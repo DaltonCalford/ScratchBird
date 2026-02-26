@@ -20,6 +20,8 @@
  */
 
 #include "scratchbird/fdw/postgresql_adapter.h"
+#include "scratchbird/core/socket_call_compat.h"
+#include "scratchbird/udr/scram_auth.h"
 
 #ifdef _WIN32
     #include <winsock2.h>
@@ -82,6 +84,8 @@ namespace pg_protocol {
     constexpr uint32_t AUTH_CLEARTEXT       = 3;
     constexpr uint32_t AUTH_MD5             = 5;
     constexpr uint32_t AUTH_SCRAM_SHA_256   = 10;
+    constexpr uint32_t AUTH_SASL_CONTINUE   = 11;
+    constexpr uint32_t AUTH_SASL_FINAL      = 12;
 }
 
 // =============================================================================
@@ -132,7 +136,7 @@ Result<void> PostgreSQLAdapter::connect(const ServerDefinition& server,
     setState(ConnectionState::CONNECTING);
 
     // Resolve hostname
-    struct addrinfo hints{}, *result;
+    struct addrinfo hints{}, *result = nullptr;
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
@@ -146,34 +150,41 @@ Result<void> PostgreSQLAdapter::connect(const ServerDefinition& server,
                          "Failed to resolve hostname: " + std::string(gai_strerror(err)));
     }
 
-    // Create socket and connect
-    impl_->socket_fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (impl_->socket_fd < 0) {
-        freeaddrinfo(result);
-        setState(ConnectionState::FAILED);
-        return makeError(core::Status::IO_ERROR, "Failed to create socket");
+    // Try all resolved addresses (e.g. localhost -> ::1 then 127.0.0.1)
+    bool connected = false;
+    for (addrinfo* ai = result; ai != nullptr; ai = ai->ai_next) {
+        int candidate_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (candidate_fd < 0) {
+            continue;
+        }
+
+        // Set TCP_NODELAY
+        int flag = 1;
+        sb_socket_setsockopt(candidate_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+
+        // Set connection timeout
+        struct timeval timeout;
+        timeout.tv_sec = server.connection_timeout_ms / 1000;
+        timeout.tv_usec = (server.connection_timeout_ms % 1000) * 1000;
+        sb_socket_setsockopt(candidate_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        sb_socket_setsockopt(candidate_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+        if (::connect(candidate_fd, ai->ai_addr, ai->ai_addrlen) == 0) {
+            impl_->socket_fd = candidate_fd;
+            connected = true;
+            break;
+        }
+
+        close(candidate_fd);
     }
+    freeaddrinfo(result);
 
-    // Set TCP_NODELAY
-    int flag = 1;
-    sb_socket_setsockopt(impl_->socket_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
-
-    // Set connection timeout
-    struct timeval timeout;
-    timeout.tv_sec = server.connection_timeout_ms / 1000;
-    timeout.tv_usec = (server.connection_timeout_ms % 1000) * 1000;
-    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-    if (::connect(impl_->socket_fd, result->ai_addr, result->ai_addrlen) < 0) {
-        freeaddrinfo(result);
-        close(impl_->socket_fd);
+    if (!connected) {
         impl_->socket_fd = -1;
         setState(ConnectionState::FAILED);
         return makeError(core::Status::IO_ERROR, "Failed to connect to server");
     }
 
-    freeaddrinfo(result);
     setState(ConnectionState::AUTHENTICATING);
 
     // Send startup message
@@ -861,6 +872,8 @@ Result<void> PostgreSQLAdapter::sendStartupMessage(const ServerDefinition& serve
 }
 
 Result<void> PostgreSQLAdapter::handleAuthentication(const UserMapping& mapping) {
+    std::unique_ptr<udr::SCRAMClient> scram_client;
+
     while (true) {
         auto msg = readMessage();
         if (!msg) {
@@ -902,6 +915,85 @@ Result<void> PostgreSQLAdapter::handleAuthentication(const UserMapping& mapping)
                     // MD5 authentication - would need to implement
                     return makeError(core::Status::NOT_IMPLEMENTED,
                                      "MD5 authentication not implemented");
+                } else if (auth_type == pg_protocol::AUTH_SCRAM_SHA_256) {
+                    // AuthenticationSASL: list of mechanisms (NUL-separated, NUL-terminated)
+                    bool supports_scram256 = false;
+                    size_t mechanism_offset = 4;
+                    while (mechanism_offset < data.size()) {
+                        size_t end = mechanism_offset;
+                        while (end < data.size() && data[end] != 0) {
+                            ++end;
+                        }
+                        if (end == mechanism_offset) {
+                            break;
+                        }
+                        const std::string mechanism(reinterpret_cast<const char*>(data.data() + mechanism_offset),
+                                                    end - mechanism_offset);
+                        if (mechanism == "SCRAM-SHA-256") {
+                            supports_scram256 = true;
+                        }
+                        mechanism_offset = end + 1;
+                    }
+
+                    if (!supports_scram256) {
+                        return makeError(core::Status::NOT_IMPLEMENTED,
+                                         "Server does not support SCRAM-SHA-256");
+                    }
+
+                    const std::string username =
+                        mapping.remote_user.empty() ? mapping.local_user : mapping.remote_user;
+                    scram_client = std::make_unique<udr::SCRAMClient>(udr::SCRAMMechanism::SCRAM_SHA_256);
+                    const std::string client_first = scram_client->generateClientFirstMessage(username);
+
+                    std::vector<uint8_t> sasl_initial;
+                    static constexpr char kMechanism[] = "SCRAM-SHA-256";
+                    sasl_initial.insert(sasl_initial.end(), kMechanism, kMechanism + sizeof(kMechanism) - 1);
+                    sasl_initial.push_back(0);
+
+                    const uint32_t initial_len = static_cast<uint32_t>(client_first.size());
+                    sasl_initial.push_back((initial_len >> 24) & 0xFF);
+                    sasl_initial.push_back((initial_len >> 16) & 0xFF);
+                    sasl_initial.push_back((initial_len >> 8) & 0xFF);
+                    sasl_initial.push_back(initial_len & 0xFF);
+                    sasl_initial.insert(sasl_initial.end(), client_first.begin(), client_first.end());
+
+                    auto write_result = writeMessage(pg_protocol::MSG_PASSWORD, sasl_initial);
+                    if (!write_result) {
+                        return write_result;
+                    }
+                } else if (auth_type == pg_protocol::AUTH_SASL_CONTINUE) {
+                    if (!scram_client) {
+                        return makeError(core::Status::PROTOCOL_VIOLATION,
+                                         "SCRAM continuation received without SCRAM state");
+                    }
+
+                    const std::string server_first(reinterpret_cast<const char*>(data.data() + 4),
+                                                   data.size() - 4);
+                    std::string client_final;
+                    if (!scram_client->processServerFirstMessage(server_first,
+                                                                 mapping.remote_password,
+                                                                 client_final)) {
+                        return makeError(core::Status::INVALID_AUTHORIZATION,
+                                         "SCRAM authentication failed: " + scram_client->getError());
+                    }
+
+                    std::vector<uint8_t> payload(client_final.begin(), client_final.end());
+                    auto write_result = writeMessage(pg_protocol::MSG_PASSWORD, payload);
+                    if (!write_result) {
+                        return write_result;
+                    }
+                } else if (auth_type == pg_protocol::AUTH_SASL_FINAL) {
+                    if (!scram_client) {
+                        return makeError(core::Status::PROTOCOL_VIOLATION,
+                                         "SCRAM final received without SCRAM state");
+                    }
+
+                    const std::string server_final(reinterpret_cast<const char*>(data.data() + 4),
+                                                   data.size() - 4);
+                    if (!scram_client->verifyServerFinalMessage(server_final)) {
+                        return makeError(core::Status::INVALID_AUTHORIZATION,
+                                         "SCRAM server verification failed: " + scram_client->getError());
+                    }
                 } else {
                     return makeError(core::Status::NOT_IMPLEMENTED,
                                      "Unsupported authentication method: " +

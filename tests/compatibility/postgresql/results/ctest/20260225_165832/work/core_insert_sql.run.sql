@@ -1,0 +1,620 @@
+CREATE TABLE IF NOT EXISTS onek (
+    unique1 int4, unique2 int4, two int4, four int4, ten int4, twenty int4,
+    hundred int4, thousand int4, twothousand int4, fivethous int4, tenthous int4,
+    odd int4, even int4, stringu1 varchar(32), stringu2 varchar(32), string4 varchar(32)
+);
+DELETE FROM onek;
+INSERT INTO onek VALUES
+    (0, 999, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 'ATAAAA', 'ATAAAA', 'AAAA'),
+    (1, 998, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 'BBAAAA', 'BBAAAA', 'BBBB'),
+    (2, 997, 0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 1, 'CCAAAA', 'CCAAAA', 'CCCC');
+
+CREATE TABLE IF NOT EXISTS onek2 (
+    unique1 int4, unique2 int4, two int4, four int4, ten int4, twenty int4,
+    hundred int4, thousand int4, twothousand int4, fivethous int4, tenthous int4,
+    odd int4, even int4, stringu1 varchar(32), stringu2 varchar(32), string4 varchar(32)
+);
+DELETE FROM onek2;
+INSERT INTO onek2 SELECT * FROM onek;
+
+CREATE TABLE IF NOT EXISTS tenk1 (
+    unique1 int4, unique2 int4, two int4, four int4, ten int4, twenty int4,
+    hundred int4, thousand int4, twothousand int4, fivethous int4, tenthous int4,
+    odd int4, even int4, stringu1 varchar(32), stringu2 varchar(32), string4 varchar(32)
+);
+DELETE FROM tenk1;
+INSERT INTO tenk1 SELECT * FROM onek;
+
+CREATE TABLE IF NOT EXISTS tenk2 (
+    unique1 int4, unique2 int4, two int4, four int4, ten int4, twenty int4,
+    hundred int4, thousand int4, twothousand int4, fivethous int4, tenthous int4,
+    odd int4, even int4, stringu1 varchar(32), stringu2 varchar(32), string4 varchar(32)
+);
+DELETE FROM tenk2;
+INSERT INTO tenk2 SELECT * FROM tenk1;
+
+CREATE TABLE IF NOT EXISTS person (
+    name text, age int4, location text
+);
+DELETE FROM person;
+INSERT INTO person VALUES ('alice', 21, '(0,0)'), ('bob', 35, '(1,1)');
+
+CREATE TABLE IF NOT EXISTS emp (
+    name text, age int4, location text, salary int4, manager text
+);
+DELETE FROM emp;
+INSERT INTO emp VALUES ('eve', 40, '(2,2)', 1000, 'alice');
+
+CREATE TABLE IF NOT EXISTS student (
+    name text, age int4, location text, gpa float8
+);
+DELETE FROM student;
+INSERT INTO student VALUES ('sam', 19, '(3,3)', 3.8);
+
+CREATE TABLE IF NOT EXISTS stud_emp (
+    name text, age int4, location text, salary int4, manager text, gpa float8, percent int4
+);
+DELETE FROM stud_emp;
+INSERT INTO stud_emp VALUES ('pat', 22, '(4,4)', 900, 'eve', 3.6, 50);
+
+CREATE TABLE IF NOT EXISTS int8_tbl (q1 int8, q2 int8);
+DELETE FROM int8_tbl;
+INSERT INTO int8_tbl VALUES (123, 456), (4567890123456789, 123);
+CREATE TABLE IF NOT EXISTS inserttest (col1 int4, col2 int4 NOT NULL, col3 text default 'testing');
+
+insert into inserttest (col2, col3) values (3, DEFAULT);
+
+insert into inserttest (col1, col2, col3) values (DEFAULT, 5, DEFAULT);
+
+insert into inserttest values (DEFAULT, 5, 'test');
+
+insert into inserttest values (DEFAULT, 7);
+
+select * from inserttest;
+
+select * from inserttest;
+
+select * from inserttest;
+
+insert into inserttest values(30, 50, repeat('x', 10000));
+
+select col1, col2, char_length(col3) from inserttest;
+
+CREATE TABLE large_tuple_test (a int, b text) WITH (fillfactor = 10);
+
+ALTER TABLE large_tuple_test ALTER COLUMN b SET STORAGE plain;
+
+INSERT INTO large_tuple_test (select 1, NULL);
+
+INSERT INTO large_tuple_test (select 2, repeat('a', 1000));
+
+SELECT pg_size_pretty(pg_relation_size('large_tuple_test'::regclass, 'main'));
+
+INSERT INTO large_tuple_test (select 3, NULL);
+
+INSERT INTO large_tuple_test (select 4, repeat('a', 8126));
+
+CREATE TABLE IF NOT EXISTS inserttest (f1 int, f2 int[],
+                         f3 insert_test_type, f4 insert_test_type[]);
+
+insert into inserttest (f2[1], f2[2]) values (1,2);
+
+insert into inserttest (f2[1], f2[2]) values (3,4), (5,6);
+
+insert into inserttest (f2[1], f2[2]) select 7,8;
+
+insert into inserttest (f2[1], f2[2]) values (1,default);  -- not supported
+
+insert into inserttest (f3.if1, f3.if2) values (1,array['foo']);
+
+insert into inserttest (f3.if1, f3.if2) values (1,'{foo}'), (2,'{bar}');
+
+insert into inserttest (f3.if1, f3.if2) select 3, '{baz,quux}';
+
+insert into inserttest (f3.if1, f3.if2) values (1,default);  -- not supported
+
+insert into inserttest (f3.if2[1], f3.if2[2]) values ('foo', 'bar');
+
+insert into inserttest (f3.if2[1], f3.if2[2]) values ('foo', 'bar'), ('baz', 'quux');
+
+insert into inserttest (f3.if2[1], f3.if2[2]) select 'bear', 'beer';
+
+insert into inserttest (f4[1].if2[1], f4[1].if2[2]) values ('foo', 'bar');
+
+insert into inserttest (f4[1].if2[1], f4[1].if2[2]) values ('foo', 'bar'), ('baz', 'quux');
+
+insert into inserttest (f4[1].if2[1], f4[1].if2[2]) select 'bear', 'beer';
+
+select * from inserttest;
+
+CREATE TABLE IF NOT EXISTS inserttest2 (f1 bigint, f2 text);
+
+CREATE TABLE IF NOT EXISTS inserttesta (f1 int, f2 insert_pos_ints);
+
+CREATE TABLE IF NOT EXISTS inserttestb (f3 insert_test_domain, f4 insert_test_domain[]);
+
+insert into inserttesta (f2[1], f2[2]) values (1,2);
+
+insert into inserttesta (f2[1], f2[2]) values (3,4), (5,6);
+
+insert into inserttesta (f2[1], f2[2]) select 7,8;
+
+insert into inserttesta (f2[1], f2[2]) values (1,default);  -- not supported
+
+insert into inserttesta (f2[1], f2[2]) values (0,2);
+
+insert into inserttesta (f2[1], f2[2]) values (3,4), (0,6);
+
+insert into inserttesta (f2[1], f2[2]) select 0,8;
+
+insert into inserttestb (f3.if1, f3.if2) values (1,array['foo']);
+
+insert into inserttestb (f3.if1, f3.if2) values (1,'{foo}'), (2,'{bar}');
+
+insert into inserttestb (f3.if1, f3.if2) select 3, '{baz,quux}';
+
+insert into inserttestb (f3.if1, f3.if2) values (1,default);  -- not supported
+
+insert into inserttestb (f3.if1, f3.if2) values (1,array[null]);
+
+insert into inserttestb (f3.if1, f3.if2) values (1,'{null}'), (2,'{bar}');
+
+insert into inserttestb (f3.if1, f3.if2) select 3, '{null,quux}';
+
+insert into inserttestb (f3.if2[1], f3.if2[2]) values ('foo', 'bar');
+
+insert into inserttestb (f3.if2[1], f3.if2[2]) values ('foo', 'bar'), ('baz', 'quux');
+
+insert into inserttestb (f3.if2[1], f3.if2[2]) select 'bear', 'beer';
+
+insert into inserttestb (f3, f4[1].if2[1], f4[1].if2[2]) values (row(1,'{x}'), 'foo', 'bar');
+
+insert into inserttestb (f3, f4[1].if2[1], f4[1].if2[2]) values (row(1,'{x}'), 'foo', 'bar'), (row(2,'{y}'), 'baz', 'quux');
+
+insert into inserttestb (f3, f4[1].if2[1], f4[1].if2[2]) select row(1,'{x}')::insert_test_domain, 'bear', 'beer';
+
+select * from inserttesta;
+
+select * from inserttestb;
+
+CREATE TABLE IF NOT EXISTS inserttest2 (f1 bigint, f2 text);
+
+CREATE TABLE IF NOT EXISTS inserttesta (f1 insert_nnarray);
+
+insert into inserttesta (f1[1]) values (1);  -- fail
+
+insert into inserttesta (f1[1], f1[2]) values (1, 2);
+
+CREATE TABLE IF NOT EXISTS inserttestb (f1 insert_test_domain);
+
+insert into inserttestb (f1.if1) values (1);  -- fail
+
+insert into inserttestb (f1.if1, f1.if2) values (1, '{foo}');
+
+CREATE TABLE IF NOT EXISTS part1 partition of range_parted for values from ('a', 1) to ('a', 10);
+
+CREATE TABLE IF NOT EXISTS part2 partition of range_parted for values from ('a', 10) to ('a', 20);
+
+CREATE TABLE IF NOT EXISTS part3 partition of range_parted for values from ('b', 1) to ('b', 10);
+
+CREATE TABLE IF NOT EXISTS part4 partition of range_parted for values from ('b', 10) to ('b', 20);
+
+insert into part1 values ('b', 1);
+
+insert into part1 values ('a', 1);
+
+insert into part4 values ('a', 10);
+
+insert into part4 values ('b', 10);
+
+CREATE TABLE IF NOT EXISTS part_aa_bb partition of list_parted FOR VALUES IN ('aa', 'bb');
+
+CREATE TABLE IF NOT EXISTS part_cc_dd partition of list_parted FOR VALUES IN ('cc', 'dd');
+
+CREATE TABLE IF NOT EXISTS part_null partition of list_parted FOR VALUES IN (null);
+
+insert into part_aa_bb values ('AAa', 1);
+
+insert into part_aa_bb values (null);
+
+insert into part_cc_dd values ('cC', 1);
+
+insert into part_null values (null, 0);
+
+CREATE TABLE IF NOT EXISTS part_ee_ff1 partition of part_ee_ff for values from (1) to (10);
+
+CREATE TABLE IF NOT EXISTS part_ee_ff2 partition of part_ee_ff for values from (10) to (20);
+
+CREATE TABLE IF NOT EXISTS part_default partition of list_parted default;
+
+insert into part_default values (null, 2);
+
+insert into part_default values ('Zz', 2);
+
+CREATE TABLE IF NOT EXISTS part_xx_yy_p1 partition of part_xx_yy for values in ('xx');
+
+CREATE TABLE IF NOT EXISTS part_xx_yy_defpart partition of part_xx_yy default;
+
+CREATE TABLE IF NOT EXISTS part_default_p1 partition of part_default for values from (20) to (30);
+
+CREATE TABLE IF NOT EXISTS part_default_p2 partition of part_default for values from (30) to (40);
+
+insert into part_default_p2 values ('gg', 43);
+
+insert into part_default values ('gg', 43);
+
+insert into part_ee_ff1 values ('ff', 1);
+
+insert into part_ee_ff2 values ('ff', 11);
+
+insert into part_default_p1 values ('cd', 25);
+
+insert into part_default_p2 values ('de', 35);
+
+insert into list_parted values ('ab', 21);
+
+insert into list_parted values ('xx', 1);
+
+insert into list_parted values ('yy', 2);
+
+insert into range_parted values ('a', 1);
+
+insert into range_parted values ('a', 10);
+
+insert into range_parted values ('b', 1);
+
+insert into range_parted values ('b', 10);
+
+CREATE TABLE IF NOT EXISTS part_def partition of range_parted default;
+
+insert into part_def values ('c', 10);
+
+insert into range_parted values (null, null);
+
+insert into range_parted values ('a', null);
+
+insert into range_parted values (null, 19);
+
+insert into range_parted values ('b', 20);
+
+insert into list_parted values (null, 1);
+
+insert into list_parted (a) values ('aA');
+
+insert into part_ee_ff values ('EE', 0);
+
+insert into list_parted values ('EE', 1);
+
+insert into part_ee_ff values ('EE', 10);
+
+CREATE TABLE IF NOT EXISTS part_gg1 partition of part_gg for values from (minvalue) to (1);
+
+CREATE TABLE IF NOT EXISTS part_gg2_1 partition of part_gg2 for values from (1) to (5);
+
+CREATE TABLE IF NOT EXISTS part_gg2_2 partition of part_gg2 for values from (5) to (10);
+
+CREATE TABLE IF NOT EXISTS part_ee_ff3_1 partition of part_ee_ff3 for values from (20) to (25);
+
+CREATE TABLE IF NOT EXISTS part_ee_ff3_2 partition of part_ee_ff3 for values from (25) to (30);
+
+truncate list_parted;
+
+insert into list_parted values ('aa'), ('cc');
+
+insert into list_parted select 'Ff', s.a from generate_series(1, 29) s(a);
+
+insert into list_parted select 'gg', s.a from generate_series(1, 9) s(a);
+
+insert into list_parted (b) values (1);
+
+CREATE TABLE IF NOT EXISTS hpart0 partition of hash_parted for values with (modulus 4, remainder 0);
+
+CREATE TABLE IF NOT EXISTS hpart1 partition of hash_parted for values with (modulus 4, remainder 1);
+
+CREATE TABLE IF NOT EXISTS hpart2 partition of hash_parted for values with (modulus 4, remainder 2);
+
+CREATE TABLE IF NOT EXISTS hpart3 partition of hash_parted for values with (modulus 4, remainder 3);
+
+insert into hash_parted values(generate_series(1,10));
+
+insert into hpart0 values(12),(16);
+
+insert into hpart3 values(11);
+
+CREATE TABLE IF NOT EXISTS part_default partition of list_parted default;
+
+insert into part_default values (null);
+
+insert into part_default values (1);
+
+insert into part_default values (-1);
+
+CREATE TABLE IF NOT EXISTS mlparted11 (like mlparted1);
+
+alter table mlparted11 drop a;
+
+alter table mlparted11 add a int;
+
+alter table mlparted11 drop a;
+
+alter table mlparted11 add a int not null;
+
+select attrelid::regclass, attname, attnum
+from pg_attribute
+where attname = 'a'
+ and (attrelid = 'mlparted'::regclass
+   or attrelid = 'mlparted1'::regclass
+   or attrelid = 'mlparted11'::regclass)
+order by attrelid::regclass::text;
+
+insert into mlparted values (1, 2);
+
+truncate mlparted;
+
+alter table mlparted add constraint check_b check (b = 3);
+
+return NEW;
+
+end;
+
+$$
+language plpgsql;
+
+create trigger mlparted11_trig before insert ON mlparted11
+  for each row execute procedure mlparted11_trig_fn();
+
+drop trigger mlparted11_trig on mlparted11;
+
+insert into mlparted1 (a, b) values (2, 3);
+
+CREATE TABLE IF NOT EXISTS lparted_nonullpart_a partition of lparted_nonullpart for values in ('a');
+
+insert into lparted_nonullpart values (1);
+
+alter table mlparted drop constraint check_b;
+
+CREATE TABLE IF NOT EXISTS mlparted12 partition of mlparted1 for values from (5) to (10);
+
+CREATE TABLE IF NOT EXISTS mlparted2 (b int not null, a int not null);
+
+CREATE TABLE IF NOT EXISTS mlparted3 partition of mlparted for values from (1, 20) to (1, 30);
+
+CREATE TABLE IF NOT EXISTS mlparted4 (like mlparted);
+
+alter table mlparted4 drop a;
+
+alter table mlparted4 add a int not null;
+
+alter table mlparted add c text;
+
+CREATE TABLE IF NOT EXISTS mlparted5a (a int not null, c text, b int not null);
+
+alter table mlparted add constraint check_b check (a = 1 and b < 45);
+
+insert into mlparted values (1, 45, 'a');
+
+create trigger mlparted5abrtrig before insert on mlparted5a for each row execute procedure mlparted5abrtrig_func();
+
+insert into mlparted5 (a, b, c) values (1, 40, 'a');
+
+alter table mlparted drop constraint check_b;
+
+CREATE TABLE IF NOT EXISTS mlparted_def1 partition of mlparted_def for values from (40) to (50);
+
+CREATE TABLE IF NOT EXISTS mlparted_def2 partition of mlparted_def for values from (50) to (60);
+
+insert into mlparted values (40, 100);
+
+insert into mlparted_def1 values (42, 100);
+
+insert into mlparted_def2 values (54, 50);
+
+insert into mlparted_def1 values (52, 50);
+
+insert into mlparted_def2 values (34, 50);
+
+CREATE TABLE IF NOT EXISTS mlparted_defd partition of mlparted_def default;
+
+insert into mlparted values (70, 100);
+
+alter table mlparted add d int, add e int;
+
+alter table mlparted drop e;
+
+CREATE TABLE IF NOT EXISTS mlparted5_a partition of mlparted5_ab for values in ('a');
+
+CREATE TABLE IF NOT EXISTS mlparted5_b (d int, b int, c text, a int);
+
+truncate mlparted;
+
+insert into mlparted values (1, 2, 'a', 1);
+
+insert into mlparted values (1, 40, 'a', 1);  -- goes to mlparted5_a
+
+insert into mlparted values (1, 45, 'b', 1);  -- goes to mlparted5_b
+
+insert into mlparted values (1, 45, 'c', 1);  -- goes to mlparted5_cd, fails
+
+insert into mlparted values (1, 45, 'f', 1);  -- goes to mlparted5, fails
+
+alter table mlparted drop d;
+
+truncate mlparted;
+
+alter table mlparted add e int, add d int;
+
+alter table mlparted drop e;
+
+insert into mlparted values (1, 2, 'a', 1);
+
+insert into mlparted values (1, 40, 'a', 1);  -- goes to mlparted5_a
+
+insert into mlparted values (1, 45, 'b', 1);  -- goes to mlparted5_b
+
+insert into mlparted values (1, 45, 'c', 1);  -- goes to mlparted5_cd, fails
+
+insert into mlparted values (1, 45, 'f', 1);  -- goes to mlparted5, fails
+
+alter table mlparted drop d;
+
+create user regress_insert_other_user;
+
+grant select (a) on key_desc_1 to regress_insert_other_user;
+
+grant insert on key_desc to regress_insert_other_user;
+
+set role regress_insert_other_user;
+
+insert into key_desc values (1, 1);
+
+reset role;
+
+grant select (b) on key_desc_1 to regress_insert_other_user;
+
+set role regress_insert_other_user;
+
+insert into key_desc values (1, 1);
+
+insert into key_desc values (2, 1);
+
+reset role;
+
+revoke all on key_desc from regress_insert_other_user;
+
+revoke all on key_desc_1 from regress_insert_other_user;
+
+drop role regress_insert_other_user;
+
+CREATE TABLE IF NOT EXISTS mcrparted0 partition of mcrparted for values from (minvalue, 0, 0) to (1, maxvalue, maxvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted2 partition of mcrparted for values from (10, 6, minvalue) to (10, maxvalue, minvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted4 partition of mcrparted for values from (21, minvalue, 0) to (30, 20, minvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted0 partition of mcrparted for values from (minvalue, minvalue, minvalue) to (1, maxvalue, maxvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted1 partition of mcrparted for values from (2, 1, minvalue) to (10, 5, 10);
+
+CREATE TABLE IF NOT EXISTS mcrparted2 partition of mcrparted for values from (10, 6, minvalue) to (10, maxvalue, maxvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted3 partition of mcrparted for values from (11, 1, 1) to (20, 10, 10);
+
+CREATE TABLE IF NOT EXISTS mcrparted4 partition of mcrparted for values from (21, minvalue, minvalue) to (30, 20, maxvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted5 partition of mcrparted for values from (30, 21, 20) to (maxvalue, maxvalue, maxvalue);
+
+insert into mcrparted values (null, null, null);
+
+insert into mcrparted values (0, 1, 1);
+
+insert into mcrparted0 values (0, 1, 1);
+
+insert into mcrparted values (9, 1000, 1);
+
+insert into mcrparted1 values (9, 1000, 1);
+
+insert into mcrparted values (10, 5, -1);
+
+insert into mcrparted1 values (10, 5, -1);
+
+insert into mcrparted values (2, 1, 0);
+
+insert into mcrparted1 values (2, 1, 0);
+
+insert into mcrparted values (10, 6, 1000);
+
+insert into mcrparted2 values (10, 6, 1000);
+
+insert into mcrparted values (10, 1000, 1000);
+
+insert into mcrparted2 values (10, 1000, 1000);
+
+insert into mcrparted values (11, 1, -1);
+
+insert into mcrparted3 values (11, 1, -1);
+
+insert into mcrparted values (30, 21, 20);
+
+insert into mcrparted5 values (30, 21, 20);
+
+insert into mcrparted4 values (30, 21, 20);	-- error
+
+CREATE TABLE IF NOT EXISTS brtrigpartcon1 partition of brtrigpartcon for values in (1);
+
+create or replace function brtrigpartcon1trigf() returns trigger as $$begin new.a := 2; return new; end$$ language plpgsql;
+
+create trigger brtrigpartcon1trig before insert on brtrigpartcon1 for each row execute procedure brtrigpartcon1trigf();
+
+insert into brtrigpartcon values (1, 'hi there');
+
+insert into brtrigpartcon1 values (1, 'hi there');
+
+CREATE TABLE IF NOT EXISTS inserttest3 (f1 text default 'foo', f2 text default 'bar', f3 int);
+
+create role regress_coldesc_role;
+
+grant insert on inserttest3 to regress_coldesc_role;
+
+grant insert on brtrigpartcon to regress_coldesc_role;
+
+revoke select on brtrigpartcon from regress_coldesc_role;
+
+set role regress_coldesc_role;
+
+with result as (insert into brtrigpartcon values (1, 'hi there') returning 1)
+  insert into inserttest3 (f3) select * from result;
+
+reset role;
+
+revoke all on inserttest3 from regress_coldesc_role;
+
+revoke all on brtrigpartcon from regress_coldesc_role;
+
+drop role regress_coldesc_role;
+
+CREATE TABLE IF NOT EXISTS donothingbrtrig_test1 (b text, a int);
+
+CREATE TABLE IF NOT EXISTS donothingbrtrig_test2 (c text, b text, a int);
+
+alter table donothingbrtrig_test2 drop column c;
+
+create or replace function donothingbrtrig_func() returns trigger as $$begin raise notice 'b: %', new.b; return NULL; end$$ language plpgsql;
+
+create trigger donothingbrtrig1 before insert on donothingbrtrig_test1 for each row execute procedure donothingbrtrig_func();
+
+create trigger donothingbrtrig2 before insert on donothingbrtrig_test2 for each row execute procedure donothingbrtrig_func();
+
+insert into donothingbrtrig_test values (1, 'foo'), (2, 'bar');
+
+CREATE TABLE IF NOT EXISTS mcrparted1_lt_b partition of mcrparted for values from (minvalue, minvalue) to ('b', minvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted2_b partition of mcrparted for values from ('b', minvalue) to ('c', minvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted3_c_to_common partition of mcrparted for values from ('c', minvalue) to ('common', minvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted4_common_lt_0 partition of mcrparted for values from ('common', minvalue) to ('common', 0);
+
+CREATE TABLE IF NOT EXISTS mcrparted5_common_0_to_10 partition of mcrparted for values from ('common', 0) to ('common', 10);
+
+CREATE TABLE IF NOT EXISTS mcrparted6_common_ge_10 partition of mcrparted for values from ('common', 10) to ('common', maxvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted7_gt_common_lt_d partition of mcrparted for values from ('common', maxvalue) to ('d', minvalue);
+
+CREATE TABLE IF NOT EXISTS mcrparted8_ge_d partition of mcrparted for values from ('d', minvalue) to (maxvalue, maxvalue);
+
+insert into mcrparted values ('aaa', 0), ('b', 0), ('bz', 10), ('c', -10),
+    ('comm', -10), ('common', -10), ('common', 0), ('common', 10),
+    ('commons', 0), ('d', -10), ('e', 0);
+
+CREATE TABLE IF NOT EXISTS returningwrtest1 partition of returningwrtest for values in (1);
+
+insert into returningwrtest values (1) returning returningwrtest;
+
+alter table returningwrtest add b text;
+
+CREATE TABLE IF NOT EXISTS returningwrtest2 (b text, c int, a int);
+
+alter table returningwrtest2 drop c;
+
+insert into returningwrtest values (2, 'foo') returning returningwrtest;
+

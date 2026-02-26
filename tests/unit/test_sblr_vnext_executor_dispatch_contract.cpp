@@ -741,7 +741,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest,
-       CanonicalOpcodeWithoutDirectDispatchRejectsWithDeterministicBridgeCode)
+       CanonicalOpcodeWithDirectDispatchRoutesWithoutDeterministicBridgeCode)
 {
     const std::string metric = "scratchbird_vnext_executor_events_total";
     const double reject_before =
@@ -754,13 +754,9 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
                       {"encrypted", Value(false)},
                       {"options", Value(Value::Object{{"engine", Value(std::string("native"))}})}});
 
-    ASSERT_FALSE(result.success());
-    EXPECT_NE(result.error().find("BRG_0406"), std::string::npos) << result.error();
-    EXPECT_NE(result.error().find("SBLR3_CREATE_DATABASE"), std::string::npos) << result.error();
-    EXPECT_EQ(result.error().find("V3 opcode not implemented in executor"), std::string::npos)
-        << result.error();
+    ASSERT_TRUE(result.success()) << result.error();
 
-    EXPECT_EQ(reject_before + 1.0,
+    EXPECT_EQ(reject_before,
               metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
 }
 

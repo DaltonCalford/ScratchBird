@@ -24,6 +24,7 @@
 #include <cerrno>
 #include <ctime>
 #include <deque>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -71,6 +72,18 @@ std::atomic<bool> g_dump_stats{false};
 std::atomic<bool> g_draining{false};
 std::atomic<bool> g_force_shutdown{false};
 std::unique_ptr<scratchbird::core::SignalControl> g_signal_control;
+
+#ifndef _WIN32
+void closeInheritedFileDescriptors() {
+    long max_fd = ::sysconf(_SC_OPEN_MAX);
+    if (max_fd < 0) {
+        max_fd = 1024;
+    }
+    for (int fd = STDERR_FILENO + 1; fd < max_fd; ++fd) {
+        ::close(fd);
+    }
+}
+#endif
 
 struct ListenerConfig {
     std::string protocol = SB_LISTENER_PROTOCOL;
@@ -261,17 +274,40 @@ std::string protocolKey(const std::string& protocol) {
     return "native";
 }
 
+std::string resolveSiblingExecutable(const std::string& executable) {
+#ifdef _WIN32
+    return executable;
+#else
+    if (executable.empty() || executable.find('/') != std::string::npos) {
+        return executable;
+    }
+
+    std::error_code ec;
+    const std::filesystem::path self_path = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec || self_path.empty()) {
+        return executable;
+    }
+
+    const std::filesystem::path candidate = self_path.parent_path() / executable;
+    if (std::filesystem::exists(candidate, ec) && !ec) {
+        return candidate.string();
+    }
+
+    return executable;
+#endif
+}
+
 std::string parserBinaryForProtocol(const std::string& protocol) {
     if (protocol == "postgresql") {
-        return "sb_parser_pg";
+        return resolveSiblingExecutable("sb_parser_pg");
     }
     if (protocol == "mysql") {
-        return "sb_parser_mysql";
+        return resolveSiblingExecutable("sb_parser_mysql");
     }
     if (protocol == "firebird") {
-        return "sb_parser_fb";
+        return resolveSiblingExecutable("sb_parser_fb");
     }
-    return "sb_parser_native";
+    return resolveSiblingExecutable("sb_parser_native");
 }
 
 std::string controlSocketPath(const ListenerConfig& config) {
@@ -829,6 +865,16 @@ private:
                                        {config_.protocol, "default"});
     }
 
+    bool shouldMaintainPool() const {
+        if (g_shutdown.load(std::memory_order_acquire)) {
+            return false;
+        }
+        if (draining_.load(std::memory_order_acquire)) {
+            return false;
+        }
+        return true;
+    }
+
     void markWorkerFault(const std::shared_ptr<ParserWorker>& worker, const std::string& reason) {
         std::lock_guard<std::mutex> lock(worker->mutex);
         worker->state = WorkerState::FAULT;
@@ -839,7 +885,9 @@ private:
             metrics_.parser_recycle_total->inc(1.0, {config_.protocol, "default", reason});
         }
         updateMetrics();
-        ensureMinWorkers();
+        if (shouldMaintainPool()) {
+            ensureMinWorkers();
+        }
     }
 
     bool spawnWorker() {
@@ -848,6 +896,9 @@ private:
     }
 
     bool spawnWorkerLocked() {
+        if (!shouldMaintainPool()) {
+            return false;
+        }
         if (runningCountLocked() >= config_.pool_max) {
             return false;
         }
@@ -908,6 +959,7 @@ private:
                     ::close(fd);
                 }
             }
+            closeInheritedFileDescriptors();
             std::vector<char*> argv;
             argv.reserve(args.size() + 1);
             for (auto& item : args) {
@@ -992,7 +1044,9 @@ private:
                     std::lock_guard<std::mutex> lock(worker->mutex);
                     worker->running = false;
                     updateMetrics();
-                    ensureMinWorkers();
+                    if (shouldMaintainPool()) {
+                        ensureMinWorkers();
+                    }
                 } else {
                     markWorkerFault(worker, "error");
                 }
@@ -1182,16 +1236,23 @@ private:
     }
 
     void ensureMinWorkers() {
-        while (true) {
-            size_t running = 0;
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                running = runningCountLocked();
-            }
-            if (running >= config_.pool_min) {
-                break;
-            }
-            if (!spawnWorker()) {
+        if (!shouldMaintainPool()) {
+            return;
+        }
+
+        size_t running = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            running = runningCountLocked();
+        }
+
+        if (running >= config_.pool_min) {
+            return;
+        }
+
+        const size_t max_spawns = static_cast<size_t>(config_.pool_min - running);
+        for (size_t i = 0; i < max_spawns; ++i) {
+            if (!shouldMaintainPool() || !spawnWorker()) {
                 break;
             }
         }

@@ -1437,11 +1437,32 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             Value::List inherits;
             for (const auto& p : s->inherits) inherits.push_back(toSchemaPath(p));
             payload["inherits"] = Value(std::move(inherits));
+            payload["has_query"] = Value(s->as_query != nullptr);
+            if (s->as_query) {
+                payload["query"] = Value(makeInstr(emitSelect(s->as_query)));
+            }
             if (s->has_tablespace) payload["tablespace"] = toSchemaPath(s->tablespace);
-            payload["options"] = Value(Value::Object{
-                {"count", Value(uint64_t(0))},
-                {"key", Value(std::string())},
-                {"value", Value(makeInstr(emitLiteral(nullptr)))}});
+            auto schemaPathToQualified = [&](const parser::v3::SchemaPath& path) -> std::string {
+                std::string out;
+                for (size_t i = 0; i < path.components.size(); ++i) {
+                    if (i > 0) {
+                        out.push_back('.');
+                    }
+                    out.append(pool_.get(path.components[i]));
+                }
+                return out;
+            };
+            if (s->has_like_source) {
+                payload["options"] = makeOptionKvPlaceholder(
+                    1,
+                    "LIKE_SOURCE",
+                    makeStringLiteralInstr(schemaPathToQualified(s->like_source)));
+            } else {
+                payload["options"] = Value(Value::Object{
+                    {"count", Value(uint64_t(0))},
+                    {"key", Value(std::string())},
+                    {"value", Value(makeInstr(emitLiteral(nullptr)))}});
+            }
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -1705,10 +1726,21 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.flags = 0;
             Value::Object payload;
             payload["name"] = toIdent(s->user_name);
-            payload["options"] = Value(Value::Object{
-                {"count", Value(uint64_t(0))},
-                {"key", Value(std::string())},
-                {"value", Value(makeInstr(emitLiteral(nullptr)))}});
+            Value::List options;
+            if (s->has_password && s->password != parser::v3::StringPool::INVALID_ID) {
+                Value::Object opt;
+                opt["key"] = Value(std::string("PASSWORD"));
+                opt["value"] = Value(makeInstr(
+                    makeStringLiteralInstruction(std::string(pool_.get(s->password)))));
+                options.push_back(Value(std::move(opt)));
+            }
+            if (s->is_superuser) {
+                Value::Object opt;
+                opt["key"] = Value(std::string("SUPERUSER"));
+                opt["value"] = Value(makeInstr(makeBoolLiteralInstruction(true)));
+                options.push_back(Value(std::move(opt)));
+            }
+            payload["options"] = Value(std::move(options));
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -1719,10 +1751,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.flags = 0;
             Value::Object payload;
             payload["name"] = toIdent(s->role_name);
-            payload["options"] = Value(Value::Object{
-                {"count", Value(uint64_t(0))},
-                {"key", Value(std::string())},
-                {"value", Value(makeInstr(emitLiteral(nullptr)))}});
+            payload["options"] = Value(Value::List{});
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -1733,10 +1762,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.flags = 0;
             Value::Object payload;
             payload["name"] = toIdent(s->group_name);
-            payload["options"] = Value(Value::Object{
-                {"count", Value(uint64_t(0))},
-                {"key", Value(std::string())},
-                {"value", Value(makeInstr(emitLiteral(nullptr)))}});
+            payload["options"] = Value(Value::List{});
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -3019,12 +3045,66 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
     };
 
     switch (stmt->kind()) {
-        case parser::v3::ASTKind::DropTableStmt:
-            return makeDrop(Opcode::SBLR3_DROP_TABLE, static_cast<parser::v3::DropTableStmt*>(stmt)->tables.front(), 1);
+        case parser::v3::ASTKind::DropTableStmt: {
+            auto* drop_stmt = static_cast<parser::v3::DropTableStmt*>(stmt);
+            if (drop_stmt->tables.empty()) {
+                Instruction inst;
+                inst.opcode = op(Opcode::SBLR3_EXECUTE_STMT);
+                inst.flags = 0;
+                inst.payload = Value(Value::Bytes{});
+                return inst;
+            }
+
+            if (drop_stmt->tables.size() == 1) {
+                return makeDrop(Opcode::SBLR3_DROP_TABLE, drop_stmt->tables.front(), 1);
+            }
+
+            // SCHEMA_DDL_DROP currently carries a single path; encode multi-drop
+            // targets as a comma-separated path token and split in executor.
+            std::string packed_targets;
+            for (size_t i = 0; i < drop_stmt->tables.size(); ++i) {
+                if (i > 0) {
+                    packed_targets.push_back(',');
+                }
+                packed_targets += parser::v3::schemaPathToString(drop_stmt->tables[i], pool_);
+            }
+
+            parser::v3::SchemaPath packed_path(
+                parser::v3::PathType::UNQUALIFIED,
+                {pool_.intern(packed_targets)});
+            return makeDrop(Opcode::SBLR3_DROP_TABLE, packed_path, 1);
+        }
         case parser::v3::ASTKind::DropIndexStmt:
             return makeDrop(Opcode::SBLR3_DROP_INDEX, static_cast<parser::v3::DropIndexStmt*>(stmt)->indexes.front(), 2);
-        case parser::v3::ASTKind::DropViewStmt:
-            return makeDrop(Opcode::SBLR3_DROP_VIEW, static_cast<parser::v3::DropViewStmt*>(stmt)->views.front(), 3);
+        case parser::v3::ASTKind::DropViewStmt: {
+            auto* drop_stmt = static_cast<parser::v3::DropViewStmt*>(stmt);
+            if (drop_stmt->views.empty()) {
+                Instruction inst;
+                inst.opcode = op(Opcode::SBLR3_EXECUTE_STMT);
+                inst.flags = 0;
+                inst.payload = Value(Value::Bytes{});
+                return inst;
+            }
+
+            if (drop_stmt->views.size() == 1) {
+                return makeDrop(Opcode::SBLR3_DROP_VIEW, drop_stmt->views.front(), 3);
+            }
+
+            // SCHEMA_DDL_DROP currently carries a single path; encode multi-drop
+            // targets as a comma-separated path token and split in executor.
+            std::string packed_targets;
+            for (size_t i = 0; i < drop_stmt->views.size(); ++i) {
+                if (i > 0) {
+                    packed_targets.push_back(',');
+                }
+                packed_targets += parser::v3::schemaPathToString(drop_stmt->views[i], pool_);
+            }
+
+            parser::v3::SchemaPath packed_path(
+                parser::v3::PathType::UNQUALIFIED,
+                {pool_.intern(packed_targets)});
+            return makeDrop(Opcode::SBLR3_DROP_VIEW, packed_path, 3);
+        }
         case parser::v3::ASTKind::DropSequenceStmt:
             return makeDrop(Opcode::SBLR3_DROP_SEQUENCE, static_cast<parser::v3::DropSequenceStmt*>(stmt)->sequences.front(), 4);
         case parser::v3::ASTKind::DropSchemaStmt:
@@ -4974,6 +5054,22 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
     inst.flags = 0;
 
     std::string name = toUpper(pool_.get(expr->function_path.objectName()));
+    if (name == "VALUES") {
+        inst.opcode = op(Opcode::SBLR3_INSERTED_COLUMN_REF);
+        Value::Object payload;
+        if (expr->arguments.size() == 1 &&
+            expr->arguments.front() &&
+            expr->arguments.front()->kind() == parser::v3::ASTKind::ColumnRefExpr) {
+            auto* cref = static_cast<parser::v3::ColumnRefExpr*>(expr->arguments.front());
+            payload["column"] = Value(std::string(pool_.get(cref->column.column_name)));
+        } else {
+            fail("VALUES() expects a single column reference argument");
+            payload["column"] = Value(std::string());
+        }
+        inst.payload = Value(std::move(payload));
+        return inst;
+    }
+
     const bool current_timestamp_semantics = (name == "CURRENT_TIMESTAMP");
     static const std::unordered_map<std::string, Opcode> kFuncMap = {
         {"COALESCE", Opcode::SBLR3_COALESCE},
@@ -5677,8 +5773,11 @@ TypeSpec V3Emitter::buildTypeSpec(const parser::v3::TypeName& type) {
     static const std::unordered_map<std::string, Opcode> kTypeMap = {
         {"INT", Opcode::SBLR3_TYPE_INTEGER},
         {"INTEGER", Opcode::SBLR3_TYPE_INTEGER},
+        {"SERIAL", Opcode::SBLR3_TYPE_INTEGER},
         {"BIGINT", Opcode::SBLR3_TYPE_BIGINT},
+        {"BIGSERIAL", Opcode::SBLR3_TYPE_BIGINT},
         {"SMALLINT", Opcode::SBLR3_TYPE_INT16},
+        {"SMALLSERIAL", Opcode::SBLR3_TYPE_INT16},
         {"TINYINT", Opcode::SBLR3_TYPE_INT8},
         {"INT128", Opcode::SBLR3_TYPE_INT128},
         {"INT2", Opcode::SBLR3_TYPE_INT16},

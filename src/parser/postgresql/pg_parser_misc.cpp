@@ -36,7 +36,9 @@ static parser::v3::SchemaPath buildPathFromQualified(parser::v3::StringPool& poo
         }
     }
     if (!cur.empty()) comps.push_back(pool.intern(cur));
-    return parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED, std::move(comps));
+    parser::v3::PathType path_type = comps.size() > 1 ? parser::v3::PathType::ABSOLUTE
+                                                       : parser::v3::PathType::UNQUALIFIED;
+    return parser::v3::SchemaPath(path_type, std::move(comps));
 }
 
 // ============================================================================
@@ -177,6 +179,31 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
     }
     if (matchKeyword(TokenType::KW_DEFAULT)) {
         stmt->is_default = true;
+    } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+        auto* value = arena()->create<parser::v3::LiteralExpr>();
+        value->literal_type = parser::v3::LiteralType::STRING;
+        value->string_value = parseIdentifierId();
+        stmt->value = value;
+    } else if (matchKeyword(TokenType::KW_ON)) {
+        auto* value = arena()->create<parser::v3::LiteralExpr>();
+        value->literal_type = parser::v3::LiteralType::STRING;
+        value->string_value = string_pool_.intern("on");
+        stmt->value = value;
+    } else if (matchKeyword(TokenType::KW_OFF)) {
+        auto* value = arena()->create<parser::v3::LiteralExpr>();
+        value->literal_type = parser::v3::LiteralType::STRING;
+        value->string_value = string_pool_.intern("off");
+        stmt->value = value;
+    } else if (matchKeyword(TokenType::KW_TRUE)) {
+        auto* value = arena()->create<parser::v3::LiteralExpr>();
+        value->literal_type = parser::v3::LiteralType::STRING;
+        value->string_value = string_pool_.intern("true");
+        stmt->value = value;
+    } else if (matchKeyword(TokenType::KW_FALSE)) {
+        auto* value = arena()->create<parser::v3::LiteralExpr>();
+        value->literal_type = parser::v3::LiteralType::STRING;
+        value->string_value = string_pool_.intern("false");
+        stmt->value = value;
     } else {
         stmt->value = parseExpression();
     }
@@ -186,6 +213,39 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
     if (upper_name == "AUTOCOMMIT") {
         error("PostgreSQL does not support SET AUTOCOMMIT");
     }
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseResetStmtV3() {
+    if (!matchKeyword(TokenType::KW_RESET)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ResetStmt>();
+
+    auto parse_variable_name = [&]() -> parser::v3::StringPool::StringId {
+        std::string name = parseIdentifier();
+        while (match(TokenType::DOT)) {
+            name += ".";
+            name += parseIdentifier();
+        }
+        return string_pool_.intern(name);
+    };
+
+    if (matchKeyword(TokenType::KW_ALL)) {
+        stmt->reset_all = true;
+    } else if (matchKeyword(TokenType::KW_SESSION)) {
+        consumeKeyword(TokenType::KW_AUTHORIZATION, "Expected AUTHORIZATION after RESET SESSION");
+        stmt->name = string_pool_.intern("SESSION_AUTHORIZATION");
+    } else if (matchKeyword(TokenType::KW_ROLE)) {
+        stmt->name = string_pool_.intern("ROLE");
+    } else if (matchKeyword(TokenType::KW_TIME)) {
+        consumeKeyword(TokenType::KW_ZONE, "Expected ZONE after RESET TIME");
+        stmt->name = string_pool_.intern("TIME_ZONE");
+    } else {
+        stmt->name = parse_variable_name();
+    }
+
     return stmt;
 }
 
@@ -412,6 +472,11 @@ void Parser::parseSetStmt() {
         if (matchKeyword(TokenType::KW_TO) || match(TokenType::EQUAL)) {
             if (matchKeyword(TokenType::KW_DEFAULT)) {
                 emit(sblr::Opcode::LITERAL_NULL);
+            } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+                // PostgreSQL SET GUC values commonly use bare identifiers
+                // (e.g. ON/OFF). Encode them as string literals so executor-side
+                // setting handlers can interpret textual values consistently.
+                emitString(parseIdentifier());
             } else {
                 parseExpression();
             }

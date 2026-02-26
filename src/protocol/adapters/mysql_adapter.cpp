@@ -78,6 +78,29 @@ std::string resolveMySqlSchemaPath(core::CatalogManager* catalog,
         return legacy;
     }
 
+    if (!db_name.empty()) {
+        core::ErrorContext direct_ctx;
+        if (catalog->getSchema(db_name, schema_info, &direct_ctx) == core::Status::OK) {
+            return db_name;
+        }
+
+        std::string user_scoped = "users." + db_name;
+        core::ErrorContext user_ctx;
+        if (catalog->getSchema(user_scoped, schema_info, &user_ctx) == core::Status::OK) {
+            return user_scoped;
+        }
+    }
+
+    core::ErrorContext users_public_ctx;
+    if (catalog->getSchema("users.public", schema_info, &users_public_ctx) == core::Status::OK) {
+        return "users.public";
+    }
+
+    core::ErrorContext public_ctx;
+    if (catalog->getSchema("public", schema_info, &public_ctx) == core::Status::OK) {
+        return "public";
+    }
+
     return canonical;
 }
 
@@ -824,9 +847,14 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
         error_out = "Database switch denied by manager binding context";
         return core::Status::INVALID_AUTHORIZATION;
     }
-    compiler.setDefaultSchema(
-        resolveMySqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
-                               db_name));
+    std::string default_schema = resolveMySqlSchemaPath(
+        engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
+        db_name);
+    if (!default_db_set_ &&
+        default_schema == buildMySqlSchemaPath(db_name)) {
+        default_schema = "users.public";
+    }
+    compiler.setDefaultSchema(default_schema);
     compiler.setCompatibilityMode(resolveMysqlCompat(engineDatabase(), db_name, &ctx));
     auto result = compiler.compile(sql);
     last_warnings_ = result.warnings();
@@ -1564,6 +1592,7 @@ bool MySqlAdapter::handleShowQuery(const std::string& query, ResultContext& resu
         emit_variable("time_zone", "SYSTEM");
         emit_variable("transaction_isolation", "READ-COMMITTED");
         emit_variable("version", server_version_);
+        emit_variable("version_comment", "ScratchBird MySQL emulation");
 
         return true;
     }

@@ -873,6 +873,19 @@ std::string bootstrapTokenFilePath() {
     return "/var/lib/scratchbird/bootstrap.token";
 }
 
+bool bootstrapForceEnabled() {
+    const char* configured = std::getenv("SCRATCHBIRD_BOOTSTRAP_FORCE");
+    if (!configured || configured[0] == '\0') {
+        return false;
+    }
+
+    std::string normalized = toUpperAscii(configured);
+    return normalized != "0" &&
+           normalized != "FALSE" &&
+           normalized != "NO" &&
+           normalized != "OFF";
+}
+
 std::mutex& bootstrapTokenMutex() {
     static std::mutex mutex;
     return mutex;
@@ -1194,23 +1207,30 @@ AuthResult LocalAuthProvider::authenticate(
             actual_hash = parsed.bcrypt;
         }
     } else {
-        // Check for bootstrap state (only SYSTEM user or empty catalog)
+        // Check for bootstrap state (only bootstrap-internal principals).
         std::vector<CatalogManager::UserInfo> all_users;
         Status list_status = catalog_->listUsers(all_users, &ctx);
-        bool only_system_user = false;
+        bool only_bootstrap_internal_users = false;
         if (list_status == Status::OK) {
-            if (all_users.empty()) {
-                only_system_user = true;
-            } else if (all_users.size() == 1 && all_users[0].username == "SYSTEM") {
-                only_system_user = true;
+            only_bootstrap_internal_users = true;
+            for (const auto& user : all_users) {
+                const std::string normalized = IdentifierUtils::toUpper(user.username);
+                if (normalized != "SYSTEM" && normalized != "SYSARCH") {
+                    only_bootstrap_internal_users = false;
+                    break;
+                }
             }
         }
-        bootstrap_allowed = only_system_user &&
+        bootstrap_allowed = only_bootstrap_internal_users &&
                             bootstrap_state == CatalogManager::BootstrapState::UNINITIALIZED;
 
         // Use dummy hash for timing resistance (same format as bcrypt)
         // This ensures password verification takes same time whether user exists or not
         actual_hash = "$2a$10$DUMMY.HASH.FOR.TIMING.RESISTANCE.ONLY............................";
+    }
+
+    if (!user_exists && bootstrapForceEnabled()) {
+        bootstrap_allowed = true;
     }
 
     if (bootstrap_allowed) {
@@ -1221,9 +1241,16 @@ AuthResult LocalAuthProvider::authenticate(
                                "auth",
                                "bootstrap_candidate");
 
+        const bool force_bootstrap = bootstrapForceEnabled();
         ErrorContext claim_ctx;
         Status claim_status = catalog_->claimBootstrapWindow(&claim_ctx);
-        if (claim_status != Status::OK) {
+        bool claim_acquired = (claim_status == Status::OK);
+        if (!claim_acquired &&
+            force_bootstrap &&
+            claim_status == Status::CONSTRAINT_VIOLATION) {
+            // Test/override mode: allow token bootstrap even if state is not UNINITIALIZED.
+            claim_acquired = false;
+        } else if (!claim_acquired) {
             if (has_catalog_auth_ctx) {
                 applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
             } else {
@@ -1247,6 +1274,9 @@ AuthResult LocalAuthProvider::authenticate(
         }
 
         auto release_bootstrap_window = [&]() -> bool {
+            if (!claim_acquired) {
+                return true;
+            }
             ErrorContext release_ctx;
             Status release_status = catalog_->releaseBootstrapWindow(&release_ctx);
             if (release_status != Status::OK) {

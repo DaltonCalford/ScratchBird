@@ -731,6 +731,10 @@ public:
     StringPool::StringId partition_by = StringPool::INVALID_ID;  // RANGE, LIST, HASH
     std::vector<StringPool::StringId> partition_columns;
 
+    // MySQL CREATE TABLE ... LIKE <source>
+    bool has_like_source = false;
+    SchemaPath like_source;
+
     // CREATE TABLE AS SELECT
     SelectStmt* as_query = nullptr;
 };

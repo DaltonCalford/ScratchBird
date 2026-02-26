@@ -16348,7 +16348,8 @@ bool hasTriggerNameConflictInTable(
             auto table_it = table_by_id.find(table_id);
             if (table_it == table_by_id.end())
             {
-                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Column table not found");
+                std::string msg = "Column table not found: " + table_id.toString();
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, msg.c_str());
                 return Status::DATA_CORRUPTED;
             }
             const auto& table = table_it->second;
@@ -21993,44 +21994,54 @@ bool hasTriggerNameConflictInTable(
 
     auto CatalogManager::deleteTableRecord(const ID &table_id, ErrorContext *ctx) -> Status
     {
-        // Mark the table record as invalid (logical delete) by setting is_valid = 0
-        // This is a simple implementation that scans for the table ID and marks it invalid
-
+        // Mark the table record as invalid (logical delete) by setting is_valid = 0.
+        // Tables catalog can span multiple heap pages, so scan the full page chain.
         BufferPool *bp = db_->buffer_pool();
-        void *page_data;
-        Status status = bp->pinPage(tables_table_page_, &page_data, ctx);
-        if (status != Status::OK)
+        uint32_t current_page_id = tables_table_page_;
+        while (current_page_id != 0)
         {
-            return status;
-        }
-
-        // Use CatalogHeapPage to scan records (matches writeRecordToHeapPage)
-        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
-        uint32_t record_count = heap->record_count;
-        bool found = false;
-
-        // Scan through all records directly (no TupleHeader - raw records)
-        uint32_t offset = sizeof(CatalogHeapPage);
-        for (uint32_t i = 0; i < record_count; ++i)
-        {
-            auto *record = reinterpret_cast<TableRecord *>(
-                static_cast<uint8_t *>(page_data) + offset);
-
-            if (record->table_id == table_id && record->is_valid == 1)
+            void *page_data = nullptr;
+            Status status = bp->pinPage(current_page_id, &page_data, ctx);
+            if (status != Status::OK)
             {
-                // Found the record - mark it as invalid
-                record->is_valid = 0;
-                found = true;
-                break;
+                return status;
             }
 
-            offset += sizeof(TableRecord);
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+            uint32_t offset = sizeof(CatalogHeapPage);
+            bool found_on_page = false;
+
+            for (uint32_t i = 0; i < heap->record_count; ++i)
+            {
+                auto *record = reinterpret_cast<TableRecord *>(
+                    static_cast<uint8_t *>(page_data) + offset);
+
+                if (record->table_id == table_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    heap->header.generation++;
+                    found_on_page = true;
+                    break;
+                }
+
+                offset += sizeof(TableRecord);
+            }
+
+            uint32_t next_page = heap->next_page;
+            Status unpin_status = bp->unpinPage(current_page_id, found_on_page, ctx);
+            if (unpin_status != Status::OK)
+            {
+                return unpin_status;
+            }
+
+            if (found_on_page)
+            {
+                return Status::OK;
+            }
+            current_page_id = next_page;
         }
 
-        // Mark page as dirty if we found and updated the record
-        bp->unpinPage(tables_table_page_, found, ctx);
-
-        return found ? Status::OK : Status::NOT_FOUND;
+        return Status::NOT_FOUND;
     }
 
     auto CatalogManager::deleteIndexRecord(const ID &index_id, ErrorContext *ctx) -> Status
@@ -29507,6 +29518,27 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         }
     }
 
+    // De-duplicate owned objects by object ID; dependency graph may contain
+    // multiple AUTO edges for the same owned object (e.g., FK/constraint metadata).
+    auto dedupeOwned = [](const std::vector<DependencyInfo>& deps) {
+        std::vector<DependencyInfo> unique;
+        unique.reserve(deps.size());
+        std::unordered_set<ID, IDHash> seen;
+        for (const auto& dep : deps)
+        {
+            if (seen.insert(dep.dependent_object_id).second)
+            {
+                unique.push_back(dep);
+            }
+        }
+        return unique;
+    };
+
+    owned_triggers = dedupeOwned(owned_triggers);
+    owned_indexes = dedupeOwned(owned_indexes);
+    owned_constraints = dedupeOwned(owned_constraints);
+    owned_sequences = dedupeOwned(owned_sequences);
+
     // Drop in proper order: triggers first, then indexes, then constraints
     Status status;
     for (const auto& dep : owned_triggers) {
@@ -29644,7 +29676,58 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         }
     }
 
-    // 6. Soft delete the table record (mark is_valid = 0)
+    // 6. Soft delete column records for this table.
+    {
+        BufferPool *bp = db_ ? db_->buffer_pool() : nullptr;
+        if (!bp)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint32_t current_page_id = columns_table_page_;
+        while (current_page_id != 0)
+        {
+            void *page_data = nullptr;
+            status = bp->pinPage(current_page_id, &page_data, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_data);
+            uint32_t offset = sizeof(CatalogHeapPage);
+            bool page_dirty = false;
+
+            for (uint32_t i = 0; i < heap->record_count; ++i)
+            {
+                auto *record = reinterpret_cast<ColumnRecord *>(
+                    reinterpret_cast<uint8_t *>(page_data) + offset);
+
+                if (record->table_id == table_id && record->is_valid == 1)
+                {
+                    record->is_valid = 0;
+                    heap->header.generation++;
+                    page_dirty = true;
+                }
+
+                offset += sizeof(ColumnRecord);
+            }
+
+            const uint32_t next_page = heap->next_page;
+            const Status unpin_status = bp->unpinPage(current_page_id, page_dirty, ctx);
+            if (unpin_status != Status::OK)
+            {
+                return unpin_status;
+            }
+            current_page_id = next_page;
+        }
+    }
+
+    // Remove cached columns for dropped table to keep resolver cache rebuild stable.
+    column_cache_.erase(table_id);
+
+    // 7. Soft delete the table record (mark is_valid = 0)
     status = deleteTableRecord(table_id, ctx);
     if (status != Status::OK)
     {
@@ -29657,11 +29740,11 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         return status;
     }
 
-    // 7. Clear dependencies (remove this table from dependency graph)
+    // 8. Clear dependencies (remove this table from dependency graph)
     // Use internal version that assumes locks already held
     clearDependenciesForInternal(table_id, ctx);
 
-    // 8. Remove from cache
+    // 9. Remove from cache
     table_cache_.erase(table_it);
 
     LOG_INFO(CATALOG, "Dropped table '%s' with owned objects", table_info.table_name.c_str());
@@ -41552,7 +41635,9 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
         return status;
     }
 
-    if (IdentifierUtils::toUpper(username) != "SYSTEM")
+    const std::string normalized_username = IdentifierUtils::toUpper(username);
+    if (normalized_username != "SYSTEM" &&
+        normalized_username != "SYSARCH")
     {
         // Persist bootstrap phase progression once a non-SYSTEM user exists.
         ErrorContext bootstrap_ctx;
@@ -41672,7 +41757,9 @@ auto CatalogManager::ensureUserExists(const std::string& username, const std::st
         return status;
     }
 
-    if (IdentifierUtils::toUpper(username) != "SYSTEM")
+    const std::string normalized_username = IdentifierUtils::toUpper(username);
+    if (normalized_username != "SYSTEM" &&
+        normalized_username != "SYSARCH")
     {
         ErrorContext bootstrap_ctx;
         Status bootstrap_status = transitionBootstrapState(BootstrapState::UNINITIALIZED,
@@ -42070,8 +42157,9 @@ auto CatalogManager::getBootstrapState(BootstrapState& state_out,
     Status provider_status = listAuthProviderCatalogEntries(providers, &provider_ctx);
     if (provider_status != Status::OK && provider_status != Status::NOT_FOUND)
     {
-        SET_ERROR_CONTEXT(ctx, provider_status, "Failed to load bootstrap state record");
-        return provider_status;
+        // Older/newer catalogs may not have a readable auth_provider page yet.
+        // Bootstrap state can still be derived from persisted users below.
+        providers.clear();
     }
 
     for (const auto& provider : providers)
@@ -42092,7 +42180,8 @@ auto CatalogManager::getBootstrapState(BootstrapState& state_out,
         break;
     }
 
-    // Phase A/B distinction: initialized once any non-SYSTEM principal exists.
+    // Phase A/B distinction: initialized once any non-bootstrap-internal
+    // principal exists.
     std::vector<std::string> usernames;
     auto filter = [](const UserRecord& rec) { return rec.is_valid != 0; };
     auto converter = [](const UserRecord& rec, std::string& username) {
@@ -42108,7 +42197,9 @@ auto CatalogManager::getBootstrapState(BootstrapState& state_out,
 
     for (const std::string& username : usernames)
     {
-        if (IdentifierUtils::toUpper(username) != "SYSTEM")
+        const std::string normalized_username = IdentifierUtils::toUpper(username);
+        if (normalized_username != "SYSTEM" &&
+            normalized_username != "SYSARCH")
         {
             state_out = BootstrapState::INITIALIZED;
             return Status::OK;
@@ -62470,6 +62561,10 @@ auto CatalogManager::listAuthProviderCatalogEntries(std::vector<AuthProviderCata
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
     rows_out.clear();
+    if (auth_provider_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
     auto filter = [](const AuthProviderRecord& row) { return row.is_valid == 1; };
     auto converter = [](const AuthProviderRecord& row, AuthProviderCatalogInfo& info) {
         info = AuthProviderCatalogInfo{};

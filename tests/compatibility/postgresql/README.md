@@ -76,6 +76,36 @@ ctest -R CompatibilityPostgreSQL --test-dir build
 
 `CompatibilityPostgreSQL` performs a connection precheck first; if no compatible PostgreSQL endpoint is reachable with current auth settings, it exits as `SKIP` (CTest code 77) instead of failing the full suite.
 
+Before running PostgreSQL compatibility tests, provision a PostgreSQL-wire login in the target ScratchBird database. The runner can do this automatically:
+
+```bash
+export SCRATCHBIRD_PG_USER=pg_admin
+export SCRATCHBIRD_PG_PASSWORD='PgAdmin_Compat1!'
+export SCRATCHBIRD_PG_DB=main
+export SCRATCHBIRD_PG_ADMIN_USER=SYSTEM
+export SCRATCHBIRD_PG_ADMIN_PASSWORD='<admin-or-bootstrap-password>'
+ctest -R CompatibilityPostgreSQL --test-dir build
+```
+
+Runner auth/provisioning controls:
+
+- `SCRATCHBIRD_PG_PROVISION_USER=0` (default) assumes compatibility credentials/database already exist. Set to `1` to attempt `CREATE/ALTER USER` and `CREATE/ALTER/GRANT DATABASE` before executing tests.
+- `SCRATCHBIRD_PG_ADMIN_USER` with `SCRATCHBIRD_PG_ADMIN_PASSWORD` or `SCRATCHBIRD_PG_ADMIN_PASSWORD_FILE` define the provisioning principal.
+- `SCRATCHBIRD_PG_BOOTSTRAP_TOKEN_FILE` optionally points to bootstrap token file used when admin password is not supplied.
+- `SCRATCHBIRD_PG_OWNER_DB` (default `main`) is used when listener owner-binding rejects database switching.
+- Default compatibility lane target is `SCRATCHBIRD_PG_USER=pg_admin`, `SCRATCHBIRD_PG_DB=main`.
+- `SCRATCHBIRD_PG_REQUIRE_SB_EMULATION=1` (default) requires endpoint fingerprint output to include `ScratchBird` so native `postgres` targets are rejected.
+- `SCRATCHBIRD_PG_COMPAT_RUN=1` converts unreachable/auth provisioning issues from `SKIP` to hard `FAIL`.
+
+Unmodified upstream regression mode (`pg_regress`):
+
+- `SCRATCHBIRD_PG_USE_UPSTREAM=1` runs upstream `pg_regress --use-existing` instead of converted SQL wrappers.
+- `SCRATCHBIRD_PG_REGRESS_BIN` optionally sets explicit `pg_regress` binary path.
+- `SCRATCHBIRD_PG_PSQL_BINDIR` optionally sets bindir containing `psql`.
+- `SCRATCHBIRD_PG_REGRESS_INPUT_DIR` defaults to `tests/compatibility/postgresql/repos/postgres/src/test/regress`.
+- `SCRATCHBIRD_PG_REGRESS_SCHEDULE` defaults to `parallel_schedule`.
+- `SCRATCHBIRD_PG_REGRESS_TESTS` optionally appends specific test names for subset/smoke execution.
+
 If `sb_pg_isql` is unavailable, set `SCRATCHBIRD_PG_ISQL` to a valid `sb_pg_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
 
 ## Test Format

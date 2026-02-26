@@ -358,6 +358,7 @@ ParseResult Parser::parseStatement() {
         result.setStatement(statement_);
         result.setArena(std::move(arena_));
         result.setBytecode(std::move(bytecode_));
+        result.stringPool() = string_pool_;
     }
     return result;
 }
@@ -457,6 +458,13 @@ parser::v3::Statement* Parser::parseStatementInternal() {
                 parser::v3::Statement* stmt = parseSetStmtV3();
                 if (stmt) return stmt;
                 error("Unsupported SET statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
+        case TokenType::KW_RESET:
+            {
+                parser::v3::Statement* stmt = parseResetStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported RESET statement for V3 PostgreSQL parser");
                 return nullptr;
             }
         case TokenType::KW_SHOW:
@@ -615,22 +623,46 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
     };
 
     std::string normalized_default = normalize_path(default_schema_);
+    auto has_hierarchy = [](const std::string& value) {
+        return value.find('.') != std::string::npos ||
+               value.find('/') != std::string::npos;
+    };
+    auto has_emulation_prefix = [](const std::string& value) {
+        auto has_prefix = [&](const std::string& prefix) {
+            return value == prefix || value.rfind(prefix + ".", 0) == 0;
+        };
+        return has_prefix("emulated.postgresql") ||
+               has_prefix("emulation.postgresql") ||
+               has_prefix("remote.emulated.postgresql") ||
+               has_prefix("remote.emulation.postgresql");
+    };
+    const bool default_is_database_alias =
+        !normalized_default.empty() &&
+        !has_hierarchy(normalized_default) &&
+        !has_emulation_prefix(normalized_default);
 
     // If no schema specified, use default
     if (schema.empty()) {
-        schema = normalized_default;
+        if (default_is_database_alias) {
+            // In manager-bound PostgreSQL emulation, an unqualified object name should
+            // remain unqualified so execution resolves against the live current/search path.
+            // Treating the bound database alias as a schema qualifier here causes DDL/DML
+            // path divergence (e.g. CREATE TABLE vs INSERT into the same name).
+            schema.clear();
+        } else {
+            schema = normalized_default;
+        }
         return;
     }
 
     std::string normalized_schema = normalize_path(schema);
-    auto has_prefix = [&](const std::string& prefix) {
-        return normalized_schema == prefix ||
-               normalized_schema.rfind(prefix + ".", 0) == 0;
-    };
-    if (has_prefix("emulated.postgresql") ||
-        has_prefix("emulation.postgresql") ||
-        has_prefix("remote.emulated.postgresql") ||
-        has_prefix("remote.emulation.postgresql"))
+    if (has_emulation_prefix(normalized_schema))
+    {
+        schema = normalized_schema;
+        return;
+    }
+
+    if (default_is_database_alias)
     {
         schema = normalized_schema;
         return;

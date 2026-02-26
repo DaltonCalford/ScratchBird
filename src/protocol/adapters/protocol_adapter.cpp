@@ -29,6 +29,12 @@
 #include <cctype>
 #include <cstring>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 namespace scratchbird {
 namespace protocol {
 
@@ -46,6 +52,14 @@ const char* dialectTagForProtocol(network::ProtocolType type) {
         default:
             return "scratchbird";
     }
+}
+
+uint64_t currentProcessIdForPath() {
+#ifdef _WIN32
+    return static_cast<uint64_t>(::_getpid());
+#else
+    return static_cast<uint64_t>(::getpid());
+#endif
 }
 
 size_t countParameterPlaceholders(const std::string& sql) {
@@ -243,67 +257,87 @@ core::Status ProtocolAdapter::handleData(network::Connection* conn) {
 // ============================================================================
 
 core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultContext& result) {
-    queries_executed_++;
+    try {
+        queries_executed_++;
 
-    core::ErrorContext ctx;
-    auto status = ensureEngine(&ctx);
-    if (status != core::Status::OK) {
-        result.has_error = true;
-        result.error_code = static_cast<uint32_t>(status);
-        result.sqlstate = "58000";
-        result.error_message = ctx.message;
+        core::ErrorContext ctx;
+        auto status = ensureEngine(&ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.sqlstate = "58000";
+            result.error_message = ctx.message;
+            return status;
+        }
+
+        struct ParameterGuard {
+            sblr::Executor* executor = nullptr;
+            explicit ParameterGuard(sblr::Executor* exec, const QueryContext& query_ctx)
+                : executor(exec)
+            {
+                if (executor) {
+                    executor->setParameters(query_ctx.parameter_values, query_ctx.parameter_nulls);
+                }
+            }
+            ~ParameterGuard()
+            {
+                if (executor) {
+                    executor->clearParameters();
+                }
+            }
+        };
+
+        ParameterGuard param_guard(executor_.get(), query);
+
+        // Track the statement for dormant reattach inspection (no cursor state retained).
+        if (connection_ctx_) {
+            connection_ctx_->beginStatementTracking(query.query);
+        }
+
+        std::vector<uint8_t> bytecode;
+        std::string compile_error;
+        status = compileQuery(query.query, bytecode, compile_error);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.sqlstate = "42000";
+            result.error_message = compile_error.empty() ? "Compilation error" : compile_error;
+            if (connection_ctx_) {
+                connection_ctx_->endStatementTrackingFailure(result.error_code, result.sqlstate);
+            }
+            return core::Status::OK;
+        }
+
+        status = executeBytecode(query.query, bytecode, result, &ctx);
+        if (connection_ctx_) {
+            if (result.has_error) {
+                const std::string sqlstate = result.sqlstate.empty() ? "42000" : result.sqlstate;
+                connection_ctx_->endStatementTrackingFailure(result.error_code, sqlstate);
+            } else {
+                connection_ctx_->endStatementTrackingSuccess(result.rows_affected);
+            }
+        }
+
         return status;
-    }
-
-    struct ParameterGuard {
-        sblr::Executor* executor = nullptr;
-        explicit ParameterGuard(sblr::Executor* exec, const QueryContext& query_ctx)
-            : executor(exec)
-        {
-            if (executor) {
-                executor->setParameters(query_ctx.parameter_values, query_ctx.parameter_nulls);
-            }
-        }
-        ~ParameterGuard()
-        {
-            if (executor) {
-                executor->clearParameters();
-            }
-        }
-    };
-
-    ParameterGuard param_guard(executor_.get(), query);
-
-    // Track the statement for dormant reattach inspection (no cursor state retained).
-    if (connection_ctx_) {
-        connection_ctx_->beginStatementTracking(query.query);
-    }
-
-    std::vector<uint8_t> bytecode;
-    std::string compile_error;
-    status = compileQuery(query.query, bytecode, compile_error);
-    if (status != core::Status::OK) {
+    } catch (const std::exception& ex) {
         result.has_error = true;
-        result.error_code = static_cast<uint32_t>(status);
-        result.sqlstate = "42000";
-        result.error_message = compile_error.empty() ? "Compilation error" : compile_error;
+        result.error_code = static_cast<uint32_t>(core::Status::INTERNAL_ERROR);
+        result.sqlstate = "XX000";
+        result.error_message = std::string("Unhandled adapter exception: ") + ex.what();
+        if (connection_ctx_) {
+            connection_ctx_->endStatementTrackingFailure(result.error_code, result.sqlstate);
+        }
+        return core::Status::OK;
+    } catch (...) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(core::Status::INTERNAL_ERROR);
+        result.sqlstate = "XX000";
+        result.error_message = "Unhandled adapter exception";
         if (connection_ctx_) {
             connection_ctx_->endStatementTrackingFailure(result.error_code, result.sqlstate);
         }
         return core::Status::OK;
     }
-
-    status = executeBytecode(query.query, bytecode, result, &ctx);
-    if (connection_ctx_) {
-        if (result.has_error) {
-            const std::string sqlstate = result.sqlstate.empty() ? "42000" : result.sqlstate;
-            connection_ctx_->endStatementTrackingFailure(result.error_code, sqlstate);
-        } else {
-            connection_ctx_->endStatementTrackingSuccess(result.rows_affected);
-        }
-    }
-
-    return status;
 }
 
 core::Status ProtocolAdapter::prepareStatement(const std::string& name,
@@ -346,50 +380,64 @@ core::Status ProtocolAdapter::prepareStatement(const std::string& name,
 core::Status ProtocolAdapter::executePrepared(const std::string& name,
                                                const QueryContext& params,
                                                ResultContext& result) {
-    core::ScratchBirdMetrics& metrics = core::ScratchBirdMetrics::getInstance();
-    metrics.initialize();
+    try {
+        core::ScratchBirdMetrics& metrics = core::ScratchBirdMetrics::getInstance();
+        metrics.initialize();
 
-    if (config_.engine_endpoint.empty()) {
-        core::ErrorContext ctx;
-        auto status = ensureEngine(&ctx);
-        if (status != core::Status::OK) {
-            result.has_error = true;
-            result.error_code = static_cast<uint32_t>(status);
-            result.sqlstate = "58000";
-            result.error_message = ctx.message;
-            return status;
-        }
-    }
-
-    if (connection_ctx_) {
-        auto* prepared = connection_ctx_->getPreparedStatement(name);
-        if (prepared) {
-            if (metrics.statement_cache_hits_total) {
-                metrics.statement_cache_hits_total->inc(1.0);
+        if (config_.engine_endpoint.empty()) {
+            core::ErrorContext ctx;
+            auto status = ensureEngine(&ctx);
+            if (status != core::Status::OK) {
+                result.has_error = true;
+                result.error_code = static_cast<uint32_t>(status);
+                result.sqlstate = "58000";
+                result.error_message = ctx.message;
+                return status;
             }
+        }
+
+        if (connection_ctx_) {
+            auto* prepared = connection_ctx_->getPreparedStatement(name);
+            if (prepared) {
+                if (metrics.statement_cache_hits_total) {
+                    metrics.statement_cache_hits_total->inc(1.0);
+                }
+                QueryContext ctx = params;
+                ctx.query = prepared->sql_text;
+                auto status = executeBytecode(ctx.query, prepared->bytecode, result, nullptr);
+                connection_ctx_->recordStatementExecution(name);
+                return status;
+            }
+            if (metrics.statement_cache_misses_total) {
+                metrics.statement_cache_misses_total->inc(1.0);
+            }
+        }
+
+        auto it = prepared_statements_.find(name);
+        if (it != prepared_statements_.end()) {
             QueryContext ctx = params;
-            ctx.query = prepared->sql_text;
-            auto status = executeBytecode(ctx.query, prepared->bytecode, result, nullptr);
-            connection_ctx_->recordStatementExecution(name);
-            return status;
+            ctx.query = it->second;
+            return executeQuery(ctx, result);
         }
-        if (metrics.statement_cache_misses_total) {
-            metrics.statement_cache_misses_total->inc(1.0);
-        }
-    }
 
-    auto it = prepared_statements_.find(name);
-    if (it != prepared_statements_.end()) {
-        QueryContext ctx = params;
-        ctx.query = it->second;
-        return executeQuery(ctx, result);
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(core::Status::NOT_FOUND);
+        result.sqlstate = "26000";  // Invalid SQL statement name
+        result.error_message = "Prepared statement not found: " + name;
+        return core::Status::NOT_FOUND;
+    } catch (const std::exception& ex) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(core::Status::INTERNAL_ERROR);
+        result.sqlstate = "XX000";
+        result.error_message = std::string("Unhandled adapter exception: ") + ex.what();
+        return core::Status::OK;
+    } catch (...) {
+        result.has_error = true;
+        result.error_code = static_cast<uint32_t>(core::Status::INTERNAL_ERROR);
+        result.sqlstate = "XX000";
+        result.error_message = "Unhandled adapter exception";
+        return core::Status::OK;
     }
-
-    result.has_error = true;
-    result.error_code = static_cast<uint32_t>(core::Status::NOT_FOUND);
-    result.sqlstate = "26000";  // Invalid SQL statement name
-    result.error_message = "Prepared statement not found: " + name;
-    return core::Status::NOT_FOUND;
 }
 
 core::Status ProtocolAdapter::closePrepared(const std::string& name) {
@@ -539,11 +587,34 @@ core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
     if (!db) {
         // Default database path under build/database
         if (database_path_.empty()) {
-            database_path_ = std::filesystem::path("build") / "database" / "protocol_default.sbdb";
+            if (!config_.engine_endpoint.empty()) {
+                const std::string local_name =
+                    std::string("protocol_") +
+                    dialectTagForProtocol(getProtocolType()) +
+                    "_" +
+                    std::to_string(currentProcessIdForPath()) +
+                    ".sbdb";
+                std::filesystem::path endpoint_path(config_.engine_endpoint);
+                std::filesystem::path base_dir = endpoint_path.parent_path();
+                if (base_dir.empty()) {
+                    std::error_code tmp_ec;
+                    std::filesystem::path tmp_dir = std::filesystem::temp_directory_path(tmp_ec);
+                    if (tmp_ec || tmp_dir.empty()) {
+                        tmp_dir = std::filesystem::path("/tmp");
+                    }
+                    base_dir = tmp_dir / "scratchbird" / "protocol";
+                }
+                database_path_ = base_dir / local_name;
+            } else {
+                database_path_ = std::filesystem::path("build") / "database" / "protocol_default.sbdb";
+            }
         }
 
         std::error_code ec;
-        std::filesystem::create_directories(database_path_.parent_path(), ec);
+        const std::filesystem::path parent_dir = database_path_.parent_path();
+        if (!parent_dir.empty()) {
+            std::filesystem::create_directories(parent_dir, ec);
+        }
         if (ec) {
             SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, "Failed to create database directory");
             return core::Status::IO_ERROR;
@@ -644,7 +715,11 @@ core::Status ProtocolAdapter::compileQuery(const std::string& sql,
         ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
     }
 
-    if (dialect == "SCRATCHBIRD" && compiler_v3_) {
+    if (dialect == "SCRATCHBIRD") {
+        if (!compiler_v3_) {
+            // Remote listener mode can compile without a local ensureEngine() call.
+            compiler_v3_ = std::make_unique<parser::v3::Compiler>();
+        }
         auto result = compiler_v3_->compile(sql);
         if (!result.ok) {
             error_out = buildNativeCompileDiagnostic(

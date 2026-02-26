@@ -1,0 +1,2 @@
+OK
+or: NOT NULL constraint violation: NULL value in column 'col2' (SQLSTATE XX000)

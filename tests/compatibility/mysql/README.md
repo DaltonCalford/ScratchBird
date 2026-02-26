@@ -86,6 +86,15 @@ ctest -R CompatibilityMySQL --test-dir build
 
 If `sb_my_isql` is unavailable, set `SCRATCHBIRD_MY_ISQL` to a valid `sb_my_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
 
+Runner controls:
+
+- `SCRATCHBIRD_MY_COMPAT_RUN=1` converts unreachable/auth failures from `SKIP` to hard `FAIL`.
+- `SCRATCHBIRD_MY_REQUIRE_SB_EMULATION=1` (default) requires endpoint fingerprint output to include `ScratchBird` so native `mysqld` targets are rejected.
+- `SCRATCHBIRD_MY_USE_UPSTREAM=1` runs unmodified upstream `mysql-test-run.pl` (`--extern`) instead of converted SQL wrappers.
+- `SCRATCHBIRD_MY_MTR_ROOT` sets explicit `mysql-test` directory (defaults to `tests/compatibility/mysql/repos/mysql-server/mysql-test`).
+- `SCRATCHBIRD_MY_MTR_CLIENT_BINDIR` sets directory containing `mysqltest` binary (required for upstream mode when not auto-detected).
+- `SCRATCHBIRD_MY_MTR_SUITE` / `SCRATCHBIRD_MY_MTR_DO_TEST` scope upstream MTR execution.
+
 ## Test Format
 
 Each converted SQL file contains:

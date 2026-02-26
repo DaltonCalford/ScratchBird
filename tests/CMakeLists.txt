@@ -2212,7 +2212,41 @@ set(SCRATCHBIRD_COMPAT_ROOT "${CMAKE_SOURCE_DIR}/tests/compatibility")
 set(SCRATCHBIRD_COMPAT_FIREBIRD_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/firebird/scripts/run_firebird_ctest.sh")
 set(SCRATCHBIRD_COMPAT_MYSQL_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/mysql/scripts/run_mysql_ctest.sh")
 set(SCRATCHBIRD_COMPAT_POSTGRESQL_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/postgresql/scripts/run_postgresql_ctest.sh")
+set(SCRATCHBIRD_COMPAT_SCRATCHBIRD_NATIVE_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/scratchbird/scripts/run_scratchbird_native_ctest.sh")
+set(SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER "${SCRATCHBIRD_COMPAT_ROOT}/scripts/manage_example_db.sh")
 set(SCRATCHBIRD_COMPAT_VERIFY_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/scripts/verify_required_emulation_tests.sh")
+set(SCRATCHBIRD_COMPAT_EXAMPLE_FIXTURE "compatibility_example_db")
+
+set(SCRATCHBIRD_COMPAT_EXAMPLE_NATIVE_ENV
+    "SCRATCHBIRD_NATIVE_HOST=127.0.0.1;SCRATCHBIRD_NATIVE_PORT=16092;SCRATCHBIRD_NATIVE_DB=main;SCRATCHBIRD_NATIVE_USER=sb_admin;SCRATCHBIRD_NATIVE_PASSWORD=SbAdmin_Compat1!;SCRATCHBIRD_EXAMPLE_ENV_FILE=/tmp/scratchbird-example-dynamic/profiles/runtime.env")
+set(SCRATCHBIRD_COMPAT_EXAMPLE_POSTGRES_ENV
+    "SCRATCHBIRD_PG_HOST=127.0.0.1;SCRATCHBIRD_PG_PORT=16432;SCRATCHBIRD_PG_USER=pg_admin;SCRATCHBIRD_PG_PASSWORD=PgAdmin_Compat1!;SCRATCHBIRD_PG_DB=main;SCRATCHBIRD_PG_PROVISION_USER=0;SCRATCHBIRD_PG_OWNER_DB=main;SCRATCHBIRD_PG_COMPAT_RUN=1")
+set(SCRATCHBIRD_COMPAT_EXAMPLE_MYSQL_ENV
+    "SCRATCHBIRD_MY_HOST=127.0.0.1;SCRATCHBIRD_MY_PORT=16306;SCRATCHBIRD_MY_USER=root;SCRATCHBIRD_MY_PASSWORD=RootCompat_1!;SCRATCHBIRD_MY_DB=main;SCRATCHBIRD_MY_DB_PER_TEST=0;SCRATCHBIRD_MY_COMPAT_RUN=1")
+
+if(EXISTS "${SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER}")
+    add_test(
+        NAME CompatibilityExampleDbSetup
+        COMMAND bash "${SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER}" dynamic-setup
+    )
+    set_tests_properties(CompatibilityExampleDbSetup PROPERTIES
+        LABELS "integration;compatibility;example_db;linux_only"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+        FIXTURES_SETUP "${SCRATCHBIRD_COMPAT_EXAMPLE_FIXTURE}"
+        RUN_SERIAL TRUE
+    )
+
+    add_test(
+        NAME CompatibilityExampleDbTeardown
+        COMMAND bash "${SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER}" dynamic-teardown
+    )
+    set_tests_properties(CompatibilityExampleDbTeardown PROPERTIES
+        LABELS "integration;compatibility;example_db;linux_only"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+        FIXTURES_CLEANUP "${SCRATCHBIRD_COMPAT_EXAMPLE_FIXTURE}"
+        RUN_SERIAL TRUE
+    )
+endif()
 
 if(EXISTS "${SCRATCHBIRD_COMPAT_FIREBIRD_RUNNER}")
     add_test(
@@ -2226,6 +2260,25 @@ if(EXISTS "${SCRATCHBIRD_COMPAT_FIREBIRD_RUNNER}")
     )
 endif()
 
+if(EXISTS "${SCRATCHBIRD_COMPAT_SCRATCHBIRD_NATIVE_RUNNER}")
+    add_test(
+        NAME CompatibilityScratchBirdNative
+        COMMAND bash "${SCRATCHBIRD_COMPAT_SCRATCHBIRD_NATIVE_RUNNER}"
+    )
+    set_tests_properties(CompatibilityScratchBirdNative PROPERTIES
+        LABELS "integration;compatibility;native;scratchbird;linux_only"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+        SKIP_RETURN_CODE 77
+    )
+    if(EXISTS "${SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER}")
+        set_tests_properties(CompatibilityScratchBirdNative PROPERTIES
+            FIXTURES_REQUIRED "${SCRATCHBIRD_COMPAT_EXAMPLE_FIXTURE}"
+            ENVIRONMENT "${SCRATCHBIRD_COMPAT_EXAMPLE_NATIVE_ENV}"
+            RUN_SERIAL TRUE
+        )
+    endif()
+endif()
+
 if(EXISTS "${SCRATCHBIRD_COMPAT_MYSQL_RUNNER}")
     add_test(
         NAME CompatibilityMySQL
@@ -2236,6 +2289,13 @@ if(EXISTS "${SCRATCHBIRD_COMPAT_MYSQL_RUNNER}")
         TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
         SKIP_RETURN_CODE 77
     )
+    if(EXISTS "${SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER}")
+        set_tests_properties(CompatibilityMySQL PROPERTIES
+            FIXTURES_REQUIRED "${SCRATCHBIRD_COMPAT_EXAMPLE_FIXTURE}"
+            ENVIRONMENT "${SCRATCHBIRD_COMPAT_EXAMPLE_MYSQL_ENV}"
+            RUN_SERIAL TRUE
+        )
+    endif()
 endif()
 
 if(EXISTS "${SCRATCHBIRD_COMPAT_POSTGRESQL_RUNNER}")
@@ -2248,6 +2308,16 @@ if(EXISTS "${SCRATCHBIRD_COMPAT_POSTGRESQL_RUNNER}")
         TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
         SKIP_RETURN_CODE 77
     )
+    if(EXISTS "${SCRATCHBIRD_COMPAT_EXAMPLE_DB_MANAGER}")
+        set_tests_properties(CompatibilityPostgreSQL PROPERTIES
+            FIXTURES_REQUIRED "${SCRATCHBIRD_COMPAT_EXAMPLE_FIXTURE}"
+            ENVIRONMENT "${SCRATCHBIRD_COMPAT_EXAMPLE_POSTGRES_ENV}"
+            RUN_SERIAL TRUE
+        )
+        set_tests_properties(CompatibilityPostgreSQL PROPERTIES
+            DEPENDS "CompatibilityMySQL"
+        )
+    endif()
 endif()
 
 if(EXISTS "${SCRATCHBIRD_COMPAT_VERIFY_RUNNER}")

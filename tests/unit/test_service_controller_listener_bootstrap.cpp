@@ -413,14 +413,25 @@ TEST(ServiceControllerListenerBootstrapTest,
     ASSERT_EQ(controller.startListeners(&ctx), Status::OK) << ctx.message;
     ASSERT_EQ(controller.listeners_.size(), 1U);
 
-    // Stub listener exits immediately. Health check should detect exit and restart.
-    std::this_thread::sleep_for(std::chrono::milliseconds(120));
-    controller.checkListeners();
+    // Stub listener exits immediately. Under heavy parallel load the exit/restart
+    // can race a single health-check tick, so poll until restart is observed.
+    const auto restart_deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
+    bool saw_restart = false;
+    while (std::chrono::steady_clock::now() < restart_deadline) {
+        controller.checkListeners();
+        if (controller.listeners_[0].restart_count >= 1U &&
+            waitForFileTokenCount(args_path,
+                                  "__invocation__",
+                                  2,
+                                  std::chrono::milliseconds(100))) {
+            saw_restart = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
 
-    ASSERT_TRUE(waitForFileTokenCount(args_path,
-                                      "__invocation__",
-                                      2,
-                                      std::chrono::milliseconds(2000)));
+    ASSERT_TRUE(saw_restart);
 
     EXPECT_GE(controller.listeners_[0].restart_count, 1U);
     EXPECT_GE(controller.listeners_[0].start_count, 2U);
@@ -546,7 +557,10 @@ TEST(ServiceControllerListenerBootstrapTest,
     ErrorContext ctx;
     ASSERT_EQ(controller.startListeners(&ctx), Status::OK) << ctx.message;
     EXPECT_EQ(controller.listeners_.size(), 2U);
-    ASSERT_TRUE(waitForFile(args_path, std::chrono::milliseconds(1000)));
+    ASSERT_TRUE(waitForFileTokenCount(args_path,
+                                      "__invocation__",
+                                      2,
+                                      std::chrono::milliseconds(2000)));
 
     const std::string args = readTextFile(args_path);
     EXPECT_NE(args.find(std::to_string(multi_ports[0])), std::string::npos) << args;

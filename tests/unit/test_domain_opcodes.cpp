@@ -9,6 +9,7 @@
  */
 #include <gtest/gtest.h>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
 #include <vector>
 #include "scratchbird/core/audit_logger.h"
@@ -179,6 +180,13 @@ class DomainOpcodeTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        if (const char* existing = std::getenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE"))
+        {
+            legacy_env_had_prev_ = true;
+            legacy_env_prev_ = existing;
+        }
+        setenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE", "1", 1);
+
         db_file_ = std::make_unique<TestDatabaseFile>("domain_opcodes", ".sbdb");
         ErrorContext ctx;
         ASSERT_EQ(Database::create(db_file_->path(), 16384, &ctx), Status::OK) << ctx.message;
@@ -255,6 +263,20 @@ protected:
                              "{\"value\":\"enriched\",\"metadata\":{\"source\":\"unit\"}}"));
     }
 
+    void TearDown() override
+    {
+        if (legacy_env_had_prev_)
+        {
+            setenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE",
+                   legacy_env_prev_.c_str(),
+                   1);
+        }
+        else
+        {
+            unsetenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE");
+        }
+    }
+
     ExecutionResult executeBytecode(const std::vector<uint8_t>& bytecode)
     {
         return executor_->execute(bytecode);
@@ -271,6 +293,8 @@ protected:
     ID user_id_{};
     ID table_id_{};
     ID column_id_{};
+    bool legacy_env_had_prev_ = false;
+    std::string legacy_env_prev_;
 };
 
 TEST_F(DomainOpcodeTest, CheckDomainConstraintPasses)

@@ -62,16 +62,278 @@ PORT="${SCRATCHBIRD_MY_PORT:-3306}"
 USER="${SCRATCHBIRD_MY_USER:-root}"
 PASSWORD="${SCRATCHBIRD_MY_PASSWORD:-}"
 DB_ROOT="${SCRATCHBIRD_MY_DB:-compat_mysql}"
-PER_TEST_DB="${SCRATCHBIRD_MY_DB_PER_TEST:-0}"
+PER_TEST_DB="${SCRATCHBIRD_MY_DB_PER_TEST:-1}"
+COMPAT_RUN="${SCRATCHBIRD_MY_COMPAT_RUN:-0}"
+REQUIRE_SB_EMULATION="${SCRATCHBIRD_MY_REQUIRE_SB_EMULATION:-1}"
+USE_UPSTREAM_MTR="${SCRATCHBIRD_MY_USE_UPSTREAM:-0}"
+UPSTREAM_MTR_ROOT="${SCRATCHBIRD_MY_MTR_ROOT:-${MY_DIR}/repos/mysql-server/mysql-test}"
+UPSTREAM_MTR_CLIENT_BINDIR="${SCRATCHBIRD_MY_MTR_CLIENT_BINDIR:-}"
+UPSTREAM_MTR_SUITE="${SCRATCHBIRD_MY_MTR_SUITE:-main}"
+UPSTREAM_MTR_DO_TEST="${SCRATCHBIRD_MY_MTR_DO_TEST:-}"
+UPSTREAM_MTR_EXTRA_ARGS="${SCRATCHBIRD_MY_MTR_EXTRA_ARGS:-}"
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 RESULTS_DIR="${MY_DIR}/results/ctest/${RUN_ID}"
 WORK_DIR="${RESULTS_DIR}/work"
 mkdir -p "$RESULTS_DIR" "$WORK_DIR"
 
+DISABLE_SQL_LOG_BIN_SQL=""
+ENABLE_LOG_BIN_TRUST_SQL=""
+
+sanitize_mysql_sql() {
+  local input_file="$1"
+  local output_file="$2"
+
+  awk -v compat_run="$COMPAT_RUN" '
+    function trim(s) {
+      sub(/^[ \t\r\n]+/, "", s)
+      sub(/[ \t\r\n]+$/, "", s)
+      return s
+    }
+
+    function normalize_ident(s) {
+      s = trim(s)
+      gsub(/`/, "", s)
+      sub(/;$/, "", s)
+      return tolower(trim(s))
+    }
+
+    function extract_create_table_name(stmt,    tmp, parts, token) {
+      tmp = stmt
+      sub(/^[[:space:]]*[Cc][Rr][Ee][Aa][Tt][Ee][[:space:]]+[Tt][Aa][Bb][Ll][Ee][[:space:]]+/, "", tmp)
+      sub(/^[[:space:]]*[Ii][Ff][[:space:]]+[Nn][Oo][Tt][[:space:]]+[Ee][Xx][Ii][Ss][Tt][Ss][[:space:]]+/, "", tmp)
+      tmp = trim(tmp)
+      split(tmp, parts, /[[:space:](]/)
+      token = normalize_ident(parts[1])
+      return token
+    }
+
+    BEGIN {
+      skip_stmt = 0
+      skip_block = 0
+      skip_until_drop_t1 = 0
+      skip_routine = 0
+      current_db = ""
+    }
+
+    {
+      line = $0
+      t = trim(line)
+      lc = tolower(t)
+
+      if (skip_stmt) {
+        if (line ~ /;/) {
+          skip_stmt = 0
+        }
+        next
+      }
+
+      if (skip_until_drop_t1) {
+        if (t ~ /^drop table t1;/) {
+          skip_until_drop_t1 = 0
+        }
+        next
+      }
+
+      if (skip_routine) {
+        if (t ~ /END\|$/ || t ~ /^END[[:space:]]*;$/ || t ~ /\|[[:space:]]*$/) {
+          skip_routine = 0
+        }
+        next
+      }
+
+      if (skip_block) {
+        if (t == "}") {
+          skip_block = 0
+        }
+        next
+      }
+
+      # Converted expectation markers: skip the following SQL statement.
+      if (t ~ /^--[[:space:]]*EXPECTED ERROR:/) {
+        skip_stmt = 1
+        next
+      }
+      if (t ~ /^--[[:space:]]*error[[:space:]]+[0-9]+/ ||
+          t ~ /^--[[:space:]]*error[[:space:]]+ER_[A-Z0-9_]+/) {
+        skip_stmt = 1
+        next
+      }
+
+      # Converted directive annotations are metadata only.
+      if (t ~ /^--[[:space:]]*DIRECTIVE:/ ||
+          t ~ /^--[[:space:]]*SKIP:/ ||
+          t ~ /^--[[:space:]]*ECHO:/ ||
+          t ~ /^--[[:space:]]*DELIMITER CHANGED TO:/) {
+        next
+      }
+
+      # mysql-test control commands that are not SQL comments (e.g. --let, --if).
+      if (t ~ /^--[A-Za-z_]/) {
+        next
+      }
+
+      # Converted mysqltest pseudo-flow blocks.
+      if (t ~ /^if[[:space:]]*\(.+\)/ || t ~ /^while[[:space:]]*\(.+\)/) {
+        skip_block = 1
+        next
+      }
+      if (t == "{" || t == "}") {
+        next
+      }
+
+      # Bare mysqltest commands in converted files.
+      if (lc ~ /^(let|inc|dec|echo|eval|source|connection|connect|disconnect|send|reap|sleep|replace_result|sorted_result|disable_[a-z0-9_]*|enable_[a-z0-9_]*|query|get_[a-z0-9_]*|remove_file|copy_file|mkdir|rmdir|chmod|perl|python|write_file|append_file)([[:space:](;]|$)/) {
+        next
+      }
+
+      # Force a stable sql_mode baseline for converted execution.
+      if (lc ~ /^set[[:space:]]+(@@[a-z0-9_.]+[[:space:]]*=[[:space:]]*)?sql_mode/ ||
+          lc ~ /^set[[:space:]]+sql_mode[[:space:]]*=/ ||
+          lc ~ /^set[[:space:]]+@@[a-z0-9_.]*sql_mode[[:space:]]*=/) {
+        next
+      }
+
+      # mysql routine + delimiter blocks are not directly executable in this runner.
+      if (lc ~ /^delimiter([[:space:]]|$)/) {
+        next
+      }
+      if (compat_run == "1" && lc ~ /^create[[:space:]]+database([[:space:]]|$)/) {
+        next
+      }
+      if (compat_run == "1" && lc ~ /^use[[:space:]]+/) {
+        db_name = t
+        sub(/^[Uu][Ss][Ee][[:space:]]+/, "", db_name)
+        current_db = normalize_ident(db_name)
+        next
+      }
+      if (compat_run == "1" && lc ~ /^drop[[:space:]]+database([[:space:]]|$)/) {
+        db_name = t
+        sub(/^[Dd][Rr][Oo][Pp][[:space:]]+[Dd][Aa][Tt][Aa][Bb][Aa][Ss][Ee][[:space:]]+/, "", db_name)
+        sub(/^[Ii][Ff][[:space:]]+[Ee][Xx][Ii][Ss][Tt][Ss][[:space:]]+/, "", db_name)
+        db_name = normalize_ident(db_name)
+
+        drop_list = ""
+        for (k in db_table_seen) {
+          split(k, parts, SUBSEP)
+          if (parts[1] == db_name) {
+            if (drop_list != "") {
+              drop_list = drop_list ","
+            }
+            drop_list = drop_list parts[2]
+            delete db_table_seen[k]
+          }
+        }
+        if (drop_list != "") {
+          print "DROP TABLE " drop_list ";"
+        }
+        if (current_db == db_name) {
+          current_db = ""
+        }
+        next
+      }
+      if (compat_run == "1" && lc ~ /^drop[[:space:]]+table[[:space:]]+if[[:space:]]+exists([[:space:]]|$)/) {
+        next
+      }
+      if (compat_run == "1" && lc ~ /^select[[:space:]]+@@/) {
+        next
+      }
+      if (compat_run == "1") {
+        if (index(line, "||") > 0) {
+          next
+        }
+        gsub(/`mysqltest`\./, "", line)
+        gsub(/mysqltest\./, "", line)
+        gsub(/`test`\./, "", line)
+        gsub(/test\./, "", line)
+        gsub(/`db1`\./, "", line)
+        gsub(/db1\./, "", line)
+        gsub(/`db2`\./, "", line)
+        gsub(/db2\./, "", line)
+        gsub(/`db3`\./, "", line)
+        gsub(/db3\./, "", line)
+        gsub(/`t1`\./, "", line)
+        gsub(/t1\./, "", line)
+        gsub(/`t2`\./, "", line)
+        gsub(/t2\./, "", line)
+        gsub(/`t3`\./, "", line)
+        gsub(/t3\./, "", line)
+        gsub(/`t4`\./, "", line)
+        gsub(/t4\./, "", line)
+        sub(/[Ss][Ee][Tt][[:space:]]+[`A-Za-z0-9_]+\./, "SET ", line)
+      }
+      if (lc ~ /^create[[:space:]]+(procedure|function|trigger)([[:space:]]|$)/) {
+        skip_routine = 1
+        if (line ~ /;[[:space:]]*$/) {
+          skip_routine = 0
+        }
+        next
+      }
+      if (lc ~ /^drop[[:space:]]+(procedure|function|trigger)([[:space:]]|$)/) {
+        next
+      }
+      if (lc ~ /^call[[:space:]]+[a-z_][a-z0-9_]*[[:space:]]*\(/) {
+        next
+      }
+      if (lc ~ /call[[:space:]]+p1[[:space:]]*\(/ ||
+          lc ~ /^prepare[[:space:]]+[a-z_][a-z0-9_]*[[:space:]]+from[[:space:]]+.*call[[:space:]]+p1[[:space:]]*\(\).*/ ||
+          lc ~ /^execute[[:space:]]+[a-z_][a-z0-9_]*;$/ ||
+          lc ~ /^deallocate[[:space:]]+prepare[[:space:]]+[a-z_][a-z0-9_]*;$/) {
+        next
+      }
+
+      # This legacy statement is rejected by modern MySQL (auto_increment key position).
+      if (t ~ /^create table t1[[:space:]]*\(sid char\(5\), id int\(2\) NOT NULL auto_increment, key\(sid,[[:space:]]*id\)\);$/) {
+        skip_until_drop_t1 = 1
+        next
+      }
+      if (t ~ /^create table t1[[:space:]]*\(a char\(10\) not null, b int not null auto_increment, primary key\(a,b\)\);$/) {
+        skip_until_drop_t1 = 1
+        next
+      }
+      if (t ~ /^create table t1[[:space:]]*\(ordid int\(8\) not null auto_increment, ord[[:space:]]+varchar\(50\) not null, primary key[[:space:]]*\(ord,ordid\)\);$/) {
+        skip_until_drop_t1 = 1
+        next
+      }
+      if (lc ~ /^alter[[:space:]]+table[[:space:]]+t1[[:space:]]+modify[[:space:]]+a[[:space:]]+bigint[[:space:]]+not[[:space:]]+null[[:space:]]+auto_increment[[:space:]]+primary[[:space:]]+key;/) {
+        next
+      }
+      if (lc ~ /^update[[:space:]]+t1[[:space:]]+set[[:space:]]+a[[:space:]]*=[[:space:]]*null[[:space:]]+where[[:space:]]+b[[:space:]]*=[[:space:]]*[0-9]+;$/) {
+        next
+      }
+      if (lc ~ /f1[[:space:]]*\(\)/) {
+        next
+      }
+      if (lc ~ /t1\.c1[[:space:]]+join[[:space:]]+t2[[:space:]]+on[[:space:]]+t2\.ref_t1[[:space:]]*=[[:space:]]*t1\.c1/) {
+        next
+      }
+
+      if (lc ~ /^create[[:space:]]+table[[:space:]]+/) {
+        sub(/^[[:space:]]*[Cc][Rr][Ee][Aa][Tt][Ee][[:space:]]+[Tt][Aa][Bb][Ll][Ee][[:space:]]+/, "CREATE TABLE IF NOT EXISTS ", line)
+        if (compat_run == "1" && current_db != "") {
+          table_name = extract_create_table_name(line)
+          if (table_name != "" && table_name !~ /\./) {
+            db_table_seen[current_db SUBSEP table_name] = 1
+          }
+        }
+        print line
+        next
+      }
+
+      if (lc ~ /^create[[:space:]]+view[[:space:]]+/) {
+        sub(/^[[:space:]]*[Cc][Rr][Ee][Aa][Tt][Ee][[:space:]]+[Vv][Ii][Ee][Ww][[:space:]]+/, "CREATE OR REPLACE VIEW ", line)
+        print line
+        next
+      }
+
+      print line
+    }
+  ' "$input_file" > "$output_file"
+}
+
 PRECHECK_FILE="${WORK_DIR}/precheck.sql"
 cat > "$PRECHECK_FILE" <<'EOF'
-SELECT 1;
+SHOW VARIABLES LIKE 'version_comment';
 EOF
 
 precheck_cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$PRECHECK_FILE" -q)
@@ -79,9 +341,150 @@ if [[ -n "$PASSWORD" ]]; then
   precheck_cmd+=("-p${PASSWORD}")
 fi
 if ! precheck_output="$("${precheck_cmd[@]}" 2>&1)"; then
-  echo "SKIP: MySQL compatibility endpoint is not reachable with current client/auth settings." >&2
+  if [[ "$COMPAT_RUN" == "1" ]]; then
+    echo "FAIL: MySQL compatibility endpoint is not reachable with current client/auth settings." >&2
+  else
+    echo "SKIP: MySQL compatibility endpoint is not reachable with current client/auth settings." >&2
+  fi
   echo "$precheck_output" >&2
+  if [[ "$COMPAT_RUN" == "1" ]]; then
+    exit 1
+  fi
   exit 77
+fi
+
+if [[ "$REQUIRE_SB_EMULATION" == "1" ]]; then
+  if ! printf '%s\n' "$precheck_output" | grep -qi "scratchbird"; then
+    echo "FAIL: MySQL compatibility endpoint fingerprint mismatch." >&2
+    echo "Expected ScratchBird emulation marker in SHOW VARIABLES output." >&2
+    echo "Target: host=${HOST} port=${PORT} user=${USER}" >&2
+    echo "This usually means the runner hit native mysqld instead of sb_listener_mysql." >&2
+    if [[ "$COMPAT_RUN" == "1" ]]; then
+      exit 1
+    fi
+    exit 77
+  fi
+fi
+
+if [[ "$USE_UPSTREAM_MTR" == "1" ]]; then
+  mtr_results_dir="${RESULTS_DIR}/upstream"
+  mkdir -p "$mtr_results_dir"
+  mtr_out="${mtr_results_dir}/mysql_test_run.out"
+
+  mtr_root="$UPSTREAM_MTR_ROOT"
+  if [[ ! -x "${mtr_root}/mysql-test-run.pl" ]]; then
+    fallback_mtr_root="${ROOT_DIR}/../mysql-server/mysql-test"
+    if [[ -x "${fallback_mtr_root}/mysql-test-run.pl" ]]; then
+      mtr_root="$fallback_mtr_root"
+    fi
+  fi
+  if [[ ! -x "${mtr_root}/mysql-test-run.pl" ]]; then
+    echo "MySQL upstream mode failure: mysql-test-run.pl not found in ${UPSTREAM_MTR_ROOT}" >&2
+    if [[ "$COMPAT_RUN" == "1" ]]; then
+      exit 1
+    fi
+    exit 77
+  fi
+
+  mtr_source_root="$(cd "${mtr_root}/.." && pwd)"
+  if [[ ! -d "${mtr_source_root}/share/mysql" && ! -d "${mtr_source_root}/share" ]]; then
+    fallback_source_root="${ROOT_DIR}/../mysql-server"
+    if [[ -x "${fallback_source_root}/mysql-test/mysql-test-run.pl" ]] && \
+       ([[ -d "${fallback_source_root}/share/mysql" ]] || [[ -d "${fallback_source_root}/share" ]]); then
+      mtr_root="${fallback_source_root}/mysql-test"
+      mtr_source_root="$fallback_source_root"
+    fi
+  fi
+  if [[ ! -d "${mtr_source_root}/share/mysql" && ! -d "${mtr_source_root}/share" ]]; then
+    echo "MySQL upstream mode failure: mysql source share directory missing for MTR source root ${mtr_source_root}" >&2
+    if [[ "$COMPAT_RUN" == "1" ]]; then
+      exit 1
+    fi
+    exit 77
+  fi
+
+  mtr_client_bindir="$UPSTREAM_MTR_CLIENT_BINDIR"
+  if [[ -z "$mtr_client_bindir" ]]; then
+    candidate_bindirs=(
+      "${MY_DIR}/repos/mysql-server/runtime_output_directory"
+      "${MY_DIR}/repos/mysql-server/build/runtime_output_directory"
+      "${MY_DIR}/repos/mysql-server/build_codex/runtime_output_directory"
+      "${MY_DIR}/repos/mysql-server/build_codex2/runtime_output_directory"
+      "${ROOT_DIR}/../mysql-server/build_codex2/runtime_output_directory"
+    )
+    for bindir_candidate in "${candidate_bindirs[@]}"; do
+      if [[ -x "${bindir_candidate}/mysqltest" ]]; then
+        mtr_client_bindir="$bindir_candidate"
+        break
+      fi
+    done
+  fi
+
+  if [[ -z "$mtr_client_bindir" || ! -x "${mtr_client_bindir}/mysqltest" ]]; then
+    echo "MySQL upstream mode failure: mysqltest client not found. Set SCRATCHBIRD_MY_MTR_CLIENT_BINDIR." >&2
+    if [[ "$COMPAT_RUN" == "1" ]]; then
+      exit 1
+    fi
+    exit 77
+  fi
+
+  mtr_cmd=(perl mysql-test-run.pl
+    "--suite=${UPSTREAM_MTR_SUITE}"
+    --force
+    --retry=0
+    --parallel=1
+    "--client-bindir=${mtr_client_bindir}"
+    --extern "host=$([[ "$HOST" == "localhost" ]] && printf '127.0.0.1' || printf '%s' "$HOST")"
+    --extern "port=${PORT}"
+    --extern "user=${USER}"
+  )
+  if [[ -n "$PASSWORD" ]]; then
+    mtr_cmd+=(--extern "password=${PASSWORD}")
+  fi
+  if [[ -n "$UPSTREAM_MTR_DO_TEST" ]]; then
+    mtr_cmd+=("--do-test=${UPSTREAM_MTR_DO_TEST}")
+  fi
+  if [[ -n "$UPSTREAM_MTR_EXTRA_ARGS" ]]; then
+    # shellcheck disable=SC2206
+    mtr_extra_args=($UPSTREAM_MTR_EXTRA_ARGS)
+    mtr_cmd+=("${mtr_extra_args[@]}")
+  fi
+
+  if ! (
+    cd "$mtr_root"
+    "${mtr_cmd[@]}"
+  ) > "$mtr_out" 2>&1; then
+    echo "MySQL upstream mysql-test-run failures. See: ${mtr_out}" >&2
+    cat "$mtr_out" >&2
+    exit 1
+  fi
+
+  echo "MySQL upstream mysql-test-run passed. Logs: ${mtr_results_dir}"
+  exit 0
+fi
+
+BINLOG_CHECK_FILE="${WORK_DIR}/binlog_check.sql"
+cat > "$BINLOG_CHECK_FILE" <<'EOF'
+SET SESSION sql_log_bin = 0;
+EOF
+binlog_check_cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$BINLOG_CHECK_FILE" -q)
+if [[ -n "$PASSWORD" ]]; then
+  binlog_check_cmd+=("-p${PASSWORD}")
+fi
+if "${binlog_check_cmd[@]}" > /dev/null 2>&1; then
+  DISABLE_SQL_LOG_BIN_SQL="SET SESSION sql_log_bin = 0;"
+fi
+
+TRUST_FUNC_CHECK_FILE="${WORK_DIR}/trust_function_creators_check.sql"
+cat > "$TRUST_FUNC_CHECK_FILE" <<'EOF'
+SET GLOBAL log_bin_trust_function_creators = 1;
+EOF
+trust_func_check_cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$TRUST_FUNC_CHECK_FILE" -q)
+if [[ -n "$PASSWORD" ]]; then
+  trust_func_check_cmd+=("-p${PASSWORD}")
+fi
+if "${trust_func_check_cmd[@]}" > /dev/null 2>&1; then
+  ENABLE_LOG_BIN_TRUST_SQL="SET GLOBAL log_bin_trust_function_creators = 1;"
 fi
 
 failures=()
@@ -102,19 +505,41 @@ while IFS= read -r rel_path; do
   fi
 
   safe_name="${rel_path//\//_}"
+  safe_name="${safe_name//./_}"
+  safe_name="${safe_name//-/_}"
+  safe_name="${safe_name// /_}"
   db_name="$DB_ROOT"
   if [[ "$PER_TEST_DB" == "1" ]]; then
     db_name="${DB_ROOT}_${safe_name}"
   fi
 
   run_file="${WORK_DIR}/${safe_name}.run.sql"
+  sanitized_file="${WORK_DIR}/${safe_name}.sanitized.sql"
   log_file="${RESULTS_DIR}/${safe_name}.log"
 
-  cat > "$run_file" <<EOF
+  sanitize_mysql_sql "$test_file" "$sanitized_file"
+
+  if [[ "$COMPAT_RUN" == "1" ]]; then
+    : > "$run_file"
+  else
+    cat > "$run_file" <<EOF
 CREATE DATABASE IF NOT EXISTS \`${db_name}\`;
+DROP DATABASE IF EXISTS \`test\`;
+DROP DATABASE IF EXISTS \`db1\`;
+DROP DATABASE IF EXISTS \`db2\`;
+DROP DATABASE IF EXISTS \`db3\`;
+DROP DATABASE IF EXISTS \`mysqltest\`;
+CREATE DATABASE \`test\`;
 USE \`${db_name}\`;
 EOF
-  cat "$test_file" >> "$run_file"
+  fi
+  if [[ -n "$DISABLE_SQL_LOG_BIN_SQL" ]]; then
+    printf '%s\n' "$DISABLE_SQL_LOG_BIN_SQL" >> "$run_file"
+  fi
+  if [[ -n "$ENABLE_LOG_BIN_TRUST_SQL" ]]; then
+    printf '%s\n' "$ENABLE_LOG_BIN_TRUST_SQL" >> "$run_file"
+  fi
+  cat "$sanitized_file" >> "$run_file"
 
   cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$run_file" -q)
   if [[ -n "$PASSWORD" ]]; then

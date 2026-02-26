@@ -25,6 +25,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <fstream>
@@ -75,6 +76,19 @@ namespace client {
 namespace {
 std::string bytesToHex(const std::vector<uint8_t>& data);
 std::string formatUuidBytes(const std::vector<uint8_t>& data);
+
+bool authDebugEnabled() {
+    return true;
+    const char* value = std::getenv("SCRATCHBIRD_AUTH_DEBUG");
+    if (!value || value[0] == '\0') {
+        return false;
+    }
+    return !(std::strcmp(value, "0") == 0 ||
+             std::strcmp(value, "false") == 0 ||
+             std::strcmp(value, "FALSE") == 0 ||
+             std::strcmp(value, "no") == 0 ||
+             std::strcmp(value, "NO") == 0);
+}
 
 int64_t floorDiv(int64_t a, int64_t b) {
     if (b == 0) {
@@ -1474,6 +1488,12 @@ public:
             {}
         );
 
+        if (authDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[auth_debug_client] sending negotiation request user=%s\n",
+                         username.c_str());
+        }
+
         auto status = protocol_session_->sendMessage(negotiate_msg, ctx);
         if (!isOk(status)) {
             last_error_ = "Failed to send auth negotiation request";
@@ -1485,6 +1505,12 @@ public:
         if (!isOk(status)) {
             last_error_ = "Failed to receive auth negotiation response";
             return status;
+        }
+
+        if (authDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[auth_debug_client] negotiation response type=%u\n",
+                         static_cast<unsigned>(negotiation_response.getType()));
         }
 
         if (negotiation_response.getType() == protocol::MessageType::AUTH_RESPONSE) {
@@ -1532,13 +1558,34 @@ public:
             ctx);
         if (!isOk(status)) {
             last_error_ = "Failed to parse auth negotiation payload";
+            if (authDebugEnabled()) {
+                std::fprintf(stderr,
+                             "[auth_debug_client] parse auth challenge failed status=%d msg=%s\n",
+                             static_cast<int>(status),
+                             ctx && !ctx->message.empty() ? ctx->message.c_str() : "none");
+            }
             return status;
         }
 
         if (std::memcmp(challenge_session_id, session_id_, sizeof(session_id_)) != 0 ||
             challenge_username != username) {
             last_error_ = "Auth negotiation payload/session mismatch";
+            if (authDebugEnabled()) {
+                std::fprintf(stderr,
+                             "[auth_debug_client] challenge mismatch user=%s expected_user=%s\n",
+                             challenge_username.c_str(),
+                             username.c_str());
+            }
             return core::Status::PROTOCOL_VIOLATION;
+        }
+
+        if (authDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[auth_debug_client] challenge parsed allowed=%zu required=%d required_method=%u nonce_len=%zu\n",
+                         allowed_methods.size(),
+                         has_required_method ? 1 : 0,
+                         static_cast<unsigned>(required_method),
+                         challenge_nonce.size());
         }
 
         auth_negotiation_ready_ = true;
@@ -1832,6 +1879,13 @@ public:
                 ? "No compatible authentication method negotiated"
                 : selection_error;
             return core::Status::NOT_SUPPORTED;
+        }
+
+        if (authDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[auth_debug_client] selected auth method=%u user=%s\n",
+                         static_cast<unsigned>(selected_method),
+                         config_.username.c_str());
         }
 
         if (selected_method == protocol::AuthMethod::TOKEN) {

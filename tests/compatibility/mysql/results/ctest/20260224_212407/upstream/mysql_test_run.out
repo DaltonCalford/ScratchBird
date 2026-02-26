@@ -1,0 +1,3 @@
+Logging: mysql-test-run.pl  --suite=main --force --retry=0 --parallel=1 --client-bindir=/home/dcalford/CliWork/ScratchBird/../mysql-server/build_codex2/runtime_output_directory --extern host=localhost --extern port=3306 --extern user=root --do-test=select
+ERROR 2002 (HY000): Can't connect to local MySQL server through socket '/tmp/mysql.sock' (2)
+mysql-test-run: *** ERROR: Could not connect to extern server using command: '/home/dcalford/CliWork/ScratchBird/../mysql-server/build_codex2/runtime_output_directory/mysql --no-defaults --user=root --user=root --port=3306 --host=localhost --silent --database=mysql --execute="SHOW GLOBAL VARIABLES"'

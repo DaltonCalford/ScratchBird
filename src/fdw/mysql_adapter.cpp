@@ -32,6 +32,8 @@
     #include <unistd.h>
 #endif
 
+#include "scratchbird/core/socket_call_compat.h"
+
 #include <algorithm>
 #include <cstring>
 #include <functional>
@@ -149,7 +151,7 @@ Result<void> MySQLAdapter::connect(const ServerDefinition& server,
     setState(ConnectionState::CONNECTING);
 
     // Resolve hostname
-    struct addrinfo hints{}, *result;
+    struct addrinfo hints{}, *result = nullptr;
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
@@ -163,35 +165,41 @@ Result<void> MySQLAdapter::connect(const ServerDefinition& server,
                          "Failed to resolve hostname: " + std::string(gai_strerror(err)));
     }
 
-    // Create socket
-    impl_->socket_fd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (impl_->socket_fd < 0) {
-        freeaddrinfo(result);
-        setState(ConnectionState::FAILED);
-        return makeError(core::Status::IO_ERROR, "Failed to create socket");
+    // Try all resolved addresses (e.g. localhost -> ::1 then 127.0.0.1)
+    bool connected = false;
+    for (addrinfo* ai = result; ai != nullptr; ai = ai->ai_next) {
+        int candidate_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (candidate_fd < 0) {
+            continue;
+        }
+
+        // Set TCP_NODELAY
+        int flag = 1;
+        sb_socket_setsockopt(candidate_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+
+        // Set timeout
+        struct timeval timeout;
+        timeout.tv_sec = server.connection_timeout_ms / 1000;
+        timeout.tv_usec = (server.connection_timeout_ms % 1000) * 1000;
+        sb_socket_setsockopt(candidate_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+        sb_socket_setsockopt(candidate_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+        if (::connect(candidate_fd, ai->ai_addr, ai->ai_addrlen) == 0) {
+            impl_->socket_fd = candidate_fd;
+            connected = true;
+            break;
+        }
+
+        close(candidate_fd);
     }
+    freeaddrinfo(result);
 
-    // Set TCP_NODELAY
-    int flag = 1;
-    sb_socket_setsockopt(impl_->socket_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
-
-    // Set timeout
-    struct timeval timeout;
-    timeout.tv_sec = server.connection_timeout_ms / 1000;
-    timeout.tv_usec = (server.connection_timeout_ms % 1000) * 1000;
-    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-    // Connect
-    if (::connect(impl_->socket_fd, result->ai_addr, result->ai_addrlen) < 0) {
-        freeaddrinfo(result);
-        close(impl_->socket_fd);
+    if (!connected) {
         impl_->socket_fd = -1;
         setState(ConnectionState::FAILED);
         return makeError(core::Status::IO_ERROR, "Failed to connect to server");
     }
 
-    freeaddrinfo(result);
     setState(ConnectionState::AUTHENTICATING);
 
     // Read initial handshake packet
@@ -271,15 +279,37 @@ Result<void> MySQLAdapter::connect(const ServerDefinition& server,
     // Reserved (10 bytes)
     offset += 10;
 
-    // Auth-plugin-data-part-2
-    if (auth_data_len > 8 && offset + (auth_data_len - 8) <= data.size()) {
-        auth_data.insert(auth_data.end(),
-                         data.begin() + offset,
-                         data.begin() + offset + auth_data_len - 8 - 1);  // -1 for null terminator
+    // Auth-plugin-data-part-2 (includes trailing NUL in protocol payload)
+    if (auth_data_len > 8 && offset < data.size()) {
+        size_t part2_len = static_cast<size_t>(auth_data_len - 8);
+        part2_len = std::min(part2_len, data.size() - offset);
+        if (part2_len > 0) {
+            size_t scramble_len = part2_len;
+            if (data[offset + part2_len - 1] == 0 && scramble_len > 0) {
+                --scramble_len;
+            }
+            auth_data.insert(auth_data.end(),
+                             data.begin() + offset,
+                             data.begin() + offset + scramble_len);
+            offset += part2_len;
+        }
+    }
+
+    // Auth plugin name (if plugin-auth capability is set)
+    std::string server_auth_plugin = "mysql_native_password";
+    if ((impl_->server_capabilities & mysql_protocol::CLIENT_PLUGIN_AUTH) && offset < data.size()) {
+        size_t plugin_end = offset;
+        while (plugin_end < data.size() && data[plugin_end] != 0) {
+            ++plugin_end;
+        }
+        if (plugin_end > offset) {
+            server_auth_plugin.assign(reinterpret_cast<const char*>(data.data() + offset),
+                                      plugin_end - offset);
+        }
     }
 
     // Send handshake response
-    auto response_result = sendHandshakeResponse(server, mapping, auth_data);
+    auto response_result = sendHandshakeResponse(server, mapping, auth_data, server_auth_plugin);
     if (!response_result) {
         close(impl_->socket_fd);
         impl_->socket_fd = -1;
@@ -287,30 +317,108 @@ Result<void> MySQLAdapter::connect(const ServerDefinition& server,
         return response_result;
     }
 
-    // Read response
-    auto auth_response = readPacket();
-    if (!auth_response) {
-        close(impl_->socket_fd);
-        impl_->socket_fd = -1;
-        setState(ConnectionState::FAILED);
-        return makeError(auth_response.errorCode(), auth_response.errorMessage());
-    }
-
-    if (!auth_response->empty() && (*auth_response)[0] == mysql_protocol::ERR_PACKET) {
-        std::string error_msg = "Authentication failed";
-        if (auth_response->size() > 9) {
-            error_msg = std::string(auth_response->begin() + 9, auth_response->end());
+    // Complete authentication, including auth-switch flows.
+    constexpr size_t kMaxAuthRounds = 4;
+    for (size_t auth_round = 0; auth_round < kMaxAuthRounds; ++auth_round) {
+        auto auth_response = readPacket();
+        if (!auth_response) {
+            close(impl_->socket_fd);
+            impl_->socket_fd = -1;
+            setState(ConnectionState::FAILED);
+            return makeError(auth_response.errorCode(), auth_response.errorMessage());
         }
+
+        if (auth_response->empty()) {
+            close(impl_->socket_fd);
+            impl_->socket_fd = -1;
+            setState(ConnectionState::FAILED);
+            return makeError(core::Status::PROTOCOL_VIOLATION,
+                             "Received empty authentication response");
+        }
+
+        const uint8_t packet_type = (*auth_response)[0];
+        if (packet_type == mysql_protocol::OK_PACKET) {
+            impl_->connected = true;
+            impl_->current_database = server.database;
+            setState(ConnectionState::CONNECTED);
+            return Result<void>();
+        }
+
+        if (packet_type == mysql_protocol::ERR_PACKET) {
+            std::string error_msg = "Authentication failed";
+            if (auth_response->size() > 9) {
+                error_msg = std::string(auth_response->begin() + 9, auth_response->end());
+            }
+            close(impl_->socket_fd);
+            impl_->socket_fd = -1;
+            setState(ConnectionState::FAILED);
+            return makeError(core::Status::INVALID_AUTHORIZATION, error_msg);
+        }
+
+        // AuthSwitchRequest: 0xFE + plugin_name + '\0' + plugin_data
+        if (packet_type == mysql_protocol::EOF_PACKET) {
+            size_t plugin_end = 1;
+            while (plugin_end < auth_response->size() && (*auth_response)[plugin_end] != 0) {
+                ++plugin_end;
+            }
+            if (plugin_end >= auth_response->size()) {
+                close(impl_->socket_fd);
+                impl_->socket_fd = -1;
+                setState(ConnectionState::FAILED);
+                return makeError(core::Status::PROTOCOL_VIOLATION,
+                                 "Malformed AuthSwitchRequest from server");
+            }
+
+            const std::string plugin(reinterpret_cast<const char*>(auth_response->data() + 1),
+                                     plugin_end - 1);
+            std::vector<uint8_t> plugin_data;
+            if (plugin_end + 1 < auth_response->size()) {
+                plugin_data.assign(auth_response->begin() + plugin_end + 1, auth_response->end());
+                while (!plugin_data.empty() && plugin_data.back() == 0) {
+                    plugin_data.pop_back();
+                }
+            }
+
+            std::vector<uint8_t> switch_response;
+            if (plugin == "mysql_clear_password") {
+                switch_response.insert(switch_response.end(),
+                                       mapping.remote_password.begin(),
+                                       mapping.remote_password.end());
+                switch_response.push_back(0);
+            } else if (plugin == "mysql_native_password") {
+                switch_response = scramblePassword(mapping.remote_password, plugin_data);
+            } else {
+                close(impl_->socket_fd);
+                impl_->socket_fd = -1;
+                setState(ConnectionState::FAILED);
+                return makeError(core::Status::NOT_IMPLEMENTED,
+                                 "Unsupported MySQL auth plugin: " + plugin);
+            }
+
+            auto switch_write = writePacket(switch_response);
+            if (!switch_write) {
+                close(impl_->socket_fd);
+                impl_->socket_fd = -1;
+                setState(ConnectionState::FAILED);
+                return switch_write;
+            }
+
+            continue;
+        }
+
         close(impl_->socket_fd);
         impl_->socket_fd = -1;
         setState(ConnectionState::FAILED);
-        return makeError(core::Status::INVALID_AUTHORIZATION, error_msg);
+        return makeError(core::Status::PROTOCOL_VIOLATION,
+                         "Unexpected authentication packet type: " +
+                         std::to_string(packet_type));
     }
 
-    impl_->connected = true;
-    impl_->current_database = server.database;
-    setState(ConnectionState::CONNECTED);
-    return Result<void>();
+    close(impl_->socket_fd);
+    impl_->socket_fd = -1;
+    setState(ConnectionState::FAILED);
+    return makeError(core::Status::PROTOCOL_VIOLATION,
+                     "Authentication negotiation exceeded max rounds");
 }
 
 Result<void> MySQLAdapter::disconnect() {
@@ -775,18 +883,34 @@ RemoteValue MySQLAdapter::convertToLocal(const void* data, size_t len,
         case mysql_protocol::MYSQL_TYPE_SHORT:
         case mysql_protocol::MYSQL_TYPE_LONG:
         case mysql_protocol::MYSQL_TYPE_INT24:
-            return static_cast<int32_t>(std::stoi(val));
+            try {
+                return static_cast<int32_t>(std::stoi(val));
+            } catch (...) {
+                return val;
+            }
 
         case mysql_protocol::MYSQL_TYPE_LONGLONG:
-            return static_cast<int64_t>(std::stoll(val));
+            try {
+                return static_cast<int64_t>(std::stoll(val));
+            } catch (...) {
+                return val;
+            }
 
         case mysql_protocol::MYSQL_TYPE_FLOAT:
-            return std::stof(val);
+            try {
+                return std::stof(val);
+            } catch (...) {
+                return val;
+            }
 
         case mysql_protocol::MYSQL_TYPE_DOUBLE:
         case mysql_protocol::MYSQL_TYPE_DECIMAL:
         case mysql_protocol::MYSQL_TYPE_NEWDECIMAL:
-            return std::stod(val);
+            try {
+                return std::stod(val);
+            } catch (...) {
+                return val;
+            }
 
         default:
             return val;
@@ -851,17 +975,25 @@ const std::unordered_map<uint8_t, uint32_t>& MySQLAdapter::getTypeMap() {
 
 Result<void> MySQLAdapter::sendHandshakeResponse(const ServerDefinition& server,
                                                   const UserMapping& mapping,
-                                                  const std::vector<uint8_t>& auth_data)
+                                                  const std::vector<uint8_t>& auth_data,
+                                                  const std::string& server_auth_plugin)
 {
+    const bool has_database = !server.database.empty();
+
     // Calculate capabilities
     impl_->client_capabilities =
         mysql_protocol::CLIENT_LONG_PASSWORD |
         mysql_protocol::CLIENT_FOUND_ROWS |
         mysql_protocol::CLIENT_LONG_FLAG |
-        mysql_protocol::CLIENT_CONNECT_WITH_DB |
         mysql_protocol::CLIENT_PROTOCOL_41 |
         mysql_protocol::CLIENT_TRANSACTIONS |
         mysql_protocol::CLIENT_SECURE_CONNECTION;
+    if (has_database) {
+        impl_->client_capabilities |= mysql_protocol::CLIENT_CONNECT_WITH_DB;
+    }
+    if (impl_->server_capabilities & mysql_protocol::CLIENT_PLUGIN_AUTH) {
+        impl_->client_capabilities |= mysql_protocol::CLIENT_PLUGIN_AUTH;
+    }
 
     std::vector<uint8_t> data;
 
@@ -893,15 +1025,35 @@ Result<void> MySQLAdapter::sendHandshakeResponse(const ServerDefinition& server,
     data.push_back(0);
 
     // Auth response
-    auto scrambled = scramblePassword(mapping.remote_password, auth_data);
-    data.push_back(static_cast<uint8_t>(scrambled.size()));
-    data.insert(data.end(), scrambled.begin(), scrambled.end());
-
-    // Database (null-terminated)
-    for (char c : server.database) {
-        data.push_back(static_cast<uint8_t>(c));
+    std::string auth_plugin = server_auth_plugin;
+    std::vector<uint8_t> auth_response;
+    if (auth_plugin == "caching_sha2_password") {
+        auth_response = scrambleCachingSha2Password(mapping.remote_password, auth_data);
+    } else if (auth_plugin == "mysql_clear_password") {
+        auth_response.insert(auth_response.end(),
+                             mapping.remote_password.begin(),
+                             mapping.remote_password.end());
+        auth_response.push_back(0);
+    } else {
+        auth_plugin = "mysql_native_password";
+        auth_response = scramblePassword(mapping.remote_password, auth_data);
     }
-    data.push_back(0);
+
+    data.push_back(static_cast<uint8_t>(auth_response.size()));
+    data.insert(data.end(), auth_response.begin(), auth_response.end());
+
+    // Database (null-terminated) when a database is explicitly requested.
+    if (has_database) {
+        for (char c : server.database) {
+            data.push_back(static_cast<uint8_t>(c));
+        }
+        data.push_back(0);
+    }
+
+    if (impl_->client_capabilities & mysql_protocol::CLIENT_PLUGIN_AUTH) {
+        data.insert(data.end(), auth_plugin.begin(), auth_plugin.end());
+        data.push_back(0);
+    }
 
     return writePacket(data);
 }
@@ -1103,8 +1255,9 @@ Result<std::vector<uint8_t>> MySQLAdapter::readPacket() {
         (static_cast<uint32_t>(header[1]) << 8) |
         (static_cast<uint32_t>(header[2]) << 16);
 
-    // Sequence ID
-    impl_->sequence_id = header[3];
+    // Track the next outbound sequence ID expected by the server.
+    // Example: server handshake is seq=0, client auth reply must be seq=1.
+    impl_->sequence_id = static_cast<uint8_t>(header[3] + 1);
 
     // Read payload
     std::vector<uint8_t> data(length);
@@ -1172,6 +1325,39 @@ std::vector<uint8_t> MySQLAdapter::scramblePassword(const std::string& password,
     std::vector<uint8_t> result(SHA_DIGEST_LENGTH);
     for (size_t i = 0; i < SHA_DIGEST_LENGTH; i++) {
         result[i] = sha1_pass[i] ^ sha1_combined[i];
+    }
+
+    return result;
+}
+
+std::vector<uint8_t> MySQLAdapter::scrambleCachingSha2Password(
+    const std::string& password,
+    const std::vector<uint8_t>& auth_data)
+{
+    if (password.empty()) {
+        return {};
+    }
+
+    // caching_sha2_password fast auth:
+    // token = SHA256(password) XOR SHA256(SHA256(SHA256(password)) + scramble)
+    unsigned char sha256_pass[SHA256_DIGEST_LENGTH];
+    unsigned char sha256_sha256_pass[SHA256_DIGEST_LENGTH];
+
+    SHA256(reinterpret_cast<const unsigned char*>(password.c_str()),
+           password.length(), sha256_pass);
+    SHA256(sha256_pass, SHA256_DIGEST_LENGTH, sha256_sha256_pass);
+
+    std::vector<uint8_t> combined;
+    combined.insert(combined.end(), sha256_sha256_pass,
+                    sha256_sha256_pass + SHA256_DIGEST_LENGTH);
+    combined.insert(combined.end(), auth_data.begin(), auth_data.end());
+
+    unsigned char sha256_combined[SHA256_DIGEST_LENGTH];
+    SHA256(combined.data(), combined.size(), sha256_combined);
+
+    std::vector<uint8_t> result(SHA256_DIGEST_LENGTH);
+    for (size_t i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+        result[i] = static_cast<uint8_t>(sha256_pass[i] ^ sha256_combined[i]);
     }
 
     return result;

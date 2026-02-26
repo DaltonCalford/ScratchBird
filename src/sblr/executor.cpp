@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <functional>
@@ -25,6 +26,9 @@
 #include <iostream>
 #include <sstream>
 #include "scratchbird/parser/shared_types.h"
+#include "scratchbird/parser/parser_v3.h"
+#include "scratchbird/parser/v3_compiler.h"
+#include "scratchbird/parser/v3_emitter.h"
 #include "scratchbird/parser/mysql/mysql_parser.h"
 #include "scratchbird/sblr/v3_codec.h"
 #include "scratchbird/sblr/v3_container.h"
@@ -234,6 +238,25 @@ namespace scratchbird
                 }
 
                 return input.substr(begin, end - begin);
+            }
+
+            static bool isTruthySetting(const char* value)
+            {
+                if (!value || value[0] == '\0')
+                {
+                    return false;
+                }
+                const std::string normalized = toUpperAsciiCopy(trimAsciiCopy(value));
+                return normalized == "1" ||
+                       normalized == "TRUE" ||
+                       normalized == "YES" ||
+                       normalized == "ON";
+            }
+
+            static bool relaxedEmulationPasswordPolicyEnabled()
+            {
+                return isTruthySetting(
+                    std::getenv("SCRATCHBIRD_EMULATION_RELAXED_PASSWORD_POLICY"));
             }
 
             enum class ArrayUniquenessMode : uint8_t
@@ -1146,6 +1169,112 @@ namespace scratchbird
                 dst->cause = nullptr;
             }
 
+            bool isNumericLikeForMySqlTemporal(core::DataType type)
+            {
+                switch (type)
+                {
+                    case core::DataType::INT8:
+                    case core::DataType::INT16:
+                    case core::DataType::INT32:
+                    case core::DataType::INT64:
+                    case core::DataType::UINT8:
+                    case core::DataType::UINT16:
+                    case core::DataType::UINT32:
+                    case core::DataType::UINT64:
+                    case core::DataType::FLOAT32:
+                    case core::DataType::FLOAT64:
+                    case core::DataType::DECIMAL:
+                    case core::DataType::DECFLOAT16:
+                    case core::DataType::DECFLOAT34:
+                    case core::DataType::DECIMAL256:
+                    case core::DataType::MONEY:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            bool formatMySqlCompactTimestampLiteral(const core::TypedValue& input_value,
+                                                    std::string& out_timestamp)
+            {
+                if (!isNumericLikeForMySqlTemporal(input_value.type()))
+                {
+                    return false;
+                }
+
+                std::string raw = trimAsciiCopy(input_value.toString());
+                if (raw.empty())
+                {
+                    return false;
+                }
+
+                if (raw.front() == '+')
+                {
+                    raw.erase(raw.begin());
+                }
+                if (raw.empty() || raw.front() == '-')
+                {
+                    return false;
+                }
+
+                size_t dot_pos = raw.find('.');
+                if (dot_pos != std::string::npos)
+                {
+                    raw = raw.substr(0, dot_pos);
+                }
+                if (raw.empty())
+                {
+                    return false;
+                }
+                if (!std::all_of(raw.begin(), raw.end(),
+                                 [](unsigned char c) { return std::isdigit(c) != 0; }))
+                {
+                    return false;
+                }
+
+                if (raw == "0")
+                {
+                    out_timestamp = "1970-01-01 00:00:00";
+                    return true;
+                }
+
+                if (raw.size() == 14)
+                {
+                    out_timestamp = raw.substr(0, 4) + "-" +
+                                    raw.substr(4, 2) + "-" +
+                                    raw.substr(6, 2) + " " +
+                                    raw.substr(8, 2) + ":" +
+                                    raw.substr(10, 2) + ":" +
+                                    raw.substr(12, 2);
+                    return true;
+                }
+
+                if (raw.size() == 12)
+                {
+                    int yy = std::stoi(raw.substr(0, 2));
+                    int full_year = (yy >= 70) ? (1900 + yy) : (2000 + yy);
+                    std::ostringstream oss;
+                    oss << std::setw(4) << std::setfill('0') << full_year
+                        << "-" << raw.substr(2, 2)
+                        << "-" << raw.substr(4, 2)
+                        << " " << raw.substr(6, 2)
+                        << ":" << raw.substr(8, 2)
+                        << ":" << raw.substr(10, 2);
+                    out_timestamp = oss.str();
+                    return true;
+                }
+
+                if (raw.size() == 8)
+                {
+                    out_timestamp = raw.substr(0, 4) + "-" +
+                                    raw.substr(4, 2) + "-" +
+                                    raw.substr(6, 2) + " 00:00:00";
+                    return true;
+                }
+
+                return false;
+            }
+
             bool coerceValueForColumn(const core::TypedValue& value,
                                       const core::CatalogManager::ColumnInfo& column,
                                       core::TypedValue& coerced_out,
@@ -1172,6 +1301,184 @@ namespace scratchbird
                     return false;
                 }
                 return true;
+            }
+
+            bool isMySqlIntegerTargetType(core::DataType type)
+            {
+                switch (type)
+                {
+                    case core::DataType::INT8:
+                    case core::DataType::INT16:
+                    case core::DataType::INT32:
+                    case core::DataType::INT64:
+                    case core::DataType::UINT8:
+                    case core::DataType::UINT16:
+                    case core::DataType::UINT32:
+                    case core::DataType::UINT64:
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+
+            bool tryCoerceMySqlIntegerByTruncation(const core::TypedValue& value,
+                                                   core::DataType target_type,
+                                                   core::TypedValue& coerced_out)
+            {
+                if (value.isNull() || !isMySqlIntegerTargetType(target_type))
+                {
+                    return false;
+                }
+
+                std::string raw = trimAsciiCopy(value.toString());
+                if (raw.empty())
+                {
+                    return false;
+                }
+
+                char* end_ptr = nullptr;
+                const long double parsed = std::strtold(raw.c_str(), &end_ptr);
+                if (end_ptr == raw.c_str() || !std::isfinite(parsed))
+                {
+                    return false;
+                }
+                while (*end_ptr != '\0' &&
+                       std::isspace(static_cast<unsigned char>(*end_ptr)) != 0)
+                {
+                    ++end_ptr;
+                }
+                if (*end_ptr != '\0')
+                {
+                    return false;
+                }
+
+                const long double truncated = std::trunc(parsed);
+
+                auto clampSigned = [&](long double min_value, long double max_value) -> int64_t {
+                    if (truncated < min_value)
+                    {
+                        return static_cast<int64_t>(min_value);
+                    }
+                    if (truncated > max_value)
+                    {
+                        return static_cast<int64_t>(max_value);
+                    }
+                    return static_cast<int64_t>(truncated);
+                };
+
+                auto clampUnsigned = [&](long double max_value) -> uint64_t {
+                    if (truncated <= 0.0L)
+                    {
+                        return 0;
+                    }
+                    if (truncated > max_value)
+                    {
+                        return static_cast<uint64_t>(max_value);
+                    }
+                    return static_cast<uint64_t>(truncated);
+                };
+
+                switch (target_type)
+                {
+                    case core::DataType::INT8:
+                        coerced_out = core::TypedValue::makeInt8(
+                            static_cast<int8_t>(clampSigned(
+                                static_cast<long double>(std::numeric_limits<int8_t>::min()),
+                                static_cast<long double>(std::numeric_limits<int8_t>::max()))));
+                        return true;
+                    case core::DataType::INT16:
+                        coerced_out = core::TypedValue::makeInt16(
+                            static_cast<int16_t>(clampSigned(
+                                static_cast<long double>(std::numeric_limits<int16_t>::min()),
+                                static_cast<long double>(std::numeric_limits<int16_t>::max()))));
+                        return true;
+                    case core::DataType::INT32:
+                        coerced_out = core::TypedValue::makeInt32(
+                            static_cast<int32_t>(clampSigned(
+                                static_cast<long double>(std::numeric_limits<int32_t>::min()),
+                                static_cast<long double>(std::numeric_limits<int32_t>::max()))));
+                        return true;
+                    case core::DataType::INT64:
+                        coerced_out = core::TypedValue::makeInt64(
+                            clampSigned(
+                                static_cast<long double>(std::numeric_limits<int64_t>::min()),
+                                static_cast<long double>(std::numeric_limits<int64_t>::max())));
+                        return true;
+                    case core::DataType::UINT8:
+                        coerced_out = core::TypedValue::makeUInt8(
+                            static_cast<uint8_t>(clampUnsigned(
+                                static_cast<long double>(std::numeric_limits<uint8_t>::max()))));
+                        return true;
+                    case core::DataType::UINT16:
+                        coerced_out = core::TypedValue::makeUInt16(
+                            static_cast<uint16_t>(clampUnsigned(
+                                static_cast<long double>(std::numeric_limits<uint16_t>::max()))));
+                        return true;
+                    case core::DataType::UINT32:
+                        coerced_out = core::TypedValue::makeUInt32(
+                            static_cast<uint32_t>(clampUnsigned(
+                                static_cast<long double>(std::numeric_limits<uint32_t>::max()))));
+                        return true;
+                    case core::DataType::UINT64:
+                        coerced_out = core::TypedValue::makeUInt64(
+                            clampUnsigned(
+                                static_cast<long double>(std::numeric_limits<uint64_t>::max())));
+                        return true;
+                    default:
+                        break;
+                }
+
+                return false;
+            }
+
+            bool tryCoerceMySqlZeroTemporal(const core::TypedValue& value,
+                                            core::DataType target_type,
+                                            core::TypedValue& coerced_out)
+            {
+                if (value.isNull())
+                {
+                    return false;
+                }
+
+                std::string raw = trimAsciiCopy(value.toString());
+                if (raw.empty())
+                {
+                    return false;
+                }
+
+                if (target_type == core::DataType::DATE)
+                {
+                    if (raw == "0000-00-00")
+                    {
+                        coerced_out = core::TypedValue::makeDate(0);
+                        return true;
+                    }
+                    return false;
+                }
+
+                if (target_type == core::DataType::TIMESTAMP ||
+                    target_type == core::DataType::DATETIME)
+                {
+                    if (raw == "0000-00-00 00:00:00" ||
+                        raw == "0000-00-00T00:00:00" ||
+                        raw == "0000-00-00")
+                    {
+                        coerced_out = core::TypedValue::makeTimestamp(0);
+                        return true;
+                    }
+                    return false;
+                }
+
+                if (target_type == core::DataType::TIME)
+                {
+                    if (raw == "00:00:00" || raw == "0000-00-00 00:00:00")
+                    {
+                        coerced_out = core::TypedValue::makeTime(0);
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             bool appendPlainValue(const core::TypedValue& value,
@@ -3521,8 +3828,105 @@ namespace scratchbird
 
                 if (!isV3ContainerBytes(bytecode))
                 {
-                    return ExecutionResult(
-                        "SBLR3_REQUIRED: executor accepts only SBLR3 container input");
+                    if (!isTruthySetting(std::getenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE")))
+                    {
+                        return ExecutionResult(
+                            "SBLR3_REQUIRED: executor accepts only SBLR3 container input");
+                    }
+
+                    if (bytecode_size_ >= 2 &&
+                        bytecode_[0] == static_cast<uint8_t>(Opcode::VERSION))
+                    {
+                        uint8_t version = bytecode_[1];
+                        if (version != SBLR_VERSION && version != 0)
+                        {
+                            return ExecutionResult(
+                                "Unsupported SBLR version: " +
+                                std::to_string(static_cast<uint32_t>(version)));
+                        }
+                        pc_ = 2;
+                    }
+
+                    ExecutionResult legacy_result;
+                    while (pc_ < bytecode_size_)
+                    {
+                        if (isCancellationRequested())
+                        {
+                            return ExecutionResult("Query execution cancelled");
+                        }
+
+                        uint8_t opcode = readByte();
+                        if (opcode == static_cast<uint8_t>(Opcode::END))
+                        {
+                            break;
+                        }
+
+                        if (opcode == static_cast<uint8_t>(Opcode::VERSION))
+                        {
+                            if (pc_ < bytecode_size_)
+                            {
+                                uint8_t version = readByte();
+                                if (version != SBLR_VERSION && version != 0)
+                                {
+                                    return ExecutionResult(
+                                        "Unsupported SBLR version: " +
+                                        std::to_string(static_cast<uint32_t>(version)));
+                                }
+                            }
+                            continue;
+                        }
+
+                        if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                        {
+                            uint16_t ext_opcode = readExtendedOpcode();
+                            ExecutionResult ext_result;
+                            if (executeLegacyStatementSurfaceExtendedOpcode(ext_opcode, ext_result) ||
+                                executeLegacyAdminControlExtendedOpcode(ext_opcode, ext_result) ||
+                                executeLegacyShowSetExtendedOpcode(ext_opcode, ext_result))
+                            {
+                                legacy_result = std::move(ext_result);
+                            }
+                            else
+                            {
+                                return ExecutionResult(
+                                    "Unsupported legacy extended opcode in compatibility mode: " +
+                                    std::to_string(static_cast<uint32_t>(ext_opcode)));
+                            }
+                            continue;
+                        }
+
+                        switch (static_cast<Opcode>(opcode))
+                        {
+                            case Opcode::SELECT:
+                                executeSelect();
+                                legacy_result = ExecutionResult(std::move(current_result_set_));
+                                break;
+                            case Opcode::INSERT:
+                                executeInsert();
+                                legacy_result = ExecutionResult();
+                                legacy_result.setAffectedCount(
+                                    static_cast<int>(last_affected_rows_));
+                                break;
+                            case Opcode::UPDATE:
+                                executeUpdate();
+                                legacy_result = ExecutionResult();
+                                legacy_result.setAffectedCount(
+                                    static_cast<int>(last_affected_rows_));
+                                break;
+                            case Opcode::DELETE:
+                                executeDelete();
+                                legacy_result = ExecutionResult();
+                                legacy_result.setAffectedCount(
+                                    static_cast<int>(last_affected_rows_));
+                                break;
+                            default:
+                                return ExecutionResult(
+                                    "Unsupported legacy opcode in compatibility mode: " +
+                                    std::to_string(static_cast<uint32_t>(opcode)));
+                        }
+                    }
+
+                    return legacy_result;
                 }
 
                 return executeCanonicalV3(bytecode);
@@ -5113,15 +5517,32 @@ namespace scratchbird
                 schema_name_fallback = schema_components.front();
             }
 
-            core::ObjectPath schema_path;
-            schema_path.type = path.type;
-            schema_path.no_search_path = path.no_search_path;
-            schema_path.components = std::move(schema_components);
+	            core::ObjectPath schema_path;
+	            schema_path.type = path.type;
+	            schema_path.no_search_path = path.no_search_path;
+	            schema_path.components = std::move(schema_components);
+	            if (schema_path.type == core::PathType::ABSOLUTE)
+	            {
+	                std::string absolute_schema =
+	                    joinSchemaComponents(schema_path.components, 0);
+	                status = resolveSchemaIdForName(absolute_schema,
+	                                                schema_id_out,
+	                                                ctx,
+	                                                false /*allow_search_path*/);
+	                if (status == core::Status::OK)
+	                {
+	                    return core::Status::OK;
+	                }
+	                if (status != core::Status::NOT_FOUND)
+	                {
+	                    return status;
+	                }
+	            }
 
-            core::CatalogManager::ResolveOptions opts;
-            if (conn_ctx_)
-            {
-                opts.dialect_tag = conn_ctx_->dialect_tag();
+	            core::CatalogManager::ResolveOptions opts;
+	            if (conn_ctx_)
+	            {
+	                opts.dialect_tag = conn_ctx_->dialect_tag();
             }
             opts.allow_search_path = allow_search_path && !path.no_search_path;
 
@@ -5545,6 +5966,174 @@ namespace scratchbird
                                                 object_id_out, resolved_type_out, ctx);
             if (status != core::Status::OK)
             {
+                if (status == core::Status::NOT_FOUND &&
+                    expected_type == core::CatalogManager::ObjectType::VIEW &&
+                    path.type == core::PathType::UNQUALIFIED &&
+                    search_path_allowed &&
+                    path.components.size() == 1)
+                {
+                    const std::string object_name = path.components.front();
+                    int matches = 0;
+                    core::ID found_id{};
+
+                    auto match_in_schema = [&](const core::ID& schema_id) -> core::Status {
+                        core::CatalogManager::ResolveFilter filter;
+                        filter.object_type = core::CatalogManager::ObjectType::VIEW;
+                        filter.filter_schema_id = true;
+                        filter.schema_id = schema_id;
+
+                        std::vector<core::CatalogManager::ResolvedObject> objects;
+                        auto list_status = catalog->listResolvedObjects(filter, objects, ctx);
+                        if (list_status != core::Status::OK)
+                        {
+                            return list_status;
+                        }
+
+                        for (const auto& obj : objects)
+                        {
+                            if (core::IdentifierUtils::namesMatch(
+                                    object_name, false /*search_delimited*/,
+                                    obj.object_name, false /*stored_delimited*/))
+                            {
+                                if (matches == 0)
+                                {
+                                    found_id = obj.object_id;
+                                }
+                                ++matches;
+                            }
+                        }
+                        return core::Status::OK;
+                    };
+
+                    auto current_schema = [&]() -> core::ID {
+                        if (current_schema_set_)
+                        {
+                            return current_schema_id_;
+                        }
+                        if (conn_ctx_)
+                        {
+                            core::ID ctx_schema = conn_ctx_->getCurrentSchemaId();
+                            if (!isZeroUuid(ctx_schema))
+                            {
+                                return ctx_schema;
+                            }
+                        }
+                        return core::ID{};
+                    };
+
+                    core::ID schema_id = current_schema();
+                    if (!isZeroUuid(schema_id))
+                    {
+                        auto match_status = match_in_schema(schema_id);
+                        if (match_status != core::Status::OK)
+                        {
+                            return match_status;
+                        }
+                    }
+
+                    if (matches == 0)
+                    {
+                        std::vector<std::string> search_paths = {"public"};
+                        if (conn_ctx_)
+                        {
+                            const auto& paths = conn_ctx_->search_path();
+                            if (!paths.empty())
+                            {
+                                search_paths = paths;
+                            }
+                        }
+
+                        std::string root_upper;
+                        if (enforce_root && !emulated_root.empty())
+                        {
+                            root_upper = core::IdentifierUtils::toUpper(emulated_root);
+                        }
+
+                        for (const auto& entry : search_paths)
+                        {
+                            if (entry.empty())
+                            {
+                                continue;
+                            }
+                            std::string normalized_entry = normalizeSchemaPath(entry);
+                            if (normalized_entry.empty())
+                            {
+                                continue;
+                            }
+                            if (enforce_root && !emulated_root.empty())
+                            {
+                                std::string entry_upper =
+                                    core::IdentifierUtils::toUpper(normalized_entry);
+                                if (entry_upper != root_upper &&
+                                    entry_upper.rfind(root_upper + ".", 0) != 0)
+                                {
+                                    normalized_entry = emulated_root + "." + normalized_entry;
+                                }
+                            }
+
+                            core::CatalogManager::SchemaInfo schema_info;
+                            auto schema_status = catalog->getSchema(normalized_entry, schema_info, ctx);
+                            if (schema_status == core::Status::NOT_FOUND)
+                            {
+                                continue;
+                            }
+                            if (schema_status != core::Status::OK)
+                            {
+                                return schema_status;
+                            }
+
+                            auto match_status = match_in_schema(schema_info.schema_id);
+                            if (match_status != core::Status::OK)
+                            {
+                                return match_status;
+                            }
+                        }
+                    }
+
+                    if (matches == 0)
+                    {
+                        // MySQL emulation can expose unqualified view names via compat naming
+                        // even when search_path is anchored outside users.public.
+                        core::CatalogManager::ResolveFilter filter;
+                        filter.object_type = core::CatalogManager::ObjectType::VIEW;
+                        std::vector<core::CatalogManager::ResolvedObject> objects;
+                        auto list_status = catalog->listResolvedObjects(filter, objects, ctx);
+                        if (list_status != core::Status::OK)
+                        {
+                            return list_status;
+                        }
+                        for (const auto& obj : objects)
+                        {
+                            bool name_match = core::IdentifierUtils::namesMatch(
+                                object_name, false /*search_delimited*/,
+                                obj.object_name, false /*stored_delimited*/);
+                            bool compat_match = !obj.compat_name.empty() &&
+                                core::IdentifierUtils::namesMatch(
+                                    object_name, false /*search_delimited*/,
+                                    obj.compat_name, false /*stored_delimited*/);
+                            if (!name_match && !compat_match)
+                            {
+                                continue;
+                            }
+                            if (matches == 0)
+                            {
+                                found_id = obj.object_id;
+                            }
+                            ++matches;
+                        }
+                    }
+
+                    if (matches == 1)
+                    {
+                        return resolve_by_id(found_id, expected_type);
+                    }
+                    if (matches > 1)
+                    {
+                        SET_ERROR_CONTEXT(ctx, core::Status::AMBIGUOUS_COLUMN,
+                                          "Ambiguous object name in search path");
+                        return core::Status::AMBIGUOUS_COLUMN;
+                    }
+                }
                 return status;
             }
 
@@ -25384,24 +25973,25 @@ namespace scratchbird
                                        const std::vector<std::pair<std::string, std::string>>& select_items,
                                        bool is_select_star)
         {
-#if 0
-            // Compile the view's SELECT query using V3 compiler
-            /* legacy path removed */
-            // Engine-side SQL compilation removed.
-
+            DEBUG_LOG_DB("executeViewQuery view='" << view_info.view_name
+                         << "' definition='" << view_info.definition << "'");
+            parser::v3::Compiler compiler;
+            auto compile_result = compiler.compile(view_info.definition);
             if (!compile_result.ok)
             {
-                std::string error_msg = "Failed to compile view definition for view: " + view_info.name;
+                std::string err_msg = "Failed to compile view definition";
                 if (!compile_result.error.empty())
                 {
-                    error_msg += " - " + compile_result.error;
+                    err_msg += ": " + compile_result.error;
                 }
-                error(error_msg);
+                error(err_msg);
             }
 
-            // Execute the view's bytecode
             Executor view_executor(db_);
-            view_executor.setConnectionContext(conn_ctx_);  // Preserve security context
+            if (conn_ctx_)
+            {
+                view_executor.setConnectionContext(conn_ctx_);
+            }
             if (view_info.security_definer)
             {
                 view_executor.effective_user_override_ = view_info.owner_id;
@@ -25417,94 +26007,86 @@ namespace scratchbird
                     }
                 }
             }
-            auto exec_result = view_executor.execute(compile_result.bytecode);
 
+            auto exec_result = view_executor.execute(compile_result.bytecode);
             if (!exec_result.success())
             {
-                error("Failed to execute view query: " + view_info.name + " - " + exec_result.error());
+                DEBUG_LOG_DB("executeViewQuery execution failed for view='" << view_info.view_name
+                             << "' error='" << exec_result.error() << "'");
+                std::string err_msg = "Failed to execute view query";
+                if (!exec_result.error().empty())
+                {
+                    err_msg += ": " + exec_result.error();
+                }
+                error(err_msg);
             }
 
-            // Get the result set from the view execution
             auto* view_result_set = exec_result.resultSet();
             if (!view_result_set)
             {
-                error("View query did not return a result set: " + view_info.name);
+                error("View query did not return a result set");
             }
 
-            // Copy the result set from the view execution to the current result set
-            // Apply column projection if specific columns were requested
             current_result_set_ = std::make_unique<ResultSet>();
 
             if (is_select_star)
             {
-                // SELECT * FROM view - return all columns
-                for (size_t i = 0; i < view_result_set->columnCount(); i++)
+                for (size_t i = 0; i < view_result_set->columnCount(); ++i)
                 {
                     current_result_set_->addColumn(view_result_set->columnName(i),
                                                    view_result_set->columnType(i));
                 }
-
-                // Copy all rows with all columns
-                for (size_t row_idx = 0; row_idx < view_result_set->rowCount(); row_idx++)
+                for (size_t row_idx = 0; row_idx < view_result_set->rowCount(); ++row_idx)
                 {
                     std::vector<Value> row;
-                    for (size_t col_idx = 0; col_idx < view_result_set->columnCount(); col_idx++)
+                    row.reserve(view_result_set->columnCount());
+                    for (size_t col_idx = 0; col_idx < view_result_set->columnCount(); ++col_idx)
                     {
                         row.push_back(view_result_set->getValue(row_idx, col_idx));
                     }
                     current_result_set_->addRow(std::move(row));
                 }
+                return;
             }
-            else
+
+            std::vector<size_t> column_indices;
+            std::vector<std::string> column_aliases;
+            for (const auto& [col_name, alias] : select_items)
             {
-                // SELECT col1, col2, ... FROM view - project specific columns
-                // Build a mapping of requested column names to view column indices
-                std::vector<size_t> column_indices;
-                std::vector<std::string> column_aliases;
-
-                for (const auto& [col_name, alias] : select_items)
+                bool found = false;
+                for (size_t i = 0; i < view_result_set->columnCount(); ++i)
                 {
-                    // Find this column in the view's result set
-                    bool found = false;
-                    for (size_t i = 0; i < view_result_set->columnCount(); i++)
+                    if (core::IdentifierUtils::namesMatch(
+                            col_name, false /*search_delimited*/,
+                            view_result_set->columnName(i), false /*stored_delimited*/))
                     {
-                        if (view_result_set->columnName(i) == col_name)
-                        {
-                            column_indices.push_back(i);
-                            column_aliases.push_back(alias.empty() ? col_name : alias);
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    if (!found)
-                    {
-                        error("Column not found in view " + view_info.name + ": " + col_name);
+                        column_indices.push_back(i);
+                        column_aliases.push_back(alias.empty() ? col_name : alias);
+                        found = true;
+                        break;
                     }
                 }
-
-                // Add projected columns to result set
-                for (size_t i = 0; i < column_indices.size(); i++)
+                if (!found)
                 {
-                    size_t view_col_idx = column_indices[i];
-                    current_result_set_->addColumn(column_aliases[i],
-                                                   view_result_set->columnType(view_col_idx));
-                }
-
-                // Copy rows with only the projected columns
-                for (size_t row_idx = 0; row_idx < view_result_set->rowCount(); row_idx++)
-                {
-                    std::vector<Value> row;
-                    for (size_t proj_idx : column_indices)
-                    {
-                        row.push_back(view_result_set->getValue(row_idx, proj_idx));
-                    }
-                    current_result_set_->addRow(std::move(row));
+                    error("Column not found in view: " + col_name);
                 }
             }
-#else
-            error("View execution requires compiler support");
-#endif
+
+            for (size_t i = 0; i < column_indices.size(); ++i)
+            {
+                current_result_set_->addColumn(column_aliases[i],
+                                               view_result_set->columnType(column_indices[i]));
+            }
+            for (size_t row_idx = 0; row_idx < view_result_set->rowCount(); ++row_idx)
+            {
+                std::vector<Value> row;
+                row.reserve(column_indices.size());
+                for (size_t proj_idx : column_indices)
+                {
+                    row.push_back(view_result_set->getValue(row_idx, proj_idx));
+                }
+                current_result_set_->addRow(std::move(row));
+            }
         }
 
         void Executor::executeObjectResolverQuery(
@@ -26582,10 +27164,83 @@ namespace scratchbird
                         // Check for view instead of table
                         core::ID view_id;
                         core::CatalogManager::ResolvedObject resolved_view;
-                        auto view_status = resolveObjectIdForQualifiedName(
-                            table_name, core::CatalogManager::ObjectType::VIEW,
-                            view_id, resolved_type, &resolved_view, &err_ctx);
-                        if (view_status == core::Status::OK)
+                        auto try_resolve_view = [&](const std::string& candidate,
+                                                    bool allow_search_path) -> bool {
+                            resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+                            return resolveObjectIdForQualifiedName(
+                                       candidate,
+                                       core::CatalogManager::ObjectType::VIEW,
+                                       view_id,
+                                       resolved_type,
+                                       &resolved_view,
+                                       &err_ctx,
+                                       allow_search_path) == core::Status::OK;
+                        };
+
+                        bool view_resolved = try_resolve_view(table_name, true);
+                        if (!view_resolved &&
+                            table_name.find('.') == std::string::npos &&
+                            conn_ctx_)
+                        {
+                            for (const auto& schema_path : conn_ctx_->search_path())
+                            {
+                                if (schema_path.empty())
+                                {
+                                    continue;
+                                }
+                                std::string candidate = schema_path + "." + table_name;
+                                if (try_resolve_view(candidate, false))
+                                {
+                                    view_resolved = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!view_resolved && !table_name.empty())
+                        {
+                            core::CatalogManager::ResolveFilter filter;
+                            filter.object_type = core::CatalogManager::ObjectType::VIEW;
+                            std::vector<core::CatalogManager::ResolvedObject> views;
+                            auto list_status = db_->catalog_manager()->listResolvedObjects(
+                                filter, views, &err_ctx);
+                            if (list_status == core::Status::OK)
+                            {
+                                core::ID matched_view_id{};
+                                int matched_count = 0;
+                                for (const auto& obj : views)
+                                {
+                                    bool name_match = core::IdentifierUtils::namesMatch(
+                                        table_name, false /*search_delimited*/,
+                                        obj.object_name, false /*stored_delimited*/);
+                                    bool compat_match = !obj.compat_name.empty() &&
+                                        core::IdentifierUtils::namesMatch(
+                                            table_name, false /*search_delimited*/,
+                                            obj.compat_name, false /*stored_delimited*/);
+                                    if (!name_match && !compat_match)
+                                    {
+                                        continue;
+                                    }
+                                    if (matched_count == 0)
+                                    {
+                                        matched_view_id = obj.object_id;
+                                        resolved_view = obj;
+                                    }
+                                    ++matched_count;
+                                }
+                                if (matched_count == 1)
+                                {
+                                    view_id = matched_view_id;
+                                    view_resolved = true;
+                                }
+                                else if (matched_count > 1)
+                                {
+                                    err_ctx.message = "Ambiguous view name: " + table_name;
+                                }
+                            }
+                        }
+
+                        if (view_resolved)
                         {
                             core::CatalogManager::ViewInfo view_info;
                             if (db_->catalog_manager()->getViewById(view_id, view_info, &err_ctx) == core::Status::OK)
@@ -38523,6 +39178,17 @@ namespace scratchbird
                     else if (isTemporalType(left.type()) && isTemporalType(right.type()))
                         result = temporalComparisonKeyMicros(left) ==
                                  temporalComparisonKeyMicros(right);
+                    else if ((isTemporalType(left.type()) && isNumericType(right.type())) ||
+                             (isNumericType(left.type()) && isTemporalType(right.type())))
+                    {
+                        double left_cmp = isTemporalType(left.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(left))
+                            : coerceToDouble(left);
+                        double right_cmp = isTemporalType(right.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(right))
+                            : coerceToDouble(right);
+                        result = left_cmp == right_cmp;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) == 0;
                     else if (isNumericType(left.type()) && isNumericType(right.type()))
@@ -38555,6 +39221,17 @@ namespace scratchbird
                     else if (isTemporalType(left.type()) && isTemporalType(right.type()))
                         result = temporalComparisonKeyMicros(left) !=
                                  temporalComparisonKeyMicros(right);
+                    else if ((isTemporalType(left.type()) && isNumericType(right.type())) ||
+                             (isNumericType(left.type()) && isTemporalType(right.type())))
+                    {
+                        double left_cmp = isTemporalType(left.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(left))
+                            : coerceToDouble(left);
+                        double right_cmp = isTemporalType(right.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(right))
+                            : coerceToDouble(right);
+                        result = left_cmp != right_cmp;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) != 0;
                     else if (isNumericType(left.type()) && isNumericType(right.type()))
@@ -38587,6 +39264,17 @@ namespace scratchbird
                     else if (isTemporalType(left.type()) && isTemporalType(right.type()))
                         result = temporalComparisonKeyMicros(left) <
                                  temporalComparisonKeyMicros(right);
+                    else if ((isTemporalType(left.type()) && isNumericType(right.type())) ||
+                             (isNumericType(left.type()) && isTemporalType(right.type())))
+                    {
+                        double left_cmp = isTemporalType(left.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(left))
+                            : coerceToDouble(left);
+                        double right_cmp = isTemporalType(right.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(right))
+                            : coerceToDouble(right);
+                        result = left_cmp < right_cmp;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) < 0;
                     else if (isNumericType(left.type()) && isNumericType(right.type()))
@@ -38619,6 +39307,17 @@ namespace scratchbird
                     else if (isTemporalType(left.type()) && isTemporalType(right.type()))
                         result = temporalComparisonKeyMicros(left) >
                                  temporalComparisonKeyMicros(right);
+                    else if ((isTemporalType(left.type()) && isNumericType(right.type())) ||
+                             (isNumericType(left.type()) && isTemporalType(right.type())))
+                    {
+                        double left_cmp = isTemporalType(left.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(left))
+                            : coerceToDouble(left);
+                        double right_cmp = isTemporalType(right.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(right))
+                            : coerceToDouble(right);
+                        result = left_cmp > right_cmp;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) > 0;
                     else if (isNumericType(left.type()) && isNumericType(right.type()))
@@ -38651,6 +39350,17 @@ namespace scratchbird
                     else if (isTemporalType(left.type()) && isTemporalType(right.type()))
                         result = temporalComparisonKeyMicros(left) <=
                                  temporalComparisonKeyMicros(right);
+                    else if ((isTemporalType(left.type()) && isNumericType(right.type())) ||
+                             (isNumericType(left.type()) && isTemporalType(right.type())))
+                    {
+                        double left_cmp = isTemporalType(left.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(left))
+                            : coerceToDouble(left);
+                        double right_cmp = isTemporalType(right.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(right))
+                            : coerceToDouble(right);
+                        result = left_cmp <= right_cmp;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) <= 0;
                     else if (isNumericType(left.type()) && isNumericType(right.type()))
@@ -38683,6 +39393,17 @@ namespace scratchbird
                     else if (isTemporalType(left.type()) && isTemporalType(right.type()))
                         result = temporalComparisonKeyMicros(left) >=
                                  temporalComparisonKeyMicros(right);
+                    else if ((isTemporalType(left.type()) && isNumericType(right.type())) ||
+                             (isNumericType(left.type()) && isTemporalType(right.type())))
+                    {
+                        double left_cmp = isTemporalType(left.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(left))
+                            : coerceToDouble(left);
+                        double right_cmp = isTemporalType(right.type())
+                            ? static_cast<double>(temporalComparisonKeyMicros(right))
+                            : coerceToDouble(right);
+                        result = left_cmp >= right_cmp;
+                    }
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) >= 0;
                     else if (isNumericType(left.type()) && isNumericType(right.type()))
@@ -40178,6 +40899,12 @@ namespace scratchbird
                 return ExecutionResult(err.empty() ? "Invalid SBLR3 container" : err);
             }
 
+            const std::string container_module_upper =
+                toUpperAsciiCopy(container.metadata.module_name);
+            const bool v3_mysql_module =
+                (container_module_upper == "MYSQL_EMULATION" ||
+                 container_module_upper == "MYSQL");
+
             return_requested_ = false;
             return_value_ = Value();
 
@@ -41052,6 +41779,542 @@ namespace scratchbird
                 return true;
             };
 
+            auto resolveInsertTargetFromView =
+                [&](const std::string& view_path,
+                    const std::vector<std::string>& requested_columns,
+                    core::CatalogManager::TableInfo& table_info_out,
+                    std::vector<std::string>& mapped_columns_out,
+                    std::unordered_map<std::string, std::string>& view_to_base_column_out,
+                    std::string& err_out) -> bool {
+                core::ErrorContext ctx;
+                core::ID view_id{};
+                core::CatalogManager::ObjectType resolved_type =
+                    core::CatalogManager::ObjectType::UNKNOWN;
+                auto tryResolveView = [&](const std::string& candidate,
+                                          bool allow_search_path) -> bool {
+                    resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+                    return resolveObjectIdForQualifiedName(candidate,
+                                                          core::CatalogManager::ObjectType::VIEW,
+                                                          view_id,
+                                                          resolved_type,
+                                                          nullptr,
+                                                          &ctx,
+                                                          allow_search_path) == core::Status::OK;
+                };
+
+                std::string resolved_view_path = view_path;
+                bool resolved_view = tryResolveView(view_path, true);
+                if (!resolved_view &&
+                    view_path.find('.') == std::string::npos &&
+                    conn_ctx_)
+                {
+                    for (const auto& schema_path : conn_ctx_->search_path())
+                    {
+                        if (schema_path.empty())
+                        {
+                            continue;
+                        }
+                        std::string candidate = schema_path + "." + view_path;
+                        if (tryResolveView(candidate, false))
+                        {
+                            resolved_view_path = std::move(candidate);
+                            resolved_view = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!resolved_view)
+                {
+                    err_out = ctx.message.empty() ? ("Object not found: " + view_path) : ctx.message;
+                    return false;
+                }
+
+                core::CatalogManager::ViewInfo view_info;
+                if (db_->catalog_manager()->getViewById(view_id, view_info, &ctx) != core::Status::OK)
+                {
+                    err_out = ctx.message.empty() ? ("View not found: " + resolved_view_path) : ctx.message;
+                    return false;
+                }
+
+                if (view_info.materialized && view_info.materialized_table_id != core::ID{})
+                {
+                    if (db_->catalog_manager()->getTable(view_info.materialized_table_id, table_info_out, &ctx) !=
+                        core::Status::OK)
+                    {
+                        err_out = ctx.message.empty()
+                            ? ("Failed to resolve materialized view storage table for: " + view_path)
+                            : ctx.message;
+                        return false;
+                    }
+                    mapped_columns_out = requested_columns;
+                    view_to_base_column_out.clear();
+                    for (const auto& col : requested_columns)
+                    {
+                        view_to_base_column_out[core::IdentifierUtils::toUpper(col)] = col;
+                    }
+                    return true;
+                }
+
+                parser::v3::Parser view_parser(view_info.definition);
+                auto parse_result = view_parser.parseStatement();
+                if (!parse_result.success() || parse_result.statement() == nullptr)
+                {
+                    if (!parse_result.errors().empty())
+                    {
+                        err_out = "Failed to parse view definition for INSERT target '" + view_path +
+                                  "': " + parse_result.errors().front().message;
+                    }
+                    else
+                    {
+                        err_out = "Failed to parse view definition for INSERT target '" + view_path + "'";
+                    }
+                    return false;
+                }
+                if (parse_result.statement()->kind() != parser::v3::ASTKind::SelectStmt)
+                {
+                    err_out = "View '" + view_path + "' is not based on a SELECT statement";
+                    return false;
+                }
+
+                auto* select_stmt = static_cast<parser::v3::SelectStmt*>(parse_result.statement());
+                if (!select_stmt)
+                {
+                    err_out = "View '" + view_path + "' SELECT metadata is unavailable";
+                    return false;
+                }
+
+                struct BaseTableDescriptor
+                {
+                    std::string path;
+                    core::CatalogManager::TableInfo table_info;
+                    std::vector<core::CatalogManager::ColumnInfo> columns;
+                    std::unordered_map<std::string, std::string> columns_by_upper;
+                    std::string alias_upper;
+                    std::string name_upper;
+                    std::string path_upper;
+                };
+                std::vector<BaseTableDescriptor> base_tables;
+                std::unordered_map<std::string, size_t> qualifier_to_table;
+
+                auto addQualifier = [&](const std::string& name, size_t table_index) {
+                    if (name.empty())
+                    {
+                        return;
+                    }
+                    qualifier_to_table[core::IdentifierUtils::toUpper(name)] = table_index;
+                };
+
+                auto resolveBaseTableRef = [&](const parser::v3::TableRefNode* ref) -> bool {
+                    if (!ref)
+                    {
+                        return true;
+                    }
+                    if (ref->ref_type != parser::v3::TableRefNode::Type::TABLE)
+                    {
+                        return true;
+                    }
+
+                    std::string ref_path =
+                        parser::v3::schemaPathToString(ref->table_path, view_parser.stringPool());
+                    if (ref_path.empty())
+                    {
+                        err_out = "View '" + view_path + "' has an unresolved table reference";
+                        return false;
+                    }
+
+                    BaseTableDescriptor desc;
+                    desc.path = ref_path;
+                    std::string table_err;
+                    if (!resolveTableId(ref_path, desc.table_info, table_err, true))
+                    {
+                        err_out = "View '" + view_path + "' references non-table object '" + ref_path +
+                                  "': " + table_err;
+                        return false;
+                    }
+
+                    if (db_->catalog_manager()->getColumns(desc.table_info.table_id, desc.columns, nullptr) !=
+                        core::Status::OK)
+                    {
+                        err_out = "Failed to load columns for view base table '" + ref_path + "'";
+                        return false;
+                    }
+
+                    for (const auto& col : desc.columns)
+                    {
+                        desc.columns_by_upper[core::IdentifierUtils::toUpper(col.column_name)] =
+                            col.column_name;
+                    }
+
+                    if (ref->has_alias && ref->alias != parser::v3::StringPool::INVALID_ID)
+                    {
+                        std::string alias(view_parser.stringPool().get(ref->alias));
+                        desc.alias_upper = core::IdentifierUtils::toUpper(alias);
+                    }
+                    auto path_parts = splitSchemaComponents(ref_path);
+                    if (!path_parts.empty())
+                    {
+                        desc.name_upper = core::IdentifierUtils::toUpper(path_parts.back());
+                    }
+                    desc.path_upper = core::IdentifierUtils::toUpper(ref_path);
+
+                    const size_t idx = base_tables.size();
+                    base_tables.push_back(std::move(desc));
+                    addQualifier(ref_path, idx);
+                    if (!path_parts.empty())
+                    {
+                        addQualifier(path_parts.back(), idx);
+                    }
+                    if (ref->has_alias && ref->alias != parser::v3::StringPool::INVALID_ID)
+                    {
+                        addQualifier(std::string(view_parser.stringPool().get(ref->alias)), idx);
+                    }
+                    return true;
+                };
+
+                if (!resolveBaseTableRef(select_stmt->from))
+                {
+                    return false;
+                }
+                for (const auto* join : select_stmt->joins)
+                {
+                    if (!join)
+                    {
+                        continue;
+                    }
+                    if (!resolveBaseTableRef(join->right))
+                    {
+                        return false;
+                    }
+                }
+                if (base_tables.empty())
+                {
+                    err_out = "View '" + view_path + "' has no table source for INSERT";
+                    return false;
+                }
+
+                auto findTableByQualifier = [&](const std::string& qualifier) -> std::optional<size_t> {
+                    if (qualifier.empty())
+                    {
+                        return std::nullopt;
+                    }
+                    auto key = core::IdentifierUtils::toUpper(qualifier);
+                    auto it = qualifier_to_table.find(key);
+                    if (it != qualifier_to_table.end())
+                    {
+                        return it->second;
+                    }
+                    auto parts = splitSchemaComponents(qualifier);
+                    if (!parts.empty())
+                    {
+                        auto it_last = qualifier_to_table.find(core::IdentifierUtils::toUpper(parts.back()));
+                        if (it_last != qualifier_to_table.end())
+                        {
+                            return it_last->second;
+                        }
+                    }
+                    return std::nullopt;
+                };
+
+                auto findColumnInTable = [&](size_t table_index,
+                                             const std::string& column_name,
+                                             std::string& actual_column_out) -> bool {
+                    if (table_index >= base_tables.size())
+                    {
+                        return false;
+                    }
+                    auto key = core::IdentifierUtils::toUpper(column_name);
+                    const auto& table = base_tables[table_index];
+                    auto it = table.columns_by_upper.find(key);
+                    if (it == table.columns_by_upper.end())
+                    {
+                        return false;
+                    }
+                    actual_column_out = it->second;
+                    return true;
+                };
+
+                struct ViewColumnBinding
+                {
+                    std::string view_column;
+                    size_t table_index = std::numeric_limits<size_t>::max();
+                    std::string base_column;
+                    bool writable = false;
+                };
+                std::vector<ViewColumnBinding> bindings;
+                size_t expr_counter = 0;
+
+                auto appendBinding = [&](const std::string& view_col,
+                                         size_t table_index,
+                                         const std::string& base_col,
+                                         bool writable) {
+                    ViewColumnBinding b;
+                    b.view_column = view_col;
+                    b.table_index = table_index;
+                    b.base_column = base_col;
+                    b.writable = writable;
+                    bindings.push_back(std::move(b));
+                };
+
+                auto resolveUnqualifiedColumn = [&](const std::string& column_name,
+                                                    size_t& table_index_out,
+                                                    std::string& actual_column_out) -> bool {
+                    bool found = false;
+                    size_t found_idx = 0;
+                    std::string found_column;
+                    for (size_t i = 0; i < base_tables.size(); ++i)
+                    {
+                        std::string actual;
+                        if (!findColumnInTable(i, column_name, actual))
+                        {
+                            continue;
+                        }
+                        if (found)
+                        {
+                            return false;
+                        }
+                        found = true;
+                        found_idx = i;
+                        found_column = std::move(actual);
+                    }
+                    if (!found)
+                    {
+                        return false;
+                    }
+                    table_index_out = found_idx;
+                    actual_column_out = found_column;
+                    return true;
+                };
+
+                for (const auto* item : select_stmt->items)
+                {
+                    if (!item)
+                    {
+                        continue;
+                    }
+
+                    if (item->item_type == parser::v3::SelectItem::Type::STAR)
+                    {
+                        for (size_t t = 0; t < base_tables.size(); ++t)
+                        {
+                            for (const auto& col : base_tables[t].columns)
+                            {
+                                appendBinding(col.column_name, t, col.column_name, true);
+                            }
+                        }
+                        continue;
+                    }
+
+                    if (item->item_type == parser::v3::SelectItem::Type::TABLE_STAR)
+                    {
+                        const std::string qualifier =
+                            parser::v3::schemaPathToString(item->table_path, view_parser.stringPool());
+                        auto table_idx = findTableByQualifier(qualifier);
+                        if (!table_idx.has_value())
+                        {
+                            err_out = "View '" + view_path +
+                                      "' has TABLE.* projection with unresolved qualifier '" +
+                                      qualifier + "'";
+                            return false;
+                        }
+                        for (const auto& col : base_tables[*table_idx].columns)
+                        {
+                            appendBinding(col.column_name, *table_idx, col.column_name, true);
+                        }
+                        continue;
+                    }
+
+                    std::string view_col;
+                    if (item->has_alias && item->alias != parser::v3::StringPool::INVALID_ID)
+                    {
+                        view_col = std::string(view_parser.stringPool().get(item->alias));
+                    }
+
+                    if (item->expr && item->expr->kind() == parser::v3::ASTKind::ColumnRefExpr)
+                    {
+                        auto* col_expr = static_cast<parser::v3::ColumnRefExpr*>(item->expr);
+                        const std::string parsed_col =
+                            std::string(view_parser.stringPool().get(col_expr->column.column_name));
+                        if (view_col.empty())
+                        {
+                            view_col = parsed_col;
+                        }
+
+                        size_t table_idx = std::numeric_limits<size_t>::max();
+                        std::string actual_col;
+                        bool writable = false;
+                        if (col_expr->column.has_table_qualifier)
+                        {
+                            const std::string qualifier = parser::v3::schemaPathToString(
+                                col_expr->column.table_path, view_parser.stringPool());
+                            auto table_opt = findTableByQualifier(qualifier);
+                            if (table_opt.has_value())
+                            {
+                                table_idx = *table_opt;
+                                writable = findColumnInTable(table_idx, parsed_col, actual_col);
+                            }
+                        }
+                        else
+                        {
+                            writable = resolveUnqualifiedColumn(parsed_col, table_idx, actual_col);
+                        }
+
+                        appendBinding(view_col, table_idx, writable ? actual_col : parsed_col, writable);
+                        continue;
+                    }
+
+                    if (view_col.empty())
+                    {
+                        view_col = "expr" + std::to_string(++expr_counter);
+                    }
+                    appendBinding(view_col, std::numeric_limits<size_t>::max(), "", false);
+                }
+
+                if (!view_info.column_names.empty())
+                {
+                    const size_t limit = std::min(bindings.size(), view_info.column_names.size());
+                    for (size_t i = 0; i < limit; ++i)
+                    {
+                        bindings[i].view_column = view_info.column_names[i];
+                    }
+                }
+
+                auto lookupViewBinding = [&](const std::string& requested_view_column,
+                                             size_t& table_index_out,
+                                             std::string& base_column_out) -> bool {
+                    const std::string key =
+                        core::IdentifierUtils::toUpper(requested_view_column);
+                    bool found = false;
+                    size_t found_table = 0;
+                    std::string found_base;
+                    for (const auto& binding : bindings)
+                    {
+                        if (!binding.writable)
+                        {
+                            continue;
+                        }
+                        if (core::IdentifierUtils::toUpper(binding.view_column) != key)
+                        {
+                            continue;
+                        }
+                        if (!found)
+                        {
+                            found = true;
+                            found_table = binding.table_index;
+                            found_base = binding.base_column;
+                            continue;
+                        }
+                        if (binding.table_index != found_table ||
+                            core::IdentifierUtils::toUpper(binding.base_column) !=
+                                core::IdentifierUtils::toUpper(found_base))
+                        {
+                            err_out = "Ambiguous view column '" + requested_view_column +
+                                      "' for INSERT target '" + view_path + "'";
+                            return false;
+                        }
+                    }
+                    if (!found)
+                    {
+                        err_out = "Column not found in view '" + view_path + "': " +
+                                  requested_view_column;
+                        return false;
+                    }
+                    table_index_out = found_table;
+                    base_column_out = found_base;
+                    return true;
+                };
+
+                mapped_columns_out.clear();
+                view_to_base_column_out.clear();
+
+                size_t chosen_table_index = std::numeric_limits<size_t>::max();
+                if (!requested_columns.empty())
+                {
+                    std::optional<size_t> target_table;
+                    mapped_columns_out.reserve(requested_columns.size());
+                    for (const auto& req_col : requested_columns)
+                    {
+                        size_t table_index = std::numeric_limits<size_t>::max();
+                        std::string base_column;
+                        if (!lookupViewBinding(req_col, table_index, base_column))
+                        {
+                            return false;
+                        }
+                        if (!target_table.has_value())
+                        {
+                            target_table = table_index;
+                        }
+                        else if (*target_table != table_index)
+                        {
+                            err_out = "INSERT on view '" + view_path +
+                                      "' spans multiple base tables; use INSTEAD OF trigger";
+                            return false;
+                        }
+                        mapped_columns_out.push_back(base_column);
+                        view_to_base_column_out[core::IdentifierUtils::toUpper(req_col)] =
+                            base_column;
+                    }
+                    if (!target_table.has_value())
+                    {
+                        err_out = "Failed to resolve INSERT target for view '" + view_path + "'";
+                        return false;
+                    }
+                    chosen_table_index = *target_table;
+                }
+                else
+                {
+                    std::optional<size_t> target_table;
+                    for (const auto& binding : bindings)
+                    {
+                        if (!binding.writable)
+                        {
+                            continue;
+                        }
+                        if (!target_table.has_value())
+                        {
+                            target_table = binding.table_index;
+                        }
+                        else if (*target_table != binding.table_index)
+                        {
+                            err_out = "INSERT on view '" + view_path +
+                                      "' without column list is ambiguous";
+                            return false;
+                        }
+                    }
+                    if (!target_table.has_value())
+                    {
+                        err_out = "View '" + view_path +
+                                  "' has no writable columns for INSERT";
+                        return false;
+                    }
+                    chosen_table_index = *target_table;
+                    for (const auto& binding : bindings)
+                    {
+                        if (!binding.writable || binding.table_index != chosen_table_index)
+                        {
+                            continue;
+                        }
+                        mapped_columns_out.push_back(binding.base_column);
+                        view_to_base_column_out[core::IdentifierUtils::toUpper(binding.view_column)] =
+                            binding.base_column;
+                    }
+                    if (mapped_columns_out.empty())
+                    {
+                        err_out = "View '" + view_path +
+                                  "' has no writable column mapping for INSERT";
+                        return false;
+                    }
+                }
+
+                if (chosen_table_index >= base_tables.size())
+                {
+                    err_out = "Failed to resolve base table for view '" + view_path + "'";
+                    return false;
+                }
+                table_info_out = base_tables[chosen_table_index].table_info;
+                return true;
+            };
+
             auto resolveTablespaceId = [&](const std::string& name,
                                            uint16_t& tablespace_id,
                                            std::string& err_out) -> bool {
@@ -41410,15 +42673,50 @@ namespace scratchbird
                         {
                             return Value::makeNull();
                         }
-                        if (!variable_stack_)
+                        if (variable_stack_ && variable_stack_->hasVariable(var_name))
+                        {
+                            return variable_stack_->getVariable(var_name);
+                        }
+
+                        auto lookup_session_var = [&](const std::string& name, std::string& out) -> bool {
+                            if (!conn_ctx_)
+                            {
+                                return false;
+                            }
+                            std::string upper = core::IdentifierUtils::toUpper(name);
+                            if (conn_ctx_->getSessionVariable(upper, out))
+                            {
+                                return true;
+                            }
+                            if (!upper.empty() && upper[0] == '@')
+                            {
+                                if (conn_ctx_->getSessionVariable(upper.substr(1), out))
+                                {
+                                    return true;
+                                }
+                            }
+                            else
+                            {
+                                if (conn_ctx_->getSessionVariable("@" + upper, out))
+                                {
+                                    return true;
+                                }
+                            }
+                            return false;
+                        };
+
+                        std::string session_value;
+                        if (lookup_session_var(var_name, session_value))
+                        {
+                            return Value::makeVarchar(session_value);
+                        }
+
+                        if (!var_name.empty() && var_name[0] == '@')
                         {
                             return Value::makeNull();
                         }
-                        if (!variable_stack_->hasVariable(var_name))
-                        {
-                            return Value::makeNull();
-                        }
-                        return variable_stack_->getVariable(var_name);
+
+                        return Value::makeNull();
                     }
                     case Opcode::SBLR3_EXPR_NOT:
                     case Opcode::SBLR3_BIT_NOT:
@@ -41893,6 +43191,17 @@ namespace scratchbird
                             else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                 result = temporalComparisonKeyMicros(lhs) ==
                                          temporalComparisonKeyMicros(rhs);
+                            else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                     (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                            {
+                                double lhs_cmp = isTemporalType(lhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                    : coerceToDouble(lhs);
+                                double rhs_cmp = isTemporalType(rhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                    : coerceToDouble(rhs);
+                                result = lhs_cmp == rhs_cmp;
+                            }
                             else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                 result = compareIntegerValues(lhs, rhs) == 0;
                             else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -41924,6 +43233,17 @@ namespace scratchbird
                             else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                 result = temporalComparisonKeyMicros(lhs) ==
                                          temporalComparisonKeyMicros(rhs);
+                            else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                     (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                            {
+                                double lhs_cmp = isTemporalType(lhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                    : coerceToDouble(lhs);
+                                double rhs_cmp = isTemporalType(rhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                    : coerceToDouble(rhs);
+                                result = lhs_cmp == rhs_cmp;
+                            }
                             else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                 result = compareIntegerValues(lhs, rhs) == 0;
                             else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -41955,6 +43275,17 @@ namespace scratchbird
                             else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                 result = temporalComparisonKeyMicros(lhs) !=
                                          temporalComparisonKeyMicros(rhs);
+                            else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                     (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                            {
+                                double lhs_cmp = isTemporalType(lhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                    : coerceToDouble(lhs);
+                                double rhs_cmp = isTemporalType(rhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                    : coerceToDouble(rhs);
+                                result = lhs_cmp != rhs_cmp;
+                            }
                             else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                 result = compareIntegerValues(lhs, rhs) != 0;
                             else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -41986,6 +43317,17 @@ namespace scratchbird
                             else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                 result = temporalComparisonKeyMicros(lhs) <
                                          temporalComparisonKeyMicros(rhs);
+                            else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                     (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                            {
+                                double lhs_cmp = isTemporalType(lhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                    : coerceToDouble(lhs);
+                                double rhs_cmp = isTemporalType(rhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                    : coerceToDouble(rhs);
+                                result = lhs_cmp < rhs_cmp;
+                            }
                             else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                 result = compareIntegerValues(lhs, rhs) < 0;
                             else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -42017,6 +43359,17 @@ namespace scratchbird
                             else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                 result = temporalComparisonKeyMicros(lhs) <=
                                          temporalComparisonKeyMicros(rhs);
+                            else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                     (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                            {
+                                double lhs_cmp = isTemporalType(lhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                    : coerceToDouble(lhs);
+                                double rhs_cmp = isTemporalType(rhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                    : coerceToDouble(rhs);
+                                result = lhs_cmp <= rhs_cmp;
+                            }
                             else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                 result = compareIntegerValues(lhs, rhs) <= 0;
                             else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -42048,6 +43401,17 @@ namespace scratchbird
                             else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                 result = temporalComparisonKeyMicros(lhs) >
                                          temporalComparisonKeyMicros(rhs);
+                            else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                     (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                            {
+                                double lhs_cmp = isTemporalType(lhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                    : coerceToDouble(lhs);
+                                double rhs_cmp = isTemporalType(rhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                    : coerceToDouble(rhs);
+                                result = lhs_cmp > rhs_cmp;
+                            }
                             else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                 result = compareIntegerValues(lhs, rhs) > 0;
                             else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -42079,6 +43443,17 @@ namespace scratchbird
                             else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                 result = temporalComparisonKeyMicros(lhs) >=
                                          temporalComparisonKeyMicros(rhs);
+                            else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                     (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                            {
+                                double lhs_cmp = isTemporalType(lhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                    : coerceToDouble(lhs);
+                                double rhs_cmp = isTemporalType(rhs.type())
+                                    ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                    : coerceToDouble(rhs);
+                                result = lhs_cmp >= rhs_cmp;
+                            }
                             else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                 result = compareIntegerValues(lhs, rhs) >= 0;
                             else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -43979,14 +45354,20 @@ namespace scratchbird
                                                              schema_id,
                                                              &schema_ctx,
                                                              true);
-                    if (status != core::Status::OK)
-                    {
-                        std::string err_msg = schema_ctx.message.empty()
-                            ? ("Schema not found for table '" + table_path + "'")
-                            : schema_ctx.message;
-                        return ExecutionResult(err_msg);
-                    }
-                }
+	                    if (status != core::Status::OK)
+	                    {
+	                        std::string err_msg;
+	                        if (schema_ctx.message.empty())
+	                        {
+	                            err_msg = "Schema not found for table '" + table_path + "'";
+	                        }
+	                        else
+	                        {
+	                            err_msg = schema_ctx.message + " (table '" + table_path + "')";
+	                        }
+	                        return ExecutionResult(err_msg);
+	                    }
+	                }
 
                 core::CatalogManager::SchemaInfo schema_info;
                 if (db_->catalog_manager()->getSchema(schema_id, schema_info, &schema_ctx) != core::Status::OK)
@@ -44003,6 +45384,181 @@ namespace scratchbird
                     if (!resolveTablespaceId(tablespace_name, tablespace_id, ts_err))
                     {
                         return ExecutionResult(ts_err);
+                    }
+                }
+
+                auto decodeCreateTableOptionValue =
+                    [&](const scratchbird::sblr::v3::Value& raw, Value& out) -> bool {
+                    scratchbird::sblr::v3::Instruction inst;
+                    if (getInstrFromValue(raw, inst))
+                    {
+                        out = evalExpr(inst);
+                        return true;
+                    }
+                    if (raw.isNull())
+                    {
+                        out = Value::makeNull();
+                        return true;
+                    }
+                    const auto& data = raw.data;
+                    if (auto b = std::get_if<bool>(&data))
+                    {
+                        out = Value::makeBool(*b);
+                        return true;
+                    }
+                    if (auto i = std::get_if<int64_t>(&data))
+                    {
+                        out = Value::makeInt64(*i);
+                        return true;
+                    }
+                    if (auto u = std::get_if<uint64_t>(&data))
+                    {
+                        out = Value::makeUInt64(*u);
+                        return true;
+                    }
+                    if (auto d = std::get_if<double>(&data))
+                    {
+                        out = Value::makeFloat64(*d);
+                        return true;
+                    }
+                    if (auto s = std::get_if<std::string>(&data))
+                    {
+                        out = Value::makeVarchar(*s);
+                        return true;
+                    }
+                    return false;
+                };
+
+                auto parseCreateTableOptionEntries =
+                    [&](const scratchbird::sblr::v3::Value& value,
+                        std::vector<std::pair<std::string, scratchbird::sblr::v3::Value>>& out,
+                        std::string& err) -> bool {
+                    const scratchbird::sblr::v3::Value::List* list = nullptr;
+                    if (auto l = std::get_if<scratchbird::sblr::v3::Value::List>(&value.data))
+                    {
+                        list = l;
+                    }
+                    else if (auto obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data))
+                    {
+                        auto it_items = obj->find("items");
+                        if (it_items != obj->end())
+                        {
+                            list = std::get_if<scratchbird::sblr::v3::Value::List>(
+                                &it_items->second.data);
+                        }
+                        else
+                        {
+                            uint64_t count = 0;
+                            auto it_count = obj->find("count");
+                            if (it_count != obj->end())
+                            {
+                                if (auto c = std::get_if<uint64_t>(&it_count->second.data))
+                                {
+                                    count = *c;
+                                }
+                            }
+                            if (count == 0)
+                            {
+                                return true;
+                            }
+                            auto it_key = obj->find("key");
+                            auto it_value = obj->find("value");
+                            if (it_key == obj->end() || it_value == obj->end())
+                            {
+                                err = "options missing key/value";
+                                return false;
+                            }
+                            const auto* key_str = std::get_if<std::string>(&it_key->second.data);
+                            if (!key_str)
+                            {
+                                err = "options key invalid";
+                                return false;
+                            }
+                            out.emplace_back(*key_str, it_value->second);
+                            return true;
+                        }
+                    }
+                    if (!list)
+                    {
+                        return true;
+                    }
+                    for (const auto& entry : *list)
+                    {
+                        const auto* obj =
+                            std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                        if (!obj)
+                        {
+                            err = "options entry invalid";
+                            return false;
+                        }
+                        std::string key;
+                        if (!getString(*obj, "key", key) || key.empty())
+                        {
+                            uint64_t sentinel_count = 1;
+                            if (getU64(*obj, "count", sentinel_count) &&
+                                sentinel_count == 0)
+                            {
+                                continue;
+                            }
+                            auto value_it = obj->find("value");
+                            if (value_it == obj->end())
+                            {
+                                continue;
+                            }
+                            Value sentinel_value = Value::makeNull();
+                            if (decodeCreateTableOptionValue(value_it->second,
+                                                             sentinel_value) &&
+                                sentinel_value.isNull())
+                            {
+                                continue;
+                            }
+                            err = "options key missing";
+                            return false;
+                        }
+                        auto it_value = obj->find("value");
+                        if (it_value == obj->end())
+                        {
+                            err = "options value missing";
+                            return false;
+                        }
+                        out.emplace_back(std::move(key), it_value->second);
+                    }
+                    return true;
+                };
+
+                std::string like_source_path;
+                auto it_options = payload.find("options");
+                if (it_options != payload.end() && !it_options->second.isNull())
+                {
+                    std::vector<std::pair<std::string, scratchbird::sblr::v3::Value>> option_entries;
+                    std::string option_err;
+                    if (!parseCreateTableOptionEntries(it_options->second, option_entries, option_err))
+                    {
+                        return ExecutionResult("CREATE TABLE " + option_err);
+                    }
+                    for (const auto& kv : option_entries)
+                    {
+                        std::string key =
+                            core::IdentifierUtils::toUpper(trimAsciiCopy(kv.first));
+                        if (key != "LIKE_SOURCE")
+                        {
+                            continue;
+                        }
+                        Value scalar = Value::makeNull();
+                        if (!decodeCreateTableOptionValue(kv.second, scalar))
+                        {
+                            return ExecutionResult(
+                                "CREATE TABLE option value is invalid for key '" + kv.first + "'");
+                        }
+                        if (!scalar.isNull())
+                        {
+                            like_source_path = trimAsciiCopy(scalar.toString());
+                            if (like_source_path.empty())
+                            {
+                                return ExecutionResult(
+                                    "CREATE TABLE LIKE source cannot be empty");
+                            }
+                        }
                     }
                 }
 
@@ -44031,6 +45587,120 @@ namespace scratchbird
                         }
                         columns.push_back(std::move(col_info));
                         ordinal++;
+                    }
+                }
+
+                ExecutionResult ctas_exec_result;
+                ResultSet* ctas_result_set = nullptr;
+                auto it_query = payload.find("query");
+                if (it_query != payload.end() && !it_query->second.isNull())
+                {
+                    scratchbird::sblr::v3::Instruction query_inst;
+                    if (!getInstrFromValue(it_query->second, query_inst))
+                    {
+                        return ExecutionResult("CREATE TABLE query payload invalid");
+                    }
+                    if (static_cast<scratchbird::sblr::v3::Opcode>(query_inst.opcode) !=
+                        scratchbird::sblr::v3::Opcode::SBLR3_SELECT)
+                    {
+                        return ExecutionResult("CREATE TABLE query must be a SELECT statement");
+                    }
+
+                    std::vector<uint8_t> query_bytecode;
+                    std::string enc_err;
+                    if (!buildV3ContainerBytes(query_inst, query_bytecode, enc_err))
+                    {
+                        return ExecutionResult("CREATE TABLE query encode failed: " + enc_err);
+                    }
+                    Executor nested(db_);
+                    if (conn_ctx_)
+                    {
+                        nested.setConnectionContext(conn_ctx_);
+                    }
+                    ctas_exec_result = nested.execute(query_bytecode);
+                    if (!ctas_exec_result.success())
+                    {
+                        return ctas_exec_result;
+                    }
+                    if (!ctas_exec_result.hasResultSet() || !ctas_exec_result.resultSet())
+                    {
+                        return ExecutionResult("CREATE TABLE AS SELECT requires a query result set");
+                    }
+
+                    ctas_result_set = ctas_exec_result.resultSet();
+                    if (columns.empty())
+                    {
+                        size_t col_count = ctas_result_set->columnCount();
+                        columns.reserve(col_count);
+                        for (size_t i = 0; i < col_count; ++i)
+                        {
+                            core::CatalogManager::ColumnInfo col_info;
+                            std::string col_name = ctas_result_set->columnName(i);
+                            if (col_name.empty())
+                            {
+                                col_name = "column" + std::to_string(i + 1);
+                            }
+                            col_info.column_name = col_name;
+                            col_info.ordinal = static_cast<uint16_t>(i + 1);
+                            col_info.data_type =
+                                static_cast<uint16_t>(ctas_result_set->columnType(i));
+                            col_info.nullable = true;
+                            col_info.domain_id = core::ID{};
+                            columns.push_back(std::move(col_info));
+                        }
+                    }
+                    else if (ctas_result_set->columnCount() != columns.size())
+                    {
+                        return ExecutionResult(
+                            "CREATE TABLE AS SELECT column count does not match table definition");
+                    }
+                }
+
+                if (!like_source_path.empty())
+                {
+                    if (!columns.empty())
+                    {
+                        return ExecutionResult(
+                            "CREATE TABLE LIKE cannot include explicit column definitions");
+                    }
+                    if (it_query != payload.end() && !it_query->second.isNull())
+                    {
+                        return ExecutionResult(
+                            "CREATE TABLE LIKE cannot include SELECT");
+                    }
+
+                    core::CatalogManager::TableInfo source_table_info;
+                    std::string source_err;
+                    if (!resolveTableId(like_source_path,
+                                        source_table_info,
+                                        source_err,
+                                        false))
+                    {
+                        return ExecutionResult(source_err);
+                    }
+
+                    core::ErrorContext source_cols_ctx;
+                    status = db_->catalog_manager()->getColumns(source_table_info.table_id,
+                                                                columns,
+                                                                &source_cols_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg =
+                            "Failed to load CREATE TABLE LIKE source '" + like_source_path + "'";
+                        if (!source_cols_ctx.message.empty())
+                        {
+                            err_msg += ": " + source_cols_ctx.message;
+                        }
+                        return ExecutionResult(err_msg);
+                    }
+
+                    for (size_t i = 0; i < columns.size(); ++i)
+                    {
+                        auto& col = columns[i];
+                        col.table_id = core::ID{};
+                        col.column_id = core::ID{};
+                        col.ordinal = static_cast<uint16_t>(i + 1);
+                        col.created_time = 0;
                     }
                 }
 
@@ -44123,6 +45793,53 @@ namespace scratchbird
                     {
                         paths.insert(paths.begin(), temp_schema_path);
                         conn_ctx->set_search_path(paths);
+                    }
+                }
+
+                if (ctas_result_set)
+                {
+                    size_t row_count = ctas_result_set->rowCount();
+                    size_t col_count = ctas_result_set->columnCount();
+                    for (size_t row_idx = 0; row_idx < row_count; ++row_idx)
+                    {
+                        std::vector<Value> row_values;
+                        row_values.reserve(col_count);
+                        for (size_t col_idx = 0; col_idx < col_count; ++col_idx)
+                        {
+                            row_values.push_back(ctas_result_set->getValue(row_idx, col_idx));
+                        }
+
+                        std::vector<uint8_t> tuple_data;
+                        core::ErrorContext serialize_ctx;
+                        if (!serializeTupleFromValues(row_values, columns, tuple_data, &serialize_ctx))
+                        {
+                            std::string err_msg = "Failed to serialize CREATE TABLE AS row";
+                            if (!serialize_ctx.message.empty())
+                            {
+                                err_msg += ": " + serialize_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+
+                        uint32_t page_id = 0;
+                        uint16_t item_id = 0;
+                        core::ErrorContext insert_ctx;
+                        status = db_->storage_engine()->insertTuple(
+                            table_id,
+                            tuple_data.data(),
+                            static_cast<uint32_t>(tuple_data.size()),
+                            &page_id,
+                            &item_id,
+                            &insert_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to insert CREATE TABLE AS row";
+                            if (!insert_ctx.message.empty())
+                            {
+                                err_msg += ": " + insert_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
                     }
                 }
 
@@ -46536,6 +48253,85 @@ namespace scratchbird
                                     }
                                 }
 
+                                std::vector<std::string> join_clauses;
+                                auto it_joins = qobj->find("joins");
+                                if (it_joins != qobj->end())
+                                {
+                                    if (const auto* joins =
+                                            std::get_if<scratchbird::sblr::v3::Value::List>(&it_joins->second.data))
+                                    {
+                                        for (const auto& join_entry : *joins)
+                                        {
+                                            const auto* join_obj =
+                                                std::get_if<scratchbird::sblr::v3::Value::Object>(&join_entry.data);
+                                            if (!join_obj)
+                                            {
+                                                continue;
+                                            }
+
+                                            std::string right_name;
+                                            auto it_right = join_obj->find("right");
+                                            if (it_right != join_obj->end())
+                                            {
+                                                const auto* right_obj =
+                                                    std::get_if<scratchbird::sblr::v3::Value::Object>(
+                                                        &it_right->second.data);
+                                                if (right_obj)
+                                                {
+                                                    auto it_path = right_obj->find("table_path");
+                                                    if (it_path != right_obj->end())
+                                                    {
+                                                        right_name = v3SchemaPathToString(it_path->second);
+                                                    }
+                                                }
+                                            }
+                                            if (right_name.empty())
+                                            {
+                                                continue;
+                                            }
+
+                                            std::ostringstream join_sql;
+                                            join_sql << " JOIN " << right_name;
+                                            bool has_using = false;
+                                            auto it_using = join_obj->find("using");
+                                            if (it_using != join_obj->end())
+                                            {
+                                                if (const auto* using_cols =
+                                                        std::get_if<scratchbird::sblr::v3::Value::List>(
+                                                            &it_using->second.data);
+                                                    using_cols && !using_cols->empty())
+                                                {
+                                                    join_sql << " USING (";
+                                                    bool first_col = true;
+                                                    for (const auto& col_entry : *using_cols)
+                                                    {
+                                                        if (const auto* col_name =
+                                                                std::get_if<std::string>(&col_entry.data))
+                                                        {
+                                                            if (!first_col)
+                                                            {
+                                                                join_sql << ", ";
+                                                            }
+                                                            first_col = false;
+                                                            join_sql << *col_name;
+                                                        }
+                                                    }
+                                                    join_sql << ")";
+                                                    has_using = true;
+                                                }
+                                            }
+                                            if (!has_using)
+                                            {
+                                                // Keep a deterministic placeholder when join predicates are encoded
+                                                // as V3 instructions that cannot be rendered back to SQL text here.
+                                                join_sql << " ON TRUE";
+                                            }
+
+                                            join_clauses.push_back(join_sql.str());
+                                        }
+                                    }
+                                }
+
                                 if (!select_items.empty() && !from_name.empty())
                                 {
                                     std::ostringstream oss;
@@ -46549,6 +48345,10 @@ namespace scratchbird
                                         oss << select_items[i];
                                     }
                                     oss << " FROM " << from_name;
+                                    for (const auto& join_sql : join_clauses)
+                                    {
+                                        oss << join_sql;
+                                    }
                                     definition = oss.str();
                                 }
                             }
@@ -46946,21 +48746,85 @@ namespace scratchbird
                     return ExecutionResult("DROP missing object path");
                 }
 
+                auto splitDropTargets = [&path]() -> std::vector<std::string> {
+                    auto trim = [](std::string& value) {
+                        size_t begin = 0;
+                        while (begin < value.size() &&
+                               std::isspace(static_cast<unsigned char>(value[begin])))
+                        {
+                            ++begin;
+                        }
+                        size_t end = value.size();
+                        while (end > begin &&
+                               std::isspace(static_cast<unsigned char>(value[end - 1])))
+                        {
+                            --end;
+                        }
+                        value = value.substr(begin, end - begin);
+                    };
+
+                    std::vector<std::string> drop_targets;
+                    size_t cursor = 0;
+                    while (cursor <= path.size())
+                    {
+                        size_t comma = path.find(',', cursor);
+                        std::string target = (comma == std::string::npos)
+                            ? path.substr(cursor)
+                            : path.substr(cursor, comma - cursor);
+                        trim(target);
+                        if (!target.empty())
+                        {
+                            drop_targets.push_back(std::move(target));
+                        }
+                        if (comma == std::string::npos)
+                        {
+                            break;
+                        }
+                        cursor = comma + 1;
+                    }
+                    if (drop_targets.empty())
+                    {
+                        drop_targets.push_back(path);
+                    }
+                    return drop_targets;
+                };
+
                 if (opcode == static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE))
                 {
-                    core::CatalogManager::TableInfo table_info;
-                    std::string err_out;
-                    if (!resolveTableId(path, table_info, err_out))
+                    std::vector<std::string> drop_targets = splitDropTargets();
+
+                    for (const auto& target : drop_targets)
                     {
-                        return ExecutionResult(err_out);
+                        core::CatalogManager::TableInfo table_info;
+                        std::string err_out;
+                        if (!resolveTableId(target, table_info, err_out))
+                        {
+                            return ExecutionResult(err_out.empty()
+                                                       ? ("DROP TABLE resolve failed: " + target)
+                                                       : ("DROP TABLE resolve failed for " + target + ": " + err_out));
+                        }
+
+                        core::ErrorContext ctx;
+                        auto status = db_->catalog_manager()->dropTable(table_info.table_id, true, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            if (ctx.message.empty())
+                            {
+                                core::CatalogManager::TableInfo post_table{};
+                                core::ErrorContext post_ctx;
+                                auto post_status = db_->catalog_manager()->getTable(
+                                    table_info.table_id, post_table, &post_ctx);
+                                return ExecutionResult(
+                                    "DROP TABLE failed for " + target +
+                                    " id=" + table_info.table_id.toString() +
+                                    " (status " + std::to_string(static_cast<int>(status)) + ")" +
+                                    " post_status=" + std::to_string(static_cast<int>(post_status)) +
+                                    (post_ctx.message.empty() ? std::string() : (" post_msg=" + post_ctx.message)));
+                            }
+                            return ExecutionResult("DROP TABLE failed for " + target + ": " + ctx.message);
+                        }
+                        deleteObjectDefinition(core::CatalogManager::ObjectType::TABLE, table_info.table_id);
                     }
-                    core::ErrorContext ctx;
-                    auto status = db_->catalog_manager()->dropTable(table_info.table_id, true, &ctx);
-                    if (status != core::Status::OK)
-                    {
-                        return ExecutionResult(ctx.message.empty() ? "DROP TABLE failed" : ctx.message);
-                    }
-                    deleteObjectDefinition(core::CatalogManager::ObjectType::TABLE, table_info.table_id);
                     return ExecutionResult();
                 }
 
@@ -46982,6 +48846,35 @@ namespace scratchbird
                         return ExecutionResult(ctx.message.empty() ? "DROP INDEX failed" : ctx.message);
                     }
                     deleteObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);
+                    return ExecutionResult();
+                }
+
+                if (opcode == static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_DROP_VIEW))
+                {
+                    std::vector<std::string> drop_targets = splitDropTargets();
+                    for (const auto& target : drop_targets)
+                    {
+                        core::ErrorContext ctx;
+                        core::ID view_id;
+                        core::CatalogManager::ObjectType resolved_type;
+                        auto status = resolveObjectIdForQualifiedName(
+                            target, core::CatalogManager::ObjectType::VIEW,
+                            view_id, resolved_type, nullptr, &ctx, false);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty()
+                                                       ? ("View not found: " + target)
+                                                       : ctx.message);
+                        }
+                        status = db_->catalog_manager()->dropView(view_id, false, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty()
+                                                       ? ("DROP VIEW failed for " + target)
+                                                       : ctx.message);
+                        }
+                        deleteObjectDefinition(core::CatalogManager::ObjectType::VIEW, view_id);
+                    }
                     return ExecutionResult();
                 }
 
@@ -52699,7 +54592,180 @@ namespace scratchbird
                             std::string err;
                             if (!resolveTableId(path, info, err))
                             {
-                                return ExecutionResult(err);
+                                core::ErrorContext view_ctx;
+                                core::ID view_id{};
+                                core::CatalogManager::ObjectType resolved_type =
+                                    core::CatalogManager::ObjectType::UNKNOWN;
+                                auto tryResolveView = [&](const std::string& candidate,
+                                                          bool allow_search_path) -> bool {
+                                    resolved_type = core::CatalogManager::ObjectType::UNKNOWN;
+                                    return resolveObjectIdForQualifiedName(
+                                               candidate,
+                                               core::CatalogManager::ObjectType::VIEW,
+                                               view_id,
+                                               resolved_type,
+                                               nullptr,
+                                               &view_ctx,
+                                               allow_search_path) == core::Status::OK;
+                                };
+                                std::string resolved_view_path = path;
+                                bool resolved_view = tryResolveView(path, true);
+                                if (!resolved_view &&
+                                    path.find('.') == std::string::npos &&
+                                    conn_ctx_)
+                                {
+                                    for (const auto& schema_path : conn_ctx_->search_path())
+                                    {
+                                        if (schema_path.empty())
+                                        {
+                                            continue;
+                                        }
+                                        std::string candidate = schema_path + "." + path;
+                                        if (tryResolveView(candidate, false))
+                                        {
+                                            resolved_view_path = std::move(candidate);
+                                            resolved_view = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (!resolved_view)
+                                {
+                                    std::string detail = view_ctx.message.empty() ? err : view_ctx.message;
+                                    return ExecutionResult(
+                                        "Table or view not found: " + path +
+                                        (detail.empty() ? "" : (" (" + detail + ")")));
+                                }
+
+                                core::CatalogManager::ViewInfo view_info;
+                                if (db_->catalog_manager()->getViewById(view_id, view_info, &view_ctx) !=
+                                    core::Status::OK)
+                                {
+                                    return ExecutionResult(
+                                        view_ctx.message.empty()
+                                            ? ("Failed to resolve view '" + path + "'")
+                                            : view_ctx.message);
+                                }
+
+                                if (view_info.materialized &&
+                                    view_info.materialized_table_id != core::ID{} &&
+                                    db_->catalog_manager()->getTable(
+                                        view_info.materialized_table_id,
+                                        info,
+                                        &view_ctx) == core::Status::OK)
+                                {
+                                    // Continue as a regular table load against the materialized storage table.
+                                }
+                                else
+                                {
+                                    parser::v3::Parser view_parser(view_info.definition);
+                                    auto parse_result = view_parser.parseStatement();
+                                    if (!parse_result.success() || parse_result.statement() == nullptr)
+                                    {
+                                        if (!parse_result.errors().empty())
+                                        {
+                                            return ExecutionResult(
+                                                "Failed to parse view definition for '" + path + "': " +
+                                                parse_result.errors().front().message);
+                                        }
+                                        return ExecutionResult(
+                                            "Failed to parse view definition for '" + path + "'");
+                                    }
+
+                                    parser::v3::V3Emitter view_emitter(view_parser.stringPool());
+                                    scratchbird::sblr::v3::Container view_container;
+                                    std::string emit_err;
+                                    if (!view_emitter.emitStatementToContainer(
+                                            parse_result.statement(),
+                                            view_container,
+                                            emit_err))
+                                    {
+                                        return ExecutionResult(
+                                            emit_err.empty()
+                                                ? ("Failed to emit view definition for '" + path + "'")
+                                                : emit_err);
+                                    }
+
+                                    std::vector<scratchbird::sblr::v3::Instruction> view_instructions;
+                                    size_t offset = 0;
+                                    scratchbird::sblr::v3::DecodeError derr;
+                                    while (offset < view_container.bytecode_stream.size())
+                                    {
+                                        scratchbird::sblr::v3::Instruction inst;
+                                        if (!scratchbird::sblr::v3::decodeInstructionWithSchema(
+                                                view_container.bytecode_stream.data(),
+                                                view_container.bytecode_stream.size(),
+                                                offset,
+                                                inst,
+                                                derr))
+                                        {
+                                            return ExecutionResult(
+                                                derr.message.empty()
+                                                    ? ("Failed to decode view definition for '" + path + "'")
+                                                    : derr.message);
+                                        }
+                                        view_instructions.push_back(std::move(inst));
+                                    }
+
+                                    std::optional<scratchbird::sblr::v3::Instruction> view_stmt_inst;
+                                    for (const auto& inst : view_instructions)
+                                    {
+                                        auto op =
+                                            static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode);
+                                        if (op == scratchbird::sblr::v3::Opcode::SBLR3_VERSION ||
+                                            op == scratchbird::sblr::v3::Opcode::SBLR3_END)
+                                        {
+                                            continue;
+                                        }
+                                        view_stmt_inst = inst;
+                                        break;
+                                    }
+                                    if (!view_stmt_inst.has_value())
+                                    {
+                                        return ExecutionResult(
+                                            "View '" + path + "' has no executable statement");
+                                    }
+
+                                    auto view_res = execStmt(*view_stmt_inst);
+                                    if (!view_res.success())
+                                    {
+                                        return view_res;
+                                    }
+                                    if (!view_res.hasResultSet() || !view_res.resultSet())
+                                    {
+                                        return ExecutionResult(
+                                            "View query did not produce a result set: " + path);
+                                    }
+
+                                    auto* view_rs = view_res.resultSet();
+                                    TableData view_table;
+                                    view_table.info.table_id = view_id;
+                                    view_table.info.table_name = path;
+                                    view_table.alias = alias.empty() ? path : alias;
+                                    view_table.columns.reserve(view_rs->columnCount());
+                                    for (size_t i = 0; i < view_rs->columnCount(); ++i)
+                                    {
+                                        core::CatalogManager::ColumnInfo col;
+                                        col.column_name = view_rs->columnName(i);
+                                        col.data_type =
+                                            static_cast<uint16_t>(view_rs->columnType(i));
+                                        col.nullable = true;
+                                        view_table.columns.push_back(std::move(col));
+                                    }
+                                    view_table.rows.reserve(view_rs->rowCount());
+                                    for (size_t r = 0; r < view_rs->rowCount(); ++r)
+                                    {
+                                        std::vector<Value> row_values;
+                                        row_values.reserve(view_rs->columnCount());
+                                        for (size_t c = 0; c < view_rs->columnCount(); ++c)
+                                        {
+                                            row_values.push_back(view_rs->getValue(r, c));
+                                        }
+                                        view_table.rows.push_back(std::move(row_values));
+                                    }
+                                    out = std::move(view_table);
+                                    return ExecutionResult();
+                                }
                             }
                             std::vector<core::CatalogManager::ColumnInfo> cols;
                             if (db_->catalog_manager()->getColumns(info.table_id, cols, nullptr) != core::Status::OK)
@@ -53408,6 +55474,11 @@ namespace scratchbird
                             has_grouping_sets = true;
                         }
 
+                        const bool mysql_relaxed_group_by =
+                            v3_mysql_module ||
+                            (conn_ctx_ &&
+                             toUpperAsciiCopy(conn_ctx_->dialect_tag()) == "MYSQL");
+
                         if (has_agg || !group_exprs.empty() || has_grouping_sets)
                         {
                             for (const auto& set : grouping_sets)
@@ -53440,19 +55511,22 @@ namespace scratchbird
                                         }
                                         if (containsColumnRef(proj.expr) && !containsAggregate(proj.expr))
                                         {
-                                            std::unordered_set<std::string> refs;
-                                            collectColumnRefs(proj.expr, refs);
-                                            for (const auto& ref : refs)
+                                            if (!mysql_relaxed_group_by)
                                             {
-                                                if (group_col_set.find(ref) == group_col_set.end())
+                                                std::unordered_set<std::string> refs;
+                                                collectColumnRefs(proj.expr, refs);
+                                                for (const auto& ref : refs)
                                                 {
-                                                    return ExecutionResult("V3 SELECT aggregation requires grouped columns for projection: " + ref);
+                                                    if (group_col_set.find(ref) == group_col_set.end())
+                                                    {
+                                                        return ExecutionResult("V3 SELECT aggregation requires grouped columns for projection: " + ref);
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                else if (!set.empty())
+                                else if (!set.empty() && !mysql_relaxed_group_by)
                                 {
                                     for (const auto& proj : projections)
                                     {
@@ -54494,18 +56568,48 @@ namespace scratchbird
                         return ExecutionResult(std::move(out_rs));
                     }
                     case Opcode::SBLR3_INSERT: {
-                        {
-                        }
                         std::string table_path;
                         if (!getSchemaPathString(payload, "target", table_path))
                         {
                             return ExecutionResult("V3 INSERT missing target");
                         }
+
+                        std::vector<std::string> column_names;
+                        auto it_cols = payload.find("columns");
+                        if (it_cols != payload.end())
+                        {
+                            if (const auto* list =
+                                    std::get_if<scratchbird::sblr::v3::Value::List>(&it_cols->second.data))
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    if (auto s = std::get_if<std::string>(&entry.data))
+                                    {
+                                        column_names.push_back(*s);
+                                    }
+                                }
+                            }
+                        }
+
                         core::CatalogManager::TableInfo table_info;
+                        bool insert_target_rewritten_from_view = false;
+                        std::unordered_map<std::string, std::string> view_to_base_column;
                         std::string table_err;
                         if (!resolveTableId(table_path, table_info, table_err))
                         {
-                            return ExecutionResult(table_err);
+                            std::vector<std::string> mapped_columns;
+                            std::string view_err;
+                            if (!resolveInsertTargetFromView(table_path,
+                                                             column_names,
+                                                             table_info,
+                                                             mapped_columns,
+                                                             view_to_base_column,
+                                                             view_err))
+                            {
+                                return ExecutionResult(view_err.empty() ? table_err : view_err);
+                            }
+                            column_names = std::move(mapped_columns);
+                            insert_target_rewritten_from_view = true;
                         }
 
                         uint64_t source = 0;
@@ -54593,22 +56697,6 @@ namespace scratchbird
                                 err_msg += ": " + insert_trigger_ctx.message;
                             }
                             return ExecutionResult(err_msg);
-                        }
-
-                        std::vector<std::string> column_names;
-                        auto it_cols = payload.find("columns");
-                        if (it_cols != payload.end())
-                        {
-                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_cols->second.data))
-                            {
-                                for (const auto& entry : *list)
-                                {
-                                    if (auto s = std::get_if<std::string>(&entry.data))
-                                    {
-                                        column_names.push_back(*s);
-                                    }
-                                }
-                            }
                         }
                         if (column_names.empty() && source != 3)
                         {
@@ -54716,7 +56804,17 @@ namespace scratchbird
                                         std::string col_name;
                                         if (!getString(*aobj, "column", col_name))
                                         {
-                                            return ExecutionResult("V3 INSERT on_conflict assignment missing column");
+                                            auto it_col = aobj->find("column");
+                                            if (it_col == aobj->end())
+                                            {
+                                                return ExecutionResult("V3 INSERT on_conflict assignment missing column");
+                                            }
+                                            const auto* col_obj =
+                                                std::get_if<scratchbird::sblr::v3::Value::Object>(&it_col->second.data);
+                                            if (!col_obj || !getString(*col_obj, "column", col_name))
+                                            {
+                                                return ExecutionResult("V3 INSERT on_conflict assignment column invalid");
+                                            }
                                         }
                                         auto it_val = aobj->find("value");
                                         if (it_val == aobj->end())
@@ -54740,6 +56838,25 @@ namespace scratchbird
                                 {
                                     on_conflict.has_where = true;
                                 }
+                            }
+                        }
+                        if (insert_target_rewritten_from_view && !view_to_base_column.empty())
+                        {
+                            auto remap_conflict_column = [&](std::string& column_name) {
+                                auto it = view_to_base_column.find(
+                                    core::IdentifierUtils::toUpper(column_name));
+                                if (it != view_to_base_column.end())
+                                {
+                                    column_name = it->second;
+                                }
+                            };
+                            for (auto& col_name : on_conflict.target_cols)
+                            {
+                                remap_conflict_column(col_name);
+                            }
+                            for (auto& assign : on_conflict.assignments)
+                            {
+                                remap_conflict_column(assign.first);
                             }
                         }
 
@@ -54828,12 +56945,45 @@ namespace scratchbird
                             {
                                 bool ok = false;
                                 Value v = evalV3ExprHex(col.default_expr, row_values, columns, ok);
-                                if (ok)
+                                if (ok && !v.isNull())
                                 {
                                     return v;
                                 }
                             }
-                            return evaluateDefaultValue(col);
+                            Value fallback = evaluateDefaultValue(col);
+                            if (!fallback.isNull())
+                            {
+                                return fallback;
+                            }
+
+                            const bool mysql_default_semantics =
+                                v3_mysql_module ||
+                                (conn_ctx_ &&
+                                 toUpperAsciiCopy(conn_ctx_->dialect_tag()) == "MYSQL");
+                            if (mysql_default_semantics)
+                            {
+                                core::DataType dtype =
+                                    static_cast<core::DataType>(col.data_type);
+                                if ((dtype == core::DataType::TIMESTAMP ||
+                                     dtype == core::DataType::TIMESTAMP_WITH_ZONE ||
+                                     dtype == core::DataType::TIMESTAMP_NS) &&
+                                    (col.has_default || !col.default_expr.empty() ||
+                                     !col.default_value.empty()))
+                                {
+                                    auto now = std::chrono::system_clock::now();
+                                    int64_t gmt_micros =
+                                        std::chrono::duration_cast<std::chrono::microseconds>(
+                                            now.time_since_epoch()).count();
+                                    uint16_t tz_id = db_ ? db_->getConnectionTimezone()
+                                                         : timezone_manager_.getDefaultTimezone();
+                                    core::TimezoneOffset offset = timezone_manager_.getOffset(
+                                        tz_id, static_cast<int64_t>(gmt_micros));
+                                    int32_t offset_seconds = offset.offset_minutes * 60;
+                                    return Value::makeTimestamp(gmt_micros, offset_seconds);
+                                }
+                            }
+
+                            return fallback;
                         };
 
                         auto evalGeneratedForColumn = [&](const core::CatalogManager::ColumnInfo& col,
@@ -54949,6 +57099,11 @@ namespace scratchbird
                             return false;
                         };
 
+                        const bool mysql_dialect =
+                            v3_mysql_module ||
+                            (conn_ctx_ &&
+                             toUpperAsciiCopy(conn_ctx_->dialect_tag()) == "MYSQL");
+
                         std::vector<std::vector<size_t>> conflict_keys;
                         if (on_conflict.action != OnConflictSpec::Action::NONE)
                         {
@@ -54975,19 +57130,167 @@ namespace scratchbird
                             }
                             if (conflict_keys.empty())
                             {
-                                return ExecutionResult("V3 INSERT ON CONFLICT requires target columns or unique constraint");
+                                if (mysql_dialect)
+                                {
+                                    on_conflict.action = OnConflictSpec::Action::NONE;
+                                }
+                                else
+                                {
+                                    return ExecutionResult("V3 INSERT ON CONFLICT requires target columns or unique constraint");
+                                }
                             }
                         }
 
+                        auto mysqlImplicitValueForColumn =
+                            [&](const core::CatalogManager::ColumnInfo& col) -> Value {
+                            if (col.nullable)
+                            {
+                                return Value::makeNull();
+                            }
+                            switch (static_cast<core::DataType>(col.data_type))
+                            {
+                                case core::DataType::BOOLEAN:
+                                    return Value::makeBool(false);
+                                case core::DataType::INT8:
+                                    return Value::makeInt8(0);
+                                case core::DataType::INT16:
+                                    return Value::makeInt16(0);
+                                case core::DataType::INT32:
+                                    return Value::makeInt32(0);
+                                case core::DataType::INT64:
+                                    return Value::makeInt64(0);
+                                case core::DataType::UINT8:
+                                    return Value::makeUInt8(0);
+                                case core::DataType::UINT16:
+                                    return Value::makeUInt16(0);
+                                case core::DataType::UINT32:
+                                    return Value::makeUInt32(0);
+                                case core::DataType::UINT64:
+                                    return Value::makeUInt64(0);
+                                case core::DataType::FLOAT32:
+                                    return Value::makeFloat32(0.0f);
+                                case core::DataType::FLOAT64:
+                                case core::DataType::DECIMAL:
+                                case core::DataType::DECFLOAT16:
+                                case core::DataType::DECFLOAT34:
+                                case core::DataType::DECIMAL256:
+                                case core::DataType::MONEY:
+                                    return Value::makeFloat64(0.0);
+                                case core::DataType::CHAR:
+                                case core::DataType::VARCHAR:
+                                case core::DataType::TEXT:
+                                case core::DataType::BLOB_SUB_TYPE_TEXT:
+                                    return Value::makeVarchar("");
+                                case core::DataType::DATE:
+                                    return Value::makeDate(0);
+                                case core::DataType::TIME:
+                                case core::DataType::TIME_WITH_ZONE:
+                                    return Value::makeTime(0);
+                                case core::DataType::TIMESTAMP:
+                                case core::DataType::TIMESTAMP_WITH_ZONE:
+                                case core::DataType::TIMESTAMP_NS:
+                                    return Value::makeTimestamp(0);
+                                default:
+                                    return Value::makeNull();
+                            }
+                        };
+
+                        auto normalizeMySqlTimestampValue =
+                            [&](const core::CatalogManager::ColumnInfo& col,
+                                Value& candidate) {
+                            if (!mysql_dialect || candidate.isNull())
+                            {
+                                return;
+                            }
+                            core::DataType target_type =
+                                static_cast<core::DataType>(col.data_type);
+                            if (target_type != core::DataType::TIMESTAMP &&
+                                target_type != core::DataType::TIMESTAMP_WITH_ZONE &&
+                                target_type != core::DataType::TIMESTAMP_NS)
+                            {
+                                return;
+                            }
+                            std::string formatted;
+                            if (!formatMySqlCompactTimestampLiteral(candidate, formatted))
+                            {
+                                return;
+                            }
+                            candidate = Value::makeVarchar(formatted);
+                        };
+
                         int inserted = 0;
                         int updated = 0;
-                        auto process_row = [&](std::vector<Value>&& row_values) -> ExecutionResult {
+                        auto process_row = [&](std::vector<Value>&& row_values,
+                                              const std::vector<bool>* explicit_default_cols,
+                                              const std::vector<bool>* explicit_value_cols) -> ExecutionResult {
                             std::vector<bool> provided(all_columns.size(), false);
-                            for (size_t idx : col_indices)
+                            if (explicit_value_cols)
                             {
-                                if (idx < provided.size())
+                                const size_t limit =
+                                    std::min(provided.size(), explicit_value_cols->size());
+                                for (size_t idx = 0; idx < limit; ++idx)
                                 {
-                                    provided[idx] = true;
+                                    if ((*explicit_value_cols)[idx])
+                                    {
+                                        provided[idx] = true;
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                for (size_t idx : col_indices)
+                                {
+                                    if (idx < provided.size())
+                                    {
+                                        provided[idx] = true;
+                                    }
+                                }
+                            }
+                            if (explicit_default_cols)
+                            {
+                                const size_t limit =
+                                    std::min(provided.size(), explicit_default_cols->size());
+                                for (size_t idx = 0; idx < limit; ++idx)
+                                {
+                                    if ((*explicit_default_cols)[idx])
+                                    {
+                                        provided[idx] = false;
+                                    }
+                                }
+                            }
+
+                            if (mysql_dialect)
+                            {
+                                for (size_t idx = 0; idx < all_columns.size(); ++idx)
+                                {
+                                    if (!row_values[idx].isNull())
+                                    {
+                                        continue;
+                                    }
+                                    const auto& col = all_columns[idx];
+                                    if (col.generated_type ==
+                                        core::CatalogManager::GeneratedColumnType::STORED)
+                                    {
+                                        continue;
+                                    }
+                                    if (col.has_default ||
+                                        !col.default_expr.empty() ||
+                                        !col.default_value.empty())
+                                    {
+                                        row_values[idx] =
+                                            evalDefaultForColumn(col, row_values, all_columns);
+                                        continue;
+                                    }
+                                    if (domain_defaults[idx].has_default)
+                                    {
+                                        auto temp_col = col;
+                                        temp_col.has_default = true;
+                                        temp_col.default_value = domain_defaults[idx].value;
+                                        row_values[idx] =
+                                            evalDefaultForColumn(temp_col, row_values, all_columns);
+                                        continue;
+                                    }
+                                    row_values[idx] = mysqlImplicitValueForColumn(col);
                                 }
                             }
 
@@ -55074,6 +57377,10 @@ namespace scratchbird
                                     row_values[idx] = evalDefaultForColumn(temp_col, row_values, all_columns);
                                     continue;
                                 }
+                                if (mysql_dialect && !row_values[idx].isNull())
+                                {
+                                    continue;
+                                }
                                 if (!col.nullable)
                                 {
                                     return ExecutionResult("V3 INSERT missing value for NOT NULL column: " + col.column_name);
@@ -55108,6 +57415,7 @@ namespace scratchbird
                                 {
                                     continue;
                                 }
+                                normalizeMySqlTimestampValue(col, row_values[i]);
                                 core::TypedValue coerced;
                                 core::ErrorContext cast_ctx;
                                 if (!coerceValueForColumn(row_values[i], col, coerced, &cast_ctx))
@@ -55201,10 +57509,29 @@ namespace scratchbird
                                 {
                                     continue;
                                 }
+                                normalizeMySqlTimestampValue(all_columns[i], row_values[i]);
                                 core::TypedValue coerced;
                                 core::ErrorContext cast_ctx;
                                 if (!coerceValueForColumn(row_values[i], all_columns[i], coerced, &cast_ctx))
                                 {
+                                    if (mysql_dialect &&
+                                        tryCoerceMySqlZeroTemporal(
+                                            row_values[i],
+                                            static_cast<core::DataType>(all_columns[i].data_type),
+                                            coerced))
+                                    {
+                                        row_values[i] = std::move(coerced);
+                                        continue;
+                                    }
+                                    if (mysql_dialect &&
+                                        tryCoerceMySqlIntegerByTruncation(
+                                            row_values[i],
+                                            static_cast<core::DataType>(all_columns[i].data_type),
+                                            coerced))
+                                    {
+                                        row_values[i] = std::move(coerced);
+                                        continue;
+                                    }
                                     std::string err_msg = "Type mismatch for column '" + all_columns[i].column_name + "'";
                                     if (!cast_ctx.message.empty())
                                     {
@@ -55615,6 +57942,24 @@ namespace scratchbird
                                             core::ErrorContext cast_ctx;
                                             if (!coerceValueForColumn(new_values[i], all_columns[i], coerced, &cast_ctx))
                                             {
+                                                if (mysql_dialect &&
+                                                    tryCoerceMySqlZeroTemporal(
+                                                        new_values[i],
+                                                        static_cast<core::DataType>(all_columns[i].data_type),
+                                                        coerced))
+                                                {
+                                                    new_values[i] = std::move(coerced);
+                                                    continue;
+                                                }
+                                                if (mysql_dialect &&
+                                                    tryCoerceMySqlIntegerByTruncation(
+                                                        new_values[i],
+                                                        static_cast<core::DataType>(all_columns[i].data_type),
+                                                        coerced))
+                                                {
+                                                    new_values[i] = std::move(coerced);
+                                                    continue;
+                                                }
                                                 std::string err_msg = "Type mismatch for column '" + all_columns[i].column_name + "'";
                                                 if (!cast_ctx.message.empty())
                                                 {
@@ -56059,7 +58404,7 @@ namespace scratchbird
                                 {
                                     row_values[col_indices[i]] = sel_row[i];
                                 }
-                                auto row_res = process_row(std::move(row_values));
+                                auto row_res = process_row(std::move(row_values), nullptr, nullptr);
                                 if (!row_res.success())
                                 {
                                     return row_res;
@@ -56070,11 +58415,59 @@ namespace scratchbird
                         {
                             for (const auto& row_list : input_rows)
                             {
-                                if (row_list.size() != column_names.size())
+                                const bool mysql_empty_values_row =
+                                    mysql_dialect && row_list.empty();
+                                if (row_list.size() != column_names.size() &&
+                                    !mysql_empty_values_row)
                                 {
-                                    return ExecutionResult("V3 INSERT values/columns length mismatch");
+                                    std::string cols_preview;
+                                    for (size_t ci = 0; ci < column_names.size() && ci < 4; ++ci)
+                                    {
+                                        if (!cols_preview.empty())
+                                        {
+                                            cols_preview += ",";
+                                        }
+                                        cols_preview += column_names[ci];
+                                    }
+                                    return ExecutionResult(
+                                        "V3 INSERT values/columns length mismatch: values=" +
+                                        std::to_string(row_list.size()) + " columns=" +
+                                        std::to_string(column_names.size()) +
+                                        " cols=[" + cols_preview + "]");
                                 }
                                 std::vector<Value> row_values(all_columns.size(), Value::makeNull());
+                                std::vector<bool> explicit_default_cols(all_columns.size(), false);
+                                std::vector<bool> explicit_value_cols(all_columns.size(), false);
+                                if (mysql_dialect)
+                                {
+                                    for (size_t idx = 0; idx < all_columns.size(); ++idx)
+                                    {
+                                        const auto& col = all_columns[idx];
+                                        if (col.generated_type ==
+                                            core::CatalogManager::GeneratedColumnType::STORED)
+                                        {
+                                            continue;
+                                        }
+                                        if (col.has_default ||
+                                            !col.default_expr.empty() ||
+                                            !col.default_value.empty())
+                                        {
+                                            row_values[idx] =
+                                                evalDefaultForColumn(col, row_values, all_columns);
+                                            continue;
+                                        }
+                                        if (domain_defaults[idx].has_default)
+                                        {
+                                            auto temp_col = col;
+                                            temp_col.has_default = true;
+                                            temp_col.default_value = domain_defaults[idx].value;
+                                            row_values[idx] =
+                                                evalDefaultForColumn(temp_col, row_values, all_columns);
+                                            continue;
+                                        }
+                                        row_values[idx] = mysqlImplicitValueForColumn(col);
+                                    }
+                                }
                                 for (size_t i = 0; i < row_list.size(); ++i)
                                 {
                                     scratchbird::sblr::v3::Instruction expr_inst;
@@ -56082,9 +58475,40 @@ namespace scratchbird
                                     {
                                         return ExecutionResult("V3 INSERT value invalid");
                                     }
-                                    row_values[col_indices[i]] = evalExpr(expr_inst);
+                                    if (static_cast<scratchbird::sblr::v3::Opcode>(expr_inst.opcode) ==
+                                        scratchbird::sblr::v3::Opcode::SBLR3_DEFAULT_VALUE)
+                                    {
+                                        explicit_default_cols[col_indices[i]] = true;
+                                        continue;
+                                    }
+                                    explicit_value_cols[col_indices[i]] = true;
+                                    if (!mysql_dialect)
+                                    {
+                                        row_values[col_indices[i]] = evalExpr(expr_inst);
+                                        continue;
+                                    }
+
+                                    const auto* saved_row_values = current_row_values_;
+                                    const auto* saved_row_columns = current_row_columns_;
+                                    current_row_values_ = &row_values;
+                                    current_row_columns_ = &all_columns;
+                                    try
+                                    {
+                                        row_values[col_indices[i]] = evalExpr(expr_inst);
+                                    }
+                                    catch (...)
+                                    {
+                                        current_row_values_ = saved_row_values;
+                                        current_row_columns_ = saved_row_columns;
+                                        throw;
+                                    }
+                                    current_row_values_ = saved_row_values;
+                                    current_row_columns_ = saved_row_columns;
                                 }
-                                auto row_res = process_row(std::move(row_values));
+                                auto row_res =
+                                    process_row(std::move(row_values),
+                                                &explicit_default_cols,
+                                                &explicit_value_cols);
                                 if (!row_res.success())
                                 {
                                     return row_res;
@@ -62178,8 +64602,10 @@ namespace scratchbird
 	                        default:
                                 core::VNextMetricsEventModel::recordExecutorEvent(
                                     "vnext_opcode_dispatch", "reject", "IRX_0403");
-	                            return ExecutionResult(
-	                                "IRX_0403: unknown SBLR vNext opcode in executor dispatch");
+		                            return ExecutionResult(
+		                                "IRX_0403: unknown SBLR vNext opcode in executor dispatch (" +
+		                                symbol + "/" +
+		                                std::to_string(static_cast<uint16_t>(opcode)) + ")");
 	                    }
 	                };
 
@@ -63643,54 +66069,130 @@ namespace scratchbird
                             {
                                 arg_stream.push_back(1);
 
-                                scratchbird::sblr::v3::Instruction value_inst;
-                                std::vector<uint8_t> encoded_value;
-                                if (getInstrFromValue(it_value->second, value_inst))
+                                std::function<bool(const scratchbird::sblr::v3::Value&, std::string&)>
+                                    value_to_text;
+                                std::function<bool(const scratchbird::sblr::v3::Instruction&, std::string&)>
+                                    instruction_to_text;
+                                instruction_to_text =
+                                    [&](const scratchbird::sblr::v3::Instruction& instruction,
+                                        std::string& out) -> bool
                                 {
-                                    encoded_value = v3EncodeInstructionBytes(value_inst);
-                                }
-                                else
-                                {
-                                    std::string scalar_text;
-                                    const auto& raw = it_value->second.data;
-                                    if (auto s = std::get_if<std::string>(&raw))
+                                    using V3Opcode = scratchbird::sblr::v3::Opcode;
+                                    const auto opcode = static_cast<V3Opcode>(instruction.opcode);
+                                    if (opcode == V3Opcode::SBLR3_LITERAL_NULL)
                                     {
-                                        scalar_text = *s;
-                                    }
-                                    else if (auto b = std::get_if<bool>(&raw))
-                                    {
-                                        scalar_text = *b ? "TRUE" : "FALSE";
-                                    }
-                                    else if (auto i = std::get_if<int64_t>(&raw))
-                                    {
-                                        scalar_text = std::to_string(*i);
-                                    }
-                                    else if (auto u = std::get_if<uint64_t>(&raw))
-                                    {
-                                        scalar_text = std::to_string(*u);
-                                    }
-                                    else if (auto d = std::get_if<double>(&raw))
-                                    {
-                                        scalar_text = std::to_string(*d);
-                                    }
-                                    else
-                                    {
-                                        return ExecutionResult("V3 SET VARIABLE value is invalid");
+                                        out.clear();
+                                        return true;
                                     }
 
-                                    scratchbird::sblr::v3::Instruction lit;
-                                    lit.opcode = static_cast<uint16_t>(
-                                        scratchbird::sblr::v3::Opcode::SBLR3_LITERAL_STRING);
-                                    lit.flags = 0;
-                                    lit.payload = scratchbird::sblr::v3::Value(
-                                        scratchbird::sblr::v3::Value::Object{
-                                            {"value", scratchbird::sblr::v3::Value(scalar_text)}});
-                                    encoded_value = v3EncodeInstructionBytes(lit);
+                                    switch (opcode)
+                                    {
+                                        case V3Opcode::SBLR3_LITERAL_BOOLEAN:
+                                        case V3Opcode::SBLR3_LITERAL_INT32:
+                                        case V3Opcode::SBLR3_LITERAL_INT64:
+                                        case V3Opcode::SBLR3_LITERAL_DOUBLE:
+                                        case V3Opcode::SBLR3_LITERAL_STRING:
+                                        case V3Opcode::SBLR3_LITERAL_BINARY:
+                                        case V3Opcode::SBLR3_LITERAL_UUID:
+                                        case V3Opcode::SBLR3_LITERAL_DATE:
+                                        case V3Opcode::SBLR3_LITERAL_TIME:
+                                        case V3Opcode::SBLR3_LITERAL_TIMESTAMP:
+                                        case V3Opcode::SBLR3_LITERAL_DECIMAL:
+                                        case V3Opcode::SBLR3_LITERAL_JSON:
+                                        case V3Opcode::SBLR3_LITERAL_XML:
+                                        {
+                                            auto payload_obj = std::get_if<
+                                                scratchbird::sblr::v3::Value::Object>(
+                                                &instruction.payload.data);
+                                            if (!payload_obj)
+                                            {
+                                                return false;
+                                            }
+                                            auto it_val = payload_obj->find("value");
+                                            if (it_val == payload_obj->end())
+                                            {
+                                                return false;
+                                            }
+                                            return value_to_text(it_val->second, out);
+                                        }
+                                        default:
+                                        {
+                                            try
+                                            {
+                                                Value evaluated = evalExpr(instruction);
+                                                if (evaluated.isNull())
+                                                {
+                                                    out.clear();
+                                                }
+                                                else
+                                                {
+                                                    out = evaluated.toString();
+                                                }
+                                                return true;
+                                            }
+                                            catch (...)
+                                            {
+                                                return false;
+                                            }
+                                        }
+                                    }
+                                };
+                                value_to_text =
+                                    [&](const scratchbird::sblr::v3::Value& value,
+                                        std::string& out) -> bool
+                                {
+                                    if (value.isNull())
+                                    {
+                                        out.clear();
+                                        return true;
+                                    }
+                                    if (auto s = std::get_if<std::string>(&value.data))
+                                    {
+                                        out = *s;
+                                        return true;
+                                    }
+                                    if (auto b = std::get_if<bool>(&value.data))
+                                    {
+                                        out = *b ? "TRUE" : "FALSE";
+                                        return true;
+                                    }
+                                    if (auto i = std::get_if<int64_t>(&value.data))
+                                    {
+                                        out = std::to_string(*i);
+                                        return true;
+                                    }
+                                    if (auto u = std::get_if<uint64_t>(&value.data))
+                                    {
+                                        out = std::to_string(*u);
+                                        return true;
+                                    }
+                                    if (auto d = std::get_if<double>(&value.data))
+                                    {
+                                        out = std::to_string(*d);
+                                        return true;
+                                    }
+                                    if (auto ptr =
+                                            std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(
+                                                &value.data))
+                                    {
+                                        if (!ptr || !*ptr)
+                                        {
+                                            return false;
+                                        }
+                                        return instruction_to_text(**ptr, out);
+                                    }
+                                    return false;
+                                };
+
+                                std::string scalar_text;
+                                if (!value_to_text(it_value->second, scalar_text))
+                                {
+                                    return ExecutionResult("V3 SET VARIABLE value is invalid");
                                 }
 
-                                arg_stream.insert(arg_stream.end(),
-                                                  encoded_value.begin(),
-                                                  encoded_value.end());
+                                arg_stream.push_back(static_cast<uint8_t>(
+                                    scratchbird::sblr::Opcode::LITERAL_STRING));
+                                append_string(scalar_text);
                             }
 
                             const uint8_t* saved_bytecode = bytecode_;
@@ -65560,6 +68062,362 @@ namespace scratchbird
 	                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
 	                    switch (opcode)
 	                    {
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_USER: {
+	                            std::string username;
+	                            if (!getString(payload, "name", username) || username.empty())
+	                            {
+	                                getSchemaPathString(payload, "name", username);
+	                            }
+	                            if (username.empty())
+	                            {
+	                                getString(payload, "user", username);
+	                            }
+	                            if (username.empty())
+	                            {
+	                                getSchemaPathString(payload, "path", username);
+	                            }
+	                            if (username.empty())
+	                            {
+	                                auto it_name = payload.find("name");
+	                                if (it_name != payload.end())
+	                                {
+	                                    if (const auto* raw_name =
+	                                            std::get_if<std::string>(&it_name->second.data))
+	                                    {
+	                                        username = *raw_name;
+	                                    }
+	                                    else if (const auto* name_list = std::get_if<
+	                                                 scratchbird::sblr::v3::Value::List>(
+	                                                 &it_name->second.data))
+	                                    {
+	                                        for (const auto& part : *name_list)
+	                                        {
+	                                            if (const auto* token =
+	                                                    std::get_if<std::string>(&part.data))
+	                                            {
+	                                                if (!token->empty())
+	                                                {
+	                                                    username = *token;
+	                                                }
+	                                            }
+	                                        }
+	                                    }
+	                                }
+	                            }
+	                            if (username.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE USER missing name");
+	                            }
+
+	                            bool has_password = false;
+	                            std::string password;
+	                            bool is_superuser = false;
+
+	                            auto it_options = payload.find("options");
+	                            if (it_options != payload.end() && !it_options->second.isNull())
+	                            {
+	                                std::vector<std::pair<std::string, scratchbird::sblr::v3::Value>> entries;
+	                                std::string option_err;
+	                                if (!parseV3OptionEntries(it_options->second, entries, option_err))
+	                                {
+	                                    return ExecutionResult("V3 CREATE USER " + option_err);
+	                                }
+
+	                                for (const auto& kv : entries)
+	                                {
+	                                    Value scalar = Value::makeNull();
+	                                    if (!evalV3ScalarValue(kv.second, scalar))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE USER option value is invalid for key '" +
+	                                            kv.first + "'");
+	                                    }
+
+	                                    std::string key =
+	                                        scratchbird::core::IdentifierUtils::toUpper(kv.first);
+	                                    if (key == "PASSWORD")
+	                                    {
+	                                        if (scalar.isNull())
+	                                        {
+	                                            return ExecutionResult(
+	                                                "V3 CREATE USER PASSWORD cannot be NULL");
+	                                        }
+	                                        has_password = true;
+	                                        password = scalar.toString();
+	                                        if (password.empty())
+	                                        {
+	                                            scratchbird::sblr::v3::Instruction literal_inst;
+	                                            if (getInstrFromValue(kv.second, literal_inst))
+	                                            {
+	                                                Value literal_value = evalLiteralPayload(literal_inst);
+	                                                if (!literal_value.isNull())
+	                                                {
+	                                                    password = literal_value.toString();
+	                                                }
+	                                            }
+	                                        }
+	                                        continue;
+	                                    }
+	                                    if (key == "SUPERUSER" || key == "NOSUPERUSER")
+	                                    {
+	                                        bool value = (key == "SUPERUSER");
+	                                        if (!scalar.isNull())
+	                                        {
+	                                            std::string bool_text =
+	                                                scratchbird::core::IdentifierUtils::toUpper(
+	                                                    scalar.toString());
+	                                            if (bool_text == "TRUE" || bool_text == "ON" ||
+	                                                bool_text == "1")
+	                                            {
+	                                                value = true;
+	                                            }
+	                                            else if (bool_text == "FALSE" ||
+	                                                     bool_text == "OFF" ||
+	                                                     bool_text == "0")
+	                                            {
+	                                                value = false;
+	                                            }
+	                                        }
+	                                        is_superuser = value;
+	                                    }
+	                                }
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            appendLegacyStringArg(arg_stream, username);
+
+	                            uint8_t flags = 0;
+	                            if (has_password)
+	                            {
+	                                flags |= 0x01;
+	                            }
+	                            if (is_superuser)
+	                            {
+	                                flags |= 0x02;
+	                            }
+	                            arg_stream.push_back(flags);
+	                            if (has_password)
+	                            {
+	                                appendLegacyStringArg(arg_stream, password);
+	                            }
+
+	                            return runLegacyVoidHandler(&Executor::executeCreateUser,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DATABASE: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+
+	                            std::string logical_name;
+	                            if (!getString(payload, "name", logical_name) || logical_name.empty())
+	                            {
+	                                getSchemaPathString(payload, "name", logical_name);
+	                            }
+	                            logical_name = trimAsciiCopy(logical_name);
+
+	                            std::string db_path;
+	                            if (!getSchemaPathString(payload, "path", db_path) || db_path.empty())
+	                            {
+	                                getString(payload, "path", db_path);
+	                            }
+	                            db_path = trimAsciiCopy(db_path);
+	                            if (db_path.empty())
+	                            {
+	                                db_path = logical_name;
+	                            }
+	                            if (db_path.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE DATABASE missing name");
+	                            }
+
+	                            if (logical_name.empty())
+	                            {
+	                                auto fallback_parts =
+	                                    splitSchemaComponents(normalizeSchemaPath(db_path));
+	                                if (!fallback_parts.empty())
+	                                {
+	                                    logical_name = fallback_parts.back();
+	                                }
+	                                if (logical_name.empty())
+	                                {
+	                                    logical_name = db_path;
+	                                }
+	                            }
+
+	                            auto is_emulated_path = [&](const std::string& candidate) -> bool {
+	                                auto parts = splitSchemaComponents(normalizeSchemaPath(candidate));
+	                                if (parts.size() < 4)
+	                                {
+	                                    return false;
+	                                }
+	                                size_t start = 0;
+	                                if (scratchbird::core::IdentifierUtils::namesMatch(
+	                                        parts[0], false, "root", false))
+	                                {
+	                                    start = 1;
+	                                }
+	                                if (parts.size() <= start)
+	                                {
+	                                    return false;
+	                                }
+
+	                                if (scratchbird::core::IdentifierUtils::namesMatch(
+	                                        parts[start], false, "remote", false))
+	                                {
+	                                    return parts.size() > start + 1 &&
+	                                           (scratchbird::core::IdentifierUtils::namesMatch(
+	                                                parts[start + 1], false, "emulated", false) ||
+	                                            scratchbird::core::IdentifierUtils::namesMatch(
+	                                                parts[start + 1], false, "emulation", false));
+	                                }
+
+	                                return scratchbird::core::IdentifierUtils::namesMatch(
+	                                           parts[start], false, "emulated", false) ||
+	                                       scratchbird::core::IdentifierUtils::namesMatch(
+	                                           parts[start], false, "emulation", false);
+	                            };
+
+	                            if (!is_emulated_path(db_path))
+	                            {
+	                                std::string anchor_path;
+	                                if (conn_ctx_)
+	                                {
+	                                    for (const auto& candidate : conn_ctx_->search_path())
+	                                    {
+	                                        if (is_emulated_path(candidate))
+	                                        {
+	                                            anchor_path = normalizeSchemaPath(candidate);
+	                                            break;
+	                                        }
+	                                    }
+	                                }
+
+	                                if (!anchor_path.empty())
+	                                {
+	                                    auto anchor_parts = splitSchemaComponents(anchor_path);
+	                                    if (!anchor_parts.empty())
+	                                    {
+	                                        anchor_parts.back() = logical_name;
+	                                        db_path = joinSchemaComponents(anchor_parts, 0);
+	                                    }
+	                                }
+	                            }
+
+	                            if (!is_emulated_path(db_path))
+	                            {
+	                                std::string dialect = conn_ctx_
+	                                    ? toLowerAsciiCopy(trimAsciiCopy(conn_ctx_->dialect_tag()))
+	                                    : std::string();
+	                                if (dialect.empty() || dialect == "scratchbird")
+	                                {
+	                                    dialect = "postgresql";
+	                                }
+	                                db_path = "emulated." + dialect + ".localhost.databases." +
+	                                          logical_name;
+	                            }
+
+	                            std::string source_spec;
+	                            getString(payload, "source", source_spec);
+	                            if (source_spec.empty())
+	                            {
+	                                getString(payload, "source_spec", source_spec);
+	                            }
+
+	                            std::vector<std::pair<std::string, scratchbird::sblr::v3::Value>>
+	                                option_entries;
+	                            if (auto it_options = payload.find("options");
+	                                it_options != payload.end() && !it_options->second.isNull())
+	                            {
+	                                std::string option_err;
+	                                if (!parseV3OptionEntries(it_options->second, option_entries,
+	                                                          option_err))
+	                                {
+	                                    return ExecutionResult("V3 CREATE DATABASE " + option_err);
+	                                }
+	                            }
+
+	                            std::vector<std::pair<std::string, std::string>> options;
+	                            options.reserve(option_entries.size());
+	                            for (const auto& kv : option_entries)
+	                            {
+	                                std::string key = trimAsciiCopy(kv.first);
+	                                if (key.empty())
+	                                {
+	                                    continue;
+	                                }
+	                                Value scalar = Value::makeNull();
+	                                if (!evalV3ScalarValue(kv.second, scalar))
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 CREATE DATABASE option value is invalid for key '" +
+	                                        key + "'");
+	                                }
+	                                options.emplace_back(
+	                                    std::move(key),
+	                                    scalar.isNull() ? std::string() : scalar.toString());
+	                            }
+
+	                            std::vector<std::string> aliases;
+	                            if (auto it_aliases = payload.find("aliases");
+	                                it_aliases != payload.end())
+	                            {
+	                                if (const auto* alias_list = std::get_if<
+	                                        scratchbird::sblr::v3::Value::List>(
+	                                        &it_aliases->second.data))
+	                                {
+	                                    for (const auto& alias_raw : *alias_list)
+	                                    {
+	                                        Value alias_scalar = Value::makeNull();
+	                                        if (!evalV3ScalarValue(alias_raw, alias_scalar) ||
+	                                            alias_scalar.isNull())
+	                                        {
+	                                            continue;
+	                                        }
+	                                        std::string alias =
+	                                            trimAsciiCopy(alias_scalar.toString());
+	                                        if (!alias.empty())
+	                                        {
+	                                            aliases.push_back(std::move(alias));
+	                                        }
+	                                    }
+	                                }
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(256);
+	                            auto append_u32le = [&](uint32_t value) {
+	                                arg_stream.push_back(static_cast<uint8_t>(value & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 8) & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 16) & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 24) & 0xFF));
+	                            };
+	                            uint8_t legacy_flags = 0;
+	                            if ((flags_value & 0x01u) != 0)
+	                            {
+	                                legacy_flags |= 0x01;
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+	                            appendLegacyStringArg(arg_stream, db_path);
+	                            appendLegacyStringArg(arg_stream, source_spec);
+	                            append_u32le(static_cast<uint32_t>(options.size()));
+	                            for (const auto& opt : options)
+	                            {
+	                                appendLegacyStringArg(arg_stream, opt.first);
+	                                appendLegacyStringArg(arg_stream, opt.second);
+	                            }
+	                            append_u32le(static_cast<uint32_t>(aliases.size()));
+	                            for (const auto& alias : aliases)
+	                            {
+	                                appendLegacyStringArg(arg_stream, alias);
+	                            }
+
+	                            return runLegacyVoidHandler(&Executor::executeCreateDatabase,
+	                                                        std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                            return handleCreateTable(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
@@ -65586,6 +68444,7 @@ namespace scratchbird
                                     return executeV3FdwMutationOpcode(opcode, payload);
 		                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
 		                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_VIEW:
 		                            return handleDrop(payload, static_cast<uint16_t>(opcode));
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
 	                            return handleDropPolicyV3(payload);
@@ -65608,6 +68467,8 @@ namespace scratchbird
 
 	                switch (static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode))
 	                {
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_USER:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DATABASE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
@@ -65625,6 +68486,7 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_VIEW:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_SERVER:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_TABLE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER_MAPPING:
@@ -65805,10 +68667,11 @@ namespace scratchbird
                             "BRG_0406: semantic class bridge requires explicit runtime closure for " + name);
                     }
 
-                    core::VNextMetricsEventModel::recordExecutorEvent(
-                        "vnext_opcode_dispatch", "reject", "IRX_0403");
-                    return ExecutionResult(
-                        "IRX_0403: unknown SBLR vNext opcode in executor dispatch");
+	                    core::VNextMetricsEventModel::recordExecutorEvent(
+	                        "vnext_opcode_dispatch", "reject", "IRX_0403");
+	                    return ExecutionResult(
+	                        "IRX_0403: unknown SBLR vNext opcode in executor dispatch (" +
+	                        name + "/" + std::to_string(inst.opcode) + ")");
 	            };
 
             ExecutionResult result;
@@ -69309,11 +72172,51 @@ namespace scratchbird
             if (variable_stack_ && variable_stack_->hasVariable(var_name))
             {
                 push(variable_stack_->getVariable(var_name));
+                return;
             }
-            else
+
+            auto lookup_session_var = [&](const std::string& name, std::string& out) -> bool {
+                if (!conn_ctx_)
+                {
+                    return false;
+                }
+                std::string upper = core::IdentifierUtils::toUpper(name);
+                if (conn_ctx_->getSessionVariable(upper, out))
+                {
+                    return true;
+                }
+                if (!upper.empty() && upper[0] == '@')
+                {
+                    if (conn_ctx_->getSessionVariable(upper.substr(1), out))
+                    {
+                        return true;
+                    }
+                }
+                else
+                {
+                    if (conn_ctx_->getSessionVariable("@" + upper, out))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            std::string session_value;
+            if (lookup_session_var(var_name, session_value))
             {
-                error("Variable not found: " + var_name);
+                push(Value::makeVarchar(session_value));
+                return;
             }
+
+            // MySQL user variables are NULL when undefined.
+            if (!var_name.empty() && var_name[0] == '@')
+            {
+                push(Value::makeNull());
+                return;
+            }
+
+            error("Variable not found: " + var_name);
         }
 
         void Executor::executeVarStore()
@@ -69830,13 +72733,21 @@ namespace scratchbird
             std::string password_hash;
             if (has_password)
             {
-                // P0-1: Validate password policy BEFORE hashing
-                core::PasswordPolicy policy;  // Use default policy
-                core::ErrorContext policy_ctx;
-                auto policy_status = core::validatePasswordPolicy(password, policy, &policy_ctx);
-                if (policy_status != core::Status::OK)
+                if (password.empty())
                 {
-                    error("Password validation failed: " + policy_ctx.error_message);
+                    error("Password validation failed: Password cannot be empty");
+                }
+
+                if (!relaxedEmulationPasswordPolicyEnabled())
+                {
+                    // P0-1: Validate password policy BEFORE hashing
+                    core::PasswordPolicy policy;  // Use default policy
+                    core::ErrorContext policy_ctx;
+                    auto policy_status = core::validatePasswordPolicy(password, policy, &policy_ctx);
+                    if (policy_status != core::Status::OK)
+                    {
+                        error("Password validation failed: " + policy_ctx.error_message);
+                    }
                 }
 
                 try
@@ -69925,13 +72836,21 @@ namespace scratchbird
             std::string password_hash = user_info.password_hash;  // Keep existing if not changing
             if (change_password)
             {
-                // P0-1: Validate password policy BEFORE hashing
-                core::PasswordPolicy policy;  // Use default policy
-                core::ErrorContext policy_ctx;
-                auto policy_status = core::validatePasswordPolicy(password, policy, &policy_ctx);
-                if (policy_status != core::Status::OK)
+                if (password.empty())
                 {
-                    error("Password validation failed: " + policy_ctx.error_message);
+                    error("Password validation failed: Password cannot be empty");
+                }
+
+                if (!relaxedEmulationPasswordPolicyEnabled())
+                {
+                    // P0-1: Validate password policy BEFORE hashing
+                    core::PasswordPolicy policy;  // Use default policy
+                    core::ErrorContext policy_ctx;
+                    auto policy_status = core::validatePasswordPolicy(password, policy, &policy_ctx);
+                    if (policy_status != core::Status::OK)
+                    {
+                        error("Password validation failed: " + policy_ctx.error_message);
+                    }
                 }
 
                 try
@@ -72591,6 +75510,16 @@ namespace scratchbird
                 local_scope = true;
                 normalized = normalized.substr(std::strlen(kLocalPrefix));
             }
+            const bool had_global_scope_prefix = (normalized.rfind("GLOBAL.", 0) == 0);
+            const bool had_session_scope_prefix = (normalized.rfind("SESSION.", 0) == 0);
+            if (normalized.rfind("GLOBAL.", 0) == 0)
+            {
+                normalized = normalized.substr(std::strlen("GLOBAL."));
+            }
+            if (normalized.rfind("SESSION.", 0) == 0)
+            {
+                normalized = normalized.substr(std::strlen("SESSION."));
+            }
 
             auto readSingleStringValue = [&](bool& default_requested) -> std::string {
                 if (pc_ >= bytecode_size_)
@@ -72680,6 +75609,15 @@ namespace scratchbird
                 evaluateExpression();
                 return pop();
             };
+
+            if (normalized == "DELAYED_INSERT_LIMIT" ||
+                normalized == "DELAYED_INSERT_TIMEOUT" ||
+                normalized == "DELAYED_QUEUE_SIZE")
+            {
+                // MySQL compatibility variable accepted as no-op.
+                (void)readOptionalValue();
+                return;
+            }
 
             auto parseDurationMillis = [&](const std::string& raw,
                                            uint64_t& millis) -> bool {
@@ -73077,6 +76015,59 @@ namespace scratchbird
                 return;
             }
 
+            if (normalized.rfind("ENABLE_", 0) == 0)
+            {
+                if (!conn_ctx_)
+                {
+                    error("SET enable_* requires connection context");
+                }
+
+                auto value_opt = readOptionalValue();
+                if (!value_opt.has_value() || value_opt->isNull())
+                {
+                    conn_ctx_->clearSessionVariable(normalized);
+                    return;
+                }
+
+                bool enabled = false;
+                if (!parseBooleanSetting(value_opt->toString(), enabled))
+                {
+                    error("SET " + var_name + " requires ON/OFF/TRUE/FALSE/1/0");
+                }
+                conn_ctx_->setSessionVariable(normalized, enabled ? "ON" : "OFF");
+                return;
+            }
+
+            const bool mysql_user_var =
+                !var_name.empty() && var_name[0] == '@' &&
+                (var_name.size() == 1 || var_name[1] != '@');
+            if (mysql_user_var)
+            {
+                if (local_scope)
+                {
+                    error("SET LOCAL is not supported for MySQL user variables");
+                }
+                if (!conn_ctx_)
+                {
+                    error("SET user variable requires connection context");
+                }
+
+                auto value_opt = readOptionalValue();
+                std::string user_key = scratchbird::core::IdentifierUtils::toUpper(var_name);
+                std::string plain_key = user_key.substr(1);
+                if (!value_opt.has_value() || value_opt->isNull())
+                {
+                    conn_ctx_->clearSessionVariable(user_key);
+                    conn_ctx_->clearSessionVariable(plain_key);
+                    return;
+                }
+
+                std::string value_text = value_opt->toString();
+                conn_ctx_->setSessionVariable(user_key, value_text);
+                conn_ctx_->setSessionVariable(plain_key, value_text);
+                return;
+            }
+
             if (local_scope)
             {
                 error("SET LOCAL is only supported for statement_timeout");
@@ -73089,6 +76080,27 @@ namespace scratchbird
 
             if (!set_search_path && !set_current_schema)
             {
+                const bool mysql_emulation_session =
+                    conn_ctx_ &&
+                    scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag()) == "MYSQL";
+                if (mysql_emulation_session || had_global_scope_prefix || had_session_scope_prefix)
+                {
+                    auto value_opt = readOptionalValue();
+                    if (!conn_ctx_)
+                    {
+                        (void)value_opt;
+                        return;
+                    }
+                    if (!value_opt.has_value() || value_opt->isNull())
+                    {
+                        conn_ctx_->clearSessionVariable(normalized);
+                    }
+                    else
+                    {
+                        conn_ctx_->setSessionVariable(normalized, value_opt->toString());
+                    }
+                    return;
+                }
                 error("SET variable not supported: " + var_name);
             }
 
@@ -79876,6 +82888,17 @@ namespace scratchbird
                                 else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                     result = temporalComparisonKeyMicros(lhs) ==
                                              temporalComparisonKeyMicros(rhs);
+                                else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                         (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                                {
+                                    double lhs_cmp = isTemporalType(lhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                        : coerceToDouble(lhs);
+                                    double rhs_cmp = isTemporalType(rhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                        : coerceToDouble(rhs);
+                                    result = lhs_cmp == rhs_cmp;
+                                }
                                 else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                     result = compareIntegerValues(lhs, rhs) == 0;
                                 else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -79907,6 +82930,17 @@ namespace scratchbird
                                 else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                     result = temporalComparisonKeyMicros(lhs) ==
                                              temporalComparisonKeyMicros(rhs);
+                                else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                         (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                                {
+                                    double lhs_cmp = isTemporalType(lhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                        : coerceToDouble(lhs);
+                                    double rhs_cmp = isTemporalType(rhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                        : coerceToDouble(rhs);
+                                    result = lhs_cmp == rhs_cmp;
+                                }
                                 else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                     result = compareIntegerValues(lhs, rhs) == 0;
                                 else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -79938,6 +82972,17 @@ namespace scratchbird
                                 else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                     result = temporalComparisonKeyMicros(lhs) !=
                                              temporalComparisonKeyMicros(rhs);
+                                else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                         (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                                {
+                                    double lhs_cmp = isTemporalType(lhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                        : coerceToDouble(lhs);
+                                    double rhs_cmp = isTemporalType(rhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                        : coerceToDouble(rhs);
+                                    result = lhs_cmp != rhs_cmp;
+                                }
                                 else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                     result = compareIntegerValues(lhs, rhs) != 0;
                                 else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -79969,6 +83014,17 @@ namespace scratchbird
                                 else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                     result = temporalComparisonKeyMicros(lhs) <
                                              temporalComparisonKeyMicros(rhs);
+                                else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                         (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                                {
+                                    double lhs_cmp = isTemporalType(lhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                        : coerceToDouble(lhs);
+                                    double rhs_cmp = isTemporalType(rhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                        : coerceToDouble(rhs);
+                                    result = lhs_cmp < rhs_cmp;
+                                }
                                 else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                     result = compareIntegerValues(lhs, rhs) < 0;
                                 else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -80000,6 +83056,17 @@ namespace scratchbird
                                 else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                     result = temporalComparisonKeyMicros(lhs) <=
                                              temporalComparisonKeyMicros(rhs);
+                                else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                         (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                                {
+                                    double lhs_cmp = isTemporalType(lhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                        : coerceToDouble(lhs);
+                                    double rhs_cmp = isTemporalType(rhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                        : coerceToDouble(rhs);
+                                    result = lhs_cmp <= rhs_cmp;
+                                }
                                 else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                     result = compareIntegerValues(lhs, rhs) <= 0;
                                 else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -80031,6 +83098,17 @@ namespace scratchbird
                                 else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                     result = temporalComparisonKeyMicros(lhs) >
                                              temporalComparisonKeyMicros(rhs);
+                                else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                         (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                                {
+                                    double lhs_cmp = isTemporalType(lhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                        : coerceToDouble(lhs);
+                                    double rhs_cmp = isTemporalType(rhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                        : coerceToDouble(rhs);
+                                    result = lhs_cmp > rhs_cmp;
+                                }
                                 else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                     result = compareIntegerValues(lhs, rhs) > 0;
                                 else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
@@ -80062,6 +83140,17 @@ namespace scratchbird
                                 else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
                                     result = temporalComparisonKeyMicros(lhs) >=
                                              temporalComparisonKeyMicros(rhs);
+                                else if ((isTemporalType(lhs.type()) && isNumericType(rhs.type())) ||
+                                         (isNumericType(lhs.type()) && isTemporalType(rhs.type())))
+                                {
+                                    double lhs_cmp = isTemporalType(lhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(lhs))
+                                        : coerceToDouble(lhs);
+                                    double rhs_cmp = isTemporalType(rhs.type())
+                                        ? static_cast<double>(temporalComparisonKeyMicros(rhs))
+                                        : coerceToDouble(rhs);
+                                    result = lhs_cmp >= rhs_cmp;
+                                }
                                 else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
                                     result = compareIntegerValues(lhs, rhs) >= 0;
                                 else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))

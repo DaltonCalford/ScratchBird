@@ -647,6 +647,9 @@ if(SCRATCHBIRD_ENABLE_UDR)
     message(STATUS "UDR library: scratchbird_udr (Remote Engine UDR Connectors)")
 endif()
 if(TARGET scratchbird_udr)
+    if(TARGET scratchbird_fdw)
+        target_link_libraries(scratchbird_fdw PUBLIC scratchbird_udr)
+    endif()
     # Keep UDR after the core archive link-group so static resolution can satisfy
     # SBLR symbols that depend on UDR helper implementations.
     target_link_libraries(scratchbird_link_group INTERFACE scratchbird_udr)

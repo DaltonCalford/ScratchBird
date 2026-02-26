@@ -19,6 +19,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -90,6 +91,20 @@ struct HandoffInfo {
 
 bool tryParseProtocolType(const std::string& protocol,
                           scratchbird::network::ProtocolType& out);
+
+bool isTruthySetting(const char* value) {
+    if (!value || value[0] == '\0') {
+        return false;
+    }
+
+    std::string normalized(value);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    return normalized != "0" &&
+           normalized != "FALSE" &&
+           normalized != "NO" &&
+           normalized != "OFF";
+}
 
 void handleSignal(int) {
     g_shutdown.store(true, std::memory_order_release);
@@ -572,6 +587,14 @@ uint32_t runSession(const ParserConfig& config,
     }
     if (manager_bound) {
         adapter_config.connect_client_flags |= scratchbird::protocol::CONNECT_FLAG_MANAGER_DBBT;
+    }
+    if (protocol_type == scratchbird::network::ProtocolType::POSTGRESQL) {
+        const bool force_password_auth =
+            isTruthySetting(std::getenv("SCRATCHBIRD_PG_ADAPTER_FORCE_PASSWORD")) ||
+            isTruthySetting(std::getenv("SCRATCHBIRD_BOOTSTRAP_FORCE"));
+        if (force_password_auth) {
+            adapter_config.auth_method = scratchbird::protocol::AuthMethod::PASSWORD;
+        }
     }
     auto adapter = scratchbird::protocol::createProtocolAdapter(protocol_type, adapter_config);
     if (!adapter) {

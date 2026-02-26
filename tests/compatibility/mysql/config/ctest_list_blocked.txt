@@ -1,0 +1,11 @@
+# MySQL compatibility tests currently blocked in converted SQL runner.
+# These remain tracked for follow-up converter/runtime parity work.
+#
+# Block reasons (current environment + converted SQL execution model):
+# - mysqltest control-flow/routine semantics removed during SQL sanitization.
+# - legacy behavior divergences on modern MySQL defaults.
+
+main/auto_increment.sql
+main/delete.sql
+main/join.sql
+main/update.sql

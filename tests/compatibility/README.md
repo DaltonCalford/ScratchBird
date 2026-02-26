@@ -124,6 +124,31 @@ ctest -R CompatibilityMySQL --test-dir build
 ctest -R CompatibilityEmulationEvidence --test-dir build
 ```
 
+### Unified Example Database Harness
+
+Compatibility lanes can run against a single seeded example database managed by:
+
+```bash
+# Dynamic CTest fixture database (recreated each run)
+./scripts/example_db_manager.sh dynamic-setup
+ctest -R "CompatibilityExampleDbSetup|CompatibilityScratchBirdNative|CompatibilityPostgreSQL|CompatibilityMySQL" --test-dir build
+./scripts/example_db_manager.sh dynamic-teardown
+
+# Static shared database for GUI/driver groups
+./scripts/example_db_manager.sh static-up
+./scripts/example_db_manager.sh static-status
+./scripts/example_db_manager.sh static-refresh
+./scripts/example_db_manager.sh static-down
+```
+
+The bootstrap/seed SQL is at:
+
+- `tests/compatibility/scratchbird/example_sql/00_bootstrap_seed.sql`
+
+Native chain scripts (including deterministic test-data inserts) are listed in:
+
+- `tests/compatibility/scratchbird/config/example_ctest_list.txt`
+
 ### 5. Run Full Emulation Verification Bundle
 
 To regenerate the standardized gate and wire-capture evidence from in-tree suites:

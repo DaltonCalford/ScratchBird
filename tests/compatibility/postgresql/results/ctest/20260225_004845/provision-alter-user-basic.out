@@ -1,0 +1,1 @@
+Error: Parse error at line 1, column 7: Unsupported ALTER statement for V3 PostgreSQL parser (SQLSTATE 42601)

@@ -68,6 +68,18 @@ namespace scratchbird::core
         }
 #endif
 
+        void closeInheritedFileDescriptors() {
+#ifndef _WIN32
+            long max_fd = ::sysconf(_SC_OPEN_MAX);
+            if (max_fd < 0) {
+                max_fd = 1024;
+            }
+            for (int fd = STDERR_FILENO + 1; fd < max_fd; ++fd) {
+                ::close(fd);
+            }
+#endif
+        }
+
         class PlatformProcessControl final : public ProcessControl
         {
         public:
@@ -145,6 +157,8 @@ namespace scratchbird::core
                     {
                         (void)::setpgid(0, 0);
                     }
+
+                    closeInheritedFileDescriptors();
 
                     for (const auto& kv : spec.environment_overrides)
                     {

@@ -70,6 +70,52 @@ namespace scratchbird::core
             bool in_quote = false;
             char quote_char = '\0';
             bool last_space = false;
+            auto hasUnarySignContext = [&sql](size_t pos) -> bool {
+                if (pos >= sql.size()) {
+                    return false;
+                }
+                const char sign = sql[pos];
+                if ((sign != '+' && sign != '-') ||
+                    pos + 1 >= sql.size() ||
+                    !std::isdigit(static_cast<unsigned char>(sql[pos + 1]))) {
+                    return false;
+                }
+
+                // Unary sign is valid at start or after another operator/grouping token.
+                size_t prev = pos;
+                while (prev > 0 &&
+                       std::isspace(static_cast<unsigned char>(sql[prev - 1]))) {
+                    --prev;
+                }
+                if (prev == 0) {
+                    return true;
+                }
+
+                const char prior = sql[prev - 1];
+                switch (prior) {
+                    case '(':
+                    case '[':
+                    case '{':
+                    case ',':
+                    case ':':
+                    case '=':
+                    case '<':
+                    case '>':
+                    case '!':
+                    case '~':
+                    case '+':
+                    case '-':
+                    case '*':
+                    case '/':
+                    case '%':
+                    case '^':
+                    case '&':
+                    case '|':
+                        return true;
+                    default:
+                        return false;
+                }
+            };
 
             for (size_t i = 0; i < sql.size(); ++i)
             {
@@ -110,11 +156,14 @@ namespace scratchbird::core
                     continue;
                 }
 
-                if (std::isdigit(c) || ((c == '+' || c == '-') &&
-                                        i + 1 < sql.size() &&
-                                        std::isdigit(static_cast<unsigned char>(sql[i + 1]))))
+                const bool is_signed_numeric = hasUnarySignContext(i);
+                if (std::isdigit(c) || is_signed_numeric)
                 {
                     size_t j = i;
+                    if (is_signed_numeric)
+                    {
+                        ++j;
+                    }
                     if (sql[j] == '0' && j + 1 < sql.size() &&
                         (sql[j + 1] == 'x' || sql[j + 1] == 'X'))
                     {

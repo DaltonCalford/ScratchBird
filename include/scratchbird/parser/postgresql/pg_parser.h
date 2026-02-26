@@ -327,6 +327,7 @@ private:
     parser::v3::Statement* parseDropStmtV3();
     parser::v3::TruncateTableStmt* parseTruncateStmtV3();
     parser::v3::Statement* parseSetStmtV3();
+    parser::v3::Statement* parseResetStmtV3();
     parser::v3::Statement* parseShowStmtV3();
     parser::v3::Statement* parseBeginStmtV3();
     parser::v3::Statement* parsePrepareStmtV3();

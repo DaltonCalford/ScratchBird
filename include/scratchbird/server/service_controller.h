@@ -583,6 +583,7 @@ private:
     struct DatabaseInstance {
         std::string name;
         std::string path;
+        std::string engine_endpoint;
         std::unique_ptr<core::Database> owned_database;
         core::Database* database = nullptr;
     };

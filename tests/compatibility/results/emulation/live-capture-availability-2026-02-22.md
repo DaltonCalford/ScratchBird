@@ -1,13 +1,15 @@
-Last updated: 2026-02-24
+Last updated: 2026-02-26
 
 # Live Capture Availability Summary
 
 - Requested mode: `live`
 
 ## Engine Status
-- `mysql` native capture: `ok`
+- `mysql` native capture: `unavailable`
 - `mysql` emulated capture: `ok`
+- `mysql` native issue: `Native endpoint unavailable: [Errno 111] Connection refused`
 - `postgresql` native capture: `ok`
 - `postgresql` emulated capture: `ok`
-- `firebird` native capture: `ok`
+- `firebird` native capture: `unavailable`
 - `firebird` emulated capture: `ok`
+- `firebird` native issue: `Native endpoint unavailable: [Errno 111] Connection refused`

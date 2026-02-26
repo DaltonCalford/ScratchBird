@@ -40,7 +40,9 @@ parser::v3::SchemaPath buildPathFromQualified(parser::v3::StringPool& pool,
     if (!cur.empty()) {
         comps.push_back(pool.intern(cur));
     }
-    return parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED, std::move(comps));
+    parser::v3::PathType path_type = comps.size() > 1 ? parser::v3::PathType::ABSOLUTE
+                                                       : parser::v3::PathType::UNQUALIFIED;
+    return parser::v3::SchemaPath(path_type, std::move(comps));
 }
 
 std::vector<std::string> splitPath(std::string_view path) {
@@ -208,6 +210,8 @@ parser::v3::TypeName pgTypeToTypeName(const PgDataType& type,
             out.name = pool.intern("TSQUERY");
             break;
         case PgDataType::Kind::SMALLSERIAL:
+            out.name = pool.intern("SMALLSERIAL");
+            break;
         case PgDataType::Kind::SERIAL:
             out.name = pool.intern("SERIAL");
             break;
@@ -246,8 +250,9 @@ uint8_t encodeDataType(const PgDataType& dt) {
     switch (dt.kind) {
         case PgDataType::Kind::SMALLINT:
         case PgDataType::Kind::INTEGER:
-        case PgDataType::Kind::SERIAL:
         case PgDataType::Kind::SMALLSERIAL:
+            return static_cast<uint8_t>(DataType::INT16);
+        case PgDataType::Kind::SERIAL:
             return static_cast<uint8_t>(DataType::INT32);
         case PgDataType::Kind::BIGINT:
         case PgDataType::Kind::BIGSERIAL:
@@ -955,15 +960,18 @@ parser::v3::CreateTableStmt* Parser::parseCreateTableV3(bool or_replace,
     }
 
     consume(TokenType::LEFT_PAREN, "Expected (");
-    do {
-        if (check(TokenType::KW_PRIMARY) || check(TokenType::KW_UNIQUE) ||
-            check(TokenType::KW_FOREIGN) || check(TokenType::KW_CHECK) ||
-            check(TokenType::KW_CONSTRAINT) || check(TokenType::KW_EXCLUDE)) {
-            stmt->constraints.push_back(parseTableConstraintV3());
-        } else {
-            stmt->columns.push_back(parseColumnDefV3());
-        }
-    } while (match(TokenType::COMMA));
+    // PostgreSQL permits zero-column tables (e.g., CREATE TEMP TABLE t();).
+    if (!check(TokenType::RIGHT_PAREN)) {
+        do {
+            if (check(TokenType::KW_PRIMARY) || check(TokenType::KW_UNIQUE) ||
+                check(TokenType::KW_FOREIGN) || check(TokenType::KW_CHECK) ||
+                check(TokenType::KW_CONSTRAINT) || check(TokenType::KW_EXCLUDE)) {
+                stmt->constraints.push_back(parseTableConstraintV3());
+            } else {
+                stmt->columns.push_back(parseColumnDefV3());
+            }
+        } while (match(TokenType::COMMA));
+    }
     consume(TokenType::RIGHT_PAREN, "Expected )");
 
     if (matchKeyword(TokenType::KW_WITH)) {
@@ -2610,8 +2618,9 @@ void Parser::parseCreateTable() {
     std::string partition_strategy;
     std::vector<std::string> partition_columns;
 
-    do {
-        bool emitted_entry = false;
+    if (!check(TokenType::RIGHT_PAREN)) {
+        do {
+            bool emitted_entry = false;
         // Check for table-level constraint
         if (check(TokenType::KW_PRIMARY) || check(TokenType::KW_UNIQUE) ||
             check(TokenType::KW_FOREIGN) || check(TokenType::KW_CHECK) ||
@@ -2755,10 +2764,11 @@ void Parser::parseCreateTable() {
             }
             emitted_entry = true;
         }
-        if (emitted_entry) {
-            count++;
-        }
-    } while (match(TokenType::COMMA));
+            if (emitted_entry) {
+                count++;
+            }
+        } while (match(TokenType::COMMA));
+    }
 
     patch_varint(count_pos, count);
     emit(sblr::Opcode::END_LIST);

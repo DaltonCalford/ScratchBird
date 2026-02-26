@@ -295,6 +295,7 @@ private:
 
     client::ConnectionConfig client_config_;
     std::unique_ptr<client::Connection> client_;
+    std::string remote_password_;
 
     bool compression_enabled_ = false;
     std::unique_ptr<core::Compressor> wire_compressor_;

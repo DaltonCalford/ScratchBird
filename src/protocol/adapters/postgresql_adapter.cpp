@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <cstdio>
 #include <random>
 #include <sstream>
 #include <iomanip>
@@ -77,6 +78,103 @@ std::string resolvePostgresqlSchemaPath(core::CatalogManager* catalog,
     }
 
     return canonical;
+}
+
+std::string trimAscii(std::string value) {
+    auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    return value;
+}
+
+std::string toLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+bool tryBuildShowServerParameterResult(
+    const std::string& query,
+    const std::unordered_map<std::string, std::string>& server_parameters,
+    ResultContext& result) {
+    std::string normalized = trimAscii(query);
+    if (!normalized.empty() && normalized.back() == ';') {
+        normalized.pop_back();
+        normalized = trimAscii(normalized);
+    }
+
+    if (normalized.size() < 5) {
+        return false;
+    }
+    std::string upper = normalized;
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+    if (upper.rfind("SHOW ", 0) != 0) {
+        return false;
+    }
+
+    std::string requested_name = trimAscii(normalized.substr(5));
+    if (requested_name.empty()) {
+        return false;
+    }
+
+    if ((requested_name.front() == '"' && requested_name.back() == '"') ||
+        (requested_name.front() == '\'' && requested_name.back() == '\'')) {
+        requested_name = requested_name.substr(1, requested_name.size() - 2);
+    }
+
+    const std::string requested_key = toLowerAscii(requested_name);
+    std::string value;
+    bool found = false;
+    for (const auto& entry : server_parameters) {
+        if (toLowerAscii(entry.first) == requested_key) {
+            value = entry.second;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        return false;
+    }
+
+    result.columns.clear();
+    ProtocolCodec::ColumnInfo column;
+    column.name = requested_key;
+    column.type = WireType::VARCHAR;
+    result.columns.push_back(column);
+
+    result.rows.clear();
+    std::vector<ProtocolCodec::ColumnValue> row;
+    row.push_back(ProtocolCodec::ColumnValue::fromString(value));
+    result.rows.push_back(std::move(row));
+
+    result.rows_affected = 1;
+    result.command_tag = "SHOW";
+    result.has_error = false;
+    return true;
+}
+
+bool pgWireDebugEnabled() {
+    static const bool enabled = []() {
+        const char* value = std::getenv("SCRATCHBIRD_PG_DEBUG_WIRE");
+        if (!value || value[0] == '\0') {
+            return false;
+        }
+        std::string normalized(value);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return normalized != "0" &&
+               normalized != "FALSE" &&
+               normalized != "NO" &&
+               normalized != "OFF";
+    }();
+    return enabled;
 }
 
 } // namespace
@@ -159,7 +257,8 @@ core::Status PostgresqlAdapter::connectRemoteClient(core::ErrorContext* ctx) {
     database_name_ = selected_database;
     client_config_.database_name = selected_database;
     if (!config_.engine_endpoint.empty()) {
-        client_config_.ipc_method = server::IPCMethod::AUTO;
+        // Listener supplies a concrete IPC socket path; avoid AUTO fallback.
+        client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
         client_config_.socket_path = config_.engine_endpoint;
     } else {
         client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
@@ -192,6 +291,12 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         return status;
     }
 
+    // In remote-engine mode rely on the engine's default schema context.
+    if (!config_.engine_endpoint.empty()) {
+        search_path_set_ = true;
+        return core::Status::OK;
+    }
+
     // Set search_path to emulated schema (if it exists or can be created)
     if (!search_path_set_) {
         std::string db_name = database_name_;
@@ -221,11 +326,25 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
                                                    ResultContext& result,
                                                    core::ErrorContext* ctx) {
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] executeRemoteQuery begin sql=%s\n",
+                     query.query.c_str());
+        std::fflush(stderr);
+    }
+
     auto status = ensureRemoteClient(ctx);
     if (status != core::Status::OK) {
         result.has_error = true;
         result.error_code = static_cast<uint32_t>(status);
         result.error_message = ctx ? ctx->message : "Failed to connect to engine";
+        if (pgWireDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[pg_wire] executeRemoteQuery ensureRemoteClient status=%d err=%s\n",
+                         static_cast<int>(status),
+                         result.error_message.c_str());
+            std::fflush(stderr);
+        }
         return status;
     }
 
@@ -250,7 +369,34 @@ core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
         result.has_error = true;
         result.error_code = static_cast<uint32_t>(compile_status);
         result.error_message = compile_error.empty() ? "Compilation failed" : compile_error;
+        if (pgWireDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[pg_wire] executeRemoteQuery compile status=%d err=%s\n",
+                         static_cast<int>(compile_status),
+                         result.error_message.c_str());
+            std::fflush(stderr);
+        }
         return compile_status;
+    }
+    if (pgWireDebugEnabled()) {
+        uint64_t digest = 1469598103934665603ULL;
+        std::ostringstream head_hex;
+        head_hex << std::hex << std::setfill('0');
+        const size_t preview = std::min<size_t>(bytecode.size(), 24);
+        for (size_t i = 0; i < bytecode.size(); ++i) {
+            digest ^= static_cast<uint64_t>(bytecode[i]);
+            digest *= 1099511628211ULL;
+            if (i < preview) {
+                head_hex << std::setw(2)
+                         << static_cast<unsigned>(bytecode[i]);
+            }
+        }
+        std::fprintf(stderr,
+                     "[pg_wire] executeRemoteQuery compile ok bytecode=%zu digest=%016llx head=%s\n",
+                     bytecode.size(),
+                     static_cast<unsigned long long>(digest),
+                     head_hex.str().c_str());
+        std::fflush(stderr);
     }
 
     status = client_->executeBytecode(bytecode, query.query, &rs, ctx);
@@ -269,7 +415,21 @@ core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
             err = ctx->message;
         }
         result.error_message = err.empty() ? "Query execution failed" : err;
+        if (pgWireDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[pg_wire] executeRemoteQuery execute status=%d err=%s\n",
+                         static_cast<int>(status),
+                         result.error_message.c_str());
+            std::fflush(stderr);
+        }
         return status;
+    }
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] executeRemoteQuery execute ok rows=%zu tag=%s\n",
+                     static_cast<size_t>(rs.getRowCount()),
+                     rs.getCommandTag().c_str());
+        std::fflush(stderr);
     }
 
     result.columns.clear();
@@ -360,6 +520,7 @@ void PostgresqlAdapter::initializeServerParameters() {
     server_parameters_["in_hot_standby"] = "off";
     server_parameters_["is_superuser"] = "on";
     server_parameters_["session_authorization"] = "";
+    server_parameters_["dialect_tag"] = "scratchbird";
 }
 
 // ============================================================================
@@ -393,6 +554,15 @@ core::Status PostgresqlAdapter::parseMessage(network::Connection* conn) {
         // Consume from read buffer
         conn->consumeReadBuffer(length);
 
+        if (pgWireDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[pg_wire] recv startup len=%d payload=%zu state=%d\n",
+                         length,
+                         current_msg_data_.size(),
+                         static_cast<int>(pg_state_));
+            std::fflush(stderr);
+        }
+
         return core::Status::OK;
     }
 
@@ -418,6 +588,20 @@ core::Status PostgresqlAdapter::parseMessage(network::Connection* conn) {
 
     // Consume from read buffer
     conn->consumeReadBuffer(total_length);
+
+    if (pgWireDebugEnabled()) {
+        const unsigned char type_u8 = static_cast<unsigned char>(current_msg_type_);
+        const char printable_type =
+            (type_u8 >= 32 && type_u8 <= 126) ? static_cast<char>(type_u8) : '?';
+        std::fprintf(stderr,
+                     "[pg_wire] recv type=%c(0x%02X) len=%d payload=%zu state=%d\n",
+                     printable_type,
+                     static_cast<unsigned>(type_u8),
+                     current_msg_length_,
+                     current_msg_data_.size(),
+                     static_cast<int>(pg_state_));
+        std::fflush(stderr);
+    }
 
     return core::Status::OK;
 }
@@ -795,24 +979,49 @@ core::Status PostgresqlAdapter::handleCancelRequest(network::Connection* /*conn*
 
 core::Status PostgresqlAdapter::handlePasswordMessage(network::Connection* conn) {
     core::ErrorContext ctx;
+    auto authFailureMessage =
+        [&](const client::Connection::AuthResponse* auth_resp = nullptr) -> std::string {
+        if (auth_resp && !auth_resp->error_message.empty()) {
+            return auth_resp->error_message;
+        }
+        if (!ctx.message.empty()) {
+            return ctx.message;
+        }
+        if (client_) {
+            const std::string last_error = client_->getLastError();
+            if (!last_error.empty()) {
+                return last_error;
+            }
+        }
+        return "Authentication failed for user \"" + username_ + "\"";
+    };
 
     if (pg_state_ == PgProtocolState::AUTH_REQUESTED) {
         std::string password = readString(current_msg_data_.data(), current_msg_data_.size());
         std::vector<uint8_t> payload(password.begin(), password.end());
         auto status = connectRemoteClient(&ctx);
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] auth cleartext connect status=%d err=%s\n",
+                     static_cast<int>(status),
+                     ctx.message.c_str());
+        std::fflush(stderr);
+    }
         if (status != core::Status::OK) {
-            std::string msg = ctx.message.empty()
-                ? "Authentication failed for user \"" + username_ + "\""
-                : ctx.message;
-            return sendAuthResult(conn, false, msg);
+            return sendAuthResult(conn, false, authFailureMessage());
         }
         client::Connection::AuthResponse auth_resp;
         status = client_->sendAuthRequest(AuthMethod::PASSWORD, payload, auth_resp, &ctx);
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] auth cleartext request status=%d auth_status=%d err=%s\n",
+                     static_cast<int>(status),
+                     static_cast<int>(auth_resp.status),
+                     auth_resp.error_message.c_str());
+        std::fflush(stderr);
+    }
         if (status != core::Status::OK || auth_resp.status != AuthStatus::OK) {
-            std::string msg = auth_resp.error_message.empty()
-                ? "Authentication failed for user \"" + username_ + "\""
-                : auth_resp.error_message;
-            return sendAuthResult(conn, false, msg);
+            return sendAuthResult(conn, false, authFailureMessage(&auth_resp));
         }
         return sendAuthResult(conn, true);
     }
@@ -824,20 +1033,29 @@ core::Status PostgresqlAdapter::handlePasswordMessage(network::Connection* conn)
         payload.insert(payload.end(), response.begin(), response.end());
 
         auto status = connectRemoteClient(&ctx);
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] auth md5 connect status=%d err=%s\n",
+                     static_cast<int>(status),
+                     ctx.message.c_str());
+        std::fflush(stderr);
+    }
         if (status != core::Status::OK) {
-            std::string msg = ctx.message.empty()
-                ? "Authentication failed for user \"" + username_ + "\""
-                : ctx.message;
-            return sendAuthResult(conn, false, msg);
+            return sendAuthResult(conn, false, authFailureMessage());
         }
 
         client::Connection::AuthResponse auth_resp;
         status = client_->sendAuthRequest(AuthMethod::MD5, payload, auth_resp, &ctx);
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] auth md5 request status=%d auth_status=%d err=%s\n",
+                     static_cast<int>(status),
+                     static_cast<int>(auth_resp.status),
+                     auth_resp.error_message.c_str());
+        std::fflush(stderr);
+    }
         if (status != core::Status::OK || auth_resp.status != AuthStatus::OK) {
-            std::string msg = auth_resp.error_message.empty()
-                ? "Authentication failed for user \"" + username_ + "\""
-                : auth_resp.error_message;
-            return sendAuthResult(conn, false, msg);
+            return sendAuthResult(conn, false, authFailureMessage(&auth_resp));
         }
         return sendAuthResult(conn, true);
     }
@@ -873,21 +1091,30 @@ core::Status PostgresqlAdapter::handlePasswordMessage(network::Connection* conn)
             }
 
             auto status = connectRemoteClient(&ctx);
+            if (pgWireDebugEnabled()) {
+                std::fprintf(stderr,
+                             "[pg_wire] auth scram step0 connect status=%d err=%s\n",
+                             static_cast<int>(status),
+                             ctx.message.c_str());
+                std::fflush(stderr);
+            }
             if (status != core::Status::OK) {
-                std::string msg = ctx.message.empty()
-                    ? "Authentication failed for user \"" + username_ + "\""
-                    : ctx.message;
-                return sendAuthResult(conn, false, msg);
+                return sendAuthResult(conn, false, authFailureMessage());
             }
 
             std::vector<uint8_t> payload(client_first.begin(), client_first.end());
             client::Connection::AuthResponse auth_resp;
             status = client_->sendAuthRequest(AuthMethod::SCRAM_SHA_256, payload, auth_resp, &ctx);
+            if (pgWireDebugEnabled()) {
+                std::fprintf(stderr,
+                             "[pg_wire] auth scram step0 request status=%d auth_status=%d err=%s\n",
+                             static_cast<int>(status),
+                             static_cast<int>(auth_resp.status),
+                             auth_resp.error_message.c_str());
+                std::fflush(stderr);
+            }
             if (status != core::Status::OK || auth_resp.status != AuthStatus::CONTINUE) {
-                std::string msg = auth_resp.error_message.empty()
-                    ? "Authentication failed for user \"" + username_ + "\""
-                    : auth_resp.error_message;
-                return sendAuthResult(conn, false, msg);
+                return sendAuthResult(conn, false, authFailureMessage(&auth_resp));
             }
 
             std::string server_first(auth_resp.data.begin(), auth_resp.data.end());
@@ -900,22 +1127,31 @@ core::Status PostgresqlAdapter::handlePasswordMessage(network::Connection* conn)
             std::string client_final(reinterpret_cast<const char*>(current_msg_data_.data()),
                                      current_msg_data_.size());
             auto status = connectRemoteClient(&ctx);
+            if (pgWireDebugEnabled()) {
+                std::fprintf(stderr,
+                             "[pg_wire] auth scram step1 connect status=%d err=%s\n",
+                             static_cast<int>(status),
+                             ctx.message.c_str());
+                std::fflush(stderr);
+            }
             if (status != core::Status::OK) {
-                std::string msg = ctx.message.empty()
-                    ? "Authentication failed for user \"" + username_ + "\""
-                    : ctx.message;
-                return sendAuthResult(conn, false, msg);
+                return sendAuthResult(conn, false, authFailureMessage());
             }
 
             std::vector<uint8_t> payload(client_final.begin(), client_final.end());
             client::Connection::AuthResponse auth_resp;
             status = client_->sendAuthRequest(AuthMethod::SCRAM_SHA_256, payload, auth_resp, &ctx);
+            if (pgWireDebugEnabled()) {
+                std::fprintf(stderr,
+                             "[pg_wire] auth scram step1 request status=%d auth_status=%d err=%s\n",
+                             static_cast<int>(status),
+                             static_cast<int>(auth_resp.status),
+                             auth_resp.error_message.c_str());
+                std::fflush(stderr);
+            }
             scram_step_ = 0;
             if (status != core::Status::OK || auth_resp.status != AuthStatus::OK) {
-                std::string msg = auth_resp.error_message.empty()
-                    ? "Authentication failed for user \"" + username_ + "\""
-                    : auth_resp.error_message;
-                return sendAuthResult(conn, false, msg);
+                return sendAuthResult(conn, false, authFailureMessage(&auth_resp));
             }
 
             std::string server_final(auth_resp.data.begin(), auth_resp.data.end());
@@ -934,10 +1170,24 @@ core::Status PostgresqlAdapter::handlePasswordMessage(network::Connection* conn)
 core::Status PostgresqlAdapter::handleQuery(network::Connection* conn) {
     // Simple query protocol
     std::string query = readString(current_msg_data_.data(), current_msg_data_.size());
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] handleQuery sql=%s\n",
+                     query.c_str());
+        std::fflush(stderr);
+    }
 
     // Check for empty query
     if (query.empty() || query == ";") {
         sendEmptyQueryResponse(conn);
+        sendReadyForQuery(conn);
+        return sendBuffer(conn);
+    }
+
+    ResultContext show_result;
+    if (tryBuildShowServerParameterResult(query, server_parameters_, show_result)) {
+        updateTransactionStatus(query, false);
+        sendQueryResult(conn, show_result);
         sendReadyForQuery(conn);
         return sendBuffer(conn);
     }
@@ -968,6 +1218,15 @@ core::Status PostgresqlAdapter::handleQuery(network::Connection* conn) {
 
     ResultContext result;
     auto status = executeRemoteQuery(ctx, result);
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] handleQuery executeRemoteQuery status=%d has_error=%d code=%u msg=%s\n",
+                     static_cast<int>(status),
+                     result.has_error ? 1 : 0,
+                     result.error_code,
+                     result.error_message.c_str());
+        std::fflush(stderr);
+    }
 
     updateTransactionStatus(query, result.has_error);
 
@@ -1586,6 +1845,16 @@ void PostgresqlAdapter::sendMessage(network::Connection* conn, char type, const 
     writeBytes(msg, payload.data(), payload.size());
 
     writeToBuffer(conn, msg.data(), msg.size());
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] send type=%c(0x%02X) payload=%zu total=%zu state=%d\n",
+                     std::isprint(static_cast<unsigned char>(type)) ? type : '?',
+                     static_cast<unsigned int>(static_cast<unsigned char>(type)),
+                     payload.size(),
+                     msg.size(),
+                     static_cast<int>(pg_state_));
+        std::fflush(stderr);
+    }
 }
 
 void PostgresqlAdapter::sendAuthenticationOk(network::Connection* conn) {
@@ -1754,28 +2023,44 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
                                              std::vector<uint8_t>& bytecode_out,
                                              std::string& error_out) {
     core::ErrorContext ctx;
-    auto status = ensureEngine(&ctx);
-    if (status != core::Status::OK) {
-        error_out = ctx.message;
-        return status;
+    core::Database* compile_db = nullptr;
+
+    // In manager/listener mode we compile against the PostgreSQL dialect surface
+    // without creating a local engine-backed database.
+    if (config_.engine_endpoint.empty()) {
+        auto status = ensureEngine(&ctx);
+        if (status != core::Status::OK) {
+            error_out = ctx.message;
+            return status;
+        }
+
+        status = ensurePostgresSystemCatalog(&ctx);
+        if (status != core::Status::OK) {
+            error_out = ctx.message.empty() ? "Failed to initialize PostgreSQL catalog" : ctx.message;
+            return status;
+        }
+        compile_db = engineDatabase();
     }
 
-    status = ensurePostgresSystemCatalog(&ctx);
-    if (status != core::Status::OK) {
-        error_out = ctx.message.empty() ? "Failed to initialize PostgreSQL catalog" : ctx.message;
-        return status;
-    }
-
-    sblr::PostgreSQLQueryCompiler compiler(engineDatabase());
+    sblr::PostgreSQLQueryCompiler compiler(compile_db);
     std::string db_name;
     if (!resolveDatabaseSelection(database_name_, db_name)) {
         error_out = "Database switch denied by manager binding context";
         return core::Status::INVALID_AUTHORIZATION;
     }
-    compiler.setDefaultSchema(
-        resolvePostgresqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
-                                    db_name));
-    if (pg_schema_id_ != core::ID{}) {
+    std::string parser_default_schema;
+    if (config_.engine_endpoint.empty()) {
+        parser_default_schema =
+            resolvePostgresqlSchemaPath(compile_db ? compile_db->catalog_manager() : nullptr,
+                                        db_name);
+    } else {
+        // In manager-bound endpoint mode, the remote engine already owns schema/search_path
+        // context for the bound database alias. Feeding the parser a deep emulated schema
+        // root here causes CREATE/ALTER object paths to miss the live schema tree.
+        parser_default_schema = db_name;
+    }
+    compiler.setDefaultSchema(parser_default_schema);
+    if (compile_db && pg_schema_id_ != core::ID{}) {
         compiler.setCurrentSchema(pg_schema_id_);
     }
     auto result = compiler.compile(sql);

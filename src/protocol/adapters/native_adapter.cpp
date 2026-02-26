@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <filesystem>
@@ -109,6 +110,46 @@ uint64_t readU64(const uint8_t* data) {
         value |= static_cast<uint64_t>(data[i]) << (8 * i);
     }
     return value;
+}
+
+std::string toUpperAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    return value;
+}
+
+bool isTruthyEnv(const char* value) {
+    if (!value || value[0] == '\0') {
+        return false;
+    }
+    const std::string normalized = toUpperAscii(value);
+    return normalized != "0" &&
+           normalized != "FALSE" &&
+           normalized != "NO" &&
+           normalized != "OFF";
+}
+
+bool preferPasswordAuthForNativeAdapter() {
+    if (isTruthyEnv(std::getenv("SCRATCHBIRD_NATIVE_FORCE_PASSWORD_AUTH"))) {
+        return true;
+    }
+    return isTruthyEnv(std::getenv("SCRATCHBIRD_EMULATION_RELAXED_PASSWORD_POLICY"));
+}
+
+std::string decodeNativePasswordPayload(const std::vector<uint8_t>& payload) {
+    if (payload.empty()) {
+        return {};
+    }
+
+    size_t end = payload.size();
+    for (size_t i = 0; i < payload.size(); ++i) {
+        if (payload[i] == '\0') {
+            end = i;
+            break;
+        }
+    }
+    return std::string(reinterpret_cast<const char*>(payload.data()), end);
 }
 
 protocol::AuthMethod mapAuthMethod(sbwp::AuthMethod method) {
@@ -775,13 +816,16 @@ core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
     username_ = get_param("user");
     conn->setUsername(username_);
     conn->setDatabase(database_name_);
+    remote_password_.clear();
 
     std::string app_name = get_param("application_name");
     if (!app_name.empty()) {
         conn->setApplicationName(app_name);
     }
 
-    auth_method_ = sbwp::AuthMethod::ScramSha256;
+    auth_method_ = preferPasswordAuthForNativeAdapter()
+        ? sbwp::AuthMethod::Password
+        : sbwp::AuthMethod::ScramSha256;
     auth_in_progress_ = true;
     scram_pending_ = false;
     sendAuthRequest(conn, auth_method_);
@@ -810,6 +854,32 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
     }
 
     core::ErrorContext ctx;
+
+    if (auth_method_ == sbwp::AuthMethod::Password) {
+        remote_password_ = decodeNativePasswordPayload(payload);
+        if (client_) {
+            client_->disconnect();
+            client_.reset();
+        }
+
+        auto status = ensureRemoteClient(&ctx);
+        if (status != core::Status::OK) {
+            sendQueryError(conn, static_cast<uint32_t>(status),
+                          "28000", ctx.message.empty() ? "Authentication failed" : ctx.message);
+            return sendBuffer(conn);
+        }
+
+        auth_in_progress_ = false;
+        scram_pending_ = false;
+        sendAuthOk(conn, {});
+        sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
+        sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
+        sendCapabilityStatus(conn);
+        sendReady(conn);
+        native_state_ = NativeProtocolState::READY;
+        return sendBuffer(conn);
+    }
+
     auto status = ensureRemoteClient(&ctx);
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status),
@@ -2002,10 +2072,10 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.connect_client_flags = config_.connect_client_flags;
     client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
     client_config_.bound_db_uuid = config_.bound_db_uuid;
-    client_config_.manual_auth = !username_.empty();
-    if (client_config_.manual_auth) {
+    client_config_.manual_auth = !username_.empty() && remote_password_.empty();
+    if (!username_.empty()) {
         client_config_.username = username_;
-        client_config_.password.clear();
+        client_config_.password = remote_password_;
     } else {
         client_config_.username = "bootstrap";
         client_config_.password.clear();
@@ -2019,6 +2089,10 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         if (status == core::Status::OK) {
             return core::Status::OK;
         }
+        const std::string client_error = client_->getLastError();
+        if (!client_error.empty()) {
+            last_message = client_error;
+        }
         if (ctx && !ctx->message.empty()) {
             last_message = ctx->message;
         }
@@ -2031,6 +2105,10 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
     if (ctx && !last_message.empty()) {
         ctx->message = last_message;
+    }
+    if (ctx && ctx->message.empty()) {
+        ctx->message = "Engine connect/auth failed with status " +
+            std::to_string(static_cast<int>(status));
     }
     return status;
 }

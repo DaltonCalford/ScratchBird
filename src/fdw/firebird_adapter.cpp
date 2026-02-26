@@ -20,6 +20,7 @@
  */
 
 #include "scratchbird/fdw/firebird_adapter.h"
+#include "scratchbird/core/socket_call_compat.h"
 
 #ifdef _WIN32
     #include <winsock2.h>

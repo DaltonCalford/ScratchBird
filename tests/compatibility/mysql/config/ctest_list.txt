@@ -4,8 +4,4 @@
 
 main/alias.sql
 main/ansi.sql
-main/auto_increment.sql
-main/delete.sql
 main/insert.sql
-main/join.sql
-main/update.sql

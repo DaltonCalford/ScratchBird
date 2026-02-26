@@ -205,6 +205,13 @@ class DomainE2EScenariosTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        if (const char* existing = std::getenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE"))
+        {
+            legacy_env_had_prev_ = true;
+            legacy_env_prev_ = existing;
+        }
+        setenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE", "1", 1);
+
         db_file_ = std::make_unique<TestDatabaseFile>("domain_e2e", ".sbdb");
 
         ErrorContext ctx;
@@ -374,6 +381,15 @@ protected:
         conn_ctx_.reset();
         db_.close();
         db_file_.reset();
+
+        if (legacy_env_had_prev_)
+        {
+            setenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE", legacy_env_prev_.c_str(), 1);
+        }
+        else
+        {
+            unsetenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE");
+        }
     }
 
     ExecutionResult compileAndExecute(const std::string& sql)
@@ -509,6 +525,9 @@ protected:
     ID inherit_column_id_{};
 
     ID user_id_{};
+
+    bool legacy_env_had_prev_ = false;
+    std::string legacy_env_prev_;
 
     std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;

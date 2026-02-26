@@ -73,8 +73,51 @@ MySQLCompilationResult MySQLQueryCompiler::compileInternal(const std::string& sq
         }
         result.setBytecode(std::move(encoded));
     } else {
-        result.addError("V3 AST not available for MySQL statement");
-        return result;
+        // No-op input chunk (e.g. comment-only statement segment).
+        sblr::v3::Container container;
+        container.header.version_major = 3;
+        container.header.version_minor = 0;
+        container.header.version_patch = 0;
+        container.header.flags = 0;
+        container.metadata.module_name = "mysql_emulation";
+        container.metadata.module_version = "v3";
+        container.metadata.dialect_id = 1;
+        container.metadata.target_platform = 0;
+        container.metadata.build_id.clear();
+        container.metadata.source_hash.clear();
+
+        sblr::v3::Buffer bytecode_stream;
+        sblr::v3::DecodeError derr;
+
+        sblr::v3::Instruction version_inst;
+        version_inst.opcode = static_cast<uint16_t>(sblr::v3::Opcode::SBLR3_VERSION);
+        version_inst.flags = 0;
+        sblr::v3::Value::Bytes version_payload(6, 0);
+        version_payload[0] = 3;
+        version_inst.payload = sblr::v3::Value(std::move(version_payload));
+        if (!sblr::v3::encodeInstructionWithSchema(version_inst, bytecode_stream, derr)) {
+            result.addError("V3 no-op encode failed: " + derr.message);
+            return result;
+        }
+
+        sblr::v3::Instruction end_inst;
+        end_inst.opcode = static_cast<uint16_t>(sblr::v3::Opcode::SBLR3_END);
+        end_inst.flags = 0;
+        end_inst.payload = sblr::v3::Value(sblr::v3::Value::Bytes{});
+        if (!sblr::v3::encodeInstructionWithSchema(end_inst, bytecode_stream, derr)) {
+            result.addError("V3 no-op encode failed: " + derr.message);
+            return result;
+        }
+
+        container.bytecode_stream = std::move(bytecode_stream);
+
+        std::vector<uint8_t> encoded;
+        std::string encode_err;
+        if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
+            result.addError("V3 container encode failed: " + encode_err);
+            return result;
+        }
+        result.setBytecode(std::move(encoded));
     }
     for (const auto& warn : parse_result.warnings()) {
         result.addWarning(warn);

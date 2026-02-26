@@ -31,7 +31,9 @@ static parser::v3::SchemaPath buildPathFromQualified(parser::v3::StringPool& poo
         }
     }
     if (!cur.empty()) comps.push_back(pool.intern(cur));
-    return parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED, std::move(comps));
+    parser::v3::PathType path_type = comps.size() > 1 ? parser::v3::PathType::ABSOLUTE
+                                                       : parser::v3::PathType::UNQUALIFIED;
+    return parser::v3::SchemaPath(path_type, std::move(comps));
 }
 
 parser::v3::SelectStmt* Parser::parseSelectStmt() {
@@ -73,22 +75,54 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
     }
 
     if (matchKeyword(TokenType::KW_FROM)) {
-        // base table
         auto parse_alias = [&]() -> parser::v3::StringPool::StringId {
+            auto consume_alias_column_list = [&]() {
+                if (!match(TokenType::LEFT_PAREN)) {
+                    return;
+                }
+                if (!check(TokenType::RIGHT_PAREN)) {
+                    do {
+                        parseIdentifierId();
+                    } while (match(TokenType::COMMA));
+                }
+                consume(TokenType::RIGHT_PAREN, "Expected ) after table alias column list");
+            };
+
             if (matchKeyword(TokenType::KW_AS)) {
-                return parseIdentifierId();
+                auto alias = parseIdentifierId();
+                consume_alias_column_list();
+                return alias;
             }
             if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
-                return parseIdentifierId();
+                auto alias = parseIdentifierId();
+                consume_alias_column_list();
+                return alias;
             }
             return parser::v3::StringPool::INVALID_ID;
         };
 
-        auto* base = arena()->create<parser::v3::TableRefNode>();
-        base->ref_type = parser::v3::TableRefNode::Type::TABLE;
-        base->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
-        base->alias = parse_alias();
-        base->has_alias = base->alias != parser::v3::StringPool::INVALID_ID;
+        auto parse_table_ref = [&]() -> parser::v3::TableRefNode* {
+            auto* ref = arena()->create<parser::v3::TableRefNode>();
+            if (matchKeyword(TokenType::KW_LATERAL)) {
+                ref->lateral = true;
+            }
+            if (match(TokenType::LEFT_PAREN)) {
+                if (!check(TokenType::KW_SELECT)) {
+                    error("Expected SELECT in subquery table reference");
+                }
+                ref->ref_type = parser::v3::TableRefNode::Type::SUBQUERY;
+                ref->subquery = parseSelectStmt();
+                consume(TokenType::RIGHT_PAREN, "Expected ) after subquery table reference");
+            } else {
+                ref->ref_type = parser::v3::TableRefNode::Type::TABLE;
+                ref->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+            }
+            ref->alias = parse_alias();
+            ref->has_alias = ref->alias != parser::v3::StringPool::INVALID_ID;
+            return ref;
+        };
+
+        auto* base = parse_table_ref();
         stmt->from = base;
 
         // joins
@@ -137,18 +171,17 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
             } else if (matchKeyword(TokenType::KW_JOIN)) {
                 join_type = parser::JoinType::INNER;
                 has_join = true;
+            } else if (match(TokenType::COMMA)) {
+                // PostgreSQL comma-join syntax in FROM lists is equivalent to CROSS JOIN.
+                join_type = parser::JoinType::CROSS;
+                has_join = true;
             }
 
             if (!has_join) break;
 
             auto* join = arena()->create<parser::v3::JoinNode>();
             join->join_type = join_type;
-            auto* right = arena()->create<parser::v3::TableRefNode>();
-            right->ref_type = parser::v3::TableRefNode::Type::TABLE;
-            right->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
-            right->alias = parse_alias();
-            right->has_alias = right->alias != parser::v3::StringPool::INVALID_ID;
-            join->right = right;
+            join->right = parse_table_ref();
 
             if (matchKeyword(TokenType::KW_ON)) {
                 join->on_condition = parseExpression();
@@ -184,6 +217,21 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
         do {
             auto* item = arena()->create<parser::v3::OrderByItem>();
             item->expr = parseExpression();
+            if (matchKeyword(TokenType::KW_USING)) {
+                // PostgreSQL supports ORDER BY <expr> USING <operator>. We map
+                // simple operator forms to ASC/DESC semantics for compatibility.
+                if (match(TokenType::LESS_THAN) || match(TokenType::LESS_EQUAL)) {
+                    item->ascending = true;
+                } else if (match(TokenType::GREATER_THAN) || match(TokenType::GREATER_EQUAL)) {
+                    item->ascending = false;
+                } else if (match(TokenType::EQUAL)) {
+                    item->ascending = true;
+                } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+                    (void)parseIdentifierId();
+                } else {
+                    error("Expected operator after USING in ORDER BY");
+                }
+            }
             if (matchKeyword(TokenType::KW_ASC)) item->ascending = true;
             else if (matchKeyword(TokenType::KW_DESC)) item->ascending = false;
             if (matchKeyword(TokenType::KW_NULLS)) {
@@ -262,7 +310,11 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
         auto emit_table_ref = [&](const parser::v3::TableRefNode* ref) {
             emit(sblr::Opcode::TABLE_REF);
             emitByte(0);  // name-based ref
-            emitString(parser::v3::schemaPathToString(ref->table_path, string_pool_));
+            if (ref->ref_type == parser::v3::TableRefNode::Type::SUBQUERY) {
+                emitString("(subquery)");
+            } else {
+                emitString(parser::v3::schemaPathToString(ref->table_path, string_pool_));
+            }
             if (ref->has_alias) {
                 emitString(std::string(string_pool_.get(ref->alias)));
             } else {
@@ -449,6 +501,11 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmt() {
     consumeKeyword(TokenType::KW_SET, "Expected SET");
     do {
         auto col = parseIdentifierId();
+        if (match(TokenType::DOT)) {
+            // Qualified targets (alias.column) are legal in PostgreSQL grammar
+            // even when later rejected semantically.
+            col = parseIdentifierId();
+        }
         consume(TokenType::EQUAL, "Expected = in SET clause");
         auto* expr = parseExpression();
         stmt->set_items.push_back({col, expr});
@@ -456,11 +513,27 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmt() {
 
     if (matchKeyword(TokenType::KW_FROM)) {
         auto parse_alias = [&]() -> parser::v3::StringPool::StringId {
+            auto consume_alias_column_list = [&]() {
+                if (!match(TokenType::LEFT_PAREN)) {
+                    return;
+                }
+                if (!check(TokenType::RIGHT_PAREN)) {
+                    do {
+                        parseIdentifierId();
+                    } while (match(TokenType::COMMA));
+                }
+                consume(TokenType::RIGHT_PAREN, "Expected ) after table alias column list");
+            };
+
             if (matchKeyword(TokenType::KW_AS)) {
-                return parseIdentifierId();
+                auto alias = parseIdentifierId();
+                consume_alias_column_list();
+                return alias;
             }
             if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
-                return parseIdentifierId();
+                auto alias = parseIdentifierId();
+                consume_alias_column_list();
+                return alias;
             }
             return parser::v3::StringPool::INVALID_ID;
         };
@@ -500,6 +573,9 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmt() {
                 has_join = true;
             } else if (matchKeyword(TokenType::KW_JOIN)) {
                 join_type = parser::JoinType::INNER;
+                has_join = true;
+            } else if (match(TokenType::COMMA)) {
+                join_type = parser::JoinType::CROSS;
                 has_join = true;
             }
 
@@ -585,18 +661,46 @@ parser::v3::DeleteStmt* Parser::parseDeleteStmt() {
     if (matchKeyword(TokenType::KW_AS)) {
         stmt->alias = parseIdentifierId();
         stmt->has_alias = true;
+        if (match(TokenType::LEFT_PAREN)) {
+            if (!check(TokenType::RIGHT_PAREN)) {
+                do { parseIdentifierId(); } while (match(TokenType::COMMA));
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ) after table alias column list");
+        }
     } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
         stmt->alias = parseIdentifierId();
         stmt->has_alias = true;
+        if (match(TokenType::LEFT_PAREN)) {
+            if (!check(TokenType::RIGHT_PAREN)) {
+                do { parseIdentifierId(); } while (match(TokenType::COMMA));
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ) after table alias column list");
+        }
     }
 
     if (matchKeyword(TokenType::KW_USING)) {
         auto parse_alias = [&]() -> parser::v3::StringPool::StringId {
+            auto consume_alias_column_list = [&]() {
+                if (!match(TokenType::LEFT_PAREN)) {
+                    return;
+                }
+                if (!check(TokenType::RIGHT_PAREN)) {
+                    do {
+                        parseIdentifierId();
+                    } while (match(TokenType::COMMA));
+                }
+                consume(TokenType::RIGHT_PAREN, "Expected ) after table alias column list");
+            };
+
             if (matchKeyword(TokenType::KW_AS)) {
-                return parseIdentifierId();
+                auto alias = parseIdentifierId();
+                consume_alias_column_list();
+                return alias;
             }
             if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
-                return parseIdentifierId();
+                auto alias = parseIdentifierId();
+                consume_alias_column_list();
+                return alias;
             }
             return parser::v3::StringPool::INVALID_ID;
         };

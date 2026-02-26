@@ -15,3 +15,22 @@ Run as root:
 ```bash
 sudo tools/install/ensure-service-account.sh
 ```
+
+## `seed-example-database.sh`
+
+Creates (or refreshes) the static, seeded example database used by installer/test/demo workflows.
+The script uses `scripts/example_db_manager.sh static-refresh` and writes connection profiles to:
+
+- `<example-root>/profiles/runtime.env`
+- `<example-root>/profiles/connections.json`
+
+Defaults:
+
+- service user/group: `scratchbird:scratchbird`
+- static example root: `/var/lib/scratchbird/example`
+
+Run as root after the service account setup:
+
+```bash
+sudo tools/install/seed-example-database.sh
+```

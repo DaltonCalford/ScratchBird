@@ -67,6 +67,29 @@ std::string listenerBinary(network::ProtocolType type) {
     }
 }
 
+std::string resolveSiblingExecutable(const std::string& executable) {
+#ifdef _WIN32
+    return executable;
+#else
+    if (executable.empty() || executable.find('/') != std::string::npos) {
+        return executable;
+    }
+
+    std::error_code ec;
+    const std::filesystem::path self_path = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (ec || self_path.empty()) {
+        return executable;
+    }
+
+    const std::filesystem::path candidate = self_path.parent_path() / executable;
+    if (std::filesystem::exists(candidate, ec) && !ec) {
+        return candidate.string();
+    }
+
+    return executable;
+#endif
+}
+
 std::string toLowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
         return static_cast<char>(std::tolower(ch));
@@ -153,6 +176,65 @@ std::string listenerManagementSocketPath(const ProtocolConfig& proto,
     // for the same protocol can run without socket collisions.
     return path + "sb_listener." + protocolControlName(proto.type) + "." +
            std::to_string(proto.port) + ".mgmt.sock";
+#endif
+}
+
+std::string sanitizeEndpointToken(const std::string& input,
+                                  const std::string& fallback) {
+    std::string token;
+    token.reserve(input.size());
+    for (char ch : input) {
+        if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '-') {
+            token.push_back(ch);
+        }
+    }
+    if (!token.empty()) {
+        return token;
+    }
+
+    token.reserve(fallback.size());
+    for (char ch : fallback) {
+        if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || ch == '-') {
+            token.push_back(ch);
+        }
+    }
+    if (!token.empty()) {
+        return token;
+    }
+    return "main";
+}
+
+std::string resolveEngineEndpointPath(const ServiceConfig& config,
+                                      const std::string& database_name,
+                                      const std::string& database_path) {
+#ifdef _WIN32
+    (void)config;
+    (void)database_name;
+    (void)database_path;
+    return std::string();
+#else
+    std::filesystem::path base_dir;
+    if (!config.control_socket_dir.empty()) {
+        base_dir = config.control_socket_dir;
+    } else if (!config.unix_socket.empty()) {
+        base_dir = std::filesystem::path(config.unix_socket).parent_path();
+    } else {
+        std::error_code tmp_ec;
+        base_dir = std::filesystem::temp_directory_path(tmp_ec);
+        if (tmp_ec || base_dir.empty()) {
+            base_dir = "/tmp";
+        }
+        base_dir /= "scratchbird-control";
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(base_dir, ec);
+    if (ec) {
+        return std::string();
+    }
+
+    const std::string token = sanitizeEndpointToken(database_name, database_path);
+    return (base_dir / ("sb_engine." + token + ".sock")).string();
 #endif
 }
 
@@ -1107,6 +1189,14 @@ core::Status ServiceController::openDatabase(const std::string& name, const std:
         server_config.auto_create_db = create;
         server_config.max_connections = config_.max_connections;
         server_config.verbose = (config_.log_level == ServiceConfig::LogLevel::DEBUG);
+#ifndef _WIN32
+        const std::string resolved_endpoint =
+            resolveEngineEndpointPath(config_, name, path);
+        if (!resolved_endpoint.empty()) {
+            server_config.ipc_method = IPCMethod::UNIX_SOCKET;
+            server_config.ipc_path = resolved_endpoint;
+        }
+#endif
 
         auto server = std::make_unique<ScratchBirdServer>(server_config);
         core::Status status = server->startAsync(ctx);
@@ -1117,6 +1207,7 @@ core::Status ServiceController::openDatabase(const std::string& name, const std:
         DatabaseInstance instance;
         instance.name = name;
         instance.path = path;
+        instance.engine_endpoint = server->getIPCPath();
         instance.database = server->database();
         databases_.push_back(std::move(instance));
         engine_servers_.push_back({name, std::move(server)});
@@ -1327,7 +1418,11 @@ core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
             return false;
         }
 
-        engine_endpoint = getIPCPath(db_it->path, IPCMethod::AUTO);
+        if (!db_it->engine_endpoint.empty()) {
+            engine_endpoint = db_it->engine_endpoint;
+        } else {
+            engine_endpoint = getIPCPath(db_it->path, IPCMethod::AUTO);
+        }
         return true;
     };
 
@@ -1427,7 +1522,7 @@ core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
         ListenerProcess listener;
         listener.config = proto;
         listener.name = protocolName(proto.type);
-        listener.binary = listenerBinary(proto.type);
+        listener.binary = resolveSiblingExecutable(listenerBinary(proto.type));
         listener.owner_database = owner_database;
         listener.engine_endpoint = engine_endpoint;
 
@@ -1486,8 +1581,9 @@ core::Status ServiceController::startManager(core::ErrorContext* ctx) {
     log(ServiceConfig::LogLevel::INFO, "Starting manager proxy...");
 
     ManagerProcess manager;
-    manager.binary = config_.manager_proxy.binary.empty() ? "sb_manager"
-                                                          : config_.manager_proxy.binary;
+    manager.binary = resolveSiblingExecutable(
+        config_.manager_proxy.binary.empty() ? "sb_manager"
+                                             : config_.manager_proxy.binary);
     manager.bind_address = config_.manager_proxy.bind_address;
     manager.port = config_.manager_proxy.port;
     manager.internal_native_bind = config_.manager_proxy.internal_native_bind;
@@ -1580,7 +1676,7 @@ core::Status ServiceController::stopManager(core::ErrorContext* ctx) {
 bool ServiceController::launchManagerProcess(ManagerProcess& manager,
                                              core::ErrorContext* ctx) {
     core::ProcessLaunchSpec launch_spec;
-    launch_spec.executable = manager.binary;
+    launch_spec.executable = resolveSiblingExecutable(manager.binary);
     launch_spec.arguments.push_back("--bind");
     launch_spec.arguments.push_back(manager.bind_address);
     launch_spec.arguments.push_back("--port");
@@ -1631,7 +1727,7 @@ bool ServiceController::launchListenerProcess(ListenerProcess& listener,
                                               core::ErrorContext* ctx) {
     const auto& proto = listener.config;
     core::ProcessLaunchSpec launch_spec;
-    launch_spec.executable = listener.binary;
+    launch_spec.executable = resolveSiblingExecutable(listener.binary);
     launch_spec.arguments.push_back("--bind");
     launch_spec.arguments.push_back(proto.bind_address);
     launch_spec.arguments.push_back("--port");

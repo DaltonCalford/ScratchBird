@@ -268,6 +268,30 @@ bool detectBootstrapPhaseA(core::CatalogManager* catalog,
     phase_a_out = false;
     error_out.clear();
 
+    const auto auth_debug_enabled = []() -> bool {
+        const char* configured = std::getenv("SCRATCHBIRD_AUTH_DEBUG");
+        if (!configured || configured[0] == '\0') {
+            return false;
+        }
+        const std::string normalized = toUpperAscii(configured);
+        return normalized != "0" &&
+               normalized != "FALSE" &&
+               normalized != "NO" &&
+               normalized != "OFF";
+    }();
+
+    const char* force_bootstrap = std::getenv("SCRATCHBIRD_BOOTSTRAP_FORCE");
+    if (force_bootstrap && force_bootstrap[0] != '\0') {
+        const std::string normalized = toUpperAscii(force_bootstrap);
+        if (normalized != "0" &&
+            normalized != "FALSE" &&
+            normalized != "NO" &&
+            normalized != "OFF") {
+            phase_a_out = true;
+            return true;
+        }
+    }
+
     if (!catalog) {
         return true;
     }
@@ -282,7 +306,32 @@ bool detectBootstrapPhaseA(core::CatalogManager* catalog,
         return false;
     }
 
+    if (auth_debug_enabled) {
+        std::fprintf(stderr,
+                     "[auth_debug] bootstrap state enum=%d\n",
+                     static_cast<int>(bootstrap_state));
+    }
+
     if (bootstrap_state != core::CatalogManager::BootstrapState::UNINITIALIZED) {
+        if (auth_debug_enabled) {
+            std::vector<core::CatalogManager::UserInfo> all_users_debug;
+            core::Status list_status_debug = catalog->listUsers(all_users_debug, &bootstrap_ctx);
+            if (list_status_debug == core::Status::OK) {
+                std::fprintf(stderr,
+                             "[auth_debug] bootstrap debug users (state!=UNINITIALIZED) count=%zu\n",
+                             all_users_debug.size());
+                for (const auto& user : all_users_debug) {
+                    std::fprintf(stderr,
+                                 "[auth_debug] bootstrap debug user=%s\n",
+                                 user.username.c_str());
+                }
+            } else {
+                std::fprintf(stderr,
+                             "[auth_debug] bootstrap debug users list failed status=%d msg=%s\n",
+                             static_cast<int>(list_status_debug),
+                             bootstrap_ctx.message.c_str());
+            }
+        }
         return true;
     }
 
@@ -294,13 +343,31 @@ bool detectBootstrapPhaseA(core::CatalogManager* catalog,
         return false;
     }
 
+    if (auth_debug_enabled) {
+        std::fprintf(stderr,
+                     "[auth_debug] bootstrap user count=%zu\n",
+                     all_users.size());
+        for (const auto& user : all_users) {
+            std::fprintf(stderr,
+                         "[auth_debug] bootstrap user=%s\n",
+                         user.username.c_str());
+        }
+    }
+
     if (all_users.empty()) {
         phase_a_out = true;
         return true;
     }
 
-    phase_a_out = all_users.size() == 1 &&
-                  toUpperAscii(all_users.front().username) == "SYSTEM";
+    bool has_non_bootstrap_principal = false;
+    for (const auto& user : all_users) {
+        const std::string normalized = toUpperAscii(user.username);
+        if (normalized != "SYSTEM" && normalized != "SYSARCH") {
+            has_non_bootstrap_principal = true;
+            break;
+        }
+    }
+    phase_a_out = !has_non_bootstrap_principal;
     return true;
 }
 
@@ -347,6 +414,28 @@ constexpr const char* kAuthMfaRequiredCode = "AUTH_MFA_REQUIRED";
 constexpr const char* kAuthMfaInvalidCode = "AUTH_MFA_INVALID";
 constexpr const char* kMfaPayloadPrefix = "SBMFA1";
 constexpr const char* kAuthPolicyNegotiatedCode = "AUTH_POLICY_NEGOTIATED";
+
+bool isTruthySetting(const char* value) {
+    if (!value || value[0] == '\0') {
+        return false;
+    }
+    const std::string normalized = toUpperAscii(value);
+    return normalized != "0" &&
+           normalized != "FALSE" &&
+           normalized != "NO" &&
+           normalized != "OFF";
+}
+
+bool authDebugEnabled() {
+    return isTruthySetting(std::getenv("SCRATCHBIRD_AUTH_DEBUG"));
+}
+
+bool relaxedEmulationAuthPolicyEnabled() {
+    if (isTruthySetting(std::getenv("SCRATCHBIRD_EMULATION_RELAXED_AUTH_POLICY"))) {
+        return true;
+    }
+    return isTruthySetting(std::getenv("SCRATCHBIRD_EMULATION_RELAXED_PASSWORD_POLICY"));
+}
 
 const char* authMethodToString(protocol::AuthMethod method) {
     switch (method) {
@@ -935,7 +1024,10 @@ bool isTrustedLocalIpc(const IPCConnection* connection) {
         return false;
     }
     const IPCMethod method = connection->getMethod();
-    return method == IPCMethod::UNIX_SOCKET || method == IPCMethod::NAMED_PIPE;
+    // TCP_LOCALHOST is explicitly loopback-only and used as local IPC fallback.
+    return method == IPCMethod::UNIX_SOCKET ||
+           method == IPCMethod::NAMED_PIPE ||
+           method == IPCMethod::TCP_LOCALHOST;
 }
 
 uint8_t transportMaskBit(core::CatalogManager::ConnectionTransport transport) {
@@ -1109,12 +1201,14 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
     required_method_out = protocol::AuthMethod::SCRAM_SHA_256;
     peer_mode_out = CM::AuthPeerMode::DISABLED;
     bool allow_legacy_password_fallback = false;
+    bool has_catalog_policy_rows = false;
 
     if (catalog) {
         std::vector<CM::AuthPolicyCatalogInfo> policies;
         core::ErrorContext list_ctx;
         const core::Status list_status = catalog->listAuthPolicyCatalogEntries(policies, &list_ctx);
         if (list_status == core::Status::OK && !policies.empty()) {
+            has_catalog_policy_rows = true;
             const char* policy_name_env = std::getenv("SCRATCHBIRD_AUTH_POLICY_NAME");
             const std::string requested_policy =
                 (policy_name_env && policy_name_env[0] != '\0')
@@ -1162,17 +1256,40 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
     bool bootstrap_phase_a = false;
     std::string bootstrap_phase_error;
     if (!detectBootstrapPhaseA(catalog, bootstrap_phase_a, bootstrap_phase_error)) {
+        if (authDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[auth_debug] bootstrap phase detection failed: %s\n",
+                         bootstrap_phase_error.c_str());
+        }
         policy_deny_code_out = kAuthPolicyNegotiationRequiredCode;
         return false;
     }
 
-    if (bootstrap_phase_a) {
+    if (authDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[auth_debug] bootstrap phase resolved: phase_a=%d catalog=%p\n",
+                     bootstrap_phase_a ? 1 : 0,
+                     static_cast<void*>(catalog));
+    }
+
+    const bool force_bootstrap = isTruthySetting(std::getenv("SCRATCHBIRD_BOOTSTRAP_FORCE"));
+    if (bootstrap_phase_a && (!has_catalog_policy_rows || force_bootstrap)) {
         // Bootstrap login relies on one-time token proof in PASSWORD payload.
         allowed_method_mask = CM::AUTH_POLICY_METHOD_PASSWORD;
         has_required_method_out = true;
         required_method_out = protocol::AuthMethod::PASSWORD;
         peer_mode_out = CM::AuthPeerMode::DISABLED;
     } else {
+        const bool relaxed_emulation = relaxedEmulationAuthPolicyEnabled();
+        if (relaxed_emulation) {
+            // Local emulation harnesses may rely on bootstrap/password login for
+            // provisioning. In relaxed mode, allow legacy auth fallback on
+            // trusted local IPC even when strict policy rows are present.
+            allow_legacy_password_fallback = true;
+            allowed_method_mask |= kLegacyMethodMask;
+            has_required_method_out = false;
+        }
+
         // Legacy PASSWORD/MD5 are only legal when policy explicitly allows fallback
         // and the transport is a trusted local IPC channel.
         if (!allow_legacy_password_fallback || !isTrustedLocalIpc(connection)) {
@@ -1735,6 +1852,15 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
     auto* catalog = database_ ? database_->catalog_manager() : nullptr;
     auto* audit_logger = database_ ? database_->audit_logger() : nullptr;
 
+    if (authDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[auth_debug] auth request user=%s method=%u payload_len=%zu negotiation_ready=%d\n",
+                     username.c_str(),
+                     static_cast<unsigned>(auth_method),
+                     auth_payload.size(),
+                     auth_negotiation_ready_ ? 1 : 0);
+    }
+
     auto clear_auth_negotiation = [&]() {
         auth_negotiation_ready_ = false;
         auth_negotiation_username_.clear();
@@ -1774,6 +1900,13 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
     };
 
     auto send_auth_policy_error = [&](const char* code) -> core::Status {
+        if (authDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[auth_debug] auth policy denied code=%s method=%u user=%s\n",
+                         (code && code[0] != '\0') ? code : kAuthPolicyMethodDeniedCode,
+                         static_cast<unsigned>(auth_method),
+                         username.c_str());
+        }
         log_auth_policy_decision(false, code);
         protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
             protocol::AuthStatus::FAILURE, 0, code ? code : kAuthPolicyMethodDeniedCode);
@@ -2000,6 +2133,13 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             auth_negotiation_required_method_,
             auth_negotiation_transport_mask_,
             auth_negotiation_nonce_);
+        if (authDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[auth_debug] sending auth challenge methods=%zu required=%d method=%u\n",
+                         auth_negotiation_allowed_methods_.size(),
+                         auth_negotiation_has_required_method_ ? 1 : 0,
+                         static_cast<unsigned>(auth_negotiation_required_method_));
+        }
         log_auth_policy_decision(true, kAuthPolicyNegotiatedCode);
         return protocol_session_->sendMessage(challenge, ctx);
     }
@@ -2037,7 +2177,14 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         auth_method == protocol::AuthMethod::PASSWORD ||
         auth_method == protocol::AuthMethod::MD5;
     if (legacy_method && !isTrustedLocalIpc(connection_)) {
-        return send_auth_policy_error(kAuthPolicyTransportDeniedCode);
+        bool bootstrap_phase_a = false;
+        std::string bootstrap_phase_error;
+        if (!detectBootstrapPhaseA(catalog, bootstrap_phase_a, bootstrap_phase_error)) {
+            return send_auth_policy_error(kAuthPolicyNegotiationRequiredCode);
+        }
+        if (!bootstrap_phase_a) {
+            return send_auth_policy_error(kAuthPolicyTransportDeniedCode);
+        }
     }
 
     if (pending_mfa_auth_.active) {
@@ -2274,6 +2421,14 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
     }
 
     stats_.queries_failed++;
+
+    if (authDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[auth_debug] auth failure user=%s method=%u detail=%s\n",
+                     username.c_str(),
+                     static_cast<unsigned>(auth_method),
+                     auth_error.c_str());
+    }
 
     protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
         protocol::AuthStatus::FAILURE, 0, "Authentication failed");

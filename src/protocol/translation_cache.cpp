@@ -78,7 +78,8 @@ bool TranslationCache::get(const std::string& dialect,
     CacheKey key{dialect, sql, schema_version, privilege_signature};
     auto now = std::chrono::steady_clock::now();
 
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    // get() updates access metadata and LRU ordering, so it requires an exclusive lock.
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     auto it = cache_.find(key);
     if (it == cache_.end()) {
         ++stats_.misses;
@@ -89,17 +90,12 @@ bool TranslationCache::get(const std::string& dialect,
     }
 
     if (isExpired(it->second->second, now)) {
-        lock.unlock();
-        std::unique_lock<std::shared_mutex> write_lock(mutex_);
-        auto it2 = cache_.find(key);
-        if (it2 != cache_.end()) {
-            current_bytes_ -= it2->second->second.size_bytes;
-            lru_.erase(it2->second);
-            cache_.erase(it2);
-            ++stats_.evictions;
-            if (metrics.translation_cache_evictions_total) {
-                metrics.translation_cache_evictions_total->inc();
-            }
+        current_bytes_ -= it->second->second.size_bytes;
+        lru_.erase(it->second);
+        cache_.erase(it);
+        ++stats_.evictions;
+        if (metrics.translation_cache_evictions_total) {
+            metrics.translation_cache_evictions_total->inc();
         }
         ++stats_.misses;
         if (metrics.translation_cache_misses_total) {

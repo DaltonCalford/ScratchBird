@@ -19,6 +19,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
@@ -129,6 +130,27 @@ TEST_F(QueryCompilerV3Test, CompileSimpleSelect) {
 TEST_F(QueryCompilerV3Test, CompileSelectWithArithmetic) {
     auto result = compiler_->compile("SELECT 1 + 2 * 3");
     ASSERT_TRUE(result.success()) << "Compilation failed";
+}
+
+TEST_F(QueryCompilerV3Test, CompileSelectWithCompactArithmetic) {
+    auto result = compiler_->compile("SELECT 10+5-2");
+    ASSERT_TRUE(result.success()) << "Compilation failed";
+}
+
+TEST_F(QueryCompilerV3Test, ValidateCompactAndSpacedArithmeticBytecode) {
+    auto compact = compiler_->compile("SELECT 10+5");
+    ASSERT_TRUE(compact.success()) << "Compact compilation failed";
+
+    auto spaced = compiler_->compile("SELECT 10 + 5");
+    ASSERT_TRUE(spaced.success()) << "Spaced compilation failed";
+
+    ErrorContext compact_ctx;
+    auto compact_status = validateBytecode(compact.bytecode(), &compact_ctx);
+    EXPECT_EQ(compact_status, Status::OK) << compact_ctx.message;
+
+    ErrorContext spaced_ctx;
+    auto spaced_status = validateBytecode(spaced.bytecode(), &spaced_ctx);
+    EXPECT_EQ(spaced_status, Status::OK) << spaced_ctx.message;
 }
 
 TEST_F(QueryCompilerV3Test, CompileSelectWithStringLiteral) {
@@ -519,6 +541,18 @@ TEST_F(QueryCompilerV3Test, ExecuteSelectWithExpression) {
     auto* rs = result.resultSet();
     ASSERT_NE(rs, nullptr);
     EXPECT_EQ(rs->rowCount(), 1);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteSelectWithCompactExpression) {
+    auto result = compileAndExecute("SELECT 10+5");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 1);
+    EXPECT_DOUBLE_EQ(rs->getValue(0, 0).toDouble(), 15.0);
 }
 
 TEST_F(QueryCompilerV3Test, ExecuteSelectMultipleColumns) {

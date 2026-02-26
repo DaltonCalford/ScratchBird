@@ -210,6 +210,9 @@ const SchemaDef* schemaForOpcode(uint16_t opcode) {
     if (name == "SBLR3_COALESCE" || name == "SBLR3_NULLIF") {
         return lookupSchema("SCHEMA_FUNC_CALL");
     }
+    if (name == "SBLR3_COLUMN_REF" || name == "SBLR3_INSERTED_COLUMN_REF") {
+        return lookupSchema("SCHEMA_COLUMN_REF");
+    }
     if (name == "SBLR3_CASE_WHEN") return lookupSchema("SCHEMA_EXPR_CASE");
     if (name == "SBLR3_IN_LIST" || name == "SBLR3_SUBQUERY_IN" || name == "SBLR3_SUBQUERY_NOT_IN") {
         return lookupSchema("SCHEMA_EXPR_IN");

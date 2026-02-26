@@ -305,7 +305,7 @@ static parser::v3::TypeName pgTypeToTypeName(const PgDataType& type, parser::v3:
         case PgDataType::Kind::INT128: out.name = intern("int128"); break;
         case PgDataType::Kind::UINT128: out.name = intern("uint128"); break;
         case PgDataType::Kind::REAL: out.name = intern("real"); break;
-        case PgDataType::Kind::DOUBLE_PRECISION: out.name = intern("double_precision"); break;
+        case PgDataType::Kind::DOUBLE_PRECISION: out.name = intern("double precision"); break;
         case PgDataType::Kind::DECIMAL: out.name = intern("decimal"); break;
         case PgDataType::Kind::NUMERIC: out.name = intern("numeric"); break;
         case PgDataType::Kind::MONEY: out.name = intern("money"); break;

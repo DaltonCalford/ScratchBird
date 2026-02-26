@@ -457,7 +457,10 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
                     "bash tests/compatibility/mysql/scripts/run_mysql_ctest.sh",
                     SCRATCHBIRD_ROOT,
                     timeout_s=120,
-                    env={"SCRATCHBIRD_MY_COMPAT_RUN": "1"},
+                    env={
+                        "SCRATCHBIRD_MY_COMPAT_RUN": "1",
+                        "SCRATCHBIRD_MY_USE_UPSTREAM": "1",
+                    },
                 )
             )
             return specs, None
@@ -467,7 +470,10 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
                     "bash tests/compatibility/postgresql/scripts/run_postgresql_ctest.sh",
                     SCRATCHBIRD_ROOT,
                     timeout_s=120,
-                    env={"SCRATCHBIRD_PG_COMPAT_RUN": "1"},
+                    env={
+                        "SCRATCHBIRD_PG_COMPAT_RUN": "1",
+                        "SCRATCHBIRD_PG_USE_UPSTREAM": "1",
+                    },
                 )
             )
             return specs, None

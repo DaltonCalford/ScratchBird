@@ -138,7 +138,8 @@ private:
     // Protocol helpers
     Result<void> sendHandshakeResponse(const ServerDefinition& server,
                                         const UserMapping& mapping,
-                                        const std::vector<uint8_t>& auth_data);
+                                        const std::vector<uint8_t>& auth_data,
+                                        const std::string& server_auth_plugin);
     Result<void> sendCommand(uint8_t command, const std::vector<uint8_t>& data);
     Result<void> sendQuery(const std::string& sql);
     Result<RemoteQueryResult> readQueryResult();
@@ -148,6 +149,8 @@ private:
     // Authentication helpers
     std::vector<uint8_t> scramblePassword(const std::string& password,
                                            const std::vector<uint8_t>& auth_data);
+    std::vector<uint8_t> scrambleCachingSha2Password(const std::string& password,
+                                                      const std::vector<uint8_t>& auth_data);
 
     // Type mapping
     static const std::unordered_map<uint8_t, uint32_t>& getTypeMap();

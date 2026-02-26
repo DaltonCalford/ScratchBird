@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include <gtest/gtest.h>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -103,6 +104,13 @@ class DomainSecurityIntegrationTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        if (const char* existing = std::getenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE"))
+        {
+            legacy_env_had_prev_ = true;
+            legacy_env_prev_ = existing;
+        }
+        setenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE", "1", 1);
+
         db_file_ = std::make_unique<TestDatabaseFile>("domain_security", ".sbdb");
 
         ErrorContext ctx;
@@ -183,6 +191,15 @@ protected:
         connection_ctx_.reset();
         db_.close();
         db_file_.reset();
+
+        if (legacy_env_had_prev_)
+        {
+            setenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE", legacy_env_prev_.c_str(), 1);
+        }
+        else
+        {
+            unsetenv("SCRATCHBIRD_ENABLE_LEGACY_EXECUTE");
+        }
     }
 
     ExecutionResult compileAndExecute(const std::string& sql)
@@ -212,6 +229,8 @@ protected:
     std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::unique_ptr<ConnectionContext> connection_ctx_;
+    bool legacy_env_had_prev_ = false;
+    std::string legacy_env_prev_;
 };
 
 TEST_F(DomainSecurityIntegrationTest, MasksWithoutPrivilege)

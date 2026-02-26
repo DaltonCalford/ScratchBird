@@ -593,7 +593,7 @@ private:
     parser::v3::SelectStmt* parseSelectStmtV3();
     parser::v3::SelectItem* parseSelectItemV3();
     void parseSelectListV3(parser::v3::SelectStmt* stmt);
-    parser::v3::TableRefNode* parseTableRefV3();
+    parser::v3::TableRefNode* parseTableRefV3(std::vector<parser::v3::JoinNode*>* grouped_joins = nullptr);
     parser::v3::OrderByItem* parseOrderByItemV3();
 
     // Table reference parsing

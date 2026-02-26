@@ -185,17 +185,34 @@ protected:
 
         compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
         executor_ = std::make_unique<Executor>(db_.get());
+        ASSERT_NE(db_->catalog_manager(), nullptr);
 
-        ASSERT_TRUE(executeSql("CREATE TABLE users (id INT, name TEXT)"));
-        ASSERT_TRUE(executeSql("CREATE INDEX idx_users_id ON users USING BTREE (id)"));
+        scratchbird::core::CatalogManager::SchemaInfo public_schema;
+        ASSERT_EQ(db_->catalog_manager()->getSchema("public", public_schema, &ctx), Status::OK)
+            << ctx.message;
+        compiler_->setCurrentSchema(public_schema.schema_id);
+        executor_->setCurrentSchema(public_schema.schema_id);
+
+        ASSERT_TRUE(executeSql("CREATE TABLE users (id INT, name TEXT)")) << "failed to create users table";
+        ASSERT_TRUE(executeSql("CREATE INDEX idx_users_id ON users USING BTREE (id)"))
+            << "failed to create baseline index";
     }
 
     bool executeSql(const std::string& sql) {
         auto compile_result = compiler_->compile(sql);
         if (!compile_result.success()) {
+            if (!compile_result.errors().empty()) {
+                ADD_FAILURE() << "Compilation failed for SQL: " << sql
+                              << " :: " << compile_result.errors().front();
+            } else {
+                ADD_FAILURE() << "Compilation failed for SQL: " << sql;
+            }
             return false;
         }
         ExecutionResult exec_result = executor_->execute(compile_result.bytecode());
+        if (!exec_result.success()) {
+            ADD_FAILURE() << "Execution failed for SQL: " << sql << " :: " << exec_result.error();
+        }
         return exec_result.success();
     }
 

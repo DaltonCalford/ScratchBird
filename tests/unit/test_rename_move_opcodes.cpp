@@ -14,6 +14,7 @@
 #include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/sblr/postgresql_query_compiler.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
+#include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/sblr/v3_codec.h"
 #include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/sblr/v3_opcode_registry.h"
@@ -133,4 +134,23 @@ TEST_F(RenameMoveOpcodeV3Test, NativeRenameTableEmitsV3Opcode)
     auto result = compiler.compile("ALTER TABLE IF EXISTS foo RENAME TO bar");
     ASSERT_TRUE(result.success()) << (result.errors().empty() ? "" : result.errors()[0]);
     EXPECT_TRUE(containsOpcode(result.bytecode(), sblr_v3::Opcode::SBLR3_RENAME_OBJECT));
+}
+
+TEST_F(RenameMoveOpcodeV3Test, PostgresCompactArithmeticBytecodeValidWithNullDbContext)
+{
+    PostgreSQLQueryCompiler compiler(nullptr);
+
+    auto compact = compiler.compile("SELECT 10+5;");
+    ASSERT_TRUE(compact.success()) << (compact.errors().empty() ? "" : compact.errors()[0]);
+
+    auto spaced = compiler.compile("SELECT 10 + 5;");
+    ASSERT_TRUE(spaced.success()) << (spaced.errors().empty() ? "" : spaced.errors()[0]);
+
+    scratchbird::core::ErrorContext compact_ctx;
+    auto compact_status = scratchbird::sblr::validateBytecode(compact.bytecode(), &compact_ctx);
+    EXPECT_EQ(compact_status, scratchbird::core::Status::OK) << compact_ctx.message;
+
+    scratchbird::core::ErrorContext spaced_ctx;
+    auto spaced_status = scratchbird::sblr::validateBytecode(spaced.bytecode(), &spaced_ctx);
+    EXPECT_EQ(spaced_status, scratchbird::core::Status::OK) << spaced_ctx.message;
 }

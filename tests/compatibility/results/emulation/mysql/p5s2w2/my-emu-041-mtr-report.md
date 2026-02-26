@@ -1,4 +1,4 @@
-Last updated: 2026-02-24
+Last updated: 2026-02-26
 
 # MY-EMU-041 MTR Smoke Report
 
@@ -31,8 +31,6 @@ Checking supported features
 Using suite(s): main
 Collecting tests
 Checking leftover processes
- - found old pid 3947493 in 'mysqld.1.pid', killing it...
-   ok!
 Removing old var directory
 Creating var directory '<outside-tree-path>'
 Installing system database
@@ -43,24 +41,24 @@ ports_per_thread:30
                   TEST NAME                       RESULT  TIME (ms) COMMENT
 ------------------------------------------------------------------------------
 [  6%] main.select_distinct_debug                [ skipped ]  Test needs debug binaries.
-[ 13%] main.select_count                         [ pass ]   1109
-[ 20%] main.select_for_update                    [ pass ]   7909
-[ 26%] main.select_all                           [ pass ]  46143
-[ 33%] main.select_all_bka                       [ pass ]  43960
-[ 40%] main.select_all_bka_nobnl                 [ pass ]  44128
-[ 46%] main.select_found                         [ pass ]   3757
-[ 53%] main.select_icp_mrr                       [ pass ]  44372
-[ 60%] main.select_icp_mrr_bka                   [ pass ]  43967
-[ 66%] main.select_icp_mrr_bka_nobnl             [ pass ]  44045
-[ 73%] main.select_none                          [ pass ]  43656
-[ 80%] main.select_none_bka                      [ pass ]  45234
-[ 86%] main.select_none_bka_nobnl                [ pass ]  43537
-[ 93%] main.select_safe                          [ pass ]   1181
+[ 13%] main.select_count                         [ pass ]    783
+[ 20%] main.select_for_update                    [ pass ]   9815
+[ 26%] main.select_all                           [ pass ]  61424
+[ 33%] main.select_all_bka                       [ pass ]  62656
+[ 40%] main.select_all_bka_nobnl                 [ pass ]  57966
+[ 46%] main.select_found                         [ pass ]   3553
+[ 53%] main.select_icp_mrr                       [ pass ]  46054
+[ 60%] main.select_icp_mrr_bka                   [ pass ]  43733
+[ 66%] main.select_icp_mrr_bka_nobnl             [ pass ]  44248
+[ 73%] main.select_none                          [ pass ]  43690
+[ 80%] main.select_none_bka                      [ pass ]  43729
+[ 86%] main.select_none_bka_nobnl                [ pass ]  43495
+[ 93%] main.select_safe                          [ pass ]   1088
 [100%] shutdown_report                           [ pass ]       
 ------------------------------------------------------------------------------
 The servers were restarted 2 times
 The servers were reinitialized 0 times
-Spent 412.998 of 441 seconds executing testcases
+Spent 462.234 of 490 seconds executing testcases
 
 Completed: All 14 tests were successful.
 
