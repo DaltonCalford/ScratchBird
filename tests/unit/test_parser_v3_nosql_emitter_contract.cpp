@@ -130,7 +130,7 @@ const Instruction* firstSelectItemExpr(const EmittedRoot& emitted) {
 
 }  // namespace
 
-TEST(ParserV3NoSqlEmitterContractTest, MapsEquivalentNoSqlCommandsToAllBridgeOpcodes) {
+TEST(ParserV3NoSqlEmitterContractTest, MapsCanonicalRedisKvAndStreamCommandsToBridgeOpcodes) {
     struct Case {
         const char* sql;
         Opcode opcode;
@@ -138,37 +138,12 @@ TEST(ParserV3NoSqlEmitterContractTest, MapsEquivalentNoSqlCommandsToAllBridgeOpc
     };
 
     const std::vector<Case> cases = {
-        {"CQL KEYSPACE ks_main", Opcode::SBLR3_CQL_KEYSPACE, 1},
-        {"CQL BATCH 'BEGIN BATCH ...'", Opcode::SBLR3_CQL_BATCH, 2},
-        {"CQL TTL 'ttl(users)=600'", Opcode::SBLR3_CQL_TTL, 3},
-        {"CQL WRITETIME 'writetime(users.email)'", Opcode::SBLR3_CQL_WRITETIME, 4},
-
-        {"MONGO FIND '{\"active\":true}'", Opcode::SBLR3_MONGO_FIND, 5},
-        {"MONGO AGGREGATE '[{\"$match\":{}}]'", Opcode::SBLR3_MONGO_AGGREGATE, 6},
-        {"MONGO FIND AND MODIFY '{\"_id\":1}'", Opcode::SBLR3_MONGO_FIND_AND_MODIFY, 7},
-        {"MONGO BULK WRITE '[{\"insertOne\":{}}]'", Opcode::SBLR3_MONGO_BULK_WRITE, 8},
-
-        {"CYPHER MATCH 'MATCH (n) RETURN n'", Opcode::SBLR3_CYPHER_MATCH, 9},
-        {"CYPHER MERGE 'MERGE (n:Person {id:1})'", Opcode::SBLR3_CYPHER_MERGE, 10},
-        {"CYPHER UNWIND 'UNWIND [1,2] AS n RETURN n'", Opcode::SBLR3_CYPHER_UNWIND, 11},
-        {"CYPHER CALL 'CALL db.labels()'", Opcode::SBLR3_CYPHER_CALL, 12},
-
         {"REDIS STRING 'SET k v'", Opcode::SBLR3_REDIS_STRING, 13},
         {"REDIS HASH 'HSET h k v'", Opcode::SBLR3_REDIS_HASH, 14},
         {"REDIS LIST 'LPUSH l v'", Opcode::SBLR3_REDIS_LIST, 15},
         {"REDIS SET 'SADD s v'", Opcode::SBLR3_REDIS_SET, 16},
         {"REDIS ZSET 'ZADD z 1 v'", Opcode::SBLR3_REDIS_ZSET, 17},
         {"REDIS STREAM 'XADD s * f v'", Opcode::SBLR3_REDIS_STREAM, 18},
-        {"REDIS PUBSUB 'PUBLISH c msg'", Opcode::SBLR3_REDIS_PUBSUB, 19},
-
-        {"MILVUS CREATE COLLECTION vecs_main", Opcode::SBLR3_MILVUS_CREATE_COLLECTION, 20},
-        {"MILVUS DROP COLLECTION vecs_main", Opcode::SBLR3_MILVUS_DROP_COLLECTION, 21},
-        {"MILVUS CREATE INDEX vecs_hnsw", Opcode::SBLR3_MILVUS_CREATE_INDEX, 22},
-        {"MILVUS DROP INDEX vecs_hnsw", Opcode::SBLR3_MILVUS_DROP_INDEX, 23},
-        {"MILVUS INSERT '[{\"id\":1}]'", Opcode::SBLR3_MILVUS_INSERT, 24},
-        {"MILVUS DELETE 'id in [1,2]'", Opcode::SBLR3_MILVUS_DELETE, 25},
-        {"MILVUS SEARCH 'vector=[0.1,0.2]'", Opcode::SBLR3_MILVUS_SEARCH, 26},
-        {"MILVUS QUERY 'id >= 10'", Opcode::SBLR3_MILVUS_QUERY, 27},
     };
 
     for (const auto& c : cases) {
@@ -191,6 +166,23 @@ TEST(ParserV3NoSqlEmitterContractTest, MapsEquivalentNoSqlCommandsToAllBridgeOpc
         const auto* options = payloadListField(*payload, "options");
         ASSERT_NE(nullptr, options) << c.sql;
         EXPECT_TRUE(options->empty()) << c.sql;
+    }
+}
+
+TEST(ParserV3NoSqlEmitterContractTest, RejectsRemovedEnginePrefixedAliasesBeforeEmission) {
+    const std::vector<const char*> removed_aliases = {
+        "CQL KEYSPACE ks_main",
+        "MONGO FIND '{\"active\":true}'",
+        "CYPHER MATCH 'MATCH (n) RETURN n'",
+        "MILVUS QUERY 'id >= 10'",
+        "REDIS PUBSUB 'PUBLISH c msg'",
+    };
+
+    for (const char* sql : removed_aliases) {
+        EmittedRoot emitted;
+        std::string err;
+        EXPECT_FALSE(emitRootFromSql(sql, emitted, err)) << sql;
+        EXPECT_NE(err.find("PRS_0505"), std::string::npos) << sql << " | " << err;
     }
 }
 

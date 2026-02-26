@@ -1553,27 +1553,22 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidTokenScopeModelDeterminis
     EXPECT_TRUE(hasErrorCode(result, "SEC_1256"));
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesDocPathFilterStatementAndClauseForms) {
-    {
-        Parser parser("DOC PATH FILTER PATH_ID 17 OP EQ VALUE_REF 42");
-        auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success());
-        ASSERT_EQ(result.statement()->kind(), ASTKind::AST_DOC_PATH_FILTER);
-        auto* stmt = static_cast<DocPathFilterStmt*>(result.statement());
-        EXPECT_EQ(stmt->path_expr, 17u);
-        EXPECT_EQ(stmt->compare_op, 0u);
-        EXPECT_EQ(stmt->value_expr, 42u);
-    }
-    {
-        Parser parser("FILTER DOC PATH 11 >= 9");
-        auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success());
-        ASSERT_EQ(result.statement()->kind(), ASTKind::AST_DOC_PATH_FILTER);
-        auto* stmt = static_cast<DocPathFilterStmt*>(result.statement());
-        EXPECT_EQ(stmt->path_expr, 11u);
-        EXPECT_EQ(stmt->compare_op, 5u);
-        EXPECT_EQ(stmt->value_expr, 9u);
-    }
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalDocPathFilterStatementForm) {
+    Parser parser("DOC PATH FILTER PATH_ID 17 OP EQ VALUE_REF 42");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(result.statement()->kind(), ASTKind::AST_DOC_PATH_FILTER);
+    auto* stmt = static_cast<DocPathFilterStmt*>(result.statement());
+    EXPECT_EQ(stmt->path_expr, 17u);
+    EXPECT_EQ(stmt->compare_op, 0u);
+    EXPECT_EQ(stmt->value_expr, 42u);
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsDocPathFilterClauseAlias) {
+    Parser parser("FILTER DOC PATH 11 >= 9");
+    auto result = parser.parseStatement();
+    EXPECT_FALSE(result.success());
+    EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
 }
 
 TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidDocPathFilterComparator) {
@@ -1583,27 +1578,22 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidDocPathFilterComparator) 
     EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesTimeBucketAggregateStatementAndClauseForms) {
-    {
-        Parser parser("TS BUCKET AGG TIME_EXPR 91 BUCKET_NS 60000000000 AGG_REFS (7, 8, 9)");
-        auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success());
-        ASSERT_EQ(result.statement()->kind(), ASTKind::AST_TS_BUCKET_AGG);
-        auto* stmt = static_cast<TsBucketAggStmt*>(result.statement());
-        EXPECT_EQ(stmt->time_expr, 91u);
-        EXPECT_EQ(stmt->bucket_size, 60000000000ULL);
-        ASSERT_EQ(stmt->agg_refs.size(), 3u);
-    }
-    {
-        Parser parser("AGGREGATE TIME BUCKET 60000000000 BY 91 USING (7, 8)");
-        auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success());
-        ASSERT_EQ(result.statement()->kind(), ASTKind::AST_TS_BUCKET_AGG);
-        auto* stmt = static_cast<TsBucketAggStmt*>(result.statement());
-        EXPECT_EQ(stmt->time_expr, 91u);
-        EXPECT_EQ(stmt->bucket_size, 60000000000ULL);
-        ASSERT_EQ(stmt->agg_refs.size(), 2u);
-    }
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalTimeBucketAggregateStatementForm) {
+    Parser parser("TS BUCKET AGG TIME_EXPR 91 BUCKET_NS 60000000000 AGG_REFS (7, 8, 9)");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(result.statement()->kind(), ASTKind::AST_TS_BUCKET_AGG);
+    auto* stmt = static_cast<TsBucketAggStmt*>(result.statement());
+    EXPECT_EQ(stmt->time_expr, 91u);
+    EXPECT_EQ(stmt->bucket_size, 60000000000ULL);
+    ASSERT_EQ(stmt->agg_refs.size(), 3u);
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsTimeBucketClauseAlias) {
+    Parser parser("AGGREGATE TIME BUCKET 60000000000 BY 91 USING (7, 8)");
+    auto result = parser.parseStatement();
+    EXPECT_FALSE(result.success());
+    EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
 }
 
 TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidTimeBucketAggregateList) {
@@ -1641,28 +1631,23 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidSearchDslScorer) {
     EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesVectorAnnStatementAndClauseForms) {
-    {
-        Parser parser("VECTOR ANN QUERY INDEX 33 METRIC COSINE TOPK 15 EF_SEARCH 64");
-        auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success());
-        ASSERT_EQ(result.statement()->kind(), ASTKind::AST_VECTOR_ANN_QUERY);
-        auto* stmt = static_cast<VectorAnnQueryStmt*>(result.statement());
-        EXPECT_EQ(stmt->vector_expr, 33u);
-        EXPECT_EQ(stmt->metric, 2u);
-        EXPECT_EQ(stmt->k, 15u);
-        EXPECT_EQ(stmt->ef_search, 64u);
-    }
-    {
-        Parser parser("ANN INDEX 33 WITH METRIC DOT TOPK 8 EF 40");
-        auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success());
-        ASSERT_EQ(result.statement()->kind(), ASTKind::AST_VECTOR_ANN_QUERY);
-        auto* stmt = static_cast<VectorAnnQueryStmt*>(result.statement());
-        EXPECT_EQ(stmt->metric, 3u);
-        EXPECT_EQ(stmt->k, 8u);
-        EXPECT_EQ(stmt->ef_search, 40u);
-    }
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalVectorAnnStatementForm) {
+    Parser parser("VECTOR ANN QUERY INDEX 33 METRIC COSINE TOPK 15 EF_SEARCH 64");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(result.statement()->kind(), ASTKind::AST_VECTOR_ANN_QUERY);
+    auto* stmt = static_cast<VectorAnnQueryStmt*>(result.statement());
+    EXPECT_EQ(stmt->vector_expr, 33u);
+    EXPECT_EQ(stmt->metric, 2u);
+    EXPECT_EQ(stmt->k, 15u);
+    EXPECT_EQ(stmt->ef_search, 64u);
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsVectorAnnClauseAlias) {
+    Parser parser("ANN INDEX 33 WITH METRIC DOT TOPK 8 EF 40");
+    auto result = parser.parseStatement();
+    EXPECT_FALSE(result.success());
+    EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
 }
 
 TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidVectorAnnMetric) {
@@ -1985,40 +1970,19 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesBareContextFunctionKeywordsAsFunc
     }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesNoSqlOpcodeEquivalentSurfaces) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalRedisKvAndStreamSurfaces) {
     struct Case {
         const char* sql;
         const char* key;
     };
 
     const std::vector<Case> cases = {
-        {"CQL KEYSPACE ks_main", "nosql.cql.keyspace"},
-        {"CQL BATCH 'BEGIN BATCH ...'", "nosql.cql.batch"},
-        {"CQL TTL 'ttl(users)=600'", "nosql.cql.ttl"},
-        {"CQL WRITETIME 'writetime(users.email)'", "nosql.cql.writetime"},
-        {"MONGO FIND '{\"active\":true}'", "nosql.mongo.find"},
-        {"MONGO AGGREGATE '[{\"$match\":{}}]'", "nosql.mongo.aggregate"},
-        {"MONGO FIND_AND_MODIFY '{\"_id\":1}'", "nosql.mongo.find_and_modify"},
-        {"MONGO BULK_WRITE '[{\"insertOne\":{}}]'", "nosql.mongo.bulk_write"},
-        {"CYPHER MATCH 'MATCH (n) RETURN n'", "nosql.cypher.match"},
-        {"CYPHER MERGE 'MERGE (n:Person {id:1})'", "nosql.cypher.merge"},
-        {"CYPHER UNWIND 'UNWIND [1,2] AS n RETURN n'", "nosql.cypher.unwind"},
-        {"CYPHER CALL 'CALL db.labels()'", "nosql.cypher.call"},
         {"REDIS STRING 'SET k v'", "nosql.redis.string"},
         {"REDIS HASH 'HSET h k v'", "nosql.redis.hash"},
         {"REDIS LIST 'LPUSH l v'", "nosql.redis.list"},
         {"REDIS SET 'SADD s v'", "nosql.redis.set"},
         {"REDIS ZSET 'ZADD z 1 v'", "nosql.redis.zset"},
         {"REDIS STREAM 'XADD s * f v'", "nosql.redis.stream"},
-        {"REDIS PUBSUB 'PUBLISH c msg'", "nosql.redis.pubsub"},
-        {"MILVUS CREATE COLLECTION vecs_main", "nosql.milvus.create_collection"},
-        {"MILVUS DROP COLLECTION vecs_main", "nosql.milvus.drop_collection"},
-        {"MILVUS CREATE INDEX vecs_hnsw", "nosql.milvus.create_index"},
-        {"MILVUS DROP INDEX vecs_hnsw", "nosql.milvus.drop_index"},
-        {"MILVUS INSERT '[{\"id\":1}]'", "nosql.milvus.insert"},
-        {"MILVUS DELETE 'id in [1,2]'", "nosql.milvus.delete"},
-        {"MILVUS SEARCH 'vector=[0.1,0.2]'", "nosql.milvus.search"},
-        {"MILVUS QUERY 'id >= 10'", "nosql.milvus.query"},
     };
 
     for (const auto& c : cases) {
@@ -2029,6 +1993,23 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesNoSqlOpcodeEquivalentSurfaces) {
         auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
         EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), c.key) << c.sql;
         EXPECT_NE(stmt->value, nullptr) << c.sql;
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsRemovedEnginePrefixedAliasSurfaces) {
+    const std::vector<const char*> removed = {
+        "CQL KEYSPACE ks_main",
+        "MONGO FIND '{\"active\":true}'",
+        "CYPHER MATCH 'MATCH (n) RETURN n'",
+        "MILVUS QUERY 'id >= 10'",
+        "REDIS PUBSUB 'PUBLISH c msg'",
+    };
+
+    for (const char* sql : removed) {
+        Parser parser(sql);
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success()) << sql;
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505")) << sql;
     }
 }
 

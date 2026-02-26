@@ -654,22 +654,37 @@ Statement* Parser::parseStatementInternal() {
     if (match(TokenType::KW_DROP))      return parseDrop();
     if (match(TokenType::KW_TRUNCATE))  return parseTruncate();
     if (match(TokenType::KW_DECLARE))   return parseDeclareTopLevel();
-    if (checkContextual("DOC") || checkContextual("FILTER")) {
+    if (checkContextual("DOC")) {
         if (!requireFeature(kFeatureDocPathFilter)) return nullptr;
         return parseDocPathFilterSurface();
     }
-    if (checkContextual("TS") || checkContextual("AGGREGATE")) {
+    if (checkContextual("FILTER")) {
+        errorCode("PRS_0505",
+                  "FILTER DOC PATH alias is not supported in v3; use DOC PATH FILTER ...");
+        return nullptr;
+    }
+    if (checkContextual("TS")) {
         if (!requireFeature(kFeatureTsBucketAgg)) return nullptr;
         return parseTimeBucketAggSurface();
+    }
+    if (checkContextual("AGGREGATE")) {
+        errorCode("PRS_0505",
+                  "AGGREGATE TIME BUCKET alias is not supported in v3; use TS BUCKET AGG ...");
+        return nullptr;
     }
     if (checkContextual("SEARCH") || check(TokenType::KW_JOIN) ||
         checkContextual("JOIN") || checkContextual("PERCOLATOR")) {
         if (!requireFeature(kFeatureSearchQueryDsl)) return nullptr;
         return parseSearchDslSurface();
     }
-    if (checkContextual("VECTOR") || checkContextual("ANN")) {
+    if (checkContextual("VECTOR")) {
         if (!requireFeature(kFeatureVectorAnn)) return nullptr;
         return parseVectorAnnSurface();
+    }
+    if (checkContextual("ANN")) {
+        errorCode("PRS_0505",
+                  "ANN alias is not supported in v3; use VECTOR ANN QUERY ...");
+        return nullptr;
     }
     if (checkContextual("GRAPH")) {
         return parseGraphPathSurface();
@@ -685,15 +700,17 @@ Statement* Parser::parseStatementInternal() {
         checkContextual("MONGO") ||
         checkContextual("CYPHER") ||
         checkContextual("MILVUS")) {
-        return parseNoSqlSurface();
+        errorCode("PRS_0505",
+                  "Engine-prefixed NoSQL aliases are not supported in v3");
+        return nullptr;
     }
     if (checkContextual("REDIS")) {
         Token lookahead = state_.lexer().peekToken();
-        if (lookahead.type == TokenType::IDENTIFIER &&
+        if (lookahead.type != TokenType::END_OF_FILE &&
             caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "LUA")) {
             return parseRedisLuaEvalSurface();
         }
-        if (lookahead.type == TokenType::IDENTIFIER &&
+        if (lookahead.type != TokenType::END_OF_FILE &&
             caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "STREAM")) {
             return parseRedisStreamGroupSurface();
         }
@@ -15041,12 +15058,6 @@ Statement* Parser::parseDocPathFilterSurface() {
             errorCode("PRS_0504", "Expected VALUE_REF in DOC PATH FILTER statement form");
         }
         parse_u64("VALUE_REF", stmt->value_expr);
-    } else if (matchContextual("FILTER")) {
-        expectContextual("DOC", "Expected DOC after FILTER");
-        expectContextual("PATH", "Expected PATH after FILTER DOC");
-        parse_u64("path reference", stmt->path_expr);
-        parse_cmp(stmt->compare_op);
-        parse_u64("value reference", stmt->value_expr);
     } else {
         errorCode("PRS_0505", "Unsupported DOC PATH FILTER surface");
     }
@@ -15058,10 +15069,6 @@ Statement* Parser::parseDocPathFilterSurface() {
 Statement* Parser::parseTimeBucketAggSurface() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<TsBucketAggStmt>();
-
-    auto match_word = [&](TokenType token, const char* word) -> bool {
-        return match(token) || matchContextual(word);
-    };
 
     auto parse_u64 = [&](const char* label, uint64_t& out) -> bool {
         if (!check(TokenType::INTEGER_LITERAL)) {
@@ -15107,20 +15114,6 @@ Statement* Parser::parseTimeBucketAggSurface() {
         parse_u64("BUCKET_NS", stmt->bucket_size);
         if (!matchContextual("AGG_REFS")) {
             errorCode("PRS_0504", "Expected AGG_REFS in TS BUCKET AGG statement form");
-        }
-        parse_agg_refs();
-    } else if (matchContextual("AGGREGATE")) {
-        if (!matchContextual("TIME")) {
-            errorCode("PRS_0505", "Expected TIME after AGGREGATE");
-        }
-        expectContextual("BUCKET", "Expected BUCKET after AGGREGATE TIME");
-        parse_u64("bucket size", stmt->bucket_size);
-        if (!matchContextual("BY")) {
-            errorCode("PRS_0505", "Expected BY in AGGREGATE TIME BUCKET clause form");
-        }
-        parse_u64("time expression", stmt->time_expr);
-        if (!match(TokenType::KW_USING) && !matchContextual("USING")) {
-            errorCode("PRS_0505", "Expected USING in AGGREGATE TIME BUCKET clause form");
         }
         parse_agg_refs();
     } else {
@@ -15897,151 +15890,35 @@ Statement* Parser::parseNoSqlSurface() {
         return parse_payload_expr(label);
     };
 
-    if (matchContextual("CQL")) {
-        if (matchContextual("KEYSPACE")) {
-            return make_nosql_stmt("nosql.cql.keyspace", parse_payload_expr("CQL KEYSPACE"));
-        }
-        if (matchContextual("BATCH")) {
-            return make_nosql_stmt("nosql.cql.batch", parse_query_expr("CQL BATCH"));
-        }
-        if (matchContextual("TTL")) {
-            return make_nosql_stmt("nosql.cql.ttl", parse_query_expr("CQL TTL"));
-        }
-        if (matchContextual("WRITETIME")) {
-            return make_nosql_stmt("nosql.cql.writetime", parse_query_expr("CQL WRITETIME"));
-        }
-        errorCode("PRS_0505", "Unsupported CQL surface");
+    if (!matchContextual("REDIS")) {
+        errorCode("PRS_0505", "Unsupported NoSQL surface");
         auto* fallback = arena_.create<AlterSystemStmt>();
         fallback->span = makeSpan(start);
         return fallback;
     }
 
-    if (matchContextual("MONGO")) {
-        if (matchContextual("FIND_AND_MODIFY")) {
-            return make_nosql_stmt("nosql.mongo.find_and_modify", parse_query_expr("MONGO FIND_AND_MODIFY"));
-        }
-        if (matchContextual("FIND")) {
-            if (match(TokenType::KW_AND) || matchContextual("AND")) {
-                expectContextual("MODIFY", "Expected MODIFY after FIND AND");
-                return make_nosql_stmt("nosql.mongo.find_and_modify", parse_query_expr("MONGO FIND AND MODIFY"));
-            }
-            return make_nosql_stmt("nosql.mongo.find", parse_query_expr("MONGO FIND"));
-        }
-        if (matchContextual("AGGREGATE")) {
-            return make_nosql_stmt("nosql.mongo.aggregate", parse_query_expr("MONGO AGGREGATE"));
-        }
-        if (matchContextual("BULK_WRITE")) {
-            return make_nosql_stmt("nosql.mongo.bulk_write", parse_query_expr("MONGO BULK_WRITE"));
-        }
-        if (matchContextual("BULK")) {
-            expectContextual("WRITE", "Expected WRITE after MONGO BULK");
-            return make_nosql_stmt("nosql.mongo.bulk_write", parse_query_expr("MONGO BULK WRITE"));
-        }
-        errorCode("PRS_0505", "Unsupported MONGO surface");
-        auto* fallback = arena_.create<AlterSystemStmt>();
-        fallback->span = makeSpan(start);
-        return fallback;
+    if (matchContextual("STRING")) {
+        return make_nosql_stmt("nosql.redis.string", parse_query_expr("REDIS STRING"));
+    }
+    if (matchContextual("HASH")) {
+        return make_nosql_stmt("nosql.redis.hash", parse_query_expr("REDIS HASH"));
+    }
+    if (matchContextual("LIST")) {
+        return make_nosql_stmt("nosql.redis.list", parse_query_expr("REDIS LIST"));
+    }
+    if (match(TokenType::KW_SET) || matchContextual("SET")) {
+        return make_nosql_stmt("nosql.redis.set", parse_query_expr("REDIS SET"));
+    }
+    if (matchContextual("ZSET")) {
+        return make_nosql_stmt("nosql.redis.zset", parse_query_expr("REDIS ZSET"));
     }
 
-    if (matchContextual("CYPHER")) {
-        if (matchContextual("MATCH")) {
-            return make_nosql_stmt("nosql.cypher.match", parse_query_expr("CYPHER MATCH"));
-        }
-        if (match(TokenType::KW_MERGE) || matchContextual("MERGE")) {
-            return make_nosql_stmt("nosql.cypher.merge", parse_query_expr("CYPHER MERGE"));
-        }
-        if (matchContextual("UNWIND")) {
-            return make_nosql_stmt("nosql.cypher.unwind", parse_query_expr("CYPHER UNWIND"));
-        }
-        if (match(TokenType::KW_CALL) || matchContextual("CALL")) {
-            return make_nosql_stmt("nosql.cypher.call", parse_query_expr("CYPHER CALL"));
-        }
-        errorCode("PRS_0505", "Unsupported CYPHER surface");
-        auto* fallback = arena_.create<AlterSystemStmt>();
-        fallback->span = makeSpan(start);
-        return fallback;
+    if (matchContextual("PUBSUB")) {
+        errorCode("PRS_0505",
+                  "REDIS PUBSUB alias is not supported in v3");
+    } else {
+        errorCode("PRS_0505", "Unsupported REDIS KV surface");
     }
-
-    if (matchContextual("REDIS")) {
-        if (matchContextual("STRING")) {
-            return make_nosql_stmt("nosql.redis.string", parse_query_expr("REDIS STRING"));
-        }
-        if (matchContextual("HASH")) {
-            return make_nosql_stmt("nosql.redis.hash", parse_query_expr("REDIS HASH"));
-        }
-        if (matchContextual("LIST")) {
-            return make_nosql_stmt("nosql.redis.list", parse_query_expr("REDIS LIST"));
-        }
-        if (match(TokenType::KW_SET) || matchContextual("SET")) {
-            return make_nosql_stmt("nosql.redis.set", parse_query_expr("REDIS SET"));
-        }
-        if (matchContextual("ZSET")) {
-            return make_nosql_stmt("nosql.redis.zset", parse_query_expr("REDIS ZSET"));
-        }
-        if (matchContextual("STREAM")) {
-            return make_nosql_stmt("nosql.redis.stream", parse_query_expr("REDIS STREAM"));
-        }
-        if (matchContextual("PUBSUB")) {
-            return make_nosql_stmt("nosql.redis.pubsub", parse_query_expr("REDIS PUBSUB"));
-        }
-        errorCode("PRS_0505", "Unsupported REDIS surface");
-        auto* fallback = arena_.create<AlterSystemStmt>();
-        fallback->span = makeSpan(start);
-        return fallback;
-    }
-
-    if (matchContextual("MILVUS")) {
-        if (match(TokenType::KW_CREATE) || matchContextual("CREATE")) {
-            if (matchContextual("COLLECTION")) {
-                return make_nosql_stmt(
-                    "nosql.milvus.create_collection",
-                    parse_payload_expr("MILVUS CREATE COLLECTION"));
-            }
-            if (matchContextual("INDEX")) {
-                return make_nosql_stmt(
-                    "nosql.milvus.create_index",
-                    parse_payload_expr("MILVUS CREATE INDEX"));
-            }
-            errorCode("PRS_0505", "Unsupported MILVUS CREATE surface");
-            auto* fallback = arena_.create<AlterSystemStmt>();
-            fallback->span = makeSpan(start);
-            return fallback;
-        }
-        if (match(TokenType::KW_DROP) || matchContextual("DROP")) {
-            if (matchContextual("COLLECTION")) {
-                return make_nosql_stmt(
-                    "nosql.milvus.drop_collection",
-                    parse_payload_expr("MILVUS DROP COLLECTION"));
-            }
-            if (matchContextual("INDEX")) {
-                return make_nosql_stmt(
-                    "nosql.milvus.drop_index",
-                    parse_payload_expr("MILVUS DROP INDEX"));
-            }
-            errorCode("PRS_0505", "Unsupported MILVUS DROP surface");
-            auto* fallback = arena_.create<AlterSystemStmt>();
-            fallback->span = makeSpan(start);
-            return fallback;
-        }
-        if (match(TokenType::KW_INSERT) || matchContextual("INSERT")) {
-            return make_nosql_stmt("nosql.milvus.insert", parse_query_expr("MILVUS INSERT"));
-        }
-        if (match(TokenType::KW_DELETE) || matchContextual("DELETE")) {
-            return make_nosql_stmt("nosql.milvus.delete", parse_query_expr("MILVUS DELETE"));
-        }
-        if (matchContextual("SEARCH")) {
-            return make_nosql_stmt("nosql.milvus.search", parse_query_expr("MILVUS SEARCH"));
-        }
-        if (matchContextual("QUERY")) {
-            return make_nosql_stmt("nosql.milvus.query", parse_query_expr("MILVUS QUERY"));
-        }
-        errorCode("PRS_0505", "Unsupported MILVUS surface");
-        auto* fallback = arena_.create<AlterSystemStmt>();
-        fallback->span = makeSpan(start);
-        return fallback;
-    }
-
-    errorCode("PRS_0505", "Unsupported NoSQL surface");
     auto* fallback = arena_.create<AlterSystemStmt>();
     fallback->span = makeSpan(start);
     return fallback;
@@ -16101,24 +15978,6 @@ Statement* Parser::parseVectorAnnSurface() {
             errorCode("PRS_0504", "Expected EF_SEARCH in VECTOR ANN QUERY statement form");
         }
         parse_u64("EF_SEARCH", stmt->ef_search);
-    } else if (matchContextual("ANN")) {
-        expectContextual("INDEX", "Expected INDEX after ANN");
-        parse_u64("INDEX", stmt->vector_expr);
-        if (!match(TokenType::KW_WITH) && !matchContextual("WITH")) {
-            errorCode("PRS_0505", "Expected WITH in ANN clause form");
-        }
-        if (!matchContextual("METRIC")) {
-            errorCode("PRS_0504", "Expected METRIC in ANN clause form");
-        }
-        parse_metric();
-        if (!matchContextual("TOPK")) {
-            errorCode("PRS_0504", "Expected TOPK in ANN clause form");
-        }
-        parse_u64("TOPK", stmt->k);
-        if (!matchContextual("EF")) {
-            errorCode("PRS_0504", "Expected EF in ANN clause form");
-        }
-        parse_u64("EF", stmt->ef_search);
     } else {
         errorCode("PRS_0505", "Unsupported VECTOR ANN surface");
     }
