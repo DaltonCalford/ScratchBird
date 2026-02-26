@@ -51,7 +51,7 @@ struct BuiltinPluginTemplate {
     std::size_t method_count;
 };
 
-const std::array<BuiltinPluginTemplate, 12> kBuiltinPhase1Plugins = {{
+const std::array<BuiltinPluginTemplate, 17> kBuiltinPhase1Plugins = {{
     {"scratchbird.auth.trust_reject",
      {"scratchbird.auth.trust", "scratchbird.auth.reject", nullptr, nullptr},
      2},
@@ -87,6 +87,21 @@ const std::array<BuiltinPluginTemplate, 12> kBuiltinPhase1Plugins = {{
      1},
     {"scratchbird.auth.proxy_assertion",
      {"scratchbird.auth.proxy_principal_assertion", nullptr, nullptr, nullptr},
+     1},
+    {"scratchbird.auth.ldap",
+     {"scratchbird.auth.ldap_bind", nullptr, nullptr, nullptr},
+     1},
+    {"scratchbird.auth.kerberos",
+     {"scratchbird.auth.kerberos_gssapi", nullptr, nullptr, nullptr},
+     1},
+    {"scratchbird.auth.ident",
+     {"scratchbird.auth.ident_rfc1413", nullptr, nullptr, nullptr},
+     1},
+    {"scratchbird.auth.radius",
+     {"scratchbird.auth.radius_pap", nullptr, nullptr, nullptr},
+     1},
+    {"scratchbird.auth.pam",
+     {"scratchbird.auth.pam_conversation", nullptr, nullptr, nullptr},
      1},
 }};
 
@@ -1067,6 +1082,8 @@ std::string AuthPluginManager::mapAuthTypeToMethodId(AuthType auth_type) const {
             return "scratchbird.auth.radius_pap";
         case AuthType::PAM:
             return "scratchbird.auth.pam_conversation";
+        case AuthType::TOKEN:
+            return "scratchbird.auth.authkey_token";
         default:
             return "";
     }

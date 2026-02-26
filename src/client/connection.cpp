@@ -333,6 +333,37 @@ bool selectNegotiatedAuthMethod(const std::vector<protocol::AuthMethod>& allowed
     return false;
 }
 
+constexpr char kAuthRegistrySelectionMagic[] = "SBAPR1";
+
+bool resolveAuthMethodSlot(const std::vector<protocol::AuthMethodRegistryEntry>& method_registry,
+                           protocol::AuthMethod method,
+                           uint16_t& slot_out) {
+    const uint32_t legacy_wire_code = static_cast<uint32_t>(method);
+    for (const auto& entry : method_registry) {
+        if (!entry.has_legacy_wire_code) {
+            continue;
+        }
+        if (entry.legacy_wire_code == legacy_wire_code) {
+            slot_out = entry.method_slot;
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<uint8_t> buildAuthRegistrySelectionPayload(uint16_t method_slot,
+                                                       const std::vector<uint8_t>& auth_payload) {
+    std::vector<uint8_t> payload;
+    payload.reserve(8 + auth_payload.size());
+    payload.insert(payload.end(),
+                   kAuthRegistrySelectionMagic,
+                   kAuthRegistrySelectionMagic + 6);
+    payload.push_back(static_cast<uint8_t>(method_slot & 0xFFu));
+    payload.push_back(static_cast<uint8_t>((method_slot >> 8) & 0xFFu));
+    payload.insert(payload.end(), auth_payload.begin(), auth_payload.end());
+    return payload;
+}
+
 bool timingSafeEqual(const std::string& lhs, const std::string& rhs) {
     if (lhs.size() != rhs.size()) {
         return false;
@@ -1299,6 +1330,7 @@ public:
         protocol::AuthMethod::SCRAM_SHA_256;
     uint8_t auth_negotiation_transport_mask_ = 0;
     std::vector<uint8_t> auth_negotiation_nonce_;
+    std::vector<protocol::AuthMethodRegistryEntry> auth_negotiation_method_registry_;
 
     // ============================
     // Connection helpers
@@ -1444,6 +1476,7 @@ public:
         auth_negotiation_required_method_ = protocol::AuthMethod::SCRAM_SHA_256;
         auth_negotiation_transport_mask_ = 0;
         auth_negotiation_nonce_.clear();
+        auth_negotiation_method_registry_.clear();
     }
 
     bool validateNegotiatedAuthMethod(protocol::AuthMethod method,
@@ -1546,6 +1579,7 @@ public:
         protocol::AuthMethod required_method = protocol::AuthMethod::SCRAM_SHA_256;
         uint8_t allowed_transport_mask = 0;
         std::vector<uint8_t> challenge_nonce;
+        std::vector<protocol::AuthMethodRegistryEntry> method_registry;
         status = protocol::ProtocolCodec::parseAuthChallenge(
             negotiation_response,
             challenge_session_id,
@@ -1555,7 +1589,8 @@ public:
             required_method,
             allowed_transport_mask,
             challenge_nonce,
-            ctx);
+            ctx,
+            &method_registry);
         if (!isOk(status)) {
             last_error_ = "Failed to parse auth negotiation payload";
             if (authDebugEnabled()) {
@@ -1595,6 +1630,7 @@ public:
         auth_negotiation_required_method_ = required_method;
         auth_negotiation_transport_mask_ = allowed_transport_mask;
         auth_negotiation_nonce_ = std::move(challenge_nonce);
+        auth_negotiation_method_registry_ = std::move(method_registry);
         return core::Status::OK;
     }
 
@@ -1928,11 +1964,24 @@ public:
             return core::Status::INVALID_AUTHORIZATION;
         }
 
+        std::vector<uint8_t> outbound_payload = payload;
+        const bool plugin_registry_enabled =
+            (config_.connect_client_flags & protocol::FEATURE_AUTH_PLUGIN_REGISTRY) != 0 &&
+            !auth_negotiation_method_registry_.empty();
+        if (plugin_registry_enabled) {
+            uint16_t selected_slot = 0;
+            if (!resolveAuthMethodSlot(auth_negotiation_method_registry_, method, selected_slot)) {
+                last_error_ = "AUTH_METHOD_NOT_ALLOWED: missing method slot mapping";
+                return core::Status::INVALID_AUTHORIZATION;
+            }
+            outbound_payload = buildAuthRegistrySelectionPayload(selected_slot, payload);
+        }
+
         auto auth_msg = protocol::ProtocolCodec::buildAuthRequest(
             session_id_,
             config_.username,
             method,
-            payload
+            outbound_payload
         );
 
         status = protocol_session_->sendMessage(auth_msg, ctx);

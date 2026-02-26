@@ -65,7 +65,8 @@ enum class AuthType : uint8_t {
     PEER = 9,           // Unix socket peer credentials
     IDENT = 10,         // Ident protocol
     RADIUS = 11,        // RADIUS
-    PAM = 12            // Pluggable Authentication Modules
+    PAM = 12,           // Pluggable Authentication Modules
+    TOKEN = 13          // OAuth/OIDC bearer token style auth
 };
 
 /**

@@ -1428,6 +1428,44 @@ set_tests_properties(SecurityPhase3_5_RLS_DML PROPERTIES
     TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
+# ============================================================================
+# Auth Plugin Enterprise Integration Tests (Phase 2)
+# ============================================================================
+
+add_executable(test_auth_plugin_enterprise_matrix
+    integration/test_auth_plugin_enterprise_matrix.cpp
+)
+target_link_libraries(test_auth_plugin_enterprise_matrix
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer_compiler
+    gtest
+    gtest_main
+)
+add_test(NAME AuthPluginEnterpriseMatrix COMMAND test_auth_plugin_enterprise_matrix)
+set_tests_properties(AuthPluginEnterpriseMatrix PROPERTIES
+    LABELS "integration;security;auth_plugin;enterprise;matrix"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+add_executable(test_auth_plugin_enterprise_fail_closed
+    integration/test_auth_plugin_enterprise_fail_closed.cpp
+)
+target_link_libraries(test_auth_plugin_enterprise_fail_closed
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer_compiler
+    gtest
+    gtest_main
+)
+add_test(NAME AuthPluginEnterpriseFailClosed COMMAND test_auth_plugin_enterprise_fail_closed)
+set_tests_properties(AuthPluginEnterpriseFailClosed PROPERTIES
+    LABELS "integration;security;auth_plugin;enterprise;fail_closed"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
 # Mathematical Functions Tests - DISABLED (V3 bytecode issue with complex expressions)
 # TODO: Fix nested function call emission/execution (e.g., SQRT(POWER(3, 2) + POWER(4, 2)))
 # add_executable(test_mathematical_functions

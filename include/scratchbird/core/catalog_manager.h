@@ -4725,6 +4725,10 @@ public:
             ID default_role_id;
             bool has_default_role = false;
             bool is_login_enabled = true;
+            bool no_login_direct = false; // Principal flag: NO_LOGIN_DIRECT
+            bool proxy_assertion_only = false;
+            std::string proxy_assertion_trust_profile;
+            bool has_proxy_assertion_trust_profile = false;
             bool is_locked = false;
             std::string locked_reason;
             bool has_locked_reason = false;
@@ -4802,6 +4806,8 @@ public:
             uint32_t cache_ttl_ms = 0;
             AuthProviderFailMode fail_mode = AuthProviderFailMode::HARD_FAIL;
             std::string config_payload;
+            std::vector<std::string> proxy_assertion_allowed_signers;
+            std::vector<std::string> allowed_plugins;
             bool is_valid = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -4814,6 +4820,7 @@ public:
         static constexpr uint16_t AUTH_POLICY_METHOD_SCRAM_SHA_512  = 1u << 3;
         static constexpr uint16_t AUTH_POLICY_METHOD_TOKEN          = 1u << 4;
         static constexpr uint16_t AUTH_POLICY_METHOD_PEER           = 1u << 5;
+        static constexpr uint16_t AUTH_POLICY_METHOD_PLUGIN_REGISTRY = 1u << 6;
         static constexpr uint32_t AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT = 4096;
         static constexpr uint16_t AUTH_POLICY_METHOD_ALL =
             AUTH_POLICY_METHOD_PASSWORD |
@@ -4821,7 +4828,8 @@ public:
             AUTH_POLICY_METHOD_SCRAM_SHA_256 |
             AUTH_POLICY_METHOD_SCRAM_SHA_512 |
             AUTH_POLICY_METHOD_TOKEN |
-            AUTH_POLICY_METHOD_PEER;
+            AUTH_POLICY_METHOD_PEER |
+            AUTH_POLICY_METHOD_PLUGIN_REGISTRY;
 
         // Auth policy transport mask bits for protocol negotiation.
         static constexpr uint8_t AUTH_POLICY_TRANSPORT_LOCAL = 1u << 0;
@@ -4845,6 +4853,10 @@ public:
             uint32_t lockout_duration_ms = 0;
             bool allow_password_fallback = false;
             uint16_t allowed_auth_method_mask = AUTH_POLICY_METHOD_ALL;
+            std::vector<std::string> allowed_auth_method_ids;
+            std::vector<std::string> client_pinning_required_methods;
+            std::vector<std::string> client_pinning_forbidden_methods;
+            bool client_pinning_require_channel_binding = false;
             bool has_required_auth_method = false;
             ConnectionAuthMethod required_auth_method = ConnectionAuthMethod::SCRAM_SHA_256;
             uint8_t allowed_transport_mask = AUTH_POLICY_TRANSPORT_ALL;

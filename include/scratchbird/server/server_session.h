@@ -293,6 +293,7 @@ private:
 
     std::string username_;                          // Authenticated username
     std::string client_info_;                       // Client connection info
+    uint16_t client_connect_flags_ = 0;            // CONNECT_REQUEST capability flags
     std::string auth_database_context_;             // CONNECT database for auth tuple scoping
     PeerCredentials peer_credentials_{};            // Peer identity for local IPC
     bool peer_credentials_available_ = false;
@@ -323,6 +324,8 @@ private:
     protocol::AuthMethod auth_negotiation_required_method_ = protocol::AuthMethod::SCRAM_SHA_256;
     uint8_t auth_negotiation_transport_mask_ = 0;
     std::vector<uint8_t> auth_negotiation_nonce_;
+    std::vector<std::string> auth_negotiation_allowed_method_ids_;
+    std::vector<protocol::AuthMethodRegistryEntry> auth_negotiation_method_registry_;
     core::CatalogManager::AuthPeerMode auth_negotiation_peer_mode_ =
         core::CatalogManager::AuthPeerMode::DISABLED;
     bool session_mfa_verified_ = false;

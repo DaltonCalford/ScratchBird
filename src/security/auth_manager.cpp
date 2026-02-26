@@ -23,6 +23,8 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <ctime>
 #if defined(_WIN32)
     #include <winsock2.h>
@@ -84,6 +86,72 @@ static bool matchIPv6(const struct in6_addr& addr, const struct in6_addr& networ
         }
     }
     return true;
+}
+
+static std::string trimAscii(std::string value)
+{
+    auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    return value;
+}
+
+static bool isTruthySetting(const std::string& value)
+{
+    if (value.empty()) {
+        return false;
+    }
+    std::string normalized = value;
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    return normalized != "0" &&
+           normalized != "FALSE" &&
+           normalized != "NO" &&
+           normalized != "OFF";
+}
+
+static std::vector<std::string> splitCsvList(const std::string& text)
+{
+    std::vector<std::string> out;
+    if (text.empty()) {
+        return out;
+    }
+
+    std::istringstream input(text);
+    std::string token;
+    while (std::getline(input, token, ',')) {
+        token = trimAscii(token);
+        if (!token.empty()) {
+            out.push_back(std::move(token));
+        }
+    }
+    return out;
+}
+
+static std::string normalizeMethodToken(std::string value)
+{
+    value = trimAscii(value);
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        if (c == '-') {
+            return static_cast<char>('_');
+        }
+        return static_cast<char>(std::toupper(c));
+    });
+    return value;
+}
+
+static bool tokenMatchesAny(const std::string& token,
+                            const std::vector<std::string>& candidates)
+{
+    if (token.empty()) {
+        return false;
+    }
+    return std::find(candidates.begin(), candidates.end(), token) != candidates.end();
 }
 
 bool HBARule::matches(const ConnectionInfo& conn, const std::string& username,
@@ -996,6 +1064,75 @@ AuthResult AuthManager::startAuthentication(AuthContext& ctx) {
         ctx.setSessionProperty("auth.legacy_fallback", "true");
     }
 
+    std::string selected_method_id;
+    if (config_.auth_plugin_registry_enabled && auth_plugin_manager_) {
+        auth_plugin_manager_->resolveMethodIdForAuthType(auth_type, selected_method_id);
+        if (!selected_method_id.empty()) {
+            ctx.setSessionProperty("auth.selected_method_id", selected_method_id);
+        }
+    }
+
+    std::vector<std::string> selected_method_tokens;
+    const std::string selected_method_name = authTypeToString(auth_type);
+    const std::string normalized_method_name = normalizeMethodToken(selected_method_name);
+    if (!normalized_method_name.empty()) {
+        selected_method_tokens.push_back(normalized_method_name);
+    }
+    if (!selected_method_id.empty()) {
+        const std::string normalized_method_id = normalizeMethodToken(selected_method_id);
+        if (!normalized_method_id.empty() &&
+            !tokenMatchesAny(normalized_method_id, selected_method_tokens)) {
+            selected_method_tokens.push_back(normalized_method_id);
+        }
+    }
+
+    const char* required_methods_env = std::getenv("SCRATCHBIRD_AUTH_REQUIRED_METHODS");
+    const char* forbidden_methods_env = std::getenv("SCRATCHBIRD_AUTH_FORBIDDEN_METHODS");
+    const char* channel_binding_env = std::getenv("SCRATCHBIRD_AUTH_REQUIRE_CHANNEL_BINDING");
+
+    std::vector<std::string> required_methods = splitCsvList(
+        required_methods_env ? required_methods_env : "");
+    std::vector<std::string> forbidden_methods = splitCsvList(
+        forbidden_methods_env ? forbidden_methods_env : "");
+
+    for (auto& token : required_methods) {
+        token = normalizeMethodToken(token);
+    }
+    for (auto& token : forbidden_methods) {
+        token = normalizeMethodToken(token);
+    }
+
+    if (!required_methods.empty()) {
+        bool required_match = false;
+        for (const auto& required : required_methods) {
+            if (tokenMatchesAny(required, selected_method_tokens)) {
+                required_match = true;
+                break;
+            }
+        }
+        if (!required_match) {
+            return AuthResult::failure(
+                AuthFailReason::NOT_ALLOWED,
+                "AUTH_CLIENT_PINNING_VIOLATION: selected auth method not in required_methods");
+        }
+    }
+
+    for (const auto& forbidden : forbidden_methods) {
+        if (tokenMatchesAny(forbidden, selected_method_tokens)) {
+            return AuthResult::failure(
+                AuthFailReason::NOT_ALLOWED,
+                "AUTH_CLIENT_PINNING_VIOLATION: selected auth method listed in forbidden_methods");
+        }
+    }
+
+    if (isTruthySetting(channel_binding_env ? channel_binding_env : "") &&
+        auth_type != AuthType::SCRAM_SHA_256 &&
+        auth_type != AuthType::SCRAM_SHA_512) {
+        return AuthResult::failure(
+            AuthFailReason::NOT_ALLOWED,
+            "AUTH_CLIENT_PINNING_VIOLATION: channel binding required for selected method");
+    }
+
     // Check if method is suitable for this connection
     if (!method->isSuitable(conn)) {
         return AuthResult::failure(AuthFailReason::NOT_ALLOWED,
@@ -1011,6 +1148,16 @@ AuthResult AuthManager::startAuthentication(AuthContext& ctx) {
     AuthResult result = method->start(ctx);
 
     if (result.state == AuthState::SUCCESS) {
+        const bool no_login_direct = isTruthySetting(
+            std::getenv("SCRATCHBIRD_AUTH_NO_LOGIN_DIRECT") ? std::getenv("SCRATCHBIRD_AUTH_NO_LOGIN_DIRECT") : "");
+        const bool proxy_assertion_verified =
+            isTruthySetting(ctx.getSessionProperty("auth.proxy_assertion_verified"));
+        if (no_login_direct && !proxy_assertion_verified) {
+            return AuthResult::failure(
+                AuthFailReason::NOT_ALLOWED,
+                "AUTH_NO_LOGIN_DIRECT: direct login denied for this principal");
+        }
+
         stats_.successful_authentications++;
         if (rate_limiter_) {
             rate_limiter_->recordSuccess(ctx.username(), conn.client_address);

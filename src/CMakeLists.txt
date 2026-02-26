@@ -333,6 +333,7 @@ target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer_runtime nloh
 
 file(GLOB SCRATCHBIRD_SECURITY_SOURCES
     security/*.cpp
+    security/providers/*.cpp
 )
 
 add_library(scratchbird_security STATIC
@@ -367,6 +368,14 @@ set_target_properties(scratchbird_security PROPERTIES
 )
 
 message(STATUS "Security library: scratchbird_security (TLS, auth, HBA, audit)")
+
+# Auth plugin stubs (phase-1 deterministic module layout)
+option(SCRATCHBIRD_BUILD_AUTH_PLUGIN_STUBS
+       "Build phase-1 auth plugin shared-module stubs"
+       ON)
+if(SCRATCHBIRD_BUILD_AUTH_PLUGIN_STUBS)
+    add_subdirectory(security/plugins)
+endif()
 
 # Core needs security helpers (SCRAM/base64) but security only depends on core headers.
 target_link_libraries(scratchbird_core PUBLIC scratchbird_security)

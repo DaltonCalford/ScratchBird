@@ -244,7 +244,7 @@ public:
     OAuthAuthMethod();
     ~OAuthAuthMethod();
 
-    AuthType type() const override { return AuthType::LDAP; }  // Reuse slot, should add OAUTH type
+    AuthType type() const override { return AuthType::TOKEN; }  // Routed via plugin method IDs
     const char* name() const override { return "oauth"; }
 
     core::Status initialize(const std::map<std::string, std::string>& config,

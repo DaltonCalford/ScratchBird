@@ -1524,6 +1524,41 @@ bool authPolicyMethodAllowed(uint16_t mask, CatalogManager::ConnectionAuthMethod
     }
 }
 
+bool isValidAuthPolicyMethodId(const std::string& method_id)
+{
+    return !method_id.empty() && method_id.rfind("scratchbird.auth.", 0) == 0;
+}
+
+std::vector<std::string> normalizeAuthPolicyMethodIds(const std::vector<std::string>& method_ids)
+{
+    std::vector<std::string> out;
+    out.reserve(method_ids.size());
+    for (const auto& method_id : method_ids)
+    {
+        if (isValidAuthPolicyMethodId(method_id))
+        {
+            out.push_back(method_id);
+        }
+    }
+    return out;
+}
+
+bool hasProxyAssertionAllowedPlugins(const CatalogManager::AuthProviderCatalogInfo& provider)
+{
+    // Phase-1 auth plugin bridge surface: provider-side allowed_plugins list
+    // and proxy_assertion_allowed_signers participate in admission policy.
+    if (!provider.allowed_plugins.empty())
+    {
+        return true;
+    }
+    return !provider.proxy_assertion_allowed_signers.empty();
+}
+
+bool principalNoLoginDirect(const CatalogManager::PrincipalAccountCatalogInfo& account)
+{
+    return account.no_login_direct || account.proxy_assertion_only;
+}
+
 uint32_t packAuthPolicyNegotiationFlags(uint8_t transport_mask,
                                         bool has_required_auth_method,
                                         CatalogManager::ConnectionAuthMethod required_auth_method,

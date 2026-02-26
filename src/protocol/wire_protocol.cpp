@@ -633,12 +633,14 @@ Message ProtocolCodec::buildAuthChallenge(const uint8_t session_id[16],
                                           bool has_required_method,
                                           AuthMethod required_method,
                                           uint8_t allowed_transport_mask,
-                                          const std::vector<uint8_t>& challenge_nonce) {
+                                          const std::vector<uint8_t>& challenge_nonce,
+                                          const std::vector<AuthMethodRegistryEntry>* method_registry) {
     Message msg(MessageType::AUTH_CHALLENGE);
 
     msg.writeBytes(session_id, 16);
     msg.writeNullTerminatedString(username, 64);
-    msg.writeUInt8(1);  // payload version
+    const bool include_registry = method_registry != nullptr && !method_registry->empty();
+    msg.writeUInt8(include_registry ? 2 : 1);  // payload version
 
     const uint8_t method_count = static_cast<uint8_t>(
         std::min<size_t>(allowed_methods.size(), 16));
@@ -659,6 +661,24 @@ Message ProtocolCodec::buildAuthChallenge(const uint8_t session_id[16],
         msg.writeBytes(challenge_nonce.data(), nonce_len);
     }
 
+    if (include_registry) {
+        const uint16_t registry_count = static_cast<uint16_t>(
+            std::min<size_t>(method_registry->size(), std::numeric_limits<uint16_t>::max()));
+        msg.writeUInt16(registry_count);
+        for (uint16_t i = 0; i < registry_count; ++i) {
+            const auto& entry = (*method_registry)[i];
+            const uint16_t method_id_len = static_cast<uint16_t>(
+                std::min<size_t>(entry.method_id.size(), std::numeric_limits<uint16_t>::max()));
+            msg.writeUInt16(entry.method_slot);
+            msg.writeUInt16(entry.has_legacy_wire_code ? 1u : 0u);
+            msg.writeUInt32(entry.has_legacy_wire_code ? entry.legacy_wire_code : 0xFFFFFFFFu);
+            msg.writeUInt16(method_id_len);
+            if (method_id_len > 0) {
+                msg.writeBytes(entry.method_id.data(), method_id_len);
+            }
+        }
+    }
+
     return msg;
 }
 
@@ -670,7 +690,8 @@ core::Status ProtocolCodec::parseAuthChallenge(const Message& msg,
                                                AuthMethod& required_method,
                                                uint8_t& allowed_transport_mask,
                                                std::vector<uint8_t>& challenge_nonce,
-                                               core::ErrorContext* ctx) {
+                                               core::ErrorContext* ctx,
+                                               std::vector<AuthMethodRegistryEntry>* method_registry_out) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
 
@@ -701,7 +722,7 @@ core::Status ProtocolCodec::parseAuthChallenge(const Message& msg,
                           "Truncated AUTH_CHALLENGE header");
         return core::Status::PROTOCOL_VIOLATION;
     }
-    if (version != 1 || method_count == 0 || method_count > 16) {
+    if ((version != 1 && version != 2) || method_count == 0 || method_count > 16) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Invalid AUTH_CHALLENGE method header");
         return core::Status::PROTOCOL_VIOLATION;
@@ -752,6 +773,51 @@ core::Status ProtocolCodec::parseAuthChallenge(const Message& msg,
             SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                               "Truncated AUTH_CHALLENGE nonce");
             return core::Status::PROTOCOL_VIOLATION;
+        }
+    }
+
+    if (method_registry_out) {
+        method_registry_out->clear();
+    }
+    if (version == 2) {
+        uint16_t registry_count = 0;
+        if (!m.readUInt16(registry_count)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated AUTH_CHALLENGE registry count");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+
+        for (uint16_t i = 0; i < registry_count; ++i) {
+            uint16_t method_slot = 0;
+            uint16_t registry_flags = 0;
+            uint32_t legacy_wire_code = 0xFFFFFFFFu;
+            uint16_t method_id_len = 0;
+            if (!m.readUInt16(method_slot) ||
+                !m.readUInt16(registry_flags) ||
+                !m.readUInt32(legacy_wire_code) ||
+                !m.readUInt16(method_id_len)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Truncated AUTH_CHALLENGE method registry header");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+
+            std::string method_id;
+            if (method_id_len > 0) {
+                if (!m.readString(method_id, method_id_len)) {
+                    SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                      "Truncated AUTH_CHALLENGE method_id");
+                    return core::Status::PROTOCOL_VIOLATION;
+                }
+            }
+
+            if (method_registry_out) {
+                AuthMethodRegistryEntry entry;
+                entry.method_slot = method_slot;
+                entry.method_id = std::move(method_id);
+                entry.has_legacy_wire_code = (registry_flags & 1u) != 0u;
+                entry.legacy_wire_code = legacy_wire_code;
+                method_registry_out->push_back(std::move(entry));
+            }
         }
     }
 

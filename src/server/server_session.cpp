@@ -193,6 +193,17 @@ std::string toUpperAscii(std::string value) {
     return value;
 }
 
+std::string trimAscii(std::string value) {
+    auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    return value;
+}
+
 uint64_t fnv1a64(const std::string& value, uint64_t seed) {
     constexpr uint64_t kPrime = 1099511628211ull;
     uint64_t hash = seed;
@@ -410,10 +421,14 @@ constexpr const char* kAuthPolicyTransportDeniedCode = "AUTH_POLICY_TRANSPORT_DE
 constexpr const char* kAuthPolicyUserMismatchCode = "AUTH_POLICY_USER_MISMATCH";
 constexpr const char* kAuthPolicyPeerRequiredCode = "AUTH_POLICY_PEER_REQUIRED";
 constexpr const char* kAuthPolicyPeerTransportCode = "AUTH_POLICY_PEER_TRANSPORT_UNSUPPORTED";
+constexpr const char* kAuthMethodNotAllowedCode = "AUTH_METHOD_NOT_ALLOWED";
+constexpr const char* kAuthClientPinningViolationCode = "AUTH_CLIENT_PINNING_VIOLATION";
+constexpr const char* kAuthNoLoginDirectCode = "AUTH_NO_LOGIN_DIRECT";
 constexpr const char* kAuthMfaRequiredCode = "AUTH_MFA_REQUIRED";
 constexpr const char* kAuthMfaInvalidCode = "AUTH_MFA_INVALID";
 constexpr const char* kMfaPayloadPrefix = "SBMFA1";
 constexpr const char* kAuthPolicyNegotiatedCode = "AUTH_POLICY_NEGOTIATED";
+constexpr const char* kAuthRegistrySelectionMagic = "SBAPR1";
 
 bool isTruthySetting(const char* value) {
     if (!value || value[0] == '\0') {
@@ -424,6 +439,22 @@ bool isTruthySetting(const char* value) {
            normalized != "FALSE" &&
            normalized != "NO" &&
            normalized != "OFF";
+}
+
+std::vector<std::string> splitCsvUpper(const char* text) {
+    std::vector<std::string> out;
+    if (!text || text[0] == '\0') {
+        return out;
+    }
+    std::string token;
+    std::istringstream input(text);
+    while (std::getline(input, token, ',')) {
+        token = toUpperAscii(trimAscii(token));
+        if (!token.empty()) {
+            out.push_back(std::move(token));
+        }
+    }
+    return out;
 }
 
 bool authDebugEnabled() {
@@ -453,6 +484,95 @@ const char* authMethodToString(protocol::AuthMethod method) {
             return "PEER";
     }
     return "UNKNOWN";
+}
+
+std::string authMethodToPluginMethodId(protocol::AuthMethod method) {
+    switch (method) {
+        case protocol::AuthMethod::PASSWORD:
+            return "scratchbird.auth.password_compat";
+        case protocol::AuthMethod::MD5:
+            return "scratchbird.auth.md5_legacy";
+        case protocol::AuthMethod::SCRAM_SHA_256:
+            return "scratchbird.auth.scram_sha_256";
+        case protocol::AuthMethod::SCRAM_SHA_512:
+            return "scratchbird.auth.scram_sha_512";
+        case protocol::AuthMethod::TOKEN:
+            return "scratchbird.auth.authkey_token";
+        case protocol::AuthMethod::PEER:
+            return "scratchbird.auth.peer_uid";
+    }
+    return "";
+}
+
+bool isValidPluginMethodId(const std::string& method_id) {
+    return !method_id.empty() && method_id.rfind("scratchbird.auth.", 0) == 0;
+}
+
+void appendUniquePluginMethodId(std::vector<std::string>& method_ids,
+                                const std::string& method_id) {
+    if (!isValidPluginMethodId(method_id)) {
+        return;
+    }
+    if (std::find(method_ids.begin(), method_ids.end(), method_id) == method_ids.end()) {
+        method_ids.push_back(method_id);
+    }
+}
+
+std::vector<protocol::AuthMethodRegistryEntry> buildAuthMethodRegistryEntries(
+    const std::vector<protocol::AuthMethod>& allowed_methods,
+    const std::vector<std::string>& allowed_method_ids) {
+    std::vector<protocol::AuthMethodRegistryEntry> entries;
+    entries.reserve(allowed_methods.size() + allowed_method_ids.size());
+    uint16_t next_slot = 1;
+    std::vector<std::string> emitted_method_ids;
+    emitted_method_ids.reserve(allowed_methods.size() + allowed_method_ids.size());
+    for (auto method : allowed_methods) {
+        const std::string method_id = authMethodToPluginMethodId(method);
+        if (!isValidPluginMethodId(method_id)) {
+            continue;
+        }
+        protocol::AuthMethodRegistryEntry entry;
+        entry.method_slot = next_slot++;
+        entry.method_id = method_id;
+        entry.has_legacy_wire_code = true;
+        entry.legacy_wire_code = static_cast<uint32_t>(method);
+        entries.push_back(std::move(entry));
+        emitted_method_ids.push_back(method_id);
+    }
+    for (const auto& method_id : allowed_method_ids) {
+        if (!isValidPluginMethodId(method_id)) {
+            continue;
+        }
+        if (std::find(emitted_method_ids.begin(), emitted_method_ids.end(), method_id) !=
+            emitted_method_ids.end()) {
+            continue;
+        }
+        protocol::AuthMethodRegistryEntry entry;
+        entry.method_slot = next_slot++;
+        entry.method_id = method_id;
+        entry.has_legacy_wire_code = false;
+        entry.legacy_wire_code = 0xFFFFFFFFu;
+        entries.push_back(std::move(entry));
+        emitted_method_ids.push_back(method_id);
+    }
+    return entries;
+}
+
+bool parseAuthRegistrySelectionPayload(const std::vector<uint8_t>& payload,
+                                       uint16_t& method_slot_out,
+                                       std::vector<uint8_t>& method_payload_out) {
+    method_slot_out = 0;
+    method_payload_out.clear();
+    if (payload.size() < 8) {
+        return false;
+    }
+    if (std::memcmp(payload.data(), kAuthRegistrySelectionMagic, 6) != 0) {
+        return false;
+    }
+    method_slot_out = static_cast<uint16_t>(payload[6]) |
+                      (static_cast<uint16_t>(payload[7]) << 8);
+    method_payload_out.assign(payload.begin() + 8, payload.end());
+    return true;
 }
 
 const char* authPeerModeToString(core::CatalogManager::AuthPeerMode mode) {
@@ -1180,6 +1300,7 @@ std::vector<uint8_t> generateNegotiationNonce(size_t bytes = 16) {
 bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
                                   const IPCConnection* connection,
                                   std::vector<protocol::AuthMethod>& allowed_methods_out,
+                                  std::vector<std::string>& allowed_method_ids_out,
                                   bool& has_required_method_out,
                                   protocol::AuthMethod& required_method_out,
                                   uint8_t& allowed_transport_mask_out,
@@ -1187,6 +1308,7 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
                                   std::string& policy_deny_code_out) {
     using CM = core::CatalogManager;
     policy_deny_code_out.clear();
+    allowed_method_ids_out.clear();
 
     constexpr uint16_t kLegacyMethodMask =
         CM::AUTH_POLICY_METHOD_PASSWORD | CM::AUTH_POLICY_METHOD_MD5;
@@ -1241,6 +1363,9 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
             has_required_method_out = selected->has_required_auth_method;
             peer_mode_out = selected->peer_mode;
             allow_legacy_password_fallback = selected->allow_password_fallback;
+            for (const auto& method_id : selected->allowed_auth_method_ids) {
+                appendUniquePluginMethodId(allowed_method_ids_out, method_id);
+            }
             if (has_required_method_out &&
                 !mapConnectionAuthMethodToProtocol(selected->required_auth_method, required_method_out)) {
                 policy_deny_code_out = kAuthPolicyMethodDeniedCode;
@@ -1333,6 +1458,17 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
     if (allowed_methods_out.empty()) {
         policy_deny_code_out = kAuthPolicyMethodDeniedCode;
         return false;
+    }
+    for (auto method : allowed_methods_out) {
+        appendUniquePluginMethodId(allowed_method_ids_out, authMethodToPluginMethodId(method));
+    }
+    const char* method_ids_env = std::getenv("SCRATCHBIRD_AUTH_ALLOWED_METHOD_IDS");
+    if (method_ids_env && method_ids_env[0] != '\0') {
+        std::string token;
+        std::istringstream input(method_ids_env);
+        while (std::getline(input, token, ',')) {
+            appendUniquePluginMethodId(allowed_method_ids_out, trimAscii(token));
+        }
     }
 
     if (has_required_method_out &&
@@ -1737,6 +1873,7 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
         return status;
     }
 
+    client_connect_flags_ = client_flags;
     auth_database_context_ = database;
 
     const bool manager_bound_connect =
@@ -1851,6 +1988,10 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
 
     auto* catalog = database_ ? database_->catalog_manager() : nullptr;
     auto* audit_logger = database_ ? database_->audit_logger() : nullptr;
+    const bool registry_capable_client =
+        (client_connect_flags_ & protocol::FEATURE_AUTH_PLUGIN_REGISTRY) != 0;
+    const bool proxy_assertion_verified =
+        (client_connect_flags_ & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0;
 
     if (authDebugEnabled()) {
         std::fprintf(stderr,
@@ -1869,6 +2010,8 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         auth_negotiation_required_method_ = protocol::AuthMethod::SCRAM_SHA_256;
         auth_negotiation_transport_mask_ = 0;
         auth_negotiation_nonce_.clear();
+        auth_negotiation_allowed_method_ids_.clear();
+        auth_negotiation_method_registry_.clear();
         auth_negotiation_peer_mode_ = core::CatalogManager::AuthPeerMode::DISABLED;
     };
 
@@ -1920,6 +2063,15 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
 
     auto finish_auth = [&](const core::AuthUserInfo& user_info,
                            const std::vector<uint8_t>& response_data) -> core::Status {
+        const bool no_login_direct =
+            isTruthySetting(std::getenv("SCRATCHBIRD_AUTH_NO_LOGIN_DIRECT"));
+        if (no_login_direct && !proxy_assertion_verified) {
+            protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                protocol::AuthStatus::FAILURE, 0, kAuthNoLoginDirectCode);
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
         username_ = user_info.username.empty() ? username : user_info.username;
         state_ = SessionState::AUTHENTICATED;
         clear_auth_negotiation();
@@ -2112,6 +2264,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         if (!resolveAuthNegotiationPolicy(catalog,
                                           connection_,
                                           auth_negotiation_allowed_methods_,
+                                          auth_negotiation_allowed_method_ids_,
                                           auth_negotiation_has_required_method_,
                                           auth_negotiation_required_method_,
                                           auth_negotiation_transport_mask_,
@@ -2125,6 +2278,12 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         auth_negotiation_ready_ = true;
         auth_negotiation_username_ = username;
         auth_negotiation_nonce_ = generateNegotiationNonce();
+        auth_negotiation_method_registry_.clear();
+        if (registry_capable_client) {
+            auth_negotiation_method_registry_ =
+                buildAuthMethodRegistryEntries(auth_negotiation_allowed_methods_,
+                                               auth_negotiation_allowed_method_ids_);
+        }
         protocol::Message challenge = protocol::ProtocolCodec::buildAuthChallenge(
             session_id_,
             username,
@@ -2132,13 +2291,15 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             auth_negotiation_has_required_method_,
             auth_negotiation_required_method_,
             auth_negotiation_transport_mask_,
-            auth_negotiation_nonce_);
+            auth_negotiation_nonce_,
+            registry_capable_client ? &auth_negotiation_method_registry_ : nullptr);
         if (authDebugEnabled()) {
             std::fprintf(stderr,
-                         "[auth_debug] sending auth challenge methods=%zu required=%d method=%u\n",
+                         "[auth_debug] sending auth challenge methods=%zu required=%d method=%u registry=%zu\n",
                          auth_negotiation_allowed_methods_.size(),
                          auth_negotiation_has_required_method_ ? 1 : 0,
-                         static_cast<unsigned>(auth_negotiation_required_method_));
+                         static_cast<unsigned>(auth_negotiation_required_method_),
+                         auth_negotiation_method_registry_.size());
         }
         log_auth_policy_decision(true, kAuthPolicyNegotiatedCode);
         return protocol_session_->sendMessage(challenge, ctx);
@@ -2163,6 +2324,28 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         }
     }
 
+    if (registry_capable_client) {
+        uint16_t selected_slot = 0;
+        std::vector<uint8_t> selected_payload;
+        if (!parseAuthRegistrySelectionPayload(auth_payload, selected_slot, selected_payload)) {
+            return send_auth_policy_error(kAuthMethodNotAllowedCode);
+        }
+        const auto slot_it = std::find_if(
+            auth_negotiation_method_registry_.begin(),
+            auth_negotiation_method_registry_.end(),
+            [selected_slot](const protocol::AuthMethodRegistryEntry& entry) {
+                return entry.method_slot == selected_slot;
+            });
+        if (slot_it == auth_negotiation_method_registry_.end()) {
+            return send_auth_policy_error(kAuthMethodNotAllowedCode);
+        }
+        if (!slot_it->has_legacy_wire_code ||
+            slot_it->legacy_wire_code != static_cast<uint32_t>(auth_method)) {
+            return send_auth_policy_error(kAuthMethodNotAllowedCode);
+        }
+        auth_payload = std::move(selected_payload);
+    }
+
     const bool method_allowed = std::find(auth_negotiation_allowed_methods_.begin(),
                                           auth_negotiation_allowed_methods_.end(),
                                           auth_method) != auth_negotiation_allowed_methods_.end();
@@ -2173,6 +2356,32 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         auth_method != auth_negotiation_required_method_) {
         return send_auth_policy_error(kAuthPolicyRequiredMethodCode);
     }
+
+    // Client pinning policy inputs are currently sourced from environment for
+    // deterministic conformance coverage and mirrored into session properties.
+    const std::vector<std::string> required_methods =
+        splitCsvUpper(std::getenv("SCRATCHBIRD_AUTH_REQUIRED_METHODS"));
+    const std::vector<std::string> forbidden_methods =
+        splitCsvUpper(std::getenv("SCRATCHBIRD_AUTH_FORBIDDEN_METHODS"));
+    const bool require_channel_binding =
+        isTruthySetting(std::getenv("SCRATCHBIRD_AUTH_REQUIRE_CHANNEL_BINDING"));
+
+    const std::string method_name = toUpperAscii(authMethodToString(auth_method));
+    if (!required_methods.empty() &&
+        std::find(required_methods.begin(), required_methods.end(), method_name) ==
+            required_methods.end()) {
+        return send_auth_policy_error(kAuthClientPinningViolationCode);
+    }
+    if (std::find(forbidden_methods.begin(), forbidden_methods.end(), method_name) !=
+        forbidden_methods.end()) {
+        return send_auth_policy_error(kAuthClientPinningViolationCode);
+    }
+    if (require_channel_binding &&
+        auth_method != protocol::AuthMethod::SCRAM_SHA_256 &&
+        auth_method != protocol::AuthMethod::SCRAM_SHA_512) {
+        return send_auth_policy_error(kAuthClientPinningViolationCode);
+    }
+
     const bool legacy_method =
         auth_method == protocol::AuthMethod::PASSWORD ||
         auth_method == protocol::AuthMethod::MD5;

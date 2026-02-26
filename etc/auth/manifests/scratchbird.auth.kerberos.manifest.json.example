@@ -1,0 +1,15 @@
+{
+  "schema_version": "1",
+  "plugin_id": "scratchbird.auth.kerberos",
+  "plugin_version": "2.0.0",
+  "abi_major": 1,
+  "abi_minor": 0,
+  "module_path": "libscratchbird_auth_kerberos.so",
+  "module_sha256": "replace-with-sha256",
+  "supported_method_ids": [
+    "scratchbird.auth.kerberos_gssapi"
+  ],
+  "signing": {
+    "kid": "sb-enterprise-kid-2026"
+  }
+}

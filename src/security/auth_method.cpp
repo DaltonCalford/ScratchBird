@@ -47,6 +47,7 @@ const char* authTypeToString(AuthType type) {
         case AuthType::IDENT: return "ident";
         case AuthType::RADIUS: return "radius";
         case AuthType::PAM: return "pam";
+        case AuthType::TOKEN: return "token";
         default: return "unknown";
     }
 }
@@ -68,7 +69,10 @@ bool parseAuthType(const std::string& str, AuthType& type) {
         {"peer", AuthType::PEER},
         {"ident", AuthType::IDENT},
         {"radius", AuthType::RADIUS},
-        {"pam", AuthType::PAM}
+        {"pam", AuthType::PAM},
+        {"token", AuthType::TOKEN},
+        {"oauth", AuthType::TOKEN},
+        {"oidc", AuthType::TOKEN}
     };
 
     auto it = type_map.find(str);
@@ -416,6 +420,7 @@ std::unique_ptr<AuthMethod> createAuthMethod(AuthType type) {
         case AuthType::IDENT:
         case AuthType::RADIUS:
         case AuthType::PAM:
+        case AuthType::TOKEN:
             // Not yet implemented, return nullptr
             return nullptr;
 

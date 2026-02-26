@@ -115,6 +115,51 @@
       "allowed_method_ids": [
         "scratchbird.auth.proxy_principal_assertion"
       ]
+    },
+    "scratchbird.auth.ldap": {
+      "required": false,
+      "allowed_signers": ["sb-enterprise-kid-2026"],
+      "min_version": "2.0.0",
+      "max_version": "2.x",
+      "allowed_method_ids": [
+        "scratchbird.auth.ldap_bind"
+      ]
+    },
+    "scratchbird.auth.kerberos": {
+      "required": false,
+      "allowed_signers": ["sb-enterprise-kid-2026"],
+      "min_version": "2.0.0",
+      "max_version": "2.x",
+      "allowed_method_ids": [
+        "scratchbird.auth.kerberos_gssapi"
+      ]
+    },
+    "scratchbird.auth.ident": {
+      "required": false,
+      "allowed_signers": ["sb-enterprise-kid-2026"],
+      "min_version": "2.0.0",
+      "max_version": "2.x",
+      "allowed_method_ids": [
+        "scratchbird.auth.ident_rfc1413"
+      ]
+    },
+    "scratchbird.auth.radius": {
+      "required": false,
+      "allowed_signers": ["sb-enterprise-kid-2026"],
+      "min_version": "2.0.0",
+      "max_version": "2.x",
+      "allowed_method_ids": [
+        "scratchbird.auth.radius_pap"
+      ]
+    },
+    "scratchbird.auth.pam": {
+      "required": false,
+      "allowed_signers": ["sb-enterprise-kid-2026"],
+      "min_version": "2.0.0",
+      "max_version": "2.x",
+      "allowed_method_ids": [
+        "scratchbird.auth.pam_conversation"
+      ]
     }
   }
 }

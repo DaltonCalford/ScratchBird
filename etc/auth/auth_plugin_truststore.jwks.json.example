@@ -17,6 +17,15 @@
       "alg": "EdDSA",
       "x": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
       "active": true
+    },
+    {
+      "kid": "sb-enterprise-kid-2026",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "use": "sig",
+      "alg": "EdDSA",
+      "x": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      "active": true
     }
   ]
 }

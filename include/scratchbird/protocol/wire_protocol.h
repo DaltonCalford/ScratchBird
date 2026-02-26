@@ -83,6 +83,20 @@ enum class AuthStatus : uint8_t {
     CONTINUE  = 2
 };
 
+/**
+ * Auth plugin registry negotiation entry.
+ *
+ * method_slot is the client/server stable selector for a negotiated auth flow.
+ * method_id is the canonical plugin method id (scratchbird.auth.*).
+ * legacy_wire_code is present only for downgrade compatibility.
+ */
+struct AuthMethodRegistryEntry {
+    uint16_t method_slot = 0;
+    std::string method_id;
+    bool has_legacy_wire_code = false;
+    uint32_t legacy_wire_code = 0xFFFFFFFFu;
+};
+
 // ============================================================================
 // Message Types
 // ============================================================================
@@ -216,6 +230,8 @@ constexpr uint16_t CONNECT_FLAG_NOTIFICATIONS    = 0x0010;
 constexpr uint16_t CONNECT_FLAG_PROGRESS         = 0x0020;
 constexpr uint16_t CONNECT_FLAG_MANAGER_DBBT     = 0x0040;
 constexpr uint16_t CONNECT_FLAG_BOUND_DB_UUID    = 0x0080;
+constexpr uint16_t CONNECT_FLAG_AUTH_PLUGIN_REGISTRY = 0x0100;
+constexpr uint16_t FEATURE_AUTH_PLUGIN_REGISTRY = CONNECT_FLAG_AUTH_PLUGIN_REGISTRY;
 
 constexpr uint16_t CONNECT_FLAG_BASE_CAPABILITIES =
     CONNECT_FLAG_COPY |
@@ -792,7 +808,8 @@ public:
                                       bool has_required_method,
                                       AuthMethod required_method,
                                       uint8_t allowed_transport_mask,
-                                      const std::vector<uint8_t>& challenge_nonce);
+                                      const std::vector<uint8_t>& challenge_nonce,
+                                      const std::vector<AuthMethodRegistryEntry>* method_registry = nullptr);
 
     static core::Status parseAuthChallenge(const Message& msg,
                                            uint8_t session_id[16],
@@ -802,7 +819,8 @@ public:
                                            AuthMethod& required_method,
                                            uint8_t& allowed_transport_mask,
                                            std::vector<uint8_t>& challenge_nonce,
-                                           core::ErrorContext* ctx = nullptr);
+                                           core::ErrorContext* ctx = nullptr,
+                                           std::vector<AuthMethodRegistryEntry>* method_registry_out = nullptr);
 
     // TOKEN payload contract:
     //   authkey_id(16 bytes) + proof_length(uint16 LE) + proof + binding_length(uint16 LE) + binding
