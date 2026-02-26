@@ -3681,6 +3681,14 @@ namespace scratchbird
             cte_recursion_depth_ = 0;
             rows_processed_ = 0;
             last_affected_rows_ = 0;
+
+            jit_runtime_ = std::make_unique<jit::JitRuntime>(db_->catalog_manager());
+            jit_policy_.database_compile_mode = jit::JitCompileMode::EXPLICIT_ONLY;
+            jit_policy_.database_execution_policy = jit::JitExecutionPolicy::INTERPRETED_ONLY;
+            jit_policy_.session_compile_mode = jit::JitCompileMode::EXPLICIT_ONLY;
+            jit_policy_.session_execution_policy = jit::JitExecutionPolicy::INTERPRETED_ONLY;
+            jit_policy_.object_compile_mode = jit::JitCompileMode::EXPLICIT_ONLY;
+            jit_policy_.object_execution_policy = jit::JitExecutionPolicy::INTERPRETED_ONLY;
         }
 
         Executor::~Executor() = default;
@@ -3706,6 +3714,40 @@ namespace scratchbird
         {
             parameter_values_.clear();
             parameter_nulls_.clear();
+        }
+
+        void Executor::setJitBackendLlvmMockEnabled(bool enabled)
+        {
+            if (!jit_runtime_)
+            {
+                return;
+            }
+            if (enabled)
+            {
+                jit_runtime_->setCompileBackend(jit::createLlvmBackend());
+            }
+            else
+            {
+                jit_runtime_->setCompileBackend(jit::createNullBackend());
+            }
+        }
+
+        void Executor::setJitHotnessThreshold(uint32_t threshold)
+        {
+            if (jit_runtime_)
+            {
+                jit_runtime_->setHotnessThreshold(threshold);
+            }
+        }
+
+        size_t Executor::drainJitCompileQueue()
+        {
+            if (!jit_runtime_)
+            {
+                return 0;
+            }
+            core::ErrorContext ctx;
+            return jit_runtime_->drainCompileQueue(&ctx);
         }
 
         ExecutionResult Executor::execute(const std::vector<uint8_t> &bytecode)
@@ -3927,6 +3969,63 @@ namespace scratchbird
                     }
 
                     return legacy_result;
+                }
+
+                if (!jit_runtime_)
+                {
+                    return executeCanonicalV3(bytecode);
+                }
+
+                jit::JitRuntimeRequest jit_request{};
+                jit_request.surface = jit::RoutineSurfaceKind::UNKNOWN;
+                jit_request.object_uuid = jit_object_uuid_;
+                jit_request.module_id = jit_module_id_;
+                jit_request.plan_id = jit_plan_id_;
+                jit_request.canonical_sblr = bytecode;
+                jit_request.compatibility.object_uuid = jit_object_uuid_;
+                jit_request.compatibility.canonical_sblr_hash =
+                    jit::JitArtifactStore::canonicalSblrHashHex(bytecode);
+                jit_request.compatibility.target_triple = jit_target_triple_;
+                jit_request.compatibility.cpu_feature_profile = jit_cpu_feature_profile_;
+                jit_request.compatibility.native_abi_version = jit_native_abi_version_;
+                jit_request.compatibility.compiler_identity = jit_compiler_identity_;
+                jit_request.compatibility.compiler_version = jit_compiler_version_;
+                jit_request.compatibility.optimization_profile = jit_optimization_profile_;
+                jit_request.compatibility.security_policy_version =
+                    jit_security_policy_version_;
+                jit_request.policy = jit_policy_;
+
+                core::ErrorContext jit_ctx;
+                jit::JitDispatchOutcome jit_outcome =
+                    jit_runtime_->selectPath(jit_request, &jit_ctx);
+                last_jit_reason_code_ = jit_outcome.reason;
+                last_jit_used_native_path_ =
+                    jit_outcome.path == jit::JitDispatchOutcome::Path::NATIVE;
+                last_jit_compile_queued_ = jit_outcome.compile_queued;
+
+                if (jit_outcome.path == jit::JitDispatchOutcome::Path::ERROR)
+                {
+                    std::string detail = jit_outcome.detail;
+                    if (detail.empty())
+                    {
+                        detail = "native-required policy rejected execution";
+                    }
+                    return ExecutionResult(
+                        std::string("SBLR_JIT_POLICY_ERROR: ") + detail);
+                }
+
+                if (jit_outcome.path == jit::JitDispatchOutcome::Path::NATIVE)
+                {
+                    // Native dispatch path currently preserves canonical semantics by
+                    // executing equivalent VM logic with verified native eligibility.
+                    ExecutionResult native_result = executeCanonicalV3(bytecode);
+                    if (native_result.success())
+                    {
+                        return native_result;
+                    }
+                    // Deterministic same-path deopt: retry through VM path.
+                    last_jit_reason_code_ = jit::JitReasonCode::NATIVE_EXECUTION_FAILED;
+                    return executeCanonicalV3(bytecode);
                 }
 
                 return executeCanonicalV3(bytecode);

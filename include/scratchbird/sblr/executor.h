@@ -21,6 +21,7 @@
 #include "scratchbird/core/permission_cache.h"  // For PermissionCheckMode
 #include "scratchbird/core/function_invoker.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/sblr/jit/jit_runtime.h"
 // Index headers needed for template implementation
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
@@ -290,6 +291,48 @@ namespace scratchbird
             static std::optional<core::CatalogManager::IndexType>
             mapCanonicalIndexType(const std::string& name);
 
+            // Full JIT runtime controls (Section 23).
+            void setJitPolicy(jit::JitCompileMode compile_mode,
+                              jit::JitExecutionPolicy execution_policy)
+            {
+                jit_policy_.object_compile_mode = compile_mode;
+                jit_policy_.object_execution_policy = execution_policy;
+            }
+            void setJitHints(const jit::JitHints& hints)
+            {
+                jit_policy_.hints = hints;
+            }
+            void setJitObjectBinding(const core::ID& object_uuid,
+                                     const core::ID& module_id,
+                                     const core::ID& plan_id)
+            {
+                jit_object_uuid_ = object_uuid;
+                jit_module_id_ = module_id;
+                jit_plan_id_ = plan_id;
+            }
+            void setJitCompatibilityProfile(const std::string& target_triple,
+                                            const std::string& cpu_feature_profile,
+                                            const std::string& native_abi_version,
+                                            const std::string& compiler_identity,
+                                            const std::string& compiler_version,
+                                            const std::string& optimization_profile,
+                                            uint64_t security_policy_version)
+            {
+                jit_target_triple_ = target_triple;
+                jit_cpu_feature_profile_ = cpu_feature_profile;
+                jit_native_abi_version_ = native_abi_version;
+                jit_compiler_identity_ = compiler_identity;
+                jit_compiler_version_ = compiler_version;
+                jit_optimization_profile_ = optimization_profile;
+                jit_security_policy_version_ = security_policy_version;
+            }
+            void setJitBackendLlvmMockEnabled(bool enabled);
+            void setJitHotnessThreshold(uint32_t threshold);
+            size_t drainJitCompileQueue();
+            jit::JitReasonCode lastJitReasonCode() const { return last_jit_reason_code_; }
+            bool lastJitUsedNativePath() const { return last_jit_used_native_path_; }
+            bool lastJitCompileQueued() const { return last_jit_compile_queued_; }
+
         private:
             enum class UdrInvocationScope : uint8_t
             {
@@ -454,6 +497,23 @@ namespace scratchbird
             // Current schema for DDL operations (Firebird emulation support)
             core::ID current_schema_id_;
             bool current_schema_set_ = false;
+
+            // Section-23 JIT runtime state.
+            std::unique_ptr<jit::JitRuntime> jit_runtime_;
+            jit::JitPolicyEnvelope jit_policy_{};
+            core::ID jit_object_uuid_{};
+            core::ID jit_module_id_{};
+            core::ID jit_plan_id_{};
+            std::string jit_target_triple_ = "native";
+            std::string jit_cpu_feature_profile_ = "generic";
+            std::string jit_native_abi_version_ = "v1";
+            std::string jit_compiler_identity_ = "scratchbird_jit";
+            std::string jit_compiler_version_ = "1.0.0";
+            std::string jit_optimization_profile_ = "O2";
+            uint64_t jit_security_policy_version_ = 1;
+            jit::JitReasonCode last_jit_reason_code_ = jit::JitReasonCode::NONE;
+            bool last_jit_used_native_path_ = false;
+            bool last_jit_compile_queued_ = false;
 
             // Execution helpers
             uint8_t readByte();

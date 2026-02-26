@@ -8358,9 +8358,18 @@ bool hasTriggerNameConflictInTable(
         ID artifact_id;
         ID module_id;
         ID plan_id;
+        ID object_uuid;
+        char canonical_sblr_hash[65];
+        uint8_t reserved_canonical_hash[7];
         char target_platform[128];
+        char target_triple[128];
+        char cpu_feature_profile[128];
+        char native_abi_version[128];
         char compiler_id[128];
+        char compiler_identity[128];
         char compiler_version[128];
+        char optimization_profile[128];
+        uint64_t security_policy_version;
         uint8_t artifact_state; // SblrArtifactState
         uint8_t has_signature_blob_id;
         uint8_t has_retired_at;
@@ -90711,7 +90720,12 @@ auto CatalogManager::upsertSblrArtifactCatalogEntry(const SblrArtifactCatalogInf
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
     if (isZeroUuidLocal(info.artifact_id) || isZeroUuidLocal(info.module_id) || isZeroUuidLocal(info.plan_id) ||
-        info.target_platform.empty() || info.compiler_id.empty() || info.compiler_version.empty() ||
+        isZeroUuidLocal(info.object_uuid) ||
+        info.canonical_sblr_hash.empty() ||
+        info.target_platform.empty() || info.target_triple.empty() ||
+        info.native_abi_version.empty() ||
+        info.compiler_id.empty() || info.compiler_identity.empty() ||
+        info.compiler_version.empty() ||
         isZeroUuidLocal(info.binary_blob_id) || info.hash_sha256.empty())
     {
         return Status::INVALID_ARGUMENT;
@@ -90731,7 +90745,37 @@ auto CatalogManager::upsertSblrArtifactCatalogEntry(const SblrArtifactCatalogInf
     }
 
     Status status = UTF8Utils::validateStorageCapacity(
+        info.canonical_sblr_hash, 64, sizeof(SblrArtifactRecord{}.canonical_sblr_hash), ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
         info.target_platform, sizeof(SblrArtifactRecord{}.target_platform), sizeof(SblrArtifactRecord{}.target_platform), ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.target_triple, sizeof(SblrArtifactRecord{}.target_triple), sizeof(SblrArtifactRecord{}.target_triple), ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.cpu_feature_profile,
+        sizeof(SblrArtifactRecord{}.cpu_feature_profile),
+        sizeof(SblrArtifactRecord{}.cpu_feature_profile),
+        ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.native_abi_version,
+        sizeof(SblrArtifactRecord{}.native_abi_version),
+        sizeof(SblrArtifactRecord{}.native_abi_version),
+        ctx);
     if (status != Status::OK)
     {
         return status;
@@ -90743,9 +90787,27 @@ auto CatalogManager::upsertSblrArtifactCatalogEntry(const SblrArtifactCatalogInf
         return status;
     }
     status = UTF8Utils::validateStorageCapacity(
+        info.compiler_identity,
+        sizeof(SblrArtifactRecord{}.compiler_identity),
+        sizeof(SblrArtifactRecord{}.compiler_identity),
+        ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
         info.compiler_version,
         sizeof(SblrArtifactRecord{}.compiler_version),
         sizeof(SblrArtifactRecord{}.compiler_version),
+        ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = UTF8Utils::validateStorageCapacity(
+        info.optimization_profile,
+        sizeof(SblrArtifactRecord{}.optimization_profile),
+        sizeof(SblrArtifactRecord{}.optimization_profile),
         ctx);
     if (status != Status::OK)
     {
@@ -90777,16 +90839,17 @@ auto CatalogManager::upsertSblrArtifactCatalogEntry(const SblrArtifactCatalogInf
         return Status::CONSTRAINT_VIOLATION;
     }
 
-    const std::string folded_target = canonicalIdentifierForLookup(info.target_platform);
-    const std::string folded_compiler_ver = canonicalIdentifierForLookup(info.compiler_version);
-    auto duplicate_predicate = [&info, &folded_target, &folded_compiler_ver](const SblrArtifactRecord& rec) {
+    const std::string folded_target = canonicalIdentifierForLookup(info.target_triple);
+    const std::string folded_abi = canonicalIdentifierForLookup(info.native_abi_version);
+    auto duplicate_predicate = [&info, &folded_target, &folded_abi](const SblrArtifactRecord& rec) {
         return rec.is_valid == 1 && rec.artifact_id != info.artifact_id && rec.module_id == info.module_id &&
+               rec.object_uuid == info.object_uuid &&
                rec.catalog_epoch == info.catalog_epoch && rec.security_epoch == info.security_epoch &&
                canonicalIdentifierForLookup(
-                   fixedNameFromBuffer(rec.target_platform, sizeof(rec.target_platform))) == folded_target &&
+                   fixedNameFromBuffer(rec.target_triple, sizeof(rec.target_triple))) == folded_target &&
                canonicalIdentifierForLookup(
-                   fixedNameFromBuffer(rec.compiler_version, sizeof(rec.compiler_version))) ==
-                   folded_compiler_ver;
+                   fixedNameFromBuffer(rec.native_abi_version, sizeof(rec.native_abi_version))) ==
+                   folded_abi;
     };
     auto duplicate = findRecordInHeapPage<SblrArtifactRecord>(sblr_artifact_table_page_, duplicate_predicate, ctx);
     if (duplicate.status == Status::OK)
@@ -90803,6 +90866,8 @@ auto CatalogManager::upsertSblrArtifactCatalogEntry(const SblrArtifactCatalogInf
     rec.artifact_id = info.artifact_id;
     rec.module_id = info.module_id;
     rec.plan_id = info.plan_id;
+    rec.object_uuid = info.object_uuid;
+    rec.security_policy_version = info.security_policy_version;
     rec.artifact_state = static_cast<uint8_t>(info.artifact_state);
     rec.has_signature_blob_id = info.has_signature_blob_id ? 1 : 0;
     rec.has_retired_at = info.has_retired_at ? 1 : 0;
@@ -90814,15 +90879,33 @@ auto CatalogManager::upsertSblrArtifactCatalogEntry(const SblrArtifactCatalogInf
     rec.created_txid = info.created_txid;
     rec.created_at = (info.created_at == 0) ? now : info.created_at;
     rec.retired_at = info.has_retired_at ? info.retired_at : 0;
+    std::strncpy(rec.canonical_sblr_hash,
+                 UTF8Utils::truncateToBytes(info.canonical_sblr_hash, sizeof(rec.canonical_sblr_hash)).c_str(),
+                 sizeof(rec.canonical_sblr_hash) - 1);
     std::strncpy(rec.target_platform,
                  UTF8Utils::truncateToBytes(info.target_platform, sizeof(rec.target_platform)).c_str(),
                  sizeof(rec.target_platform) - 1);
+    std::strncpy(rec.target_triple,
+                 UTF8Utils::truncateToBytes(info.target_triple, sizeof(rec.target_triple)).c_str(),
+                 sizeof(rec.target_triple) - 1);
+    std::strncpy(rec.cpu_feature_profile,
+                 UTF8Utils::truncateToBytes(info.cpu_feature_profile, sizeof(rec.cpu_feature_profile)).c_str(),
+                 sizeof(rec.cpu_feature_profile) - 1);
+    std::strncpy(rec.native_abi_version,
+                 UTF8Utils::truncateToBytes(info.native_abi_version, sizeof(rec.native_abi_version)).c_str(),
+                 sizeof(rec.native_abi_version) - 1);
     std::strncpy(rec.compiler_id,
                  UTF8Utils::truncateToBytes(info.compiler_id, sizeof(rec.compiler_id)).c_str(),
                  sizeof(rec.compiler_id) - 1);
+    std::strncpy(rec.compiler_identity,
+                 UTF8Utils::truncateToBytes(info.compiler_identity, sizeof(rec.compiler_identity)).c_str(),
+                 sizeof(rec.compiler_identity) - 1);
     std::strncpy(rec.compiler_version,
                  UTF8Utils::truncateToBytes(info.compiler_version, sizeof(rec.compiler_version)).c_str(),
                  sizeof(rec.compiler_version) - 1);
+    std::strncpy(rec.optimization_profile,
+                 UTF8Utils::truncateToBytes(info.optimization_profile, sizeof(rec.optimization_profile)).c_str(),
+                 sizeof(rec.optimization_profile) - 1);
     std::strncpy(rec.hash_sha256,
                  UTF8Utils::truncateToBytes(info.hash_sha256, sizeof(rec.hash_sha256)).c_str(),
                  sizeof(rec.hash_sha256) - 1);
@@ -90863,11 +90946,25 @@ auto CatalogManager::getSblrArtifactCatalogEntry(const ID& artifact_id,
     info_out.artifact_id = result.record.artifact_id;
     info_out.module_id = result.record.module_id;
     info_out.plan_id = result.record.plan_id;
+    info_out.object_uuid = result.record.object_uuid;
+    info_out.canonical_sblr_hash =
+        fixedNameFromBuffer(result.record.canonical_sblr_hash, sizeof(result.record.canonical_sblr_hash));
     info_out.target_platform =
         fixedNameFromBuffer(result.record.target_platform, sizeof(result.record.target_platform));
+    info_out.target_triple =
+        fixedNameFromBuffer(result.record.target_triple, sizeof(result.record.target_triple));
+    info_out.cpu_feature_profile =
+        fixedNameFromBuffer(result.record.cpu_feature_profile, sizeof(result.record.cpu_feature_profile));
+    info_out.native_abi_version =
+        fixedNameFromBuffer(result.record.native_abi_version, sizeof(result.record.native_abi_version));
     info_out.compiler_id = fixedNameFromBuffer(result.record.compiler_id, sizeof(result.record.compiler_id));
+    info_out.compiler_identity =
+        fixedNameFromBuffer(result.record.compiler_identity, sizeof(result.record.compiler_identity));
     info_out.compiler_version =
         fixedNameFromBuffer(result.record.compiler_version, sizeof(result.record.compiler_version));
+    info_out.optimization_profile =
+        fixedNameFromBuffer(result.record.optimization_profile, sizeof(result.record.optimization_profile));
+    info_out.security_policy_version = result.record.security_policy_version;
     info_out.artifact_state = static_cast<SblrArtifactState>(result.record.artifact_state);
     info_out.binary_blob_id = result.record.binary_blob_id;
     info_out.hash_sha256 = fixedNameFromBuffer(result.record.hash_sha256, sizeof(result.record.hash_sha256));
@@ -90897,9 +90994,22 @@ auto CatalogManager::listSblrArtifactCatalogEntries(const ID& module_id,
         info.artifact_id = rec.artifact_id;
         info.module_id = rec.module_id;
         info.plan_id = rec.plan_id;
+        info.object_uuid = rec.object_uuid;
+        info.canonical_sblr_hash =
+            fixedNameFromBuffer(rec.canonical_sblr_hash, sizeof(rec.canonical_sblr_hash));
         info.target_platform = fixedNameFromBuffer(rec.target_platform, sizeof(rec.target_platform));
+        info.target_triple = fixedNameFromBuffer(rec.target_triple, sizeof(rec.target_triple));
+        info.cpu_feature_profile =
+            fixedNameFromBuffer(rec.cpu_feature_profile, sizeof(rec.cpu_feature_profile));
+        info.native_abi_version =
+            fixedNameFromBuffer(rec.native_abi_version, sizeof(rec.native_abi_version));
         info.compiler_id = fixedNameFromBuffer(rec.compiler_id, sizeof(rec.compiler_id));
+        info.compiler_identity =
+            fixedNameFromBuffer(rec.compiler_identity, sizeof(rec.compiler_identity));
         info.compiler_version = fixedNameFromBuffer(rec.compiler_version, sizeof(rec.compiler_version));
+        info.optimization_profile =
+            fixedNameFromBuffer(rec.optimization_profile, sizeof(rec.optimization_profile));
+        info.security_policy_version = rec.security_policy_version;
         info.artifact_state = static_cast<SblrArtifactState>(rec.artifact_state);
         info.binary_blob_id = rec.binary_blob_id;
         info.hash_sha256 = fixedNameFromBuffer(rec.hash_sha256, sizeof(rec.hash_sha256));

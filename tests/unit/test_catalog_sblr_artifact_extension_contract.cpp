@@ -135,9 +135,18 @@ TEST_F(CatalogSblrArtifactExtensionContractTest, SblrArtifactCatalogContracts)
     artifact.artifact_id = generateUuidV7();
     artifact.module_id = module.module_id;
     artifact.plan_id = plan.plan_id;
+    artifact.object_uuid = generateUuidV7();
+    artifact.canonical_sblr_hash =
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
     artifact.target_platform = "linux_x86_64";
+    artifact.target_triple = "x86_64-unknown-linux-gnu";
+    artifact.cpu_feature_profile = "generic";
+    artifact.native_abi_version = "sb_abi_v1";
     artifact.compiler_id = "sb_native";
+    artifact.compiler_identity = "scratchbird_jit";
     artifact.compiler_version = "1.0.0";
+    artifact.optimization_profile = "O2";
+    artifact.security_policy_version = 1;
     artifact.artifact_state = CatalogManager::SblrArtifactState::READY;
     artifact.binary_blob_id = generateUuidV7();
     artifact.hash_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

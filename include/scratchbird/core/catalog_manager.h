@@ -2665,9 +2665,17 @@ public:
             ID artifact_id;
             ID module_id;
             ID plan_id;
+            ID object_uuid;
+            std::string canonical_sblr_hash;
             std::string target_platform;
+            std::string target_triple;
+            std::string cpu_feature_profile;
+            std::string native_abi_version;
             std::string compiler_id;
+            std::string compiler_identity;
             std::string compiler_version;
+            std::string optimization_profile;
+            uint64_t security_policy_version = 0;
             SblrArtifactState artifact_state = SblrArtifactState::QUEUED;
             ID binary_blob_id;
             std::string hash_sha256;
