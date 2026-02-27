@@ -470,6 +470,7 @@ private:
     uint8_t client_charset_ = mysql::Charset::UTF8MB4_GENERAL_CI;
     std::string auth_response_;
     std::string remote_password_;
+    std::string engine_database_name_;
 
     // Server capabilities
     uint32_t server_capabilities_ = 0;

@@ -638,8 +638,9 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
     };
     const bool default_is_database_alias =
         !normalized_default.empty() &&
-        !has_hierarchy(normalized_default) &&
-        !has_emulation_prefix(normalized_default);
+        ((!has_hierarchy(normalized_default) && !has_emulation_prefix(normalized_default)) ||
+         (has_emulation_prefix(normalized_default) &&
+          normalized_default.find(".databases.") != std::string::npos));
 
     // If no schema specified, use default
     if (schema.empty()) {

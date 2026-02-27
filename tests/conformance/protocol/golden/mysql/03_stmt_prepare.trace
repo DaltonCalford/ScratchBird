@@ -1,0 +1,5 @@
+# MySQL frame conformance golden metadata (A55-013)
+scenario=stmt_prepare
+type=COM_STMT_PREPARE->OK_PACKET
+direction=bidirectional
+payload_source=handleComStmtPrepare

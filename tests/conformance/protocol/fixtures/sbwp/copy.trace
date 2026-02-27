@@ -1,0 +1,6 @@
+# SBWP native COPY fixture inventory (A55-010)
+surface=sbwp_native
+scenario=copy
+expected_flow=CopyData,CopyDone,CopyFail
+parser_core=v3
+emulation_surface_only=false

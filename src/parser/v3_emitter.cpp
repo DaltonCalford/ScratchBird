@@ -1592,11 +1592,37 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             Value::Object payload;
             payload["flags"] = Value(uint64_t(s->if_not_exists ? 0x0001 : 0));
             payload["name"] = toIdent(s->database_path.objectName());
-            payload["encrypted"] = Value(false);
-            payload["options"] = Value(Value::Object{
-                {"count", Value(uint64_t(0))},
-                {"key", Value(std::string())},
-                {"value", Value(makeInstr(emitLiteral(nullptr)))}});
+            payload["path"] = toSchemaPath(s->database_path);
+            if (s->source_spec != parser::v3::StringPool::INVALID_ID) {
+                payload["source"] = Value(std::string(pool_.get(s->source_spec)));
+            }
+
+            Value::List options;
+            options.reserve(s->options.size());
+            for (const auto& opt : s->options) {
+                if (opt.key == parser::v3::StringPool::INVALID_ID) {
+                    continue;
+                }
+                Value::Object option;
+                option["key"] = Value(std::string(pool_.get(opt.key)));
+                if (opt.value != parser::v3::StringPool::INVALID_ID) {
+                    option["value"] = Value(std::string(pool_.get(opt.value)));
+                } else {
+                    option["value"] = Value();
+                }
+                options.push_back(Value(std::move(option)));
+            }
+            payload["options"] = Value(std::move(options));
+
+            Value::List aliases;
+            aliases.reserve(s->aliases.size());
+            for (auto alias_id : s->aliases) {
+                if (alias_id == parser::v3::StringPool::INVALID_ID) {
+                    continue;
+                }
+                aliases.push_back(Value(std::string(pool_.get(alias_id))));
+            }
+            payload["aliases"] = Value(std::move(aliases));
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -3032,12 +3058,15 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
 }
 
 scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement* stmt) {
-    auto makeDrop = [&](Opcode opcode, const parser::v3::SchemaPath& path, uint8_t object_type) {
+    auto makeDrop = [&](Opcode opcode,
+                        const parser::v3::SchemaPath& path,
+                        uint8_t object_type,
+                        uint64_t flags = 0) {
         Instruction inst;
         inst.opcode = op(opcode);
         inst.flags = 0;
         Value::Object payload;
-        payload["flags"] = Value(uint64_t(0));
+        payload["flags"] = Value(flags);
         payload["object_type"] = Value(uint64_t(object_type));
         payload["path"] = toSchemaPath(path);
         inst.payload = Value(std::move(payload));
@@ -3047,6 +3076,10 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
     switch (stmt->kind()) {
         case parser::v3::ASTKind::DropTableStmt: {
             auto* drop_stmt = static_cast<parser::v3::DropTableStmt*>(stmt);
+            uint64_t drop_flags = 0;
+            if (drop_stmt->if_exists) drop_flags |= 0x01;
+            if (drop_stmt->cascade) drop_flags |= 0x02;
+            if (drop_stmt->restrict) drop_flags |= 0x04;
             if (drop_stmt->tables.empty()) {
                 Instruction inst;
                 inst.opcode = op(Opcode::SBLR3_EXECUTE_STMT);
@@ -3056,7 +3089,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
             }
 
             if (drop_stmt->tables.size() == 1) {
-                return makeDrop(Opcode::SBLR3_DROP_TABLE, drop_stmt->tables.front(), 1);
+                return makeDrop(Opcode::SBLR3_DROP_TABLE, drop_stmt->tables.front(), 1, drop_flags);
             }
 
             // SCHEMA_DDL_DROP currently carries a single path; encode multi-drop
@@ -3072,12 +3105,20 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
             parser::v3::SchemaPath packed_path(
                 parser::v3::PathType::UNQUALIFIED,
                 {pool_.intern(packed_targets)});
-            return makeDrop(Opcode::SBLR3_DROP_TABLE, packed_path, 1);
+            return makeDrop(Opcode::SBLR3_DROP_TABLE, packed_path, 1, drop_flags);
         }
-        case parser::v3::ASTKind::DropIndexStmt:
-            return makeDrop(Opcode::SBLR3_DROP_INDEX, static_cast<parser::v3::DropIndexStmt*>(stmt)->indexes.front(), 2);
+        case parser::v3::ASTKind::DropIndexStmt: {
+            auto* s = static_cast<parser::v3::DropIndexStmt*>(stmt);
+            uint64_t flags = 0;
+            if (s->if_exists) flags |= 0x01;
+            if (s->cascade) flags |= 0x02;
+            return makeDrop(Opcode::SBLR3_DROP_INDEX, s->indexes.front(), 2, flags);
+        }
         case parser::v3::ASTKind::DropViewStmt: {
             auto* drop_stmt = static_cast<parser::v3::DropViewStmt*>(stmt);
+            uint64_t drop_flags = 0;
+            if (drop_stmt->if_exists) drop_flags |= 0x01;
+            if (drop_stmt->cascade) drop_flags |= 0x02;
             if (drop_stmt->views.empty()) {
                 Instruction inst;
                 inst.opcode = op(Opcode::SBLR3_EXECUTE_STMT);
@@ -3087,7 +3128,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
             }
 
             if (drop_stmt->views.size() == 1) {
-                return makeDrop(Opcode::SBLR3_DROP_VIEW, drop_stmt->views.front(), 3);
+                return makeDrop(Opcode::SBLR3_DROP_VIEW, drop_stmt->views.front(), 3, drop_flags);
             }
 
             // SCHEMA_DDL_DROP currently carries a single path; encode multi-drop
@@ -3103,24 +3144,51 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
             parser::v3::SchemaPath packed_path(
                 parser::v3::PathType::UNQUALIFIED,
                 {pool_.intern(packed_targets)});
-            return makeDrop(Opcode::SBLR3_DROP_VIEW, packed_path, 3);
+            return makeDrop(Opcode::SBLR3_DROP_VIEW, packed_path, 3, drop_flags);
         }
-        case parser::v3::ASTKind::DropSequenceStmt:
-            return makeDrop(Opcode::SBLR3_DROP_SEQUENCE, static_cast<parser::v3::DropSequenceStmt*>(stmt)->sequences.front(), 4);
-        case parser::v3::ASTKind::DropSchemaStmt:
-            return makeDrop(Opcode::SBLR3_DROP_SCHEMA, static_cast<parser::v3::DropSchemaStmt*>(stmt)->schemas.front(), 5);
-        case parser::v3::ASTKind::DropDatabaseStmt:
-            return makeDrop(Opcode::SBLR3_DROP_DATABASE, static_cast<parser::v3::DropDatabaseStmt*>(stmt)->database_path, 6);
+        case parser::v3::ASTKind::DropSequenceStmt: {
+            auto* s = static_cast<parser::v3::DropSequenceStmt*>(stmt);
+            uint64_t flags = 0;
+            if (s->if_exists) flags |= 0x01;
+            if (s->cascade) flags |= 0x02;
+            return makeDrop(Opcode::SBLR3_DROP_SEQUENCE, s->sequences.front(), 4, flags);
+        }
+        case parser::v3::ASTKind::DropSchemaStmt: {
+            auto* s = static_cast<parser::v3::DropSchemaStmt*>(stmt);
+            uint64_t flags = 0;
+            if (s->if_exists) flags |= 0x01;
+            if (s->cascade) flags |= 0x02;
+            if (s->restrict) flags |= 0x04;
+            return makeDrop(Opcode::SBLR3_DROP_SCHEMA, s->schemas.front(), 5, flags);
+        }
+        case parser::v3::ASTKind::DropDatabaseStmt: {
+            auto* s = static_cast<parser::v3::DropDatabaseStmt*>(stmt);
+            uint64_t flags = 0;
+            if (s->if_exists) flags |= 0x01;
+            if (s->force) flags |= 0x02;
+            return makeDrop(Opcode::SBLR3_DROP_DATABASE, s->database_path, 6, flags);
+        }
         case parser::v3::ASTKind::DropTablespaceStmt: {
             auto* s = static_cast<parser::v3::DropTablespaceStmt*>(stmt);
             parser::v3::SchemaPath path(parser::v3::PathType::UNQUALIFIED,
                                         {s->tablespace_name});
             return makeDrop(Opcode::SBLR3_DROP_TABLESPACE, path, 16);
         }
-        case parser::v3::ASTKind::DropDomainStmt:
-            return makeDrop(Opcode::SBLR3_DROP_DOMAIN, static_cast<parser::v3::DropDomainStmt*>(stmt)->domains.front(), 7);
-        case parser::v3::ASTKind::DropTypeStmt:
-            return makeDrop(Opcode::SBLR3_DROP_DOMAIN, static_cast<parser::v3::DropTypeStmt*>(stmt)->types.front(), 8);
+        case parser::v3::ASTKind::DropDomainStmt: {
+            auto* s = static_cast<parser::v3::DropDomainStmt*>(stmt);
+            uint64_t flags = 0;
+            if (s->if_exists) flags |= 0x01;
+            if (s->restrict) flags |= 0x02;
+            return makeDrop(Opcode::SBLR3_DROP_DOMAIN, s->domains.front(), 7, flags);
+        }
+        case parser::v3::ASTKind::DropTypeStmt: {
+            auto* s = static_cast<parser::v3::DropTypeStmt*>(stmt);
+            uint64_t flags = 0;
+            if (s->if_exists) flags |= 0x01;
+            if (s->cascade) flags |= 0x02;
+            if (s->restrict) flags |= 0x04;
+            return makeDrop(Opcode::SBLR3_DROP_DOMAIN, s->types.front(), 8, flags);
+        }
         case parser::v3::ASTKind::DropFunctionStmt:
             return makeDrop(Opcode::SBLR3_DROP_FUNCTION_STMT, static_cast<parser::v3::DropFunctionStmt*>(stmt)->functions.front(), 9);
         case parser::v3::ASTKind::DropProcedureStmt:
@@ -5066,6 +5134,20 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
             fail("VALUES() expects a single column reference argument");
             payload["column"] = Value(std::string());
         }
+        inst.payload = Value(std::move(payload));
+        return inst;
+    }
+
+    if (name == "IIF") {
+        if (expr->arguments.size() != 3) {
+            fail("IIF() expects exactly 3 arguments");
+        }
+        inst.opcode = op(Opcode::SBLR3_CASE_WHEN);
+        Value::Object payload;
+        payload["when_count"] = Value(uint64_t(1));
+        payload["when"] = Value(makeInstr(emitExpression(expr->arguments[0])));
+        payload["then"] = Value(makeInstr(emitExpression(expr->arguments[1])));
+        payload["else"] = Value(makeInstr(emitExpression(expr->arguments[2])));
         inst.payload = Value(std::move(payload));
         return inst;
     }

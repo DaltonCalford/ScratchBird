@@ -1,0 +1,6 @@
+# PostgreSQL v3 emulation fixture inventory (A55-010)
+surface=postgresql_v3_emulation
+scenario=query
+expected_flow=Query,RowDescription,DataRow,CommandComplete,ReadyForQuery
+parser_core=v3
+emulation_surface_only=true

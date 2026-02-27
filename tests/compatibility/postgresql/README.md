@@ -76,6 +76,13 @@ ctest -R CompatibilityPostgreSQL --test-dir build
 
 `CompatibilityPostgreSQL` performs a connection precheck first; if no compatible PostgreSQL endpoint is reachable with current auth settings, it exits as `SKIP` (CTest code 77) instead of failing the full suite.
 
+Proof-boundary artifacts are written per run under `results/ctest/<run_id>/`:
+
+- `RUN_MANIFEST.json` (`parser_core=v3`, `parser_mode=emulation_surface_only`, protocol + run status)
+- `PARSER_BOUNDARY.txt` (human-readable parser boundary marker)
+
+This lane is emulation-only proof. Core parser proof is the native ScratchBird lane.
+
 Before running PostgreSQL compatibility tests, provision a PostgreSQL-wire login in the target ScratchBird database. The runner can do this automatically:
 
 ```bash

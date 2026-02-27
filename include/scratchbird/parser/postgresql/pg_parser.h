@@ -15,8 +15,8 @@
  * Recursive-descent parser for PostgreSQL 16 SQL dialect.
  * This parser generates SBLR bytecode directly for execution.
  *
- * Schema: Databases are emulated as schemas at:
- *   /remote/emulated/postgresql/localhost/{database}/
+ * Schema: Emulated PostgreSQL databases are rooted at:
+ *   emulated.postgresql.localhost.databases.{database}
  *
  * Supported statements:
  * - DDL: CREATE/ALTER/DROP TABLE, INDEX, VIEW, SEQUENCE, FUNCTION, etc.
@@ -226,7 +226,7 @@ public:
      */
     Parser(std::string_view input,
            core::Database* db = nullptr,
-           std::string_view default_schema = "/remote/emulated/postgresql/localhost/");
+           std::string_view default_schema = "");
 
     ~Parser() = default;
 

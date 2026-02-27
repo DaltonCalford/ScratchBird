@@ -5505,6 +5505,44 @@ namespace scratchbird
                 return alias_status;
             }
 
+            // MySQL/MariaDB emulation accepts two-part db.object names where
+            // db is a logical database alias under the emulated databases root.
+            // Normalize that surface to the canonical absolute schema path.
+            {
+                std::string root_path;
+                const std::string dialect_upper = conn_ctx_
+                    ? scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag())
+                    : std::string();
+                if ((dialect_upper == "MYSQL" || dialect_upper == "MARIADB") &&
+                    resolveEmulatedRootPath(conn_ctx_, root_path) &&
+                    !root_path.empty())
+                {
+                    auto components = splitSchemaComponents(expanded_name);
+                    if (components.size() == 2)
+                    {
+                        std::string first_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(components.front());
+                        if (first_upper != "EMULATED" &&
+                            first_upper != "EMULATION" &&
+                            first_upper != "REMOTE" &&
+                            first_upper != "ROOT")
+                        {
+                            std::string normalized_root = normalizeSchemaPath(root_path);
+                            std::string root_upper =
+                                scratchbird::core::IdentifierUtils::toUpper(normalized_root);
+                            const std::string marker = ".DATABASES.";
+                            size_t marker_pos = root_upper.find(marker);
+                            if (marker_pos != std::string::npos)
+                            {
+                                std::string base_root =
+                                    normalized_root.substr(0, marker_pos + std::strlen(".databases"));
+                                expanded_name = base_root + "." + components[0] + "." + components[1];
+                            }
+                        }
+                    }
+                }
+            }
+
             core::ObjectPath path;
             auto status = buildObjectPathFromName(expanded_name, path, ctx);
             if (status != core::Status::OK)
@@ -5702,6 +5740,43 @@ namespace scratchbird
                     SET_ERROR_CONTEXT(ctx, alias_status, alias_ctx.message.c_str());
                 }
                 return alias_status;
+            }
+
+            // Keep MySQL/MariaDB db.object resolution aligned with schema-id
+            // resolver logic so CREATE and DROP target the same rooted schema.
+            {
+                std::string root_path;
+                const std::string dialect_upper = conn_ctx_
+                    ? scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag())
+                    : std::string();
+                if ((dialect_upper == "MYSQL" || dialect_upper == "MARIADB") &&
+                    resolveEmulatedRootPath(conn_ctx_, root_path) &&
+                    !root_path.empty())
+                {
+                    auto components = splitSchemaComponents(expanded_name);
+                    if (components.size() == 2)
+                    {
+                        std::string first_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(components.front());
+                        if (first_upper != "EMULATED" &&
+                            first_upper != "EMULATION" &&
+                            first_upper != "REMOTE" &&
+                            first_upper != "ROOT")
+                        {
+                            std::string normalized_root = normalizeSchemaPath(root_path);
+                            std::string root_upper =
+                                scratchbird::core::IdentifierUtils::toUpper(normalized_root);
+                            const std::string marker = ".DATABASES.";
+                            size_t marker_pos = root_upper.find(marker);
+                            if (marker_pos != std::string::npos)
+                            {
+                                std::string base_root =
+                                    normalized_root.substr(0, marker_pos + std::strlen(".databases"));
+                                expanded_name = base_root + "." + components[0] + "." + components[1];
+                            }
+                        }
+                    }
+                }
             }
 
             core::ObjectPath path;
@@ -41004,6 +41079,40 @@ namespace scratchbird
                 (container_module_upper == "MYSQL_EMULATION" ||
                  container_module_upper == "MYSQL");
 
+            const auto detect_v3_module_dialect = [&](const std::string& module_upper)
+                -> std::string {
+                if (module_upper.empty())
+                {
+                    return std::string();
+                }
+                if (module_upper == "MYSQL" || module_upper == "MYSQL_EMULATION")
+                {
+                    return "mysql";
+                }
+                if (module_upper == "POSTGRESQL" || module_upper == "POSTGRESQL_EMULATION")
+                {
+                    return "postgresql";
+                }
+                if (module_upper == "FIREBIRD" || module_upper == "FIREBIRD_EMULATION")
+                {
+                    return "firebird";
+                }
+                constexpr const char kSuffix[] = "_EMULATION";
+                constexpr size_t kSuffixLen = sizeof(kSuffix) - 1;
+                if (module_upper.size() > kSuffixLen &&
+                    module_upper.compare(module_upper.size() - kSuffixLen, kSuffixLen, kSuffix) == 0)
+                {
+                    std::string base = module_upper.substr(0, module_upper.size() - kSuffixLen);
+                    if (!base.empty())
+                    {
+                        return toLowerAsciiCopy(base);
+                    }
+                }
+                return std::string();
+            };
+            const std::string v3_module_dialect =
+                detect_v3_module_dialect(container_module_upper);
+
             return_requested_ = false;
             return_value_ = Value();
 
@@ -42841,6 +42950,199 @@ namespace scratchbird
                             return evaluateThreeValuedNot(val);
                         }
                         return Value::makeInt64(~val.toInt64());
+                    }
+                    case Opcode::SBLR3_CASE_WHEN: {
+                        const auto* obj =
+                            std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                        if (!obj)
+                        {
+                            return Value::makeNull();
+                        }
+
+                        uint64_t when_count = 0;
+                        getU64(*obj, "when_count", when_count);
+
+                        Value base_value = Value::makeNull();
+                        bool has_base = false;
+                        auto it_base = obj->find("base");
+                        if (it_base != obj->end())
+                        {
+                            scratchbird::sblr::v3::Instruction base_inst;
+                            if (getInstrFromValue(it_base->second, base_inst))
+                            {
+                                base_value = evalExpr(base_inst);
+                                has_base = true;
+                            }
+                        }
+
+                        Value else_value = Value::makeNull();
+                        auto it_else = obj->find("else");
+                        if (it_else != obj->end())
+                        {
+                            scratchbird::sblr::v3::Instruction else_inst;
+                            if (getInstrFromValue(it_else->second, else_inst))
+                            {
+                                else_value = evalExpr(else_inst);
+                            }
+                        }
+
+                        if (when_count == 0)
+                        {
+                            return else_value;
+                        }
+
+                        auto it_when = obj->find("when");
+                        auto it_then = obj->find("then");
+                        if (it_when == obj->end() || it_then == obj->end())
+                        {
+                            return else_value;
+                        }
+
+                        scratchbird::sblr::v3::Instruction when_inst;
+                        scratchbird::sblr::v3::Instruction then_inst;
+                        if (!getInstrFromValue(it_when->second, when_inst) ||
+                            !getInstrFromValue(it_then->second, then_inst))
+                        {
+                            return else_value;
+                        }
+
+                        Value when_value = evalExpr(when_inst);
+                        bool matched = false;
+
+                        if (has_base)
+                        {
+                            if (!base_value.isNull() && !when_value.isNull())
+                            {
+                                Value lhs = base_value;
+                                Value rhs = when_value;
+                                const bool strict_mode = isOperatorStrictModeEnabled(conn_ctx_);
+                                std::string implicit_error;
+                                if (!normalizeImplicitOperandsForBinaryOp(
+                                        scratchbird::sblr::v3::Opcode::SBLR3_EXPR_EQ,
+                                        lhs,
+                                        rhs,
+                                        implicit_error,
+                                        strict_mode))
+                                {
+                                    error(implicit_error);
+                                }
+
+                                if (core::TypeSystem::isString(lhs.type()) ||
+                                    core::TypeSystem::isString(rhs.type()))
+                                {
+                                    matched = compareStrings(lhs.toString(), rhs.toString()) == 0;
+                                }
+                                else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                                {
+                                    uint8_t precision =
+                                        (lhs.type() == core::DataType::DECFLOAT34 ||
+                                         rhs.type() == core::DataType::DECFLOAT34)
+                                            ? 34
+                                            : 16;
+                                    core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                    core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                    matched = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) == 0;
+                                }
+                                else if (lhs.type() == core::DataType::UUID &&
+                                         rhs.type() == core::DataType::UUID)
+                                {
+                                    matched = lhs.getUUID() == rhs.getUUID();
+                                }
+                                else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                {
+                                    matched = temporalComparisonKeyMicros(lhs) ==
+                                              temporalComparisonKeyMicros(rhs);
+                                }
+                                else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                {
+                                    matched = compareIntegerValues(lhs, rhs) == 0;
+                                }
+                                else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                {
+                                    matched = coerceToDouble(lhs) == coerceToDouble(rhs);
+                                }
+                                else
+                                {
+                                    matched = lhs.toInt64() == rhs.toInt64();
+                                }
+                            }
+                        }
+                        else
+                        {
+                            matched = predicateIsTrue(when_value);
+                        }
+
+                        if (matched)
+                        {
+                            return evalExpr(then_inst);
+                        }
+                        return else_value;
+                    }
+                    case Opcode::SBLR3_SUBQUERY_EXISTS:
+                    case Opcode::SBLR3_SUBQUERY_SCALAR: {
+                        const auto* obj =
+                            std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                        if (!obj)
+                        {
+                            return Value::makeNull();
+                        }
+
+                        auto it_query = obj->find("query");
+                        if (it_query == obj->end())
+                        {
+                            return Value::makeNull();
+                        }
+
+                        scratchbird::sblr::v3::Instruction query_inst;
+                        if (!getInstrFromValue(it_query->second, query_inst))
+                        {
+                            return Value::makeNull();
+                        }
+
+                        if (static_cast<Opcode>(query_inst.opcode) != Opcode::SBLR3_SELECT)
+                        {
+                            return Value::makeNull();
+                        }
+
+                        std::vector<uint8_t> query_bytecode;
+                        std::string enc_err;
+                        if (!buildV3ContainerBytes(query_inst, query_bytecode, enc_err))
+                        {
+                            return Value::makeNull();
+                        }
+
+                        Executor nested(db_);
+                        if (conn_ctx_)
+                        {
+                            nested.setConnectionContext(conn_ctx_);
+                        }
+
+                        auto subquery_result = nested.execute(query_bytecode);
+                        if (!subquery_result.success() || !subquery_result.hasResultSet() ||
+                            subquery_result.resultSet() == nullptr)
+                        {
+                            return Value::makeNull();
+                        }
+
+                        auto* rs = subquery_result.resultSet();
+                        if (op == Opcode::SBLR3_SUBQUERY_EXISTS)
+                        {
+                            return Value::makeBoolean(rs->rowCount() > 0);
+                        }
+
+                        if (rs->rowCount() == 0)
+                        {
+                            return Value::makeNull();
+                        }
+                        if (rs->rowCount() > 1)
+                        {
+                            error("Scalar subquery returned more than one row");
+                        }
+                        if (rs->columnCount() != 1)
+                        {
+                            error("Scalar subquery must return exactly one column");
+                        }
+                        return rs->getValue(0, 0);
                     }
                     case Opcode::SBLR3_IN_LIST:
                     case Opcode::SBLR3_SUBQUERY_IN:
@@ -48844,6 +49146,19 @@ namespace scratchbird
                 {
                     return ExecutionResult("DROP missing object path");
                 }
+                uint64_t flags = 0;
+                getU64(payload, "flags", flags);
+                const bool if_exists = (flags & 0x01u) != 0;
+                const bool cascade = (flags & 0x02u) != 0;
+                auto is_not_found_error = [](const std::string& text) {
+                    std::string lower = text;
+                    std::transform(lower.begin(), lower.end(), lower.begin(),
+                                   [](unsigned char ch) {
+                                       return static_cast<char>(std::tolower(ch));
+                                   });
+                    return lower.find("not found") != std::string::npos ||
+                           lower.find("does not exist") != std::string::npos;
+                };
 
                 auto splitDropTargets = [&path]() -> std::vector<std::string> {
                     auto trim = [](std::string& value) {
@@ -48898,13 +49213,22 @@ namespace scratchbird
                         std::string err_out;
                         if (!resolveTableId(target, table_info, err_out))
                         {
+                            if (if_exists && is_not_found_error(err_out))
+                            {
+                                continue;
+                            }
                             return ExecutionResult(err_out.empty()
                                                        ? ("DROP TABLE resolve failed: " + target)
                                                        : ("DROP TABLE resolve failed for " + target + ": " + err_out));
                         }
 
                         core::ErrorContext ctx;
-                        auto status = db_->catalog_manager()->dropTable(table_info.table_id, true, &ctx);
+                        auto status = db_->catalog_manager()->dropTable(table_info.table_id, cascade, &ctx);
+                        if (if_exists &&
+                            (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
+                        {
+                            continue;
+                        }
                         if (status != core::Status::OK)
                         {
                             if (ctx.message.empty())
@@ -48937,9 +49261,19 @@ namespace scratchbird
                         index_id, resolved_type, nullptr, &ctx, false);
                     if (status != core::Status::OK)
                     {
+                        if (if_exists &&
+                            (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
+                        {
+                            return ExecutionResult();
+                        }
                         return ExecutionResult(ctx.message.empty() ? "Index not found" : ctx.message);
                     }
                     status = db_->catalog_manager()->dropIndex(index_id, &ctx);
+                    if (if_exists &&
+                        (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
+                    {
+                        return ExecutionResult();
+                    }
                     if (status != core::Status::OK)
                     {
                         return ExecutionResult(ctx.message.empty() ? "DROP INDEX failed" : ctx.message);
@@ -48958,14 +49292,49 @@ namespace scratchbird
                         core::CatalogManager::ObjectType resolved_type;
                         auto status = resolveObjectIdForQualifiedName(
                             target, core::CatalogManager::ObjectType::VIEW,
-                            view_id, resolved_type, nullptr, &ctx, false);
+                            view_id, resolved_type, nullptr, &ctx, true);
                         if (status != core::Status::OK)
                         {
+                            // MySQL emulation may emit db-qualified view names while the
+                            // underlying catalog stores logical unqualified view names.
+                            // Retry by basename before reporting not-found.
+                            size_t last_dot = target.find_last_of('.');
+                            if (last_dot != std::string::npos &&
+                                last_dot + 1 < target.size())
+                            {
+                                const std::string fallback_name = target.substr(last_dot + 1);
+                                core::ErrorContext fallback_ctx;
+                                auto fallback_status = resolveObjectIdForQualifiedName(
+                                    fallback_name,
+                                    core::CatalogManager::ObjectType::VIEW,
+                                    view_id,
+                                    resolved_type,
+                                    nullptr,
+                                    &fallback_ctx,
+                                    true);
+                                if (fallback_status == core::Status::OK)
+                                {
+                                    status = fallback_status;
+                                }
+                            }
+                        }
+                        if (status != core::Status::OK)
+                        {
+                            if (if_exists &&
+                                (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
+                            {
+                                continue;
+                            }
                             return ExecutionResult(ctx.message.empty()
                                                        ? ("View not found: " + target)
                                                        : ctx.message);
                         }
                         status = db_->catalog_manager()->dropView(view_id, false, &ctx);
+                        if (if_exists &&
+                            (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
+                        {
+                            continue;
+                        }
                         if (status != core::Status::OK)
                         {
                             return ExecutionResult(ctx.message.empty()
@@ -54408,6 +54777,15 @@ namespace scratchbird
 
                         if (!has_from)
                         {
+                            if (has_where_inst)
+                            {
+                                Value cond = evalExpr(where_inst);
+                                if (!predicateIsTrue(cond))
+                                {
+                                    return ExecutionResult(std::move(rs));
+                                }
+                            }
+
                             std::vector<Value> row;
                             size_t index = 1;
                             for (const auto& entry : *list)
@@ -67188,6 +67566,30 @@ namespace scratchbird
                                 std::string key;
                                 if (!getString(*obj, "key", key) || key.empty())
                                 {
+                                    uint64_t sentinel_count = 1;
+                                    if (getU64(*obj, "count", sentinel_count) &&
+                                        sentinel_count == 0)
+                                    {
+                                        continue;
+                                    }
+                                    auto value_it = obj->find("value");
+                                    if (value_it == obj->end())
+                                    {
+                                        continue;
+                                    }
+                                    if (value_it->second.isNull())
+                                    {
+                                        continue;
+                                    }
+                                    scratchbird::sblr::v3::Instruction sentinel_inst;
+                                    if (getInstrFromValue(value_it->second, sentinel_inst))
+                                    {
+                                        Value sentinel_value = evalExpr(sentinel_inst);
+                                        if (sentinel_value.isNull())
+                                        {
+                                            continue;
+                                        }
+                                    }
                                     err = "options key missing";
                                     return false;
                                 }
@@ -68408,6 +68810,11 @@ namespace scratchbird
 	                                std::string dialect = conn_ctx_
 	                                    ? toLowerAsciiCopy(trimAsciiCopy(conn_ctx_->dialect_tag()))
 	                                    : std::string();
+	                                if ((dialect.empty() || dialect == "scratchbird") &&
+	                                    !v3_module_dialect.empty())
+	                                {
+	                                    dialect = v3_module_dialect;
+	                                }
 	                                if (dialect.empty() || dialect == "scratchbird")
 	                                {
 	                                    dialect = "postgresql";
@@ -68517,6 +68924,35 @@ namespace scratchbird
 	                            return runLegacyVoidHandler(&Executor::executeCreateDatabase,
 	                                                        std::move(arg_stream));
 	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_SCHEMA: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+
+	                            std::string schema_path;
+	                            if (!getSchemaPathString(payload, "path", schema_path) ||
+	                                schema_path.empty())
+	                            {
+	                                getString(payload, "name", schema_path);
+	                            }
+	                            schema_path = trimAsciiCopy(schema_path);
+	                            if (schema_path.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE SCHEMA missing path");
+	                            }
+
+	                            std::string owner_name;
+	                            getString(payload, "owner", owner_name);
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            arg_stream.push_back(
+	                                static_cast<uint8_t>(flags_value & 0x01u));  // IF NOT EXISTS
+	                            appendLegacyStringArg(arg_stream, schema_path);
+	                            appendLegacyStringArg(arg_stream, owner_name);
+
+	                            return runLegacyVoidHandler(&Executor::executeCreateSchema,
+	                                                        std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                            return handleCreateTable(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
@@ -68568,6 +69004,7 @@ namespace scratchbird
 	                {
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_USER:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DATABASE:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_SCHEMA:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
@@ -68611,6 +69048,10 @@ namespace scratchbird
                             static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
                             payload);
                     case scratchbird::sblr::v3::Opcode::SBLR3_START_TRANSACTION:
+                        return executeStartTransactionOpcode(payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_TRANSACTION:
+                        // Firebird/MySQL/PostgreSQL SET TRANSACTION is a transaction-control
+                        // entrypoint; route to shared START TRANSACTION payload handler.
                         return executeStartTransactionOpcode(payload);
                     case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT:
                     case scratchbird::sblr::v3::Opcode::SBLR3_PREPARE_TRANSACTION:
@@ -68779,6 +69220,7 @@ namespace scratchbird
                 {
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_AUTOCOMMIT:
                     case scratchbird::sblr::v3::Opcode::SBLR3_START_TRANSACTION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_TRANSACTION:
                     case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT:
                     case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_RETAINING:
                     case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK:
@@ -76179,10 +76621,14 @@ namespace scratchbird
 
             if (!set_search_path && !set_current_schema)
             {
-                const bool mysql_emulation_session =
-                    conn_ctx_ &&
-                    scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag()) == "MYSQL";
-                if (mysql_emulation_session || had_global_scope_prefix || had_session_scope_prefix)
+                const std::string session_dialect =
+                    conn_ctx_ ? scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag())
+                              : std::string();
+                const bool emulation_session =
+                    session_dialect == "MYSQL" ||
+                    session_dialect == "POSTGRESQL" ||
+                    session_dialect == "FIREBIRD";
+                if (emulation_session || had_global_scope_prefix || had_session_scope_prefix)
                 {
                     auto value_opt = readOptionalValue();
                     if (!conn_ctx_)
@@ -90934,7 +91380,7 @@ namespace scratchbird
                     }
                 }
 
-                return true;
+                return !root_path_out.empty();
             }
 
             bool decryptValueForColumn(core::Database* db,

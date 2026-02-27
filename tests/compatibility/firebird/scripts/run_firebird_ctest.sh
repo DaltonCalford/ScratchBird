@@ -70,6 +70,52 @@ mkdir -p "$RESULTS_DIR" "$WORK_DIR"
 FB_USER="${SCRATCHBIRD_FB_USER:-SYSDBA}"
 FB_PASSWORD="${SCRATCHBIRD_FB_PASSWORD:-masterkey}"
 
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
+count_list_entries() {
+  local list_file="$1"
+  grep -Ev '^[[:space:]]*(#|$)' "$list_file" | wc -l | tr -d '[:space:]'
+}
+
+write_run_manifest() {
+  local run_status="${1:-running}"
+  local failure_count="${2:-0}"
+  local listed_tests
+  listed_tests="$(count_list_entries "$LIST_FILE")"
+  cat > "${RESULTS_DIR}/RUN_MANIFEST.json" <<EOF
+{
+  "run_id": "$(json_escape "$RUN_ID")",
+  "engine": "firebird",
+  "protocol_surface": "firebird_remote",
+  "parser_core": "v3",
+  "parser_mode": "emulation_surface_only",
+  "execution_mode": "$([[ "$ISQL_MODE" == "native_firebird" ]] && echo "native_firebird_client" || echo "scratchbird_fb_emulation_client")",
+  "isql_binary": "$(json_escape "$ISQL_BIN")",
+  "ctest_list_file": "$(json_escape "$LIST_FILE")",
+  "listed_tests": ${listed_tests},
+  "status": "$(json_escape "$run_status")",
+  "failure_count": ${failure_count},
+  "results_dir": "$(json_escape "$RESULTS_DIR")",
+  "isql_mode": "$(json_escape "$ISQL_MODE")",
+  "username": "$(json_escape "$FB_USER")",
+  "timestamp_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+  cat > "${RESULTS_DIR}/PARSER_BOUNDARY.txt" <<'EOF'
+parser_core=v3
+parser_mode=emulation_surface_only
+protocol_surface=firebird_remote
+statement_path=v3_core_parser_then_emulation_adapter
+EOF
+}
+
+write_run_manifest "initialized" 0
+
 if [[ "$ISQL_MODE" == "native_firebird" ]]; then
   PRECHECK_FILE="${WORK_DIR}/precheck.sql"
   PRECHECK_LOG="${RESULTS_DIR}/precheck.log"
@@ -80,6 +126,7 @@ EOF
        > "$PRECHECK_LOG" 2>&1; then
     echo "SKIP: Firebird endpoint is not reachable with current isql-fb credentials/settings." >&2
     cat "$PRECHECK_LOG" >&2
+    write_run_manifest "skipped" 0
     exit 77
   fi
 fi
@@ -127,7 +174,9 @@ if [[ ${#failures[@]} -ne 0 ]]; then
   for item in "${failures[@]}"; do
     echo "  - ${item}" >&2
   done
+  write_run_manifest "failed" "${#failures[@]}"
   exit 1
 fi
 
+write_run_manifest "passed" 0
 echo "Firebird compatibility tests passed. Logs: ${RESULTS_DIR}"

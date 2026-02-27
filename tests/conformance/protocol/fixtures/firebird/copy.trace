@@ -1,0 +1,6 @@
+# Firebird wire emulation fixture inventory (A55-010)
+surface=firebird_remote_emulation
+scenario=copy
+expected_flow=op_batch_segments,op_batch_complete
+parser_core=v3
+emulation_surface_only=true

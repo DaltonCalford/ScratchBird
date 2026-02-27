@@ -1,0 +1,5 @@
+# Firebird frame conformance golden metadata (A55-014)
+scenario=invalid_opcode
+type=unknown_opcode->error_response(op_response)
+direction=bidirectional
+payload_source=default unsupported operation branch

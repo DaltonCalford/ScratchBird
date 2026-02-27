@@ -1,0 +1,5 @@
+# PostgreSQL frame conformance golden metadata (A55-012)
+scenario=empty_query
+type=Query->EmptyQueryResponse+ReadyForQuery
+direction=bidirectional
+payload_source=Frontend Query message with empty C-string

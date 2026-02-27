@@ -1,0 +1,6 @@
+# PostgreSQL v3 emulation fixture inventory (A55-010)
+surface=postgresql_v3_emulation
+scenario=copy
+expected_flow=CopyInResponse,CopyData,CopyDone,CommandComplete
+parser_core=v3
+emulation_surface_only=true

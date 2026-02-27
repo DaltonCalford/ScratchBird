@@ -64,6 +64,13 @@ ctest -R CompatibilityFirebird --test-dir build
 
 This uses a Firebird protocol client and creates a fresh ScratchBird database per test under `results/ctest/`. To override resolution, set `SCRATCHBIRD_FB_ISQL` explicitly.
 
+Proof-boundary artifacts are written per run under `results/ctest/<run_id>/`:
+
+- `RUN_MANIFEST.json` (`parser_core=v3`, `parser_mode=emulation_surface_only`, protocol + run status)
+- `PARSER_BOUNDARY.txt` (human-readable parser boundary marker)
+
+This lane is emulation-only proof. Core parser proof is the native ScratchBird lane.
+
 ### Firebird-QA Harness Smoke
 
 The vendored `repos/firebird-qa/` harness is exercised by:

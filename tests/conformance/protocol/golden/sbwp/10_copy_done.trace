@@ -1,0 +1,5 @@
+# SBWP golden trace metadata (A55-011)
+scenario=copy_done
+type=CopyDone
+direction=client_to_server
+payload_source=buildCopyDonePayload

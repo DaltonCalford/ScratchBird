@@ -573,6 +573,174 @@ set_tests_properties(WireProtocolTests PROPERTIES
 )
 
 # ==============================================================================
+# Protocol Frame Conformance (A55)
+# ==============================================================================
+add_executable(test_sbwp_frame_conformance conformance/protocol/test_sbwp_frame_conformance.cpp)
+target_link_libraries(test_sbwp_frame_conformance
+    scratchbird_protocol
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+target_compile_definitions(test_sbwp_frame_conformance PRIVATE
+    SB_PROTOCOL_CONFORMANCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/conformance/protocol"
+)
+add_test(NAME SBWPFrameConformance COMMAND test_sbwp_frame_conformance)
+set_tests_properties(SBWPFrameConformance PROPERTIES
+    LABELS "unit;protocol;conformance;a55"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+add_executable(test_pg_frame_conformance conformance/protocol/test_pg_frame_conformance.cpp)
+target_include_directories(test_pg_frame_conformance PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_pg_frame_conformance
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(GEOS_FOUND)
+    target_link_libraries(test_pg_frame_conformance ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_pg_frame_conformance ${PROJ_LIBRARIES})
+endif()
+target_compile_definitions(test_pg_frame_conformance PRIVATE
+    SB_PROTOCOL_CONFORMANCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/conformance/protocol"
+)
+add_test(NAME PGFrameConformance COMMAND test_pg_frame_conformance)
+set_tests_properties(PGFrameConformance PROPERTIES
+    LABELS "unit;protocol;conformance;a55;postgresql"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+add_executable(test_mysql_frame_conformance conformance/protocol/test_mysql_frame_conformance.cpp)
+target_include_directories(test_mysql_frame_conformance PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_mysql_frame_conformance
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(GEOS_FOUND)
+    target_link_libraries(test_mysql_frame_conformance ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_mysql_frame_conformance ${PROJ_LIBRARIES})
+endif()
+target_compile_definitions(test_mysql_frame_conformance PRIVATE
+    SB_PROTOCOL_CONFORMANCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/conformance/protocol"
+)
+add_test(NAME MySQLFrameConformance COMMAND test_mysql_frame_conformance)
+set_tests_properties(MySQLFrameConformance PROPERTIES
+    LABELS "unit;protocol;conformance;a55;mysql"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+add_executable(test_firebird_frame_conformance conformance/protocol/test_firebird_frame_conformance.cpp)
+target_include_directories(test_firebird_frame_conformance PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_firebird_frame_conformance
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(GEOS_FOUND)
+    target_link_libraries(test_firebird_frame_conformance ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_firebird_frame_conformance ${PROJ_LIBRARIES})
+endif()
+target_compile_definitions(test_firebird_frame_conformance PRIVATE
+    SB_PROTOCOL_CONFORMANCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/conformance/protocol"
+)
+add_test(NAME FirebirdFrameConformance COMMAND test_firebird_frame_conformance)
+set_tests_properties(FirebirdFrameConformance PROPERTIES
+    LABELS "unit;protocol;conformance;a55;firebird"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+add_executable(test_protocol_frame_conformance conformance/protocol/test_protocol_frame_conformance.cpp)
+target_include_directories(test_protocol_frame_conformance PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_protocol_frame_conformance
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(GEOS_FOUND)
+    target_link_libraries(test_protocol_frame_conformance ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_protocol_frame_conformance ${PROJ_LIBRARIES})
+endif()
+add_test(NAME ProtocolFrameConformance COMMAND test_protocol_frame_conformance)
+set_tests_properties(ProtocolFrameConformance PROPERTIES
+    LABELS "unit;protocol;conformance;a55;negative"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+add_executable(test_transaction_truth_native conformance/transactions/test_transaction_truth_native.cpp)
+target_include_directories(test_transaction_truth_native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_transaction_truth_native
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(GEOS_FOUND)
+    target_link_libraries(test_transaction_truth_native ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_transaction_truth_native ${PROJ_LIBRARIES})
+endif()
+add_test(NAME TransactionTruthNative COMMAND test_transaction_truth_native)
+set_tests_properties(TransactionTruthNative PROPERTIES
+    LABELS "unit;transactions;conformance;a55"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+# ==============================================================================
 # Engine IPC Session Handler Tests (SQL→Bytecode Integration)
 # ==============================================================================
 add_executable(test_engine_ipc_session_handler unit/test_engine_ipc_session_handler.cpp)
@@ -1432,6 +1600,27 @@ set_tests_properties(GiSTMVCC PROPERTIES
 #     LABELS "integration;security;phase2;alpha"
 #     TIMEOUT 120
 # )
+
+# ============================================================================
+# Security System Phase 3.3 Integration Test (Column-Level Permissions)
+# ============================================================================
+
+add_executable(test_security_phase3_3
+    integration/test_security_phase3_3.cpp
+)
+target_link_libraries(test_security_phase3_3
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer_compiler
+    gtest
+    gtest_main
+)
+add_test(NAME SecurityPhase3_3_ColumnPermissions COMMAND test_security_phase3_3)
+set_tests_properties(SecurityPhase3_3_ColumnPermissions PROPERTIES
+    LABELS "integration;security;phase3;column_permissions"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
 
 # ============================================================================
 # Security System Phase 3.4 Integration Test (RLS DDL)

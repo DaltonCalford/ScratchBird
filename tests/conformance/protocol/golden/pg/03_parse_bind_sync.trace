@@ -1,0 +1,5 @@
+# PostgreSQL frame conformance golden metadata (A55-012)
+scenario=parse_bind_sync
+type=Parse+Bind+Sync->ParseComplete+BindComplete+ReadyForQuery
+direction=bidirectional
+payload_source=Frontend Parse/Bind/Sync sequence

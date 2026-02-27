@@ -1,0 +1,5 @@
+# MySQL frame conformance golden metadata (A55-013)
+scenario=protocol_error
+type=ERR_PACKET(sqlstate)
+direction=server_to_client
+payload_source=sendProtocolError

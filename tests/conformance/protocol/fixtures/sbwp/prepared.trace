@@ -1,0 +1,6 @@
+# SBWP native prepared statement fixture inventory (A55-010)
+surface=sbwp_native
+scenario=prepared
+expected_flow=Parse,Bind,Execute,Close
+parser_core=v3
+emulation_surface_only=false

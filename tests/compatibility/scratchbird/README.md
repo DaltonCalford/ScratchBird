@@ -8,6 +8,16 @@ Comprehensive SQL-based test suite for ScratchBird's native features, including 
 **Categories:** Basic, Advanced, MGA/MVCC, Security, Performance
 **Test Infrastructure:** SQL scripts + expected outputs + automated test runners
 
+## Parser Boundary (Core Proof Lane)
+
+- This lane is the canonical parser proof lane: `parser_core=v3`, `parser_mode=native_core`.
+- Emulation lanes (PostgreSQL/MySQL/Firebird) are separate proof lanes with `parser_mode=emulation_surface_only`.
+
+When executed via `scripts/run_scratchbird_native_ctest.sh`, each run writes:
+
+- `results/ctest/<run_id>/RUN_MANIFEST.json`
+- `results/ctest/<run_id>/PARSER_BOUNDARY.txt`
+
 ## Test Categories
 
 ### 1. Basic Tests (`tests/basic/`)

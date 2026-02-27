@@ -16,8 +16,8 @@
  * This parser is dedicated to MySQL emulation and generates SBLR bytecode
  * for execution against the ScratchBird engine.
  *
- * Schema: Databases are emulated as schemas at:
- *   /remote/emulated/mysql/localhost/{database}/
+ * Schema: Emulated MySQL databases are rooted at:
+ *   emulated.mysql.localhost.databases.{database}
  *
  * Supported statements:
  * - DDL: CREATE/ALTER/DROP TABLE, INDEX, VIEW, DATABASE
@@ -331,7 +331,7 @@ public:
      */
     Parser(std::string_view input,
            core::Database* db = nullptr,
-           std::string_view default_schema = "/remote/emulated/mysql/localhost/");
+           std::string_view default_schema = "");
 
     ~Parser() = default;
 

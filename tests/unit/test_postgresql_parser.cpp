@@ -1218,3 +1218,34 @@ TEST_F(PostgreSQLParserTest, DefaultSchemaPath) {
     auto result = parser.parseStatement();
     EXPECT_TRUE(result.success());
 }
+
+TEST_F(PostgreSQLParserTest, DropTableUsesUnqualifiedPathForDatabaseAliasDefault) {
+    Parser parser("DROP TABLE IF EXISTS sb_tx_truth", nullptr, "main");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(result.statement(), nullptr);
+    ASSERT_EQ(result.statement()->kind(), scratchbird::parser::v3::ASTKind::DropTableStmt);
+
+    auto* stmt = static_cast<scratchbird::parser::v3::DropTableStmt*>(result.statement());
+    ASSERT_EQ(stmt->tables.size(), 1u);
+    const auto& path = stmt->tables.front();
+    EXPECT_EQ(path.type, scratchbird::parser::v3::PathType::UNQUALIFIED);
+    ASSERT_EQ(path.components.size(), 1u);
+    EXPECT_EQ(result.stringPool().get(path.components[0]), "sb_tx_truth");
+
+    Parser canonical_parser("DROP TABLE IF EXISTS sb_tx_truth",
+                            nullptr,
+                            "emulated.postgresql.localhost.databases.main");
+    auto canonical_result = canonical_parser.parseStatement();
+    ASSERT_TRUE(canonical_result.success());
+    ASSERT_NE(canonical_result.statement(), nullptr);
+    ASSERT_EQ(canonical_result.statement()->kind(), scratchbird::parser::v3::ASTKind::DropTableStmt);
+
+    auto* canonical_stmt =
+        static_cast<scratchbird::parser::v3::DropTableStmt*>(canonical_result.statement());
+    ASSERT_EQ(canonical_stmt->tables.size(), 1u);
+    const auto& canonical_path = canonical_stmt->tables.front();
+    EXPECT_EQ(canonical_path.type, scratchbird::parser::v3::PathType::UNQUALIFIED);
+    ASSERT_EQ(canonical_path.components.size(), 1u);
+    EXPECT_EQ(canonical_result.stringPool().get(canonical_path.components[0]), "sb_tx_truth");
+}

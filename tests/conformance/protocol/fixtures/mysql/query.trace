@@ -1,0 +1,6 @@
+# MySQL 8.x emulation fixture inventory (A55-010)
+surface=mysql_8x_emulation
+scenario=query
+expected_flow=COM_QUERY,ColumnDefs,Rows,EOFOrOK
+parser_core=v3
+emulation_surface_only=true

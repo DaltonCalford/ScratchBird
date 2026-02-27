@@ -1,0 +1,6 @@
+# MySQL 8.x emulation fixture inventory (A55-010)
+surface=mysql_8x_emulation
+scenario=cancel
+expected_flow=KILL_QUERY
+parser_core=v3
+emulation_surface_only=true

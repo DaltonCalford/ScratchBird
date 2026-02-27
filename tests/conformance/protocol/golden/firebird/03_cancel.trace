@@ -1,0 +1,5 @@
+# Firebird frame conformance golden metadata (A55-014)
+scenario=cancel
+type=op_cancel->op_response
+direction=bidirectional
+payload_source=handleCancel

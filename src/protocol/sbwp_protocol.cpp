@@ -524,11 +524,9 @@ std::vector<uint8_t> buildCancelPayload(uint32_t cancel_type, uint32_t target_se
 // ============================================================================
 
 std::vector<uint8_t> buildCopyDataPayload(const uint8_t* data, size_t len) {
-    std::vector<uint8_t> payload;
-    payload.reserve(8 + len);
+    std::vector<uint8_t> payload(8 + len);
     writeU64(payload, 0, static_cast<uint64_t>(len));
     if (len > 0 && data != nullptr) {
-        payload.resize(8 + len);
         std::memcpy(payload.data() + 8, data, len);
     }
     return payload;

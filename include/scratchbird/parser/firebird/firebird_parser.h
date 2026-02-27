@@ -247,6 +247,7 @@ private:
 
     // Expression helpers
     Expression* parseFunctionCall(const SchemaPath& name);
+    Expression* parseIifExpression();
     Expression* parseCaseExpression();
     Expression* parseCastExpression();
     Expression* parseExtractExpression();

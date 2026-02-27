@@ -30,15 +30,7 @@ FirebirdQueryCompiler::FirebirdQueryCompiler(core::Database* db)
     : db_(db)
     , catalog_(db ? db->catalog_manager() : nullptr)
 {
-    // Initialize with public schema if available
-    if (catalog_) {
-        core::CatalogManager::SchemaInfo public_schema_info;
-        core::ErrorContext ctx;
-        if (catalog_->getSchema("users.public", public_schema_info, &ctx) == core::Status::OK ||
-            catalog_->getSchema("public", public_schema_info, &ctx) == core::Status::OK) {
-            current_schema_ = public_schema_info.schema_id;
-        }
-    }
+    // Current schema is supplied by the Firebird adapter/session.
 }
 
 FirebirdQueryCompiler::~FirebirdQueryCompiler() = default;

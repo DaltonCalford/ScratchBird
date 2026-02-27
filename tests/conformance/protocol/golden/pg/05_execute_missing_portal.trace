@@ -1,0 +1,5 @@
+# PostgreSQL frame conformance golden metadata (A55-012)
+scenario=execute_missing_portal
+type=Execute->ErrorResponse+ReadyForQuery
+direction=bidirectional
+payload_source=Frontend Execute on missing portal then Sync

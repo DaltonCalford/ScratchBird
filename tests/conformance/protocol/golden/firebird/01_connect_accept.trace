@@ -1,0 +1,5 @@
+# Firebird frame conformance golden metadata (A55-014)
+scenario=connect_accept
+type=op_connect->op_accept
+direction=bidirectional
+payload_source=handleConnect(require_authentication=false)

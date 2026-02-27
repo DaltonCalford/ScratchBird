@@ -1,0 +1,6 @@
+# SBWP native cancel frame fixture inventory (A55-010)
+surface=sbwp_native
+scenario=cancel
+expected_flow=Cancel
+parser_core=v3
+emulation_surface_only=false

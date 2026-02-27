@@ -23,6 +23,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/uuidv7.h"
 #include "test_helpers.h"
 
 #include <algorithm>
@@ -67,6 +68,15 @@ protected:
         }
     }
 
+    ID getPublicSchemaId()
+    {
+        CatalogManager::SchemaInfo schema_info;
+        ErrorContext ctx;
+        auto status = db->catalog_manager()->getSchema("public", schema_info, &ctx);
+        EXPECT_EQ(status, Status::OK);
+        return schema_info.schema_id;
+    }
+
     // Helper to get or create a test user
     ID getOrCreateUser(const std::string& username)
     {
@@ -81,7 +91,8 @@ protected:
 
         // Create user
         ID user_id;
-        status = db->catalog_manager()->createUser(username, "test123", false, user_id, &ctx);
+        status = db->catalog_manager()->createUser(
+            username, "test123", getPublicSchemaId(), false, user_id, &ctx);
         EXPECT_EQ(status, Status::OK) << "Failed to create user: " << ctx.message;
         return user_id;
     }
@@ -104,11 +115,44 @@ protected:
             return table_info.table_id;
         }
 
+        CatalogManager::ColumnInfo id_col;
+        id_col.column_id = generateUuidV7();
+        id_col.column_name = "id";
+        id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+        id_col.max_length = 4;
+        id_col.nullable = false;
+        id_col.ordinal = 0;
+
+        CatalogManager::ColumnInfo name_col;
+        name_col.column_id = generateUuidV7();
+        name_col.column_name = "name";
+        name_col.data_type = static_cast<uint16_t>(DataType::TEXT);
+        name_col.max_length = 0;
+        name_col.nullable = true;
+        name_col.ordinal = 1;
+
+        CatalogManager::ColumnInfo salary_col;
+        salary_col.column_id = generateUuidV7();
+        salary_col.column_name = "salary";
+        salary_col.data_type = static_cast<uint16_t>(DataType::INT32);
+        salary_col.max_length = 4;
+        salary_col.nullable = true;
+        salary_col.ordinal = 2;
+
+        CatalogManager::ColumnInfo email_col;
+        email_col.column_id = generateUuidV7();
+        email_col.column_name = "email";
+        email_col.data_type = static_cast<uint16_t>(DataType::TEXT);
+        email_col.max_length = 0;
+        email_col.nullable = true;
+        email_col.ordinal = 3;
+
+        std::vector<CatalogManager::ColumnInfo> columns{id_col, name_col, salary_col, email_col};
+
         // Create table
         ID table_id;
         status = db->catalog_manager()->createTable(
-            schema_info.schema_id, table_name, ID{}, // owner_id empty for now
-            CatalogManager::TableType::ORDINARY, table_id, &ctx);
+            schema_info.schema_id, table_name, columns, table_id, 0, &ctx);
         EXPECT_EQ(status, Status::OK) << "Failed to create table: " << ctx.message;
         return table_id;
     }
@@ -120,10 +164,10 @@ TEST_F(SecurityPhase3_3Test, GrantColumnPermission)
     // Setup
     ID user_id = getOrCreateUser("alice");
     ID table_id = getOrCreateTable("employees");
-    ID grantor_id = db->catalog_manager()->getCurrentUserID();
+    ErrorContext ctx;
+    ID grantor_id = db->catalog_manager()->getSystemUserId(&ctx);
 
     // Grant SELECT on single column
-    ErrorContext ctx;
     auto status = db->catalog_manager()->grantColumnPermission(
         table_id, "salary",
         user_id, CatalogManager::GranteeType::USER,
@@ -149,7 +193,8 @@ TEST_F(SecurityPhase3_3Test, GrantMultipleColumnPermissions)
     // Setup
     ID user_id = getOrCreateUser("bob");
     ID table_id = getOrCreateTable("employees");
-    ID grantor_id = db->catalog_manager()->getCurrentUserID();
+    ErrorContext grant_ctx;
+    ID grantor_id = db->catalog_manager()->getSystemUserId(&grant_ctx);
 
     // Grant SELECT on multiple columns
     ErrorContext ctx;
@@ -195,7 +240,8 @@ TEST_F(SecurityPhase3_3Test, RevokeColumnPermission)
     // Setup
     ID user_id = getOrCreateUser("charlie");
     ID table_id = getOrCreateTable("employees");
-    ID grantor_id = db->catalog_manager()->getCurrentUserID();
+    ErrorContext grant_ctx;
+    ID grantor_id = db->catalog_manager()->getSystemUserId(&grant_ctx);
     ErrorContext ctx;
     uint32_t select_priv = static_cast<uint32_t>(CatalogManager::Privilege::SELECT);
 
@@ -239,7 +285,8 @@ TEST_F(SecurityPhase3_3Test, GetAccessibleColumns)
     // Setup
     ID user_id = getOrCreateUser("dave");
     ID table_id = getOrCreateTable("employees");
-    ID grantor_id = db->catalog_manager()->getCurrentUserID();
+    ErrorContext grant_ctx;
+    ID grantor_id = db->catalog_manager()->getSystemUserId(&grant_ctx);
     ErrorContext ctx;
     uint32_t select_priv = static_cast<uint32_t>(CatalogManager::Privilege::SELECT);
 
@@ -272,7 +319,8 @@ TEST_F(SecurityPhase3_3Test, MultiplePrivilegesOnColumn)
     // Setup
     ID user_id = getOrCreateUser("eve");
     ID table_id = getOrCreateTable("users");
-    ID grantor_id = db->catalog_manager()->getCurrentUserID();
+    ErrorContext grant_ctx;
+    ID grantor_id = db->catalog_manager()->getSystemUserId(&grant_ctx);
     ErrorContext ctx;
 
     // Grant both SELECT and UPDATE on email column

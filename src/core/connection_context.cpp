@@ -16,6 +16,8 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/heap_page.h"
 #include <cassert>
 #include <cctype>
 #include <cstdio>
@@ -2180,73 +2182,151 @@ namespace scratchbird::core
             return Status::IO_ERROR;
         }
 
-        // Rollback all savepoints created AFTER the named one
-        // Process from most recent (end of stack) to the target savepoint
-        auto rollback_start = sp_it;
-        ++rollback_start; // Start with the savepoint AFTER the target
-
-        for (auto it = rollback_start; it != savepoint_stack_.end(); ++it)
+        StorageEngine *storage = db_->storage_engine();
+        if (!storage)
         {
-            // Mark all inserted tuples as aborted (set HEAP_XMIN_ABORTED)
-            for (const auto &tid : it->inserted_tids)
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Storage engine not available");
+            return Status::IO_ERROR;
+        }
+
+        const size_t target_index = static_cast<size_t>(std::distance(savepoint_stack_.begin(),
+                                                                      sp_it));
+
+        struct RollbackGuard
+        {
+            bool &flag;
+            explicit RollbackGuard(bool &target_flag) : flag(target_flag)
             {
-                void *page_buffer = nullptr;
-                Status s = pool->pinPage(tid.first, &page_buffer, ctx);
-                if (s != Status::OK)
-                {
-                    LOG_WARNING(TRANSACTION,
-                                "Failed to pin page %u during savepoint rollback: %d", tid.first,
-                                static_cast<int>(s));
-                    continue; // Best effort
-                }
+                flag = true;
+            }
+            ~RollbackGuard()
+            {
+                flag = false;
+            }
+        } rollback_guard(savepoint_rollback_in_progress_);
 
-                // Get the tuple header
-                auto *page_data = static_cast<uint8_t *>(page_buffer);
-                // Locate item pointer at offset (simplified - assumes fixed layout)
-                // In real implementation, would use HeapPage::getItemPointer()
-                // For now, log the action
-                LOG_DEBUG(TRANSACTION, "Marking tuple (page=%u, item=%u) as aborted", tid.first,
-                          tid.second);
-
-                // MGA Architecture Note: Tuple abort marking is handled by TIP, not tuple flags
-                // In Firebird MGA, aborted transactions are recorded in TIP (Transaction Inventory
-                // Pages) and visibility checks use TIP lookup. The HEAP_XMIN_INVALID flag is an
-                // optional optimization that gets set lazily during subsequent visibility checks.
-                // The savepoint rollback is already complete - TIP marks the transaction as aborted,
-                // and future reads will correctly identify these tuples as invisible.
-
-                pool->unpinPage(tid.first, false, ctx); // No modification needed
+        auto markTupleRolledBackInsert = [&](uint32_t page_id, uint16_t item_id) {
+            void *page_buffer = nullptr;
+            Status s = pool->pinPage(page_id, &page_buffer, ctx);
+            if (s != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Failed to pin page %u during savepoint rollback insert undo: %d",
+                            page_id, static_cast<int>(s));
+                return;
             }
 
-            // Clear xmax on all deleted tuples (restore them)
-            for (const auto &tid : it->deleted_tids)
+            bool dirty = false;
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            auto *page_header = reinterpret_cast<PageHeader *>(page_data);
+            auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
+            uint16_t item_count = static_cast<uint16_t>(
+                (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
+
+            if (item_id < item_count && items[item_id].isValid(db_->page_size()) &&
+                !items[item_id].isDeleted())
             {
-                void *page_buffer = nullptr;
-                Status s = pool->pinPage(tid.first, &page_buffer, ctx);
-                if (s != Status::OK)
+                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
+                tuple_hdr->xmax = current_xid_;
+                tuple_hdr->infomask = static_cast<uint16_t>(
+                    tuple_hdr->infomask &
+                    ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
+                tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, true);
+                dirty = true;
+            }
+
+            pool->unpinPage(page_id, dirty, ctx);
+        };
+
+        auto clearTupleDeleteMark = [&](uint32_t page_id, uint16_t item_id) {
+            void *page_buffer = nullptr;
+            Status s = pool->pinPage(page_id, &page_buffer, ctx);
+            if (s != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Failed to pin page %u during savepoint rollback delete undo: %d",
+                            page_id, static_cast<int>(s));
+                return;
+            }
+
+            bool dirty = false;
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            auto *page_header = reinterpret_cast<PageHeader *>(page_data);
+            auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
+            uint16_t item_count = static_cast<uint16_t>(
+                (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
+
+            if (item_id < item_count && items[item_id].isValid(db_->page_size()) &&
+                !items[item_id].isDeleted())
+            {
+                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
+                tuple_hdr->xmax = 0;
+                tuple_hdr->infomask = static_cast<uint16_t>(
+                    tuple_hdr->infomask &
+                    ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
+                tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
+                dirty = true;
+            }
+
+            pool->unpinPage(page_id, dirty, ctx);
+        };
+
+        // Rollback changes made in target savepoint and nested savepoints, newest first.
+        for (size_t idx = savepoint_stack_.size(); idx-- > target_index;)
+        {
+            auto &sp = savepoint_stack_[idx];
+
+            for (auto rit = sp.updated_rows.rbegin(); rit != sp.updated_rows.rend(); ++rit)
+            {
+                if (rit->old_tuple_image.empty())
                 {
                     LOG_WARNING(TRANSACTION,
-                                "Failed to pin page %u during savepoint rollback: %d", tid.first,
-                                static_cast<int>(s));
-                    continue; // Best effort
+                                "Skipping empty update restore image for table/page/item");
+                    continue;
                 }
 
-                LOG_DEBUG(TRANSACTION, "Clearing delete mark on tuple (page=%u, item=%u)", tid.first,
-                          tid.second);
+                ErrorContext restore_ctx;
+                Status restore_status = storage->updateTuple(
+                    rit->table_id,
+                    rit->page_id,
+                    rit->item_id,
+                    rit->old_tuple_image.data(),
+                    static_cast<uint32_t>(rit->old_tuple_image.size()),
+                    nullptr,
+                    nullptr,
+                    &restore_ctx);
+                if (restore_status != Status::OK)
+                {
+                    LOG_WARNING(TRANSACTION,
+                                "Failed to restore updated tuple during rollback: table=%s page=%u item=%u status=%d msg=%s",
+                                rit->table_id.toString().c_str(),
+                                rit->page_id,
+                                rit->item_id,
+                                static_cast<int>(restore_status),
+                                restore_ctx.message.c_str());
+                }
+            }
 
-                // MGA Architecture Note: Delete mark clearing is handled by TIP
-                // Similar to insertions, the xmax transaction being marked as aborted in TIP
-                // means visibility checks will treat this tuple as not deleted.
-                // MGA rule: xmax is only valid if the transaction that set it is COMMITTED.
-                // Since the savepoint rollback marks the transaction as aborted in TIP,
-                // the xmax is automatically invalidated.
-
-                pool->unpinPage(tid.first, false, ctx); // No modification needed
+            for (auto rit = sp.inserted_tids.rbegin(); rit != sp.inserted_tids.rend(); ++rit)
+            {
+                markTupleRolledBackInsert(rit->first, rit->second);
+            }
+            for (auto rit = sp.deleted_tids.rbegin(); rit != sp.deleted_tids.rend(); ++rit)
+            {
+                clearTupleDeleteMark(rit->first, rit->second);
             }
         }
 
-        // Remove all savepoints after (and including) the next one after target
-        savepoint_stack_.erase(rollback_start, savepoint_stack_.end());
+        // Keep the target savepoint active, but clear its post-rollback mutation state.
+        sp_it = savepoint_stack_.begin() + static_cast<std::ptrdiff_t>(target_index);
+        sp_it->inserted_tids.clear();
+        sp_it->deleted_tids.clear();
+        sp_it->updated_rows.clear();
+
+        // Remove nested savepoints.
+        auto erase_from = sp_it;
+        ++erase_from;
+        savepoint_stack_.erase(erase_from, savepoint_stack_.end());
 
         // Update savepoint level
         savepoint_level_ = sp_it->level;
@@ -2304,9 +2384,17 @@ namespace scratchbird::core
             parent.deleted_tids.insert(parent.deleted_tids.end(), sp_it->deleted_tids.begin(),
                                        sp_it->deleted_tids.end());
 
+            // Merge update restore records
+            parent.updated_rows.insert(parent.updated_rows.end(),
+                                       sp_it->updated_rows.begin(),
+                                       sp_it->updated_rows.end());
+
             LOG_DEBUG(TRANSACTION,
-                      "Merged %zu insertions and %zu deletions into parent savepoint '%s'",
-                      sp_it->inserted_tids.size(), sp_it->deleted_tids.size(), parent.name.c_str());
+                      "Merged %zu insertions, %zu deletions and %zu updates into parent savepoint '%s'",
+                      sp_it->inserted_tids.size(),
+                      sp_it->deleted_tids.size(),
+                      sp_it->updated_rows.size(),
+                      parent.name.c_str());
         }
 
         // Remove this savepoint and all nested ones
@@ -2330,6 +2418,10 @@ namespace scratchbird::core
 
     void ConnectionContext::trackTupleInsertion(uint32_t page_id, uint16_t item_id)
     {
+        if (savepoint_rollback_in_progress_)
+        {
+            return;
+        }
         // If we have active savepoints, track this insertion in the most recent one
         if (!savepoint_stack_.empty())
         {
@@ -2344,6 +2436,10 @@ namespace scratchbird::core
 
     void ConnectionContext::trackTupleDeletion(uint32_t page_id, uint16_t item_id)
     {
+        if (savepoint_rollback_in_progress_)
+        {
+            return;
+        }
         // If we have active savepoints, track this deletion in the most recent one
         if (!savepoint_stack_.empty())
         {
@@ -2354,6 +2450,26 @@ namespace scratchbird::core
                       page_id, item_id, savepoint_stack_.back().name.c_str(),
                       savepoint_stack_.back().level);
         }
+    }
+
+    void ConnectionContext::trackTupleUpdate(const ID& table_id,
+                                             uint32_t page_id,
+                                             uint16_t item_id,
+                                             const uint8_t* old_tuple_data,
+                                             uint32_t old_tuple_size)
+    {
+        if (savepoint_rollback_in_progress_ || savepoint_stack_.empty() ||
+            old_tuple_data == nullptr || old_tuple_size == 0)
+        {
+            return;
+        }
+
+        Savepoint::UpdateRecord record;
+        record.table_id = table_id;
+        record.page_id = page_id;
+        record.item_id = item_id;
+        record.old_tuple_image.assign(old_tuple_data, old_tuple_data + old_tuple_size);
+        savepoint_stack_.back().updated_rows.emplace_back(std::move(record));
     }
 
     // ============================================================================

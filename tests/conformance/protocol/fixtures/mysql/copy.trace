@@ -1,0 +1,6 @@
+# MySQL 8.x emulation fixture inventory (A55-010)
+surface=mysql_8x_emulation
+scenario=copy
+expected_flow=LOCAL_INFILE_REQUEST,LOCAL_INFILE_DATA,LOCAL_INFILE_TERMINATE
+parser_core=v3
+emulation_surface_only=true

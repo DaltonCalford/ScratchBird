@@ -1,0 +1,5 @@
+# PostgreSQL frame conformance golden metadata (A55-012)
+scenario=auth_handshake
+type=AuthenticationOk+BackendKeyData+ParameterStatus+ReadyForQuery
+direction=server_to_client
+payload_source=sendAuthResult(success=true)

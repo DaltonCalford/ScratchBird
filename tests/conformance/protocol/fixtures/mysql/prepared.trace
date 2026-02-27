@@ -1,0 +1,6 @@
+# MySQL 8.x emulation fixture inventory (A55-010)
+surface=mysql_8x_emulation
+scenario=prepared
+expected_flow=COM_STMT_PREPARE,COM_STMT_EXECUTE,COM_STMT_CLOSE
+parser_core=v3
+emulation_surface_only=true

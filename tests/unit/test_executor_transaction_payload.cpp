@@ -14,6 +14,8 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/sblr/executor.h"
+#include "scratchbird/sblr/firebird_query_compiler.h"
+#include "scratchbird/sblr/postgresql_query_compiler.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
@@ -24,6 +26,8 @@ using scratchbird::core::IsolationLevel;
 using scratchbird::core::ReadCommittedMode;
 using scratchbird::core::Status;
 using scratchbird::sblr::Executor;
+using scratchbird::sblr::FirebirdQueryCompiler;
+using scratchbird::sblr::PostgreSQLQueryCompiler;
 using scratchbird::sblr::QueryCompilerV3;
 using scratchbird::testing::TestDatabaseFile;
 
@@ -57,6 +61,9 @@ protected:
         ASSERT_EQ(db_.catalog_manager()->getSchema("PUBLIC", schema_info, &ctx), Status::OK)
             << ctx.message;
         conn_->setCurrentSchemaId(schema_info.schema_id);
+        auto system_user_id = db_.catalog_manager()->getSystemUserId(&ctx);
+        conn_->setCurrentUser(system_user_id, true);
+        ConnectionContext::setCurrent(conn_.get());
 
         executor_ = std::make_unique<Executor>(&db_);
         executor_->setConnectionContext(conn_.get());
@@ -64,6 +71,7 @@ protected:
 
     void TearDown() override {
         executor_.reset();
+        ConnectionContext::setCurrent(nullptr);
         conn_.reset();
         db_.close();
         db_file_.reset();
@@ -71,6 +79,17 @@ protected:
 
     scratchbird::sblr::CompilationResultV3 compile(const std::string& sql) {
         QueryCompilerV3 compiler(&db_);
+        return compiler.compile(sql);
+    }
+
+    scratchbird::sblr::PostgreSQLCompilationResult compilePostgreSQL(const std::string& sql) {
+        PostgreSQLQueryCompiler compiler(nullptr);
+        compiler.setDefaultSchema("main");
+        return compiler.compile(sql);
+    }
+
+    scratchbird::sblr::FirebirdCompilationResult compileFirebird(const std::string& sql) {
+        FirebirdQueryCompiler compiler(&db_);
         return compiler.compile(sql);
     }
 
@@ -236,4 +255,225 @@ TEST_F(ExecutorTransactionPayloadTest, SavepointSqlReleaseAllowsReuse) {
     ErrorContext release_ctx;
     EXPECT_EQ(conn_->releaseSavepoint("blr_sp_1", &release_ctx), Status::OK)
         << release_ctx.message;
+}
+
+TEST_F(ExecutorTransactionPayloadTest, ExistsSubqueryReturnsDeterministicBoolean) {
+    auto create_compiled = compile("CREATE TABLE exists_eval_test (id INT PRIMARY KEY)");
+    ASSERT_TRUE(create_compiled.success()) << joinErrors(create_compiled.errors());
+    auto result = executor_->execute(create_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto insert_compiled = compile("INSERT INTO exists_eval_test(id) VALUES (1)");
+    ASSERT_TRUE(insert_compiled.success()) << joinErrors(insert_compiled.errors());
+    result = executor_->execute(insert_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto exists_true_compiled = compile(
+        "SELECT EXISTS(SELECT 1 FROM exists_eval_test WHERE id = 1)");
+    ASSERT_TRUE(exists_true_compiled.success()) << joinErrors(exists_true_compiled.errors());
+    result = executor_->execute(exists_true_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    ASSERT_FALSE(result.resultSet()->getValue(0, 0).isNull());
+    EXPECT_TRUE(result.resultSet()->getValue(0, 0).getBool());
+
+    auto exists_false_compiled = compile(
+        "SELECT EXISTS(SELECT 1 FROM exists_eval_test WHERE id = 999)");
+    ASSERT_TRUE(exists_false_compiled.success()) << joinErrors(exists_false_compiled.errors());
+    result = executor_->execute(exists_false_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    ASSERT_FALSE(result.resultSet()->getValue(0, 0).isNull());
+    EXPECT_FALSE(result.resultSet()->getValue(0, 0).getBool());
+}
+
+TEST_F(ExecutorTransactionPayloadTest, RollbackToSavepointRestoresPreUpdateRowImage) {
+    startTransaction();
+
+    auto create_compiled = compile("CREATE TABLE savepoint_restore_test (id INT PRIMARY KEY, val INT)");
+    ASSERT_TRUE(create_compiled.success()) << joinErrors(create_compiled.errors());
+    auto result = executor_->execute(create_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto insert_compiled = compile("INSERT INTO savepoint_restore_test(id, val) VALUES (1, 10)");
+    ASSERT_TRUE(insert_compiled.success()) << joinErrors(insert_compiled.errors());
+    result = executor_->execute(insert_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto savepoint_compiled = compile("SAVEPOINT sp_rollback_restore");
+    ASSERT_TRUE(savepoint_compiled.success()) << joinErrors(savepoint_compiled.errors());
+    result = executor_->execute(savepoint_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto update_compiled = compile("UPDATE savepoint_restore_test SET val = 11 WHERE id = 1");
+    ASSERT_TRUE(update_compiled.success()) << joinErrors(update_compiled.errors());
+    result = executor_->execute(update_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto rollback_compiled = compile("ROLLBACK TO SAVEPOINT sp_rollback_restore");
+    ASSERT_TRUE(rollback_compiled.success()) << joinErrors(rollback_compiled.errors());
+    result = executor_->execute(rollback_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto select_compiled = compile("SELECT val FROM savepoint_restore_test WHERE id = 1");
+    ASSERT_TRUE(select_compiled.success()) << joinErrors(select_compiled.errors());
+    result = executor_->execute(select_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    ASSERT_FALSE(result.resultSet()->getValue(0, 0).isNull());
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toInt64(), 10);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, PostgresCompilerExistsReturnsBoolean) {
+    auto create_compiled = compilePostgreSQL("CREATE TABLE pg_exists_eval_test (id INT PRIMARY KEY)");
+    ASSERT_TRUE(create_compiled.success()) << joinErrors(create_compiled.errors());
+    auto result = executor_->execute(create_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto insert_compiled = compilePostgreSQL("INSERT INTO pg_exists_eval_test(id) VALUES (1)");
+    ASSERT_TRUE(insert_compiled.success()) << joinErrors(insert_compiled.errors());
+    result = executor_->execute(insert_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto exists_compiled =
+        compilePostgreSQL("SELECT EXISTS(SELECT 1 FROM pg_exists_eval_test WHERE id = 1)");
+    ASSERT_TRUE(exists_compiled.success()) << joinErrors(exists_compiled.errors());
+    result = executor_->execute(exists_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1U);
+    ASSERT_EQ(result.resultSet()->columnCount(), 1U);
+    EXPECT_FALSE(result.resultSet()->getValue(0, 0).isNull());
+    EXPECT_TRUE(result.resultSet()->getValue(0, 0).getBool());
+}
+
+TEST_F(ExecutorTransactionPayloadTest, PostgresCompilerWhereNotExistsWithoutFromAppliesPredicate) {
+    auto create_compiled =
+        compilePostgreSQL("CREATE TABLE pg_exists_where_test (id INT PRIMARY KEY)");
+    ASSERT_TRUE(create_compiled.success()) << joinErrors(create_compiled.errors());
+    auto result = executor_->execute(create_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto insert_compiled = compilePostgreSQL("INSERT INTO pg_exists_where_test(id) VALUES (1)");
+    ASSERT_TRUE(insert_compiled.success()) << joinErrors(insert_compiled.errors());
+    result = executor_->execute(insert_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto false_predicate_compiled = compilePostgreSQL(
+        "SELECT 'fail' WHERE NOT EXISTS (SELECT 1 FROM pg_exists_where_test WHERE id = 1)");
+    ASSERT_TRUE(false_predicate_compiled.success())
+        << joinErrors(false_predicate_compiled.errors());
+    result = executor_->execute(false_predicate_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    EXPECT_EQ(result.resultSet()->rowCount(), 0U);
+
+    auto true_predicate_compiled = compilePostgreSQL(
+        "SELECT 'pass' WHERE NOT EXISTS (SELECT 1 FROM pg_exists_where_test WHERE id = 999)");
+    ASSERT_TRUE(true_predicate_compiled.success())
+        << joinErrors(true_predicate_compiled.errors());
+    result = executor_->execute(true_predicate_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1U);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "pass");
+}
+
+TEST_F(ExecutorTransactionPayloadTest, PostgresCompilerRollbackToSavepointRestoresSameTxnInsert) {
+    auto create_compiled = compilePostgreSQL(
+        "CREATE TABLE pg_savepoint_same_txn_test (id INT PRIMARY KEY, val INT)");
+    ASSERT_TRUE(create_compiled.success()) << joinErrors(create_compiled.errors());
+    auto result = executor_->execute(create_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto begin_compiled = compilePostgreSQL("BEGIN");
+    ASSERT_TRUE(begin_compiled.success()) << joinErrors(begin_compiled.errors());
+    result = executor_->execute(begin_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto insert_compiled = compilePostgreSQL(
+        "INSERT INTO pg_savepoint_same_txn_test(id, val) VALUES (1, 30)");
+    ASSERT_TRUE(insert_compiled.success()) << joinErrors(insert_compiled.errors());
+    result = executor_->execute(insert_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto savepoint_compiled = compilePostgreSQL("SAVEPOINT sp1");
+    ASSERT_TRUE(savepoint_compiled.success()) << joinErrors(savepoint_compiled.errors());
+    result = executor_->execute(savepoint_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto update_compiled =
+        compilePostgreSQL("UPDATE pg_savepoint_same_txn_test SET val = 31 WHERE id = 1");
+    ASSERT_TRUE(update_compiled.success()) << joinErrors(update_compiled.errors());
+    result = executor_->execute(update_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto rollback_to_compiled = compilePostgreSQL("ROLLBACK TO SAVEPOINT sp1");
+    ASSERT_TRUE(rollback_to_compiled.success()) << joinErrors(rollback_to_compiled.errors());
+    result = executor_->execute(rollback_to_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto commit_compiled = compilePostgreSQL("COMMIT");
+    ASSERT_TRUE(commit_compiled.success()) << joinErrors(commit_compiled.errors());
+    result = executor_->execute(commit_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto verify_compiled = compilePostgreSQL("SELECT val FROM pg_savepoint_same_txn_test WHERE id = 1");
+    ASSERT_TRUE(verify_compiled.success()) << joinErrors(verify_compiled.errors());
+    result = executor_->execute(verify_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1U);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toInt64(), 30);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, FirebirdSetTransactionExecutesWithoutUnknownOpcode) {
+    auto compiled = compileFirebird("SET TRANSACTION");
+    ASSERT_TRUE(compiled.success()) << joinErrors(compiled.errors());
+
+    auto result = executor_->execute(compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+}
+
+TEST_F(ExecutorTransactionPayloadTest, FirebirdSetAutoddlOffIsAcceptedAsSessionVariable) {
+    auto compiled = compileFirebird("SET AUTODDL OFF");
+    ASSERT_TRUE(compiled.success()) << joinErrors(compiled.errors());
+
+    conn_->set_dialect_tag("FIREBIRD");
+    auto result = executor_->execute(compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+}
+
+TEST_F(ExecutorTransactionPayloadTest, FirebirdIifExistsReturnsPass) {
+    auto ddl = compileFirebird(
+        "RECREATE TABLE fb_iif_eval (id INTEGER NOT NULL PRIMARY KEY)");
+    ASSERT_TRUE(ddl.success()) << joinErrors(ddl.errors());
+    auto result = executor_->execute(ddl.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto insert = compileFirebird("INSERT INTO fb_iif_eval(id) VALUES (1)");
+    ASSERT_TRUE(insert.success()) << joinErrors(insert.errors());
+    result = executor_->execute(insert.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto query = compileFirebird(
+        "SELECT IIF(EXISTS(SELECT 1 FROM fb_iif_eval WHERE id = 1), 'PASS', 'FAIL') "
+        "FROM fb_iif_eval");
+    ASSERT_TRUE(query.success()) << joinErrors(query.errors());
+    result = executor_->execute(query.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1U);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "PASS");
 }

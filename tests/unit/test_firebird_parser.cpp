@@ -676,6 +676,27 @@ TEST_F(FirebirdParserTest, SelectWithGroupBy) {
     EXPECT_EQ(stmt->group_by.size(), 1u);
 }
 
+TEST_F(FirebirdParserTest, SelectWithIifExistsExpression) {
+    Parser parser(
+        "SELECT IIF(EXISTS(SELECT 1 FROM employees WHERE id = 1), 'PASS', 'FAIL') "
+        "FROM employees");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success);
+    ASSERT_EQ(result.statement->kind(), ASTKind::SelectStmt);
+
+    auto* stmt = static_cast<ast::SelectStmt*>(result.statement.get());
+    ASSERT_EQ(stmt->items.size(), 1u);
+    ASSERT_EQ(stmt->items[0]->item_type, ast::SelectItem::Type::EXPRESSION);
+
+    auto* case_expr = dynamic_cast<ast::CaseExpr*>(stmt->items[0]->expr);
+    ASSERT_NE(case_expr, nullptr);
+    ASSERT_EQ(case_expr->when_clauses.size(), 1u);
+    ASSERT_NE(case_expr->when_clauses[0].when_expr, nullptr);
+    ASSERT_NE(case_expr->when_clauses[0].then_expr, nullptr);
+    ASSERT_NE(case_expr->else_expr, nullptr);
+    EXPECT_EQ(case_expr->when_clauses[0].when_expr->kind(), ASTKind::ExistsExpr);
+}
+
 // =============================================================================
 // DML Tests - INSERT
 // =============================================================================

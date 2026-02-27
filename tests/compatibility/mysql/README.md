@@ -84,6 +84,13 @@ ctest -R CompatibilityMySQL --test-dir build
 
 `CompatibilityMySQL` performs a connection precheck first; if no compatible MySQL endpoint is reachable with current auth settings, it exits as `SKIP` (CTest code 77) instead of failing the full suite.
 
+Proof-boundary artifacts are written per run under `results/ctest/<run_id>/`:
+
+- `RUN_MANIFEST.json` (`parser_core=v3`, `parser_mode=emulation_surface_only`, protocol + run status)
+- `PARSER_BOUNDARY.txt` (human-readable parser boundary marker)
+
+This lane is emulation-only proof. Core parser proof is the native ScratchBird lane.
+
 If `sb_my_isql` is unavailable, set `SCRATCHBIRD_MY_ISQL` to a valid `sb_my_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
 
 Runner controls:

@@ -1220,8 +1220,15 @@ parser::v3::Statement* Parser::parseDropStmtV3() {
         auto* stmt = arena()->create<parser::v3::DropViewStmt>();
         stmt->if_exists = if_exists;
         do {
-            std::string view = parseQualifiedName();
-            stmt->views.push_back(buildPathFromQualified(v3_string_pool_, view));
+            std::string schema;
+            std::string view = parseIdentifier();
+            if (match(TokenType::DOT)) {
+                schema = view;
+                view = parseIdentifier();
+            }
+            resolveTableName(schema, view);
+            std::string full = schema.empty() ? view : schema + "." + view;
+            stmt->views.push_back(buildPathFromQualified(v3_string_pool_, full));
         } while (match(TokenType::COMMA));
         return stmt;
     }
@@ -1246,8 +1253,15 @@ parser::v3::Statement* Parser::parseTruncateStmtV3() {
     matchKeyword(TokenType::KW_TABLE);
     auto* stmt = arena()->create<parser::v3::TruncateTableStmt>();
     do {
-        std::string name = parseQualifiedName();
-        stmt->tables.push_back(buildPathFromQualified(v3_string_pool_, name));
+        std::string schema;
+        std::string table = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = table;
+            table = parseIdentifier();
+        }
+        resolveTableName(schema, table);
+        std::string full = schema.empty() ? table : schema + "." + table;
+        stmt->tables.push_back(buildPathFromQualified(v3_string_pool_, full));
     } while (match(TokenType::COMMA));
     return stmt;
 }
@@ -3226,6 +3240,22 @@ parser::v3::Expression* Parser::parsePrimaryExprV3() {
         return call;
     }
 
+    if (matchKeyword(TokenType::KW_IF)) {
+        // MySQL IF(cond, true_expr, false_expr) is lowered to CASE to preserve
+        // semantics without relying on function-runtime support.
+        auto* expr = arena()->create<parser::v3::CaseExpr>();
+        consume(TokenType::LEFT_PAREN, "Expected ( after IF");
+        parser::v3::CaseExpr::WhenClause clause;
+        clause.when_expr = parseExpressionV3();
+        consume(TokenType::COMMA, "Expected , after IF condition");
+        clause.then_expr = parseExpressionV3();
+        expr->when_clauses.push_back(std::move(clause));
+        consume(TokenType::COMMA, "Expected , after IF true branch");
+        expr->else_expr = parseExpressionV3();
+        consume(TokenType::RIGHT_PAREN, "Expected ) after IF arguments");
+        return expr;
+    }
+
     if (check(TokenType::USER_VARIABLE) || check(TokenType::SYSTEM_VARIABLE)) {
         auto* expr = arena()->create<parser::v3::ParameterExpr>();
         expr->is_named = true;
@@ -4026,8 +4056,15 @@ parser::v3::Statement* Parser::parseCreateStmtV3() {
         auto* stmt = arena()->create<parser::v3::CreateViewStmt>();
         stmt->or_replace = or_replace;
         stmt->temporary = temporary;
-        std::string view = parseQualifiedName();
-        stmt->view_path = buildPathFromQualified(v3_string_pool_, view);
+        std::string schema;
+        std::string view = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = view;
+            view = parseIdentifier();
+        }
+        resolveTableName(schema, view);
+        std::string full = schema.empty() ? view : schema + "." + view;
+        stmt->view_path = buildPathFromQualified(v3_string_pool_, full);
         if (match(TokenType::LEFT_PAREN)) {
             do {
                 stmt->column_names.push_back(parseIdentifierId());
@@ -4583,7 +4620,13 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
 
     std::string server_root = buildEmulatedServerRoot(default_schema_);
     if (!server_root.empty()) {
-        schema = server_root + "." + normalized_schema;
+        std::string database_root = server_root + ".databases";
+        if (normalized_schema == database_root ||
+            normalized_schema.rfind(database_root + ".", 0) == 0) {
+            schema = normalized_schema;
+        } else {
+            schema = database_root + "." + normalized_schema;
+        }
     } else {
         schema = normalized_schema;
     }
@@ -9008,7 +9051,8 @@ void Parser::parseTruncateStmt() {
     resolveTableName(schema, table);
 
     emit(sblr::Opcode::TRUNCATE_TABLE);
-    emitString(schema + "/" + table);
+    const std::string table_path = schema.empty() ? table : (schema + "/" + table);
+    emitString(table_path);
     emitByte(0);
 }
 

@@ -1,0 +1,5 @@
+# Firebird frame conformance golden metadata (A55-014)
+scenario=protocol_error
+type=sendProtocolError->op_response
+direction=server_to_client
+payload_source=sendProtocolError

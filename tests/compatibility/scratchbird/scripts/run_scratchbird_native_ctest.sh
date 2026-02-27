@@ -38,13 +38,63 @@ DBNAME="${SCRATCHBIRD_NATIVE_DB:-main}"
 DBUSER="${SCRATCHBIRD_NATIVE_USER:-sb_admin}"
 DBPASS="${SCRATCHBIRD_NATIVE_PASSWORD:-SbAdmin_Compat1!}"
 
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
+count_list_entries() {
+  local list_file="$1"
+  grep -Ev '^[[:space:]]*(#|$)' "$list_file" | wc -l | tr -d '[:space:]'
+}
+
+write_run_manifest() {
+  local run_status="${1:-running}"
+  local failure_count="${2:-0}"
+  local listed_tests
+  listed_tests="$(count_list_entries "$LIST_FILE")"
+  cat > "${RESULTS_DIR}/RUN_MANIFEST.json" <<EOF
+{
+  "run_id": "$(json_escape "$RUN_ID")",
+  "engine": "scratchbird_native",
+  "protocol_surface": "sbwp_native",
+  "parser_core": "v3",
+  "parser_mode": "native_core",
+  "execution_mode": "native_sql_ctest",
+  "isql_binary": "$(json_escape "$ISQL_BIN")",
+  "ctest_list_file": "$(json_escape "$LIST_FILE")",
+  "listed_tests": ${listed_tests},
+  "status": "$(json_escape "$run_status")",
+  "failure_count": ${failure_count},
+  "results_dir": "$(json_escape "$RESULTS_DIR")",
+  "host": "$(json_escape "$HOST")",
+  "port": "$(json_escape "$PORT")",
+  "database": "$(json_escape "$DBNAME")",
+  "username": "$(json_escape "$DBUSER")",
+  "timestamp_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+  cat > "${RESULTS_DIR}/PARSER_BOUNDARY.txt" <<'EOF'
+parser_core=v3
+parser_mode=native_core
+protocol_surface=sbwp_native
+statement_path=v3_core_parser_direct
+EOF
+}
+
+write_run_manifest "initialized" 0
+
 if [[ ! -x "${ISQL_BIN}" ]]; then
   echo "SKIP: sb_isql not found or not executable: ${ISQL_BIN}" >&2
+  write_run_manifest "skipped" 0
   exit 77
 fi
 
 if [[ ! -f "${LIST_FILE}" ]]; then
   echo "Error: ScratchBird native CTest list not found: ${LIST_FILE}" >&2
+  write_run_manifest "failed" 1
   exit 1
 fi
 
@@ -67,6 +117,7 @@ if ! "${ISQL_BIN}" "${DBNAME}" \
     -q; then
   echo "SKIP: ScratchBird native compatibility endpoint not reachable with configured profile." >&2
   cat "${PRECHECK_OUT}" >&2 || true
+  write_run_manifest "skipped" 0
   exit 77
 fi
 
@@ -103,7 +154,9 @@ if [[ ${#failures[@]} -ne 0 ]]; then
   for item in "${failures[@]}"; do
     echo "  - ${item}" >&2
   done
+  write_run_manifest "failed" "${#failures[@]}"
   exit 1
 fi
 
+write_run_manifest "passed" 0
 echo "ScratchBird native compatibility tests passed. Logs: ${RESULTS_DIR}"

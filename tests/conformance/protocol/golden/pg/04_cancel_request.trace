@@ -1,0 +1,5 @@
+# PostgreSQL frame conformance golden metadata (A55-012)
+scenario=cancel_request
+type=CancelRequestStartupFrame
+direction=client_to_server
+payload_source=Startup packet with CANCEL_REQUEST code

@@ -7,7 +7,24 @@ This directory contains comprehensive SQL compatibility tests from three major d
 **Total Tests:** 11,905 SQL test files
 **Databases:** Firebird, MySQL, PostgreSQL
 **Purpose:** Validate ScratchBird's database emulation compatibility
+**Parser Core:** `v3` (canonical)
 **Source Policy:** Firebird, MySQL, and PostgreSQL suites are vendored snapshots in `tests/compatibility/*/repos/` and updated one-way into ScratchBird via `scripts/update_test_repos.sh`.
+
+## Parser Boundary (Authoritative)
+
+- `v3` is the only canonical SQL parser surface in ScratchBird.
+- PostgreSQL/MySQL/Firebird compatibility lanes are **emulation surfaces only** (adapter/protocol behavior over the same core semantics pipeline).
+- Native ScratchBird lane is the direct proof lane for core parser behavior.
+
+Every compatibility run now writes these files under its run directory:
+
+- `RUN_MANIFEST.json` (engine/protocol/parser_core/parser_mode, list file, listed tests, run status)
+- `PARSER_BOUNDARY.txt` (human-readable parser boundary marker)
+
+`parser_mode` values:
+
+- `native_core`: native ScratchBird lane (`tests/compatibility/scratchbird/results/ctest/<run_id>/`)
+- `emulation_surface_only`: PostgreSQL/MySQL/Firebird lanes (`tests/compatibility/<engine>/results/ctest/<run_id>/`)
 
 ## Statistics
 
@@ -48,7 +65,7 @@ tests/compatibility/
 │   ├── config/                 # Test manifests and configuration
 │   └── README.md
 │
-├── scratchbird/                 # Native ScratchBird V2 tests
+├── scratchbird/                 # Native ScratchBird v3 tests
 │   ├── tests/                  # Native test files
 │   ├── scripts/                # Test runners
 │   └── config/                 # Configuration
@@ -201,6 +218,13 @@ Tests are executed using CLI clients built from the `ScratchBird-driver` reposit
 
 Compatibility lanes require protocol-accurate clients (`sb_my_isql`, `sb_pg_isql`, and Firebird-compatible `isql-fb`/`sb_fb_isql`).
 Generic `sb_isql` is intentionally rejected for emulated protocol parity runs.
+
+Result separation by lane is mandatory:
+
+- Native core proof: `tests/compatibility/scratchbird/results/ctest/<run_id>/`
+- PostgreSQL emulation proof: `tests/compatibility/postgresql/results/ctest/<run_id>/`
+- MySQL emulation proof: `tests/compatibility/mysql/results/ctest/<run_id>/`
+- Firebird emulation proof: `tests/compatibility/firebird/results/ctest/<run_id>/`
 
 ## Test Manifests
 

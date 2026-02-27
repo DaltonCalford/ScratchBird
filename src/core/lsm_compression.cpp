@@ -26,7 +26,7 @@
 // Try to include compression libraries
 // If not available, compression will degrade to NONE
 #ifdef __has_include
-#  if __has_include(<snappy.h>)
+#  if defined(SCRATCHBIRD_WITH_SNAPPY) && __has_include(<snappy.h>)
 #    define HAS_SNAPPY 1
 #    include <snappy.h>
 #  else

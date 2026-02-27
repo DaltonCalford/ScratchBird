@@ -82,6 +82,56 @@ RESULTS_DIR="${PG_DIR}/results/ctest/${RUN_ID}"
 WORK_DIR="${RESULTS_DIR}/work"
 mkdir -p "$RESULTS_DIR" "$WORK_DIR"
 
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  printf '%s' "$value"
+}
+
+count_list_entries() {
+  local list_file="$1"
+  grep -Ev '^[[:space:]]*(#|$)' "$list_file" | wc -l | tr -d '[:space:]'
+}
+
+write_run_manifest() {
+  local run_status="${1:-running}"
+  local failure_count="${2:-0}"
+  local listed_tests
+  listed_tests="$(count_list_entries "$LIST_FILE")"
+  cat > "${RESULTS_DIR}/RUN_MANIFEST.json" <<EOF
+{
+  "run_id": "$(json_escape "$RUN_ID")",
+  "engine": "postgresql",
+  "protocol_surface": "postgresql_v3",
+  "parser_core": "v3",
+  "parser_mode": "emulation_surface_only",
+  "execution_mode": "$([[ "$USE_UPSTREAM_PG_REGRESS" == "1" ]] && echo "upstream_pg_regress" || echo "converted_sql_ctest")",
+  "isql_binary": "$(json_escape "$ISQL_BIN")",
+  "ctest_list_file": "$(json_escape "$LIST_FILE")",
+  "listed_tests": ${listed_tests},
+  "status": "$(json_escape "$run_status")",
+  "failure_count": ${failure_count},
+  "results_dir": "$(json_escape "$RESULTS_DIR")",
+  "host": "$(json_escape "$HOST")",
+  "port": "$(json_escape "$PORT")",
+  "database": "$(json_escape "$DBNAME")",
+  "username": "$(json_escape "$PG_USER")",
+  "compat_run": "$(json_escape "$COMPAT_RUN")",
+  "require_sb_emulation_marker": "$(json_escape "$REQUIRE_SB_EMULATION")",
+  "timestamp_utc": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+  cat > "${RESULTS_DIR}/PARSER_BOUNDARY.txt" <<'EOF'
+parser_core=v3
+parser_mode=emulation_surface_only
+protocol_surface=postgresql_v3
+statement_path=v3_core_parser_then_emulation_adapter
+EOF
+}
+
+write_run_manifest "initialized" 0
+
 PRECHECK_FILE="${RESULTS_DIR}/precheck.sql"
 PRECHECK_OUT="${RESULTS_DIR}/precheck.out"
 cat > "$PRECHECK_FILE" <<'EOF'
@@ -798,8 +848,10 @@ if [[ "$precheck_ok" -eq 0 ]]; then
       cat "$PRECHECK_OUT" >&2
       cat "$FALLBACK_OUT" >&2
       if [[ "$COMPAT_RUN" == "1" ]]; then
+        write_run_manifest "failed" 1
         exit 1
       fi
+      write_run_manifest "skipped" 0
       exit 77
     fi
   else
@@ -813,8 +865,10 @@ if [[ "$precheck_ok" -eq 0 ]]; then
     fi
     cat "$PRECHECK_OUT" >&2
     if [[ "$COMPAT_RUN" == "1" ]]; then
+      write_run_manifest "failed" 1
       exit 1
     fi
+    write_run_manifest "skipped" 0
     exit 77
   fi
 fi
@@ -831,22 +885,28 @@ if [[ "$USE_UPSTREAM_PG_REGRESS" == "1" ]]; then
   if [[ -z "$pg_regress_bin" || ! -x "$pg_regress_bin" ]]; then
     echo "PostgreSQL upstream mode failure: pg_regress binary not found." >&2
     if [[ "$COMPAT_RUN" == "1" ]]; then
+      write_run_manifest "failed" 1
       exit 1
     fi
+    write_run_manifest "skipped" 0
     exit 77
   fi
   if [[ -z "$psql_bindir" || ! -x "${psql_bindir}/psql" ]]; then
     echo "PostgreSQL upstream mode failure: psql bindir not found." >&2
     if [[ "$COMPAT_RUN" == "1" ]]; then
+      write_run_manifest "failed" 1
       exit 1
     fi
+    write_run_manifest "skipped" 0
     exit 77
   fi
   if [[ ! -f "$upstream_schedule_path" ]]; then
     echo "PostgreSQL upstream mode failure: schedule file missing: ${upstream_schedule_path}" >&2
     if [[ "$COMPAT_RUN" == "1" ]]; then
+      write_run_manifest "failed" 1
       exit 1
     fi
+    write_run_manifest "skipped" 0
     exit 77
   fi
 
@@ -873,9 +933,11 @@ if [[ "$USE_UPSTREAM_PG_REGRESS" == "1" ]]; then
   if ! PGPASSWORD="$PASSWORD" "${regress_cmd[@]}" > "$upstream_out" 2>&1; then
     echo "PostgreSQL upstream pg_regress failures. See: ${upstream_out}" >&2
     cat "$upstream_out" >&2
+    write_run_manifest "failed" 1
     exit 1
   fi
 
+  write_run_manifest "passed" 0
   echo "PostgreSQL upstream pg_regress passed. Logs: ${upstream_results_dir}"
   exit 0
 fi
@@ -958,7 +1020,9 @@ if [[ ${#failures[@]} -ne 0 ]]; then
   for item in "${failures[@]}"; do
     echo "  - ${item}" >&2
   done
+  write_run_manifest "failed" "${#failures[@]}"
   exit 1
 fi
 
+write_run_manifest "passed" 0
 echo "PostgreSQL compatibility tests passed. Logs: ${RESULTS_DIR}"

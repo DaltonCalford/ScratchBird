@@ -2969,7 +2969,12 @@ core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
         return core::Status::CONNECTION_FAILURE;
     }
 
-    return impl_->doExecuteBytecode(bytecode, sql, results, ctx);
+    auto status = impl_->doExecuteBytecode(bytecode, sql, results, ctx);
+    if (!isOk(status) && ctx && ctx->message.empty() && !impl_->last_error_.empty())
+    {
+        ctx->set(status, impl_->last_error_.c_str(), __FILE__, __LINE__, __func__);
+    }
+    return status;
 }
 
 core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
@@ -2980,7 +2985,12 @@ core::Status Connection::executeBytecode(const std::vector<uint8_t>& bytecode,
         return core::Status::CONNECTION_FAILURE;
     }
 
-    return impl_->doExecuteBytecode(bytecode, std::string(), results, ctx);
+    auto status = impl_->doExecuteBytecode(bytecode, std::string(), results, ctx);
+    if (!isOk(status) && ctx && ctx->message.empty() && !impl_->last_error_.empty())
+    {
+        ctx->set(status, impl_->last_error_.c_str(), __FILE__, __LINE__, __func__);
+    }
+    return status;
 }
 
 core::Status Connection::execute(const std::string& sql,

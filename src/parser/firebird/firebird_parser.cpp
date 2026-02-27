@@ -1033,6 +1033,10 @@ Expression* Parser::parsePrimaryExpression() {
         path.components.push_back(string_pool_.intern("DATEADD"));
         return parseFunctionCall(path);
     }
+    if (checkKeyword(TokenType::KW_IIF)) {
+        advance();
+        return parseIifExpression();
+    }
     if (checkKeyword(TokenType::KW_RDB_GET_CONTEXT)) {
         advance();
         ast::SchemaPath path;
@@ -1214,6 +1218,22 @@ Expression* Parser::parseFunctionCall(const ast::SchemaPath& name) {
         expr->window = parseWindowSpec();
     }
 
+    return expr;
+}
+
+Expression* Parser::parseIifExpression() {
+    consume(TokenType::LEFT_PAREN, "Expected '(' after IIF");
+
+    auto* expr = allocate<ast::CaseExpr>();
+    ast::CaseExpr::WhenClause clause;
+    clause.when_expr = parseExpression();
+    consume(TokenType::COMMA, "Expected ',' after IIF condition");
+    clause.then_expr = parseExpression();
+    expr->when_clauses.push_back(clause);
+
+    consume(TokenType::COMMA, "Expected ',' after IIF true expression");
+    expr->else_expr = parseExpression();
+    consume(TokenType::RIGHT_PAREN, "Expected ')' after IIF arguments");
     return expr;
 }
 

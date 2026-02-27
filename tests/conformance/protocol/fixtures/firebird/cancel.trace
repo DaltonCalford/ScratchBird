@@ -1,0 +1,6 @@
+# Firebird wire emulation fixture inventory (A55-010)
+surface=firebird_remote_emulation
+scenario=cancel
+expected_flow=op_cancel_events
+parser_core=v3
+emulation_surface_only=true

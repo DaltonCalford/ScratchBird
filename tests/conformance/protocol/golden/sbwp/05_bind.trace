@@ -1,0 +1,5 @@
+# SBWP golden trace metadata (A55-011)
+scenario=bind
+type=Bind
+direction=client_to_server
+payload_source=buildBindPayload

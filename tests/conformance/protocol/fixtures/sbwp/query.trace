@@ -1,0 +1,6 @@
+# SBWP native query frame fixture inventory (A55-010)
+surface=sbwp_native
+scenario=query
+expected_flow=Query,CommandComplete
+parser_core=v3
+emulation_surface_only=false

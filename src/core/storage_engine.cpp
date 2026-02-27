@@ -745,6 +745,11 @@ namespace scratchbird::core
 
         if (status == Status::OK)
         {
+            if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
+            {
+                conn_ctx->trackTupleInsertion(page_id, item_id);
+            }
+
             // Sprint 4 Task 5.4.3: Dirty page tracking
             // If table is migrating and we wrote to SOURCE tablespace, mark page dirty
             if (table_info.migration_in_progress && target_tablespace == table_info.tablespace_id)
@@ -1247,6 +1252,11 @@ namespace scratchbird::core
 
         if (status == Status::OK)
         {
+            if (ConnectionContext* active_conn_ctx = ConnectionContext::getCurrent())
+            {
+                active_conn_ctx->trackTupleDeletion(page_id, item_id);
+            }
+
             // Sprint 4 Task 5.4.3: Mark page dirty if migrating
             if (is_migrating)
             {
@@ -2299,6 +2309,12 @@ namespace scratchbird::core
 
         if (status == Status::OK)
         {
+            if (conn_ctx != nullptr)
+            {
+                conn_ctx->trackTupleUpdate(table_id, page_id, item_id,
+                                           old_tuple_buffer.data(), old_tuple_length);
+            }
+
             // Success - new version on same page
             // Phase 3 Task 3.3: Update indexes if indexed columns changed
             // MGA benefit: If indexed columns unchanged, TID is stable and indexes remain valid!
@@ -2504,6 +2520,8 @@ namespace scratchbird::core
 
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
+                conn_ctx->trackTupleUpdate(table_id, page_id, item_id,
+                                           old_tuple_buffer.data(), old_tuple_length);
                 conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
             }
 

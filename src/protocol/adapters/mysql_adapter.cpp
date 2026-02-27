@@ -33,6 +33,7 @@
 #include <limits>
 #include <sstream>
 #include <functional>
+#include <array>
 
 // For SHA1 (native password auth) and SHA256 (caching_sha2_password)
 #ifdef HAVE_OPENSSL
@@ -50,6 +51,56 @@ using json = nlohmann::json;
 namespace {
 
 using MySQLCompatMode = scratchbird::parser::mysql::MySQLCompatMode;
+
+std::string normalizePath(const std::string& raw) {
+    std::string normalized;
+    normalized.reserve(raw.size());
+    for (char ch : raw) {
+        if (ch == '/') {
+            normalized.push_back('.');
+        } else {
+            normalized.push_back(ch);
+        }
+    }
+    return normalized;
+}
+
+std::string extractMySqlDatabaseName(const std::string& raw_value) {
+    std::string value = normalizePath(raw_value);
+    if (value.empty()) {
+        return value;
+    }
+
+    constexpr const char* marker = ".databases.";
+    size_t marker_pos = value.find(marker);
+    if (marker_pos != std::string::npos) {
+        size_t begin = marker_pos + std::strlen(marker);
+        if (begin < value.size()) {
+            size_t end = value.find('.', begin);
+            if (end == std::string::npos) {
+                return value.substr(begin);
+            }
+            return value.substr(begin, end - begin);
+        }
+    }
+
+    static const std::array<const char*, 4> prefixes = {
+        "emulated.mysql.",
+        "emulation.mysql.",
+        "remote.emulation.mysql.",
+        "remote.emulated.mysql.",
+    };
+    for (const auto* prefix : prefixes) {
+        if (value.rfind(prefix, 0) == 0) {
+            size_t last_dot = value.rfind('.');
+            if (last_dot != std::string::npos && (last_dot + 1) < value.size()) {
+                return value.substr(last_dot + 1);
+            }
+        }
+    }
+
+    return value;
+}
 
 std::string buildMySqlSchemaPath(const std::string& db_name) {
     return "emulated.mysql.localhost.databases." + db_name;
@@ -72,36 +123,44 @@ std::string resolveMySqlSchemaPath(core::CatalogManager* catalog,
         return canonical;
     }
 
-    std::string legacy = buildLegacyMySqlSchemaPath(db_name);
-    core::ErrorContext legacy_ctx;
-    if (catalog->getSchema(legacy, schema_info, &legacy_ctx) == core::Status::OK) {
-        return legacy;
-    }
-
-    if (!db_name.empty()) {
-        core::ErrorContext direct_ctx;
-        if (catalog->getSchema(db_name, schema_info, &direct_ctx) == core::Status::OK) {
-            return db_name;
-        }
-
-        std::string user_scoped = "users." + db_name;
-        core::ErrorContext user_ctx;
-        if (catalog->getSchema(user_scoped, schema_info, &user_ctx) == core::Status::OK) {
-            return user_scoped;
-        }
-    }
-
-    core::ErrorContext users_public_ctx;
-    if (catalog->getSchema("users.public", schema_info, &users_public_ctx) == core::Status::OK) {
-        return "users.public";
-    }
-
-    core::ErrorContext public_ctx;
-    if (catalog->getSchema("public", schema_info, &public_ctx) == core::Status::OK) {
-        return "public";
-    }
-
+    // Emulated MySQL sessions are sandboxed under their selected DB schema root.
+    // Always use canonical emulated path; legacy aliases are not used as session roots.
     return canonical;
+}
+
+std::string ensureMySqlSchemaPath(core::CatalogManager* catalog,
+                                  const std::string& db_name,
+                                  core::ErrorContext* ctx) {
+    std::string selected = resolveMySqlSchemaPath(catalog, db_name);
+    if (!catalog || selected.empty()) {
+        return selected;
+    }
+
+    core::CatalogManager::SchemaInfo schema_info;
+    core::ErrorContext check_ctx;
+    if (catalog->getSchema(selected, schema_info, &check_ctx) == core::Status::OK) {
+        return selected;
+    }
+
+    if (selected != buildMySqlSchemaPath(db_name)) {
+        // Legacy schema root exists in metadata but cannot be resolved now.
+        // Keep caller behavior deterministic and let execute_set report failure.
+        return selected;
+    }
+
+    core::ID schema_id;
+    core::ErrorContext create_ctx;
+    auto create_status = catalog->createSchemaPath(selected,
+                                                   core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                                                   schema_id,
+                                                   &create_ctx);
+    if (create_status != core::Status::OK &&
+        create_status != core::Status::FILE_EXISTS) {
+        if (ctx && ctx->message.empty() && !create_ctx.message.empty()) {
+            ctx->set(create_status, create_ctx.message.c_str(), __FILE__, __LINE__, __func__);
+        }
+    }
+    return selected;
 }
 
 MySQLCompatMode parseMysqlCompatValue(const std::string& value) {
@@ -503,8 +562,24 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         return core::Status::OK;
     }
 
+    std::string logical_database = extractMySqlDatabaseName(database_name_);
+    if (logical_database.empty()) {
+        logical_database = extractMySqlDatabaseName(config_.default_database);
+    }
+
+    std::string attach_request = engine_database_name_;
+    if (attach_request.empty()) {
+        if (!config_.default_database.empty()) {
+            attach_request = config_.default_database;
+        } else if (!logical_database.empty()) {
+            attach_request = logical_database;
+        } else {
+            attach_request = database_name_;
+        }
+    }
+
     std::string selected_database;
-    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+    if (!resolveDatabaseSelection(attach_request, selected_database)) {
         if (ctx) {
             ctx->set(core::Status::INVALID_AUTHORIZATION,
                      "Database switch denied by manager binding context",
@@ -512,7 +587,7 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         }
         return core::Status::INVALID_AUTHORIZATION;
     }
-    database_name_ = selected_database;
+    engine_database_name_ = selected_database;
     client_config_.database_name = selected_database;
     if (!config_.engine_endpoint.empty()) {
         client_config_.ipc_method = server::IPCMethod::AUTO;
@@ -545,9 +620,19 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         return status;
     }
 
-    // Switch to emulated MySQL schema for this database if possible
+    // Emulated MySQL sessions are sandboxed under:
+    // emulated.mysql.localhost.databases.<logical_db>
     if (!default_db_set_) {
-        std::string db_name = selected_database;
+        std::string db_name = logical_database;
+        if (db_name.empty()) {
+            db_name = extractMySqlDatabaseName(selected_database);
+        }
+        if (db_name.empty()) {
+            db_name = selected_database;
+        }
+        database_name_ = db_name;
+        auto* catalog = engineDatabase() ? engineDatabase()->catalog_manager() : nullptr;
+        std::string schema_root = ensureMySqlSchemaPath(catalog, db_name, ctx);
         auto execute_set = [&](const std::string& schema_name) -> core::Status {
             std::string use_stmt = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
             client::ResultSet rs;
@@ -558,15 +643,72 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             }
             return client_->executeBytecode(compile_result.bytecode, use_stmt, &rs, ctx);
         };
+        auto execute_create_schema = [&](const std::string& schema_name) -> core::Status {
+            std::string ddl = "CREATE SCHEMA IF NOT EXISTS " + schema_name;
+            client::ResultSet rs;
+            parser::v3::Compiler compiler;
+            auto compile_result = compiler.compile(ddl);
+            if (!compile_result.ok) {
+                return core::Status::INVALID_ARGUMENT;
+            }
+            return client_->executeBytecode(compile_result.bytecode, ddl, &rs, ctx);
+        };
+        auto execute_create_database = [&](const std::string& logical_db_name) -> core::Status {
+            std::string ddl = "CREATE DATABASE IF NOT EXISTS " + logical_db_name;
+            client::ResultSet rs;
+            sblr::MySQLQueryCompiler compiler(engineDatabase());
+            compiler.setDefaultSchema(schema_root);
+            compiler.setCompatibilityMode(resolveMysqlCompat(engineDatabase(), db_name, ctx));
+            auto compile_result = compiler.compile(ddl);
+            if (!compile_result.success()) {
+                return core::Status::INVALID_ARGUMENT;
+            }
+            return client_->executeBytecode(compile_result.bytecode(), ddl, &rs, ctx);
+        };
+        auto ensure_root_and_set = [&](const std::string& schema_name) -> core::Status {
+            core::Status status_local = execute_set(schema_name);
+            if (status_local == core::Status::OK) {
+                return status_local;
+            }
 
-        core::Status set_status = execute_set(buildMySqlSchemaPath(db_name));
+            core::Status create_status = core::Status::NOT_FOUND;
+            if (catalog) {
+                core::ID schema_id;
+                core::ErrorContext create_ctx;
+                create_status = catalog->createSchemaPath(
+                    schema_name,
+                    core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                    schema_id,
+                    &create_ctx);
+            }
+
+            if (create_status != core::Status::OK &&
+                create_status != core::Status::FILE_EXISTS) {
+                create_status = execute_create_database(db_name);
+            }
+
+            if (create_status != core::Status::OK &&
+                create_status != core::Status::FILE_EXISTS) {
+                create_status = execute_create_schema(schema_name);
+            }
+            if (create_status != core::Status::OK &&
+                create_status != core::Status::FILE_EXISTS) {
+                return status_local;
+            }
+            return execute_set(schema_name);
+        };
+
+        core::Status set_status = ensure_root_and_set(schema_root);
         if (set_status != core::Status::OK) {
-            set_status = execute_set(buildLegacyMySqlSchemaPath(db_name));
+            if (ctx && ctx->message.empty()) {
+                ctx->set(set_status,
+                         "Failed to set MySQL emulation root schema",
+                         __FILE__, __LINE__, __func__);
+            }
+            return set_status;
         }
-        if (set_status == core::Status::OK) {
-            default_db_set_ = true;
-            bootstrapInformationSchema(ctx);
-        }
+
+        default_db_set_ = true;
     }
 
     return core::Status::OK;
@@ -842,18 +984,17 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
     last_warnings_.clear();
 
     sblr::MySQLQueryCompiler compiler(engineDatabase());
-    std::string db_name;
-    if (!resolveDatabaseSelection(database_name_, db_name)) {
-        error_out = "Database switch denied by manager binding context";
-        return core::Status::INVALID_AUTHORIZATION;
+    std::string db_name = extractMySqlDatabaseName(database_name_);
+    if (db_name.empty()) {
+        db_name = extractMySqlDatabaseName(config_.default_database);
     }
-    std::string default_schema = resolveMySqlSchemaPath(
+    if (db_name.empty()) {
+        db_name = "main";
+    }
+    std::string default_schema = ensureMySqlSchemaPath(
         engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
-        db_name);
-    if (!default_db_set_ &&
-        default_schema == buildMySqlSchemaPath(db_name)) {
-        default_schema = "users.public";
-    }
+        db_name,
+        &ctx);
     compiler.setDefaultSchema(default_schema);
     compiler.setCompatibilityMode(resolveMysqlCompat(engineDatabase(), db_name, &ctx));
     auto result = compiler.compile(sql);
@@ -1201,15 +1342,28 @@ core::Status MySqlAdapter::handleHandshakeResponse(network::Connection* conn) {
         offset += db_offset;
     }
 
+    std::string logical_database = extractMySqlDatabaseName(database_name_);
+    if (logical_database.empty()) {
+        logical_database = extractMySqlDatabaseName(config_.default_database);
+    }
+    if (logical_database.empty()) {
+        logical_database = "main";
+    }
+    database_name_ = std::move(logical_database);
+
+    std::string attach_request = database_name_;
+    if (attach_request.empty()) {
+        attach_request = config_.default_database;
+    }
     std::string selected_database;
-    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+    if (!resolveDatabaseSelection(attach_request, selected_database)) {
         sendErrorPacket(conn,
                         mysql::ErrorCode::ACCESS_DENIED,
                         "28000",
                         "Database switch denied by manager binding context");
         return core::Status::INVALID_AUTHORIZATION;
     }
-    database_name_ = std::move(selected_database);
+    engine_database_name_ = std::move(selected_database);
 
     // Auth plugin name (if PLUGIN_AUTH)
     if ((client_capabilities_ & mysql::Capability::PLUGIN_AUTH) && offset < current_packet_.size()) {
@@ -1301,10 +1455,14 @@ core::Status MySqlAdapter::authenticateRemoteUser(network::Connection* conn,
     core::ErrorContext auth_ctx;
     const core::Status status = ensureRemoteClient(&auth_ctx);
     if (status != core::Status::OK) {
+        std::string message = "Access denied for user '" + username_ + "'";
+        if (!auth_ctx.message.empty()) {
+            message += ": " + auth_ctx.message;
+        }
         sendErrorPacket(conn,
                         mysql::ErrorCode::ACCESS_DENIED,
                         "28000",
-                        "Access denied for user '" + username_ + "'");
+                        message);
         return status;
     }
 
@@ -1749,12 +1907,10 @@ core::Status MySqlAdapter::handleComInitDb(network::Connection* conn) {
     std::string new_db(reinterpret_cast<const char*>(current_packet_.data() + 1),
                        current_packet_.size() - 1);
 
-    std::string selected_database;
-    if (!resolveDatabaseSelection(new_db, selected_database)) {
-        sendErrorPacket(conn,
-                        mysql::ErrorCode::ACCESS_DENIED,
-                        "28000",
-                        "Database switch denied by manager binding context");
+    std::string selected_database = extractMySqlDatabaseName(new_db);
+    if (selected_database.empty()) {
+        sendErrorPacket(conn, mysql::ErrorCode::BAD_DB_ERROR, "42000",
+                       "No database specified");
         return sendBuffer(conn);
     }
 
@@ -1850,10 +2006,27 @@ core::Status MySqlAdapter::handleComChangeUser(network::Connection* conn) {
         offset += plugin_offset;
     }
 
-    std::string selected_database;
     const std::string database_request =
         requested_database.empty() ? database_name_ : requested_database;
-    if (!resolveDatabaseSelection(database_request, selected_database)) {
+
+    std::string selected_database = extractMySqlDatabaseName(database_request);
+    if (selected_database.empty()) {
+        selected_database = extractMySqlDatabaseName(config_.default_database);
+    }
+    if (selected_database.empty()) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::BAD_DB_ERROR,
+                        "42000",
+                        "No database specified");
+        return sendBuffer(conn);
+    }
+
+    std::string attach_request = selected_database;
+    if (attach_request.empty()) {
+        attach_request = config_.default_database;
+    }
+    std::string selected_engine_database;
+    if (!resolveDatabaseSelection(attach_request, selected_engine_database)) {
         sendErrorPacket(conn,
                         mysql::ErrorCode::ACCESS_DENIED,
                         "28000",
@@ -1871,6 +2044,7 @@ core::Status MySqlAdapter::handleComChangeUser(network::Connection* conn) {
 
     username_ = requested_user;
     database_name_ = std::move(selected_database);
+    engine_database_name_ = std::move(selected_engine_database);
     if (!plugin_name.empty()) {
         auth_plugin_name_ = std::move(plugin_name);
     }
@@ -2902,9 +3076,12 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         return;
     }
 
-    std::string db_name;
-    if (!resolveDatabaseSelection(database_name_, db_name)) {
-        return;
+    std::string db_name = extractMySqlDatabaseName(database_name_);
+    if (db_name.empty()) {
+        db_name = extractMySqlDatabaseName(config_.default_database);
+    }
+    if (db_name.empty()) {
+        db_name = "main";
     }
     std::string base_schema =
         resolveMySqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,

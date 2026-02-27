@@ -565,6 +565,14 @@ namespace scratchbird::core
         // Subtransaction/Savepoint support (Issue 2.15)
         struct Savepoint
         {
+            struct UpdateRecord
+            {
+                ID table_id{};
+                uint32_t page_id = 0;
+                uint16_t item_id = 0;
+                std::vector<uint8_t> old_tuple_image;
+            };
+
             std::string name;                    // Savepoint name
             uint32_t level;                      // Nesting level
             uint64_t xid;                        // Transaction ID at savepoint creation
@@ -578,11 +586,13 @@ namespace scratchbird::core
             // and clear xmax on deleted tuples
             std::vector<std::pair<uint32_t, uint16_t>> inserted_tids;  // (page_id, item_id)
             std::vector<std::pair<uint32_t, uint16_t>> deleted_tids;   // (page_id, item_id)
+            std::vector<UpdateRecord> updated_rows;                     // Restore images for UPDATE rollback
         };
 
         std::vector<Savepoint> savepoint_stack_;  // Stack of active savepoints
         uint32_t savepoint_level_ = 0;            // Current savepoint nesting level
         uint32_t command_id_ = 0;                 // Current command ID within transaction
+        bool savepoint_rollback_in_progress_ = false;
 
         // Thread-local storage
         static thread_local ConnectionContext *current_;
@@ -637,6 +647,16 @@ namespace scratchbird::core
          * @param item_id Item ID of deleted tuple
          */
         void trackTupleDeletion(uint32_t page_id, uint16_t item_id);
+
+        /**
+         * Track a tuple update image for potential savepoint rollback
+         * Called by StorageEngine::updateTuple() after a successful update.
+         */
+        void trackTupleUpdate(const ID& table_id,
+                              uint32_t page_id,
+                              uint16_t item_id,
+                              const uint8_t* old_tuple_data,
+                              uint32_t old_tuple_size);
 
         /**
          * Increment command ID (for statement-level tracking)

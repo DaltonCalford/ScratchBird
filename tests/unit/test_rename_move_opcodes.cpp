@@ -61,6 +61,105 @@ bool containsOpcode(const std::vector<uint8_t>& bytecode, sblr_v3::Opcode opcode
     return false;
 }
 
+bool containsOpcodeInInstructionValue(const sblr_v3::Value& value, sblr_v3::Opcode opcode);
+
+bool containsOpcodeInInstruction(const sblr_v3::Instruction& inst, sblr_v3::Opcode opcode)
+{
+    if (inst.opcode == static_cast<uint16_t>(opcode))
+    {
+        return true;
+    }
+    return containsOpcodeInInstructionValue(inst.payload, opcode);
+}
+
+bool containsOpcodeInInstructionValue(const sblr_v3::Value& value, sblr_v3::Opcode opcode)
+{
+    if (auto ptr = std::get_if<sblr_v3::Value::InstrPtr>(&value.data))
+    {
+        if (*ptr)
+        {
+            return containsOpcodeInInstruction(**ptr, opcode);
+        }
+        return false;
+    }
+
+    if (auto bytes = std::get_if<sblr_v3::Value::Bytes>(&value.data))
+    {
+        if (bytes->empty())
+        {
+            return false;
+        }
+        size_t off = 0;
+        sblr_v3::Instruction nested;
+        sblr_v3::DecodeError err;
+        if (sblr_v3::decodeInstructionWithSchema(bytes->data(), bytes->size(), off, nested, err))
+        {
+            return containsOpcodeInInstruction(nested, opcode);
+        }
+        return false;
+    }
+
+    if (auto list = std::get_if<sblr_v3::Value::List>(&value.data))
+    {
+        for (const auto& entry : *list)
+        {
+            if (containsOpcodeInInstructionValue(entry, opcode))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (auto obj = std::get_if<sblr_v3::Value::Object>(&value.data))
+    {
+        for (const auto& kv : *obj)
+        {
+            if (containsOpcodeInInstructionValue(kv.second, opcode))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return false;
+}
+
+bool containsOpcodeDeep(const std::vector<uint8_t>& bytecode, sblr_v3::Opcode opcode)
+{
+    sblr_v3::Container container;
+    std::string err;
+    if (!sblr_v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
+    {
+        return false;
+    }
+    size_t offset = 0;
+    sblr_v3::DecodeError decode_err;
+    while (offset < container.bytecode_stream.size())
+    {
+        sblr_v3::Instruction inst;
+        if (!sblr_v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                  container.bytecode_stream.size(),
+                                                  offset,
+                                                  inst,
+                                                  decode_err) &&
+            !sblr_v3::decodeInstruction(container.bytecode_stream.data(),
+                                        container.bytecode_stream.size(),
+                                        offset,
+                                        inst,
+                                        decode_err))
+        {
+            break;
+        }
+        if (containsOpcodeInInstruction(inst, opcode))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 class RenameMoveOpcodeV3Test : public ::testing::Test
@@ -153,4 +252,12 @@ TEST_F(RenameMoveOpcodeV3Test, PostgresCompactArithmeticBytecodeValidWithNullDbC
     scratchbird::core::ErrorContext spaced_ctx;
     auto spaced_status = scratchbird::sblr::validateBytecode(spaced.bytecode(), &spaced_ctx);
     EXPECT_EQ(spaced_status, scratchbird::core::Status::OK) << spaced_ctx.message;
+}
+
+TEST_F(RenameMoveOpcodeV3Test, PostgresExistsCompilesToSubqueryExistsOpcode)
+{
+    PostgreSQLQueryCompiler compiler(db_.get());
+    auto result = compiler.compile("SELECT EXISTS(SELECT 1)");
+    ASSERT_TRUE(result.success()) << (result.errors().empty() ? "" : result.errors()[0]);
+    EXPECT_TRUE(containsOpcodeDeep(result.bytecode(), sblr_v3::Opcode::SBLR3_SUBQUERY_EXISTS));
 }

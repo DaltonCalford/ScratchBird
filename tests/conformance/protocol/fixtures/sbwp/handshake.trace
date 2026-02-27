@@ -1,0 +1,6 @@
+# SBWP native surface fixture inventory (A55-010)
+surface=sbwp_native
+scenario=handshake
+expected_flow=Startup,AuthResponse,Sync,Ready
+parser_core=v3
+emulation_surface_only=false

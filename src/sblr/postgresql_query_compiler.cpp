@@ -13,7 +13,7 @@
  * Compiles PostgreSQL SQL to canonical V3 SBLR container bytecode.
  * The PostgreSQL parser produces a V3 AST which is emitted to container form.
  *
- * Default schema: remote.emulation.postgresql.localhost.databases.default
+ * Default schema: supplied by adapter/session and rooted in selected emulated DB schema.
  */
 
 #include "scratchbird/sblr/postgresql_query_compiler.h"
@@ -31,22 +31,8 @@ PostgreSQLQueryCompiler::PostgreSQLQueryCompiler(core::Database* db)
     : db_(db)
     , catalog_(db ? db->catalog_manager() : nullptr)
 {
-    // Initialize with default PostgreSQL schema if available
-    if (catalog_) {
-        core::CatalogManager::SchemaInfo schema_info;
-        core::ErrorContext ctx;
-
-        // Try to find or create the PostgreSQL emulation schema hierarchy:
-        // remote.emulation.postgresql.localhost.databases.default.public
-        // For now, use public schema as default
-        if (catalog_->getSchema("users.public", schema_info, &ctx) == core::Status::OK ||
-            catalog_->getSchema("public", schema_info, &ctx) == core::Status::OK) {
-            current_schema_ = schema_info.schema_id;
-        }
-    }
-
-    // Default search path for PostgreSQL
-    search_path_ = {"users.public"};
+    // Default schema/search path are intentionally left unset here.
+    // The adapter/session must set them to the selected emulated DB schema root.
 }
 
 PostgreSQLQueryCompiler::~PostgreSQLQueryCompiler() = default;

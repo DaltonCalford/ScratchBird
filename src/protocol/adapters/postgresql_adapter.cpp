@@ -26,6 +26,7 @@
 #include "scratchbird/client/connection.h"
 
 #include <filesystem>
+#include <array>
 #include <algorithm>
 #include <cctype>
 #include <cstring>
@@ -58,9 +59,76 @@ std::string buildLegacyPostgresqlSchemaPath(const std::string& db_name) {
     return "remote.emulation.postgresql.localhost.databases." + db_name;
 }
 
+std::string extractEmulatedDatabaseName(const std::string& selected_database) {
+    if (selected_database.empty()) {
+        return selected_database;
+    }
+
+    std::string normalized = selected_database;
+    std::replace(normalized.begin(), normalized.end(), '/', '.');
+    while (!normalized.empty() && normalized.front() == '.') {
+        normalized.erase(normalized.begin());
+    }
+    while (!normalized.empty() && normalized.back() == '.') {
+        normalized.pop_back();
+    }
+    if (normalized.empty()) {
+        return selected_database;
+    }
+
+    std::string lower = normalized;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    constexpr const char* marker = ".databases.";
+    size_t marker_pos = lower.rfind(marker);
+    if (marker_pos != std::string::npos) {
+        std::string leaf = normalized.substr(marker_pos + std::strlen(marker));
+        if (!leaf.empty()) {
+            return leaf;
+        }
+    }
+
+    static const std::array<std::string, 4> emulated_prefixes = {
+        "emulated.postgresql.",
+        "emulation.postgresql.",
+        "remote.emulation.postgresql.",
+        "remote.emulated.postgresql.",
+    };
+    for (const auto& prefix : emulated_prefixes) {
+        if (lower.rfind(prefix, 0) == 0) {
+            size_t last_dot = normalized.rfind('.');
+            if (last_dot != std::string::npos && (last_dot + 1) < normalized.size()) {
+                return normalized.substr(last_dot + 1);
+            }
+            break;
+        }
+    }
+
+    return normalized;
+}
+
+std::string resolveEmulatedDatabaseForSession(
+    const std::unordered_map<std::string, std::string>& client_parameters,
+    const std::string& fallback_database) {
+    auto it = client_parameters.find("database");
+    if (it != client_parameters.end()) {
+        std::string emulated_name = extractEmulatedDatabaseName(it->second);
+        if (!emulated_name.empty()) {
+            return emulated_name;
+        }
+    }
+    return extractEmulatedDatabaseName(fallback_database);
+}
+
 std::string resolvePostgresqlSchemaPath(core::CatalogManager* catalog,
                                         const std::string& db_name) {
-    std::string canonical = buildPostgresqlSchemaPath(db_name);
+    std::string db_key = extractEmulatedDatabaseName(db_name);
+    if (db_key.empty()) {
+        db_key = db_name;
+    }
+    std::string canonical = buildPostgresqlSchemaPath(db_key);
     if (!catalog) {
         return canonical;
     }
@@ -70,14 +138,37 @@ std::string resolvePostgresqlSchemaPath(core::CatalogManager* catalog,
     if (catalog->getSchema(canonical, schema_info, &check_ctx) == core::Status::OK) {
         return canonical;
     }
+    // Always use canonical emulated path; legacy aliases are not used as session roots.
+    return canonical;
+}
 
-    std::string legacy = buildLegacyPostgresqlSchemaPath(db_name);
-    core::ErrorContext legacy_ctx;
-    if (catalog->getSchema(legacy, schema_info, &legacy_ctx) == core::Status::OK) {
-        return legacy;
+std::string ensurePostgresqlSchemaPath(core::CatalogManager* catalog,
+                                       const std::string& db_name,
+                                       core::ErrorContext* ctx) {
+    std::string selected = resolvePostgresqlSchemaPath(catalog, db_name);
+    if (!catalog || selected.empty()) {
+        return selected;
     }
 
-    return canonical;
+    core::CatalogManager::SchemaInfo schema_info;
+    core::ErrorContext check_ctx;
+    if (catalog->getSchema(selected, schema_info, &check_ctx) == core::Status::OK) {
+        return selected;
+    }
+
+    core::ID schema_id;
+    core::ErrorContext create_ctx;
+    auto create_status = catalog->createSchemaPath(selected,
+                                                   core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                                                   schema_id,
+                                                   &create_ctx);
+    if (create_status != core::Status::OK &&
+        create_status != core::Status::FILE_EXISTS) {
+        if (ctx && ctx->message.empty() && !create_ctx.message.empty()) {
+            ctx->set(create_status, create_ctx.message.c_str(), __FILE__, __LINE__, __func__);
+        }
+    }
+    return selected;
 }
 
 std::string trimAscii(std::string value) {
@@ -291,33 +382,90 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         return status;
     }
 
-    // In remote-engine mode rely on the engine's default schema context.
-    if (!config_.engine_endpoint.empty()) {
-        search_path_set_ = true;
-        return core::Status::OK;
-    }
-
-    // Set search_path to emulated schema (if it exists or can be created)
+    // Set search_path to the selected emulated DB schema root.
     if (!search_path_set_) {
-        std::string db_name = database_name_;
-        std::string schema_name = buildPostgresqlSchemaPath(db_name);
-        auto execute_set = [&](const std::string& target) -> core::Status {
-            std::string set_path = "SET search_path TO '" + escapeLiteral(target) + "'";
+        std::string db_name = resolveEmulatedDatabaseForSession(client_parameters_, database_name_);
+        if (db_name.empty()) {
+            db_name = database_name_;
+        }
+        auto* catalog = engineDatabase() ? engineDatabase()->catalog_manager() : nullptr;
+        std::string schema_root = ensurePostgresqlSchemaPath(catalog, db_name, ctx);
+        if (pgWireDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[pg_wire] ensureRemoteClient db_name=%s schema_root=%s bound_db=%s\n",
+                         db_name.c_str(),
+                         schema_root.c_str(),
+                         database_name_.c_str());
+            std::fflush(stderr);
+        }
+        auto execute_sql = [&](const std::string& sql_text) -> core::Status {
             client::ResultSet rs;
             parser::v3::Compiler compiler;
-            auto compile_result = compiler.compile(set_path);
+            auto compile_result = compiler.compile(sql_text);
             if (!compile_result.ok) {
                 return core::Status::INVALID_ARGUMENT;
             }
-            return client_->executeBytecode(compile_result.bytecode, set_path, &rs, ctx);
+            return client_->executeBytecode(compile_result.bytecode, sql_text, &rs, ctx);
         };
-        core::Status set_status = execute_set(schema_name);
+        auto execute_set = [&](const std::string& target) -> core::Status {
+            std::string set_path = "SET search_path TO '" + escapeLiteral(target) + "'";
+            return execute_sql(set_path);
+        };
+        auto execute_create_database = [&](const std::string& logical_db_name) -> core::Status {
+            std::string ddl = "CREATE DATABASE IF NOT EXISTS \"" + logical_db_name + "\"";
+            return execute_sql(ddl);
+        };
+        auto ensure_root_and_set = [&](const std::string& target) -> core::Status {
+            core::Status status_local = execute_set(target);
+            if (status_local == core::Status::OK) {
+                return status_local;
+            }
+
+            core::Status create_status = execute_create_database(db_name);
+            if (create_status != core::Status::OK && catalog) {
+                core::ID schema_id;
+                core::ErrorContext create_ctx;
+                create_status = catalog->createSchemaPath(
+                    target,
+                    core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                    schema_id,
+                    &create_ctx);
+            }
+
+            if (create_status != core::Status::OK &&
+                create_status != core::Status::FILE_EXISTS) {
+                return status_local;
+            }
+            return execute_set(target);
+        };
+
+        auto set_status = ensure_root_and_set(schema_root);
+        if (pgWireDebugEnabled()) {
+            std::string client_err = client_ ? client_->getLastError() : std::string();
+            std::fprintf(stderr,
+                         "[pg_wire] ensureRemoteClient set_search_path target=%s status=%d err=%s\n",
+                         schema_root.c_str(),
+                         static_cast<int>(set_status),
+                         client_err.c_str());
+            std::fflush(stderr);
+        }
         if (set_status != core::Status::OK) {
-            set_status = execute_set(buildLegacyPostgresqlSchemaPath(db_name));
+            std::string client_err = client_ ? client_->getLastError() : std::string();
+            if (ctx && ctx->message.empty() && !client_err.empty()) {
+                ctx->set(set_status,
+                         client_err.c_str(),
+                         __FILE__, __LINE__, __func__);
+            }
+            if (ctx && ctx->message.empty()) {
+                ctx->set(set_status,
+                         "Failed to set PostgreSQL emulation root schema",
+                         __FILE__, __LINE__, __func__);
+            }
+            return set_status;
         }
-        if (set_status == core::Status::OK) {
-            search_path_set_ = true;
-        }
+
+        server_parameters_["search_path"] = schema_root;
+        search_path_set_ = true;
     }
 
     return core::Status::OK;
@@ -836,7 +984,10 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
         return core::Status::INVALID_AUTHORIZATION;
     }
     database_name_ = std::move(selected_database);
-    client_parameters_["database"] = database_name_;
+    if (!database_parameter_supplied) {
+        client_parameters_["database"] = database_name_;
+    }
+    client_parameters_["scratchbird.bound_database"] = database_name_;
 
     // Request authentication
     if (config_.require_authentication) {
@@ -1941,7 +2092,7 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
         return core::Status::INVALID_ARGUMENT;
     }
 
-    std::string db_name = database_name_;
+    std::string db_name = resolveEmulatedDatabaseForSession(client_parameters_, database_name_);
     if (db_name.empty() && !database_path_.empty()) {
         auto stem = std::filesystem::path(database_path_).stem().string();
         if (!stem.empty()) {
@@ -1951,8 +2102,19 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
     if (db_name.empty()) {
         db_name = "default";
     }
+    db_name = extractEmulatedDatabaseName(db_name);
+    if (db_name.empty()) {
+        db_name = "default";
+    }
 
     std::string schema_name = resolvePostgresqlSchemaPath(catalog, db_name);
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] ensurePostgresSystemCatalog db_name=%s schema_name=%s\n",
+                     db_name.c_str(),
+                     schema_name.c_str());
+        std::fflush(stderr);
+    }
 
     core::CatalogManager::SchemaInfo schema_info;
     auto status = catalog->getSchema(schema_name, schema_info, ctx);
@@ -2022,46 +2184,25 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
 core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
                                              std::vector<uint8_t>& bytecode_out,
                                              std::string& error_out) {
-    core::ErrorContext ctx;
-    core::Database* compile_db = nullptr;
-
-    // In manager/listener mode we compile against the PostgreSQL dialect surface
-    // without creating a local engine-backed database.
-    if (config_.engine_endpoint.empty()) {
-        auto status = ensureEngine(&ctx);
-        if (status != core::Status::OK) {
-            error_out = ctx.message;
-            return status;
-        }
-
-        status = ensurePostgresSystemCatalog(&ctx);
-        if (status != core::Status::OK) {
-            error_out = ctx.message.empty() ? "Failed to initialize PostgreSQL catalog" : ctx.message;
-            return status;
-        }
-        compile_db = engineDatabase();
-    }
-
-    sblr::PostgreSQLQueryCompiler compiler(compile_db);
-    std::string db_name;
-    if (!resolveDatabaseSelection(database_name_, db_name)) {
+    // Keep PostgreSQL compilation deterministic and rooted in the selected DB handle.
+    sblr::PostgreSQLQueryCompiler compiler(nullptr);
+    std::string selected_database;
+    if (!resolveDatabaseSelection(database_name_, selected_database)) {
         error_out = "Database switch denied by manager binding context";
         return core::Status::INVALID_AUTHORIZATION;
     }
-    std::string parser_default_schema;
-    if (config_.engine_endpoint.empty()) {
-        parser_default_schema =
-            resolvePostgresqlSchemaPath(compile_db ? compile_db->catalog_manager() : nullptr,
-                                        db_name);
-    } else {
-        // In manager-bound endpoint mode, the remote engine already owns schema/search_path
-        // context for the bound database alias. Feeding the parser a deep emulated schema
-        // root here causes CREATE/ALTER object paths to miss the live schema tree.
-        parser_default_schema = db_name;
+    std::string db_name = resolveEmulatedDatabaseForSession(client_parameters_, selected_database);
+    if (db_name.empty()) {
+        db_name = selected_database;
     }
-    compiler.setDefaultSchema(parser_default_schema);
-    if (compile_db && pg_schema_id_ != core::ID{}) {
-        compiler.setCurrentSchema(pg_schema_id_);
+    // Emulated PostgreSQL sessions are rooted at the selected logical database schema.
+    compiler.setDefaultSchema(db_name);
+    if (pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] compileQuery selected_db=%s emulated_db=%s\n",
+                     selected_database.c_str(),
+                     db_name.c_str());
+        std::fflush(stderr);
     }
     auto result = compiler.compile(sql);
     if (!result.success()) {
