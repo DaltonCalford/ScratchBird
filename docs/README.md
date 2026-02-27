@@ -8,6 +8,7 @@ This directory intentionally contains only current, implementation-facing projec
 - [REQUIREMENTS.md](REQUIREMENTS.md): compilers, tools, and library prerequisites
 - [BUILD.md](BUILD.md): supported build workflows
 - [TEST.md](TEST.md): test workflows and required beta gates
+- `Artwork/`: project logos and SVG source outputs
 
 ## Scope Policy
 
