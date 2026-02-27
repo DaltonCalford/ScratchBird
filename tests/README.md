@@ -1,11 +1,14 @@
 # ScratchBird Test Suite
 
-This directory contains the automated test suite (unit, integration, and benchmark tests).
+This directory contains automated unit, integration, conformance, and compatibility tests.
 
 Run all tests (after building):
 
 ```bash
-ctest --test-dir build
+ctest --test-dir build --output-on-failure
 ```
 
-See `docs/IMPLEMENTATION_STATUS_DASHBOARD.md` for current test status and gated cases.
+For release gating workflows, see:
+
+- `docs/TEST.md`
+- `tests/conformance/public_beta/run_required_public_beta_gate.sh`
