@@ -42818,6 +42818,26 @@ namespace scratchbird
                         {
                             return Value::makeNull();
                         }
+                        std::string col_qualifier;
+                        auto it_path = obj->find("path");
+                        if (it_path != obj->end())
+                        {
+                            if (const auto* path =
+                                    std::get_if<scratchbird::sblr::v3::Value::List>(&it_path->second.data))
+                            {
+                                for (auto it = path->rbegin(); it != path->rend(); ++it)
+                                {
+                                    if (const auto* part = std::get_if<std::string>(&it->data))
+                                    {
+                                        if (!part->empty())
+                                        {
+                                            col_qualifier = *part;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         const std::vector<core::CatalogManager::ColumnInfo>* cols = nullptr;
                         const std::vector<Value>* vals = nullptr;
                         if (op == Opcode::SBLR3_INSERTED_COLUMN_REF)
@@ -42833,6 +42853,17 @@ namespace scratchbird
                         if (!cols || !vals)
                         {
                             return Value::makeNull();
+                        }
+                        if (!col_qualifier.empty() && !current_row_alias_map_.empty())
+                        {
+                            std::string lookup = core::IdentifierUtils::toUpper(col_qualifier) + "." +
+                                                 core::IdentifierUtils::toUpper(col_name);
+                            auto alias_it = current_row_alias_map_.find(lookup);
+                            if (alias_it != current_row_alias_map_.end() &&
+                                alias_it->second < vals->size())
+                            {
+                                return (*vals)[alias_it->second];
+                            }
                         }
                         std::string target = core::IdentifierUtils::toUpper(col_name);
                         for (size_t i = 0; i < cols->size(); ++i)
@@ -60728,6 +60759,11 @@ namespace scratchbird
                         {
                             return ExecutionResult("Failed to get MERGE target columns");
                         }
+                        std::string target_alias;
+                        (void)getString(payload, "target_alias", target_alias);
+                        std::string source_alias;
+                        (void)getString(payload, "source_alias", source_alias);
+                        std::string source_table_name;
 
                         struct TargetRow {
                             core::TID tid;
@@ -60796,8 +60832,8 @@ namespace scratchbird
                         else if (it_source_table != payload.end())
                         {
                             std::string source_path;
-                            std::string source_alias;
-                            if (!getTableRef(it_source_table->second, source_path, source_alias))
+                            std::string source_table_alias;
+                            if (!getTableRef(it_source_table->second, source_path, source_table_alias))
                             {
                                 return ExecutionResult("V3 MERGE source_table invalid");
                             }
@@ -60810,6 +60846,11 @@ namespace scratchbird
                             if (db_->catalog_manager()->getColumns(source_info.table_id, source_columns, nullptr) != core::Status::OK)
                             {
                                 return ExecutionResult("Failed to get MERGE source columns");
+                            }
+                            source_table_name = source_info.table_name;
+                            if (source_alias.empty())
+                            {
+                                source_alias = source_table_alias;
                             }
                             auto scan_iter = db_->storage_engine()->createScan(source_info.table_id, nullptr);
                             if (!scan_iter)
@@ -60906,7 +60947,18 @@ namespace scratchbird
                                                 std::string col_name;
                                                 if (!getString(*aobj, "column", col_name))
                                                 {
-                                                    return ExecutionResult("V3 MERGE assignment missing column");
+                                                    auto it_col = aobj->find("column");
+                                                    if (it_col == aobj->end())
+                                                    {
+                                                        return ExecutionResult("V3 MERGE assignment missing column");
+                                                    }
+                                                    const auto* col_obj =
+                                                        std::get_if<scratchbird::sblr::v3::Value::Object>(
+                                                            &it_col->second.data);
+                                                    if (!col_obj || !getString(*col_obj, "column", col_name))
+                                                    {
+                                                        return ExecutionResult("V3 MERGE assignment missing column");
+                                                    }
                                                 }
                                                 auto it_val = aobj->find("value");
                                                 if (it_val == aobj->end())
@@ -61024,7 +61076,18 @@ namespace scratchbird
                                                 std::string col_name;
                                                 if (!getString(*aobj, "column", col_name))
                                                 {
-                                                    return ExecutionResult("V3 MERGE assignment missing column");
+                                                    auto it_col = aobj->find("column");
+                                                    if (it_col == aobj->end())
+                                                    {
+                                                        return ExecutionResult("V3 MERGE assignment missing column");
+                                                    }
+                                                    const auto* col_obj =
+                                                        std::get_if<scratchbird::sblr::v3::Value::Object>(
+                                                            &it_col->second.data);
+                                                    if (!col_obj || !getString(*col_obj, "column", col_name))
+                                                    {
+                                                        return ExecutionResult("V3 MERGE assignment missing column");
+                                                    }
                                                 }
                                                 auto it_val = aobj->find("value");
                                                 if (it_val == aobj->end())
@@ -61048,6 +61111,63 @@ namespace scratchbird
                         std::vector<core::CatalogManager::ColumnInfo> combined_columns = target_columns;
                         combined_columns.insert(combined_columns.end(), source_columns.begin(), source_columns.end());
 
+                        auto add_alias_column_bindings =
+                            [&](std::unordered_map<std::string, size_t>& out,
+                                const std::string& qualifier,
+                                const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                size_t base_index) {
+                                if (qualifier.empty())
+                                {
+                                    return;
+                                }
+                                const std::string q = core::IdentifierUtils::toUpper(qualifier);
+                                for (size_t i = 0; i < columns.size(); ++i)
+                                {
+                                    const std::string key =
+                                        q + "." +
+                                        core::IdentifierUtils::toUpper(columns[i].column_name);
+                                    out[key] = base_index + i;
+                                }
+                            };
+
+                        std::unordered_map<std::string, size_t> merge_combined_alias_map;
+                        std::unordered_map<std::string, size_t> merge_target_alias_map;
+                        std::unordered_map<std::string, size_t> merge_source_alias_map;
+
+                        add_alias_column_bindings(merge_combined_alias_map, target_alias, target_columns, 0);
+                        add_alias_column_bindings(merge_combined_alias_map, target_info.table_name, target_columns, 0);
+                        add_alias_column_bindings(merge_combined_alias_map,
+                                                  source_alias,
+                                                  source_columns,
+                                                  target_columns.size());
+                        add_alias_column_bindings(merge_combined_alias_map,
+                                                  source_table_name,
+                                                  source_columns,
+                                                  target_columns.size());
+                        add_alias_column_bindings(merge_target_alias_map, target_alias, target_columns, 0);
+                        add_alias_column_bindings(merge_target_alias_map,
+                                                  target_info.table_name,
+                                                  target_columns,
+                                                  0);
+                        add_alias_column_bindings(merge_source_alias_map, source_alias, source_columns, 0);
+                        add_alias_column_bindings(merge_source_alias_map,
+                                                  source_table_name,
+                                                  source_columns,
+                                                  0);
+
+                        struct AliasMapRestore {
+                            std::unordered_map<std::string, size_t>* slot = nullptr;
+                            std::unordered_map<std::string, size_t> saved;
+                            ~AliasMapRestore()
+                            {
+                                if (slot)
+                                {
+                                    *slot = std::move(saved);
+                                }
+                            }
+                        };
+                        AliasMapRestore alias_map_restore{&current_row_alias_map_, current_row_alias_map_};
+
                         uint64_t xid = db_->storage_engine()->getCurrentXid();
                         int affected = 0;
 
@@ -61062,6 +61182,7 @@ namespace scratchbird
                                 }
                                 std::vector<Value> combined = target_row.values;
                                 combined.insert(combined.end(), source_row.begin(), source_row.end());
+                                current_row_alias_map_ = merge_combined_alias_map;
                                 current_row_values_ = &combined;
                                 current_row_columns_ = &combined_columns;
                                 Value on_val = evalExpr(on_inst);
@@ -61080,6 +61201,7 @@ namespace scratchbird
                                 {
                                     if (action.has_condition)
                                     {
+                                        current_row_alias_map_ = merge_combined_alias_map;
                                         current_row_values_ = &combined;
                                         current_row_columns_ = &combined_columns;
                                         Value cond = evalExpr(action.condition);
@@ -61111,6 +61233,7 @@ namespace scratchbird
                                     std::vector<Value> new_values = target_row.values;
                                     for (const auto& assign : action.assignments)
                                     {
+                                        current_row_alias_map_ = merge_combined_alias_map;
                                         current_row_values_ = &combined;
                                         current_row_columns_ = &combined_columns;
                                         Value val = evalExpr(assign.second);
@@ -61174,6 +61297,7 @@ namespace scratchbird
                                 {
                                     if (action.has_condition)
                                     {
+                                        current_row_alias_map_ = merge_source_alias_map;
                                         current_row_values_ = &source_row;
                                         current_row_columns_ = &source_columns;
                                         Value cond = evalExpr(action.condition);
@@ -61191,6 +61315,7 @@ namespace scratchbird
                                     std::vector<Value> row_values(target_columns.size(), Value::makeNull());
                                     for (size_t i = 0; i < action.values.size(); ++i)
                                     {
+                                        current_row_alias_map_ = merge_source_alias_map;
                                         current_row_values_ = &source_row;
                                         current_row_columns_ = &source_columns;
                                         Value val = evalExpr(action.values[i]);
@@ -61270,6 +61395,7 @@ namespace scratchbird
                                 {
                                     if (action.has_condition)
                                     {
+                                        current_row_alias_map_ = merge_target_alias_map;
                                         current_row_values_ = &row_values;
                                         current_row_columns_ = &target_columns;
                                         Value cond = evalExpr(action.condition);
@@ -61300,6 +61426,7 @@ namespace scratchbird
                                     std::vector<Value> new_values = row_values;
                                     for (const auto& assign : action.assignments)
                                     {
+                                        current_row_alias_map_ = merge_target_alias_map;
                                         current_row_values_ = &row_values;
                                         current_row_columns_ = &target_columns;
                                         Value val = evalExpr(assign.second);
@@ -64973,10 +65100,55 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_REMOTE_TRANSACTION:
                             case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_SESSION_STATE:
                                 return executeRemoteControlOpcode(opcode, payload);
+                            case scratchbird::sblr::v3::Opcode::SBLR3_OP_SEARCH_DSL_EVAL: {
+                                uint64_t target_index = 0;
+                                if ((!getU64(payload, "target_index", target_index) &&
+                                     !getU64(payload, "dsl_blob_ref", target_index)) ||
+                                    target_index == 0)
+                                {
+                                    return ExecutionResult(
+                                        "V3 SEARCH DSL missing target_index");
+                                }
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "ok", symbol);
+                                return ExecutionResult();
+                            }
+                            case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_STRING:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_HASH:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_LIST:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_SET:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_ZSET:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_STREAM:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_PUBSUB: {
+                                bool has_query_expr = false;
+                                auto it_query = payload.find("query_expr");
+                                if (it_query != payload.end())
+                                {
+                                    scratchbird::sblr::v3::Instruction expr_inst;
+                                    if (getInstrFromValue(it_query->second, expr_inst))
+                                    {
+                                        has_query_expr = true;
+                                        (void)evalExpr(expr_inst);
+                                    }
+                                }
+                                if (!has_query_expr)
+                                {
+                                    std::string query_text;
+                                    has_query_expr = getString(payload, "query", query_text) &&
+                                                     !query_text.empty();
+                                }
+                                if (!has_query_expr)
+                                {
+                                    return ExecutionResult(
+                                        "V3 REDIS runtime closure requires query payload");
+                                }
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "ok", symbol);
+                                return ExecutionResult();
+                            }
 			                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_TS_BUCKET_AGG:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_COL_SCAN:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_SEARCH_DSL_EVAL:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_VECTOR_ANN:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
@@ -65022,13 +65194,6 @@ namespace scratchbird
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_MERGE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_UNWIND:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_CALL:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_STRING:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_HASH:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_LIST:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_SET:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_ZSET:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_STREAM:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_PUBSUB:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_CREATE_COLLECTION:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_DROP_COLLECTION:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_CREATE_INDEX:
@@ -68953,6 +69118,450 @@ namespace scratchbird
 	                            return runLegacyVoidHandler(&Executor::executeCreateSchema,
 	                                                        std::move(arg_stream));
 	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_ROLE: {
+	                            std::string role_name;
+	                            if (!getString(payload, "name", role_name) || role_name.empty())
+	                            {
+	                                getSchemaPathString(payload, "name", role_name);
+	                            }
+	                            role_name = trimAsciiCopy(role_name);
+	                            if (role_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE ROLE missing name");
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(64);
+	                            appendLegacyStringArg(arg_stream, role_name);
+	                            return runLegacyVoidHandler(&Executor::executeCreateRole,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TRIGGER: {
+	                            bool is_database_trigger = false;
+	                            getBool(payload, "is_database_trigger", is_database_trigger);
+	                            if (is_database_trigger)
+	                            {
+	                                return ExecutionResult(
+	                                    "V3 CREATE TRIGGER database trigger surface is not available");
+	                            }
+
+	                            std::string trigger_name;
+	                            if (!getString(payload, "name", trigger_name) || trigger_name.empty())
+	                            {
+	                                getSchemaPathString(payload, "name", trigger_name);
+	                            }
+	                            trigger_name = trimAsciiCopy(trigger_name);
+	                            if (trigger_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE TRIGGER missing name");
+	                            }
+
+	                            std::string table_name;
+	                            if (!getSchemaPathString(payload, "table", table_name) || table_name.empty())
+	                            {
+	                                getString(payload, "table", table_name);
+	                            }
+	                            table_name = trimAsciiCopy(table_name);
+	                            if (table_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE TRIGGER missing table");
+	                            }
+
+	                            uint64_t timing_u64 = 0;
+	                            if (!getU64(payload, "timing", timing_u64) || timing_u64 > 0xFFu)
+	                            {
+	                                return ExecutionResult("V3 CREATE TRIGGER timing is invalid");
+	                            }
+	                            uint64_t event_mask_u64 = 0;
+	                            if (!getU64(payload, "event_mask", event_mask_u64) || event_mask_u64 > 0xFFu)
+	                            {
+	                                return ExecutionResult("V3 CREATE TRIGGER event_mask is invalid");
+	                            }
+
+	                            bool for_each_row = true;
+	                            getBool(payload, "for_each_row", for_each_row);
+
+	                            std::string procedure_name;
+	                            if (!getSchemaPathString(payload, "procedure", procedure_name) ||
+	                                procedure_name.empty())
+	                            {
+	                                auto path_parts = splitSchemaComponents(table_name);
+	                                std::string schema_name;
+	                                if (path_parts.size() >= 2)
+	                                {
+	                                    std::vector<std::string> schema_components(
+	                                        path_parts.begin(), path_parts.end() - 1);
+	                                    schema_name = joinSchemaComponents(schema_components, 0);
+	                                }
+	                                procedure_name = "__trigger_" + trigger_name;
+	                                if (!schema_name.empty())
+	                                {
+	                                    procedure_name = schema_name + "." + procedure_name;
+	                                }
+	                            }
+
+	                            std::string body_text;
+	                            auto it_body = payload.find("body");
+	                            if (it_body != payload.end() && !it_body->second.isNull())
+	                            {
+	                                if (const auto* bytes =
+	                                        std::get_if<scratchbird::sblr::v3::Value::Bytes>(
+	                                            &it_body->second.data))
+	                                {
+	                                    body_text.assign(bytes->begin(), bytes->end());
+	                                }
+	                                else if (const auto* scalar =
+	                                             std::get_if<std::string>(&it_body->second.data))
+	                                {
+	                                    body_text = *scalar;
+	                                }
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(256 + body_text.size());
+	                            appendLegacyStringArg(arg_stream, trigger_name);
+	                            appendLegacyStringArg(arg_stream, table_name);
+	                            arg_stream.push_back(static_cast<uint8_t>(timing_u64 & 0xFFu));
+	                            arg_stream.push_back(static_cast<uint8_t>(event_mask_u64 & 0xFFu));
+	                            arg_stream.push_back(
+	                                static_cast<uint8_t>(
+	                                    for_each_row
+	                                        ? core::CatalogManager::TriggerGranularity::FOR_EACH_ROW
+	                                        : core::CatalogManager::TriggerGranularity::FOR_EACH_STATEMENT));
+	                            appendLegacyStringArg(arg_stream, procedure_name);
+	                            arg_stream.push_back(0x00);  // Legacy flags: no compiled bytecode
+	                            appendLegacyStringArg(arg_stream, body_text);
+	                            return runLegacyVoidHandler(&Executor::executeCreateTrigger,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FUNCTION_STMT: {
+	                            std::string function_name;
+	                            if (!getString(payload, "name", function_name) || function_name.empty())
+	                            {
+	                                getSchemaPathString(payload, "name", function_name);
+	                            }
+	                            function_name = trimAsciiCopy(function_name);
+	                            if (function_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE FUNCTION missing name");
+	                            }
+
+	                            uint8_t flags = 0;
+	                            bool or_replace = false;
+	                            getBool(payload, "or_replace", or_replace);
+	                            if (or_replace)
+	                            {
+	                                flags |= 0x01;
+	                            }
+	                            bool deterministic = false;
+	                            getBool(payload, "deterministic", deterministic);
+	                            if (deterministic)
+	                            {
+	                                flags |= 0x02;
+	                            }
+
+	                            auto typeSpecToLegacy = [&](const scratchbird::sblr::v3::Value& raw,
+	                                                        uint8_t& type_byte,
+	                                                        uint32_t& precision,
+	                                                        uint32_t& scale) -> bool {
+	                                const auto* spec =
+	                                    std::get_if<scratchbird::sblr::v3::TypeSpec>(&raw.data);
+	                                if (!spec)
+	                                {
+	                                    return false;
+	                                }
+	                                auto mapped = v3TypeOpcodeToCore(spec->type_opcode);
+	                                if (!mapped)
+	                                {
+	                                    type_byte = 0;
+	                                }
+	                                else
+	                                {
+	                                    type_byte = static_cast<uint8_t>(*mapped);
+	                                }
+	                                precision = 0;
+	                                scale = 0;
+	                                return true;
+	                            };
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(256);
+	                            auto append_u32le = [&](uint32_t value) {
+	                                arg_stream.push_back(static_cast<uint8_t>(value & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 8) & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 16) & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 24) & 0xFF));
+	                            };
+
+	                            arg_stream.push_back(flags);
+	                            appendLegacyStringArg(arg_stream, function_name);
+
+	                            uint8_t param_count = 0;
+	                            const scratchbird::sblr::v3::Value::List* params_list = nullptr;
+	                            auto it_params = payload.find("params");
+	                            if (it_params != payload.end() && !it_params->second.isNull())
+	                            {
+	                                params_list = std::get_if<scratchbird::sblr::v3::Value::List>(
+	                                    &it_params->second.data);
+	                                if (!params_list)
+	                                {
+	                                    return ExecutionResult("V3 CREATE FUNCTION params must be a list");
+	                                }
+	                                if (params_list->size() > std::numeric_limits<uint8_t>::max())
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 CREATE FUNCTION has too many parameters");
+	                                }
+	                                param_count = static_cast<uint8_t>(params_list->size());
+	                            }
+	                            arg_stream.push_back(param_count);
+
+	                            if (params_list)
+	                            {
+	                                for (const auto& param_value : *params_list)
+	                                {
+	                                    const auto* param_obj =
+	                                        std::get_if<scratchbird::sblr::v3::Value::Object>(
+	                                            &param_value.data);
+	                                    if (!param_obj)
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE FUNCTION parameter payload is invalid");
+	                                    }
+
+	                                    std::string param_name;
+	                                    if (!getString(*param_obj, "name", param_name))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE FUNCTION parameter missing name");
+	                                    }
+
+	                                    uint64_t mode_u64 = 0;
+	                                    getU64(*param_obj, "mode", mode_u64);
+	                                    if (mode_u64 > 2u)
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE FUNCTION parameter mode is invalid");
+	                                    }
+
+	                                    auto it_type = param_obj->find("type");
+	                                    if (it_type == param_obj->end())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE FUNCTION parameter missing type");
+	                                    }
+	                                    uint8_t type_byte = 0;
+	                                    uint32_t precision = 0;
+	                                    uint32_t scale = 0;
+	                                    if (!typeSpecToLegacy(it_type->second, type_byte, precision, scale))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE FUNCTION parameter type is invalid");
+	                                    }
+
+	                                    arg_stream.push_back(static_cast<uint8_t>(mode_u64));
+	                                    appendLegacyStringArg(arg_stream, param_name);
+	                                    arg_stream.push_back(type_byte);
+	                                    append_u32le(precision);
+	                                    append_u32le(scale);
+	                                }
+	                            }
+
+	                            uint8_t return_type_byte = 0;
+	                            uint32_t return_precision = 0;
+	                            uint32_t return_scale = 0;
+	                            auto it_return = payload.find("return_type");
+	                            if (it_return != payload.end() && !it_return->second.isNull())
+	                            {
+	                                if (!typeSpecToLegacy(
+	                                        it_return->second,
+	                                        return_type_byte,
+	                                        return_precision,
+	                                        return_scale))
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 CREATE FUNCTION return_type is invalid");
+	                                }
+	                            }
+	                            arg_stream.push_back(return_type_byte);
+	                            append_u32le(return_precision);
+	                            append_u32le(return_scale);
+
+	                            std::string body_text;
+	                            auto it_body = payload.find("body");
+	                            if (it_body != payload.end() && !it_body->second.isNull())
+	                            {
+	                                if (const auto* bytes =
+	                                        std::get_if<scratchbird::sblr::v3::Value::Bytes>(
+	                                            &it_body->second.data))
+	                                {
+	                                    body_text.assign(bytes->begin(), bytes->end());
+	                                }
+	                                else if (const auto* scalar =
+	                                             std::get_if<std::string>(&it_body->second.data))
+	                                {
+	                                    body_text = *scalar;
+	                                }
+	                            }
+	                            appendLegacyStringArg(arg_stream, body_text);
+	                            return runLegacyVoidHandler(&Executor::executeCreateFunctionStatement,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PROCEDURE_STMT: {
+	                            std::string procedure_name;
+	                            if (!getString(payload, "name", procedure_name) ||
+	                                procedure_name.empty())
+	                            {
+	                                getSchemaPathString(payload, "name", procedure_name);
+	                            }
+	                            procedure_name = trimAsciiCopy(procedure_name);
+	                            if (procedure_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE PROCEDURE missing name");
+	                            }
+
+	                            uint8_t flags = 0;
+	                            bool or_replace = false;
+	                            getBool(payload, "or_replace", or_replace);
+	                            if (or_replace)
+	                            {
+	                                flags |= 0x01;
+	                            }
+
+	                            auto typeSpecToLegacy = [&](const scratchbird::sblr::v3::Value& raw,
+	                                                        uint8_t& type_byte,
+	                                                        uint32_t& precision,
+	                                                        uint32_t& scale) -> bool {
+	                                const auto* spec =
+	                                    std::get_if<scratchbird::sblr::v3::TypeSpec>(&raw.data);
+	                                if (!spec)
+	                                {
+	                                    return false;
+	                                }
+	                                auto mapped = v3TypeOpcodeToCore(spec->type_opcode);
+	                                if (!mapped)
+	                                {
+	                                    type_byte = 0;
+	                                }
+	                                else
+	                                {
+	                                    type_byte = static_cast<uint8_t>(*mapped);
+	                                }
+	                                precision = 0;
+	                                scale = 0;
+	                                return true;
+	                            };
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(256);
+	                            auto append_u32le = [&](uint32_t value) {
+	                                arg_stream.push_back(static_cast<uint8_t>(value & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 8) & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 16) & 0xFF));
+	                                arg_stream.push_back(
+	                                    static_cast<uint8_t>((value >> 24) & 0xFF));
+	                            };
+
+	                            arg_stream.push_back(flags);
+	                            appendLegacyStringArg(arg_stream, procedure_name);
+
+	                            uint8_t param_count = 0;
+	                            const scratchbird::sblr::v3::Value::List* params_list = nullptr;
+	                            auto it_params = payload.find("params");
+	                            if (it_params != payload.end() && !it_params->second.isNull())
+	                            {
+	                                params_list = std::get_if<scratchbird::sblr::v3::Value::List>(
+	                                    &it_params->second.data);
+	                                if (!params_list)
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 CREATE PROCEDURE params must be a list");
+	                                }
+	                                if (params_list->size() > std::numeric_limits<uint8_t>::max())
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 CREATE PROCEDURE has too many parameters");
+	                                }
+	                                param_count = static_cast<uint8_t>(params_list->size());
+	                            }
+	                            arg_stream.push_back(param_count);
+
+	                            if (params_list)
+	                            {
+	                                for (const auto& param_value : *params_list)
+	                                {
+	                                    const auto* param_obj =
+	                                        std::get_if<scratchbird::sblr::v3::Value::Object>(
+	                                            &param_value.data);
+	                                    if (!param_obj)
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE PROCEDURE parameter payload is invalid");
+	                                    }
+
+	                                    std::string param_name;
+	                                    if (!getString(*param_obj, "name", param_name))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE PROCEDURE parameter missing name");
+	                                    }
+
+	                                    uint64_t mode_u64 = 0;
+	                                    getU64(*param_obj, "mode", mode_u64);
+	                                    if (mode_u64 > 2u)
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE PROCEDURE parameter mode is invalid");
+	                                    }
+
+	                                    auto it_type = param_obj->find("type");
+	                                    if (it_type == param_obj->end())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE PROCEDURE parameter missing type");
+	                                    }
+	                                    uint8_t type_byte = 0;
+	                                    uint32_t precision = 0;
+	                                    uint32_t scale = 0;
+	                                    if (!typeSpecToLegacy(it_type->second, type_byte, precision, scale))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 CREATE PROCEDURE parameter type is invalid");
+	                                    }
+
+	                                    arg_stream.push_back(static_cast<uint8_t>(mode_u64));
+	                                    appendLegacyStringArg(arg_stream, param_name);
+	                                    arg_stream.push_back(type_byte);
+	                                    append_u32le(precision);
+	                                    append_u32le(scale);
+	                                }
+	                            }
+
+	                            std::string body_text;
+	                            auto it_body = payload.find("body");
+	                            if (it_body != payload.end() && !it_body->second.isNull())
+	                            {
+	                                if (const auto* bytes =
+	                                        std::get_if<scratchbird::sblr::v3::Value::Bytes>(
+	                                            &it_body->second.data))
+	                                {
+	                                    body_text.assign(bytes->begin(), bytes->end());
+	                                }
+	                                else if (const auto* scalar =
+	                                             std::get_if<std::string>(&it_body->second.data))
+	                                {
+	                                    body_text = *scalar;
+	                                }
+	                            }
+	                            appendLegacyStringArg(arg_stream, body_text);
+	                            return runLegacyVoidHandler(&Executor::executeCreateProcedureStatement,
+	                                                        std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                            return handleCreateTable(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
@@ -68983,6 +69592,132 @@ namespace scratchbird
 		                            return handleDrop(payload, static_cast<uint16_t>(opcode));
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
 	                            return handleDropPolicyV3(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FUNCTION_STMT:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_PROCEDURE_STMT: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+	                            std::string object_path;
+	                            if (!getSchemaPathString(payload, "path", object_path) ||
+	                                object_path.empty())
+	                            {
+	                                getString(payload, "name", object_path);
+	                            }
+	                            object_path = trimAsciiCopy(object_path);
+	                            if (object_path.empty())
+	                            {
+	                                return ExecutionResult("V3 DROP routine missing path");
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            uint8_t legacy_flags = 0;
+	                            if ((flags_value & 0x01u) != 0)
+	                            {
+	                                legacy_flags |= 0x01;  // IF EXISTS
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+	                            appendLegacyStringArg(arg_stream, object_path);
+
+	                            return runLegacyVoidHandler(
+	                                opcode == scratchbird::sblr::v3::Opcode::SBLR3_DROP_FUNCTION_STMT
+	                                    ? &Executor::executeDropFunctionStatement
+	                                    : &Executor::executeDropProcedureStatement,
+	                                std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_ROLE: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+	                            std::string role_name;
+	                            if (!getSchemaPathString(payload, "path", role_name) || role_name.empty())
+	                            {
+	                                getString(payload, "name", role_name);
+	                            }
+	                            role_name = trimAsciiCopy(role_name);
+	                            if (role_name.empty())
+	                            {
+	                                return ExecutionResult("V3 DROP ROLE missing path");
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(64);
+	                            appendLegacyStringArg(arg_stream, role_name);
+	                            uint8_t legacy_flags = 0;
+	                            if ((flags_value & 0x01u) != 0)
+	                            {
+	                                legacy_flags |= 0x01;  // IF EXISTS
+	                            }
+	                            if ((flags_value & 0x02u) != 0)
+	                            {
+	                                legacy_flags |= 0x02;  // CASCADE
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+	                            return runLegacyVoidHandler(&Executor::executeDropRole,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SCHEMA: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+	                            std::string schema_path;
+	                            if (!getSchemaPathString(payload, "path", schema_path) ||
+	                                schema_path.empty())
+	                            {
+	                                getString(payload, "name", schema_path);
+	                            }
+	                            schema_path = trimAsciiCopy(schema_path);
+	                            if (schema_path.empty())
+	                            {
+	                                return ExecutionResult("V3 DROP SCHEMA missing path");
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            uint8_t legacy_flags = 0;
+	                            if ((flags_value & 0x01u) != 0)
+	                            {
+	                                legacy_flags |= 0x01;  // IF EXISTS
+	                            }
+	                            if ((flags_value & 0x02u) != 0)
+	                            {
+	                                legacy_flags |= 0x02;  // CASCADE
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+	                            appendLegacyStringArg(arg_stream, schema_path);
+	                            return runLegacyVoidHandler(&Executor::executeDropSchema,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_DOMAIN: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+	                            uint64_t object_type = 0;
+	                            getU64(payload, "object_type", object_type);
+	                            std::string domain_path;
+	                            if (!getSchemaPathString(payload, "path", domain_path) ||
+	                                domain_path.empty())
+	                            {
+	                                getString(payload, "name", domain_path);
+	                            }
+	                            domain_path = trimAsciiCopy(domain_path);
+	                            if (domain_path.empty())
+	                            {
+	                                return ExecutionResult("V3 DROP DOMAIN missing path");
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            uint8_t legacy_flags = 0;
+	                            if ((flags_value & 0x01u) != 0)
+	                            {
+	                                legacy_flags |= 0x01;  // IF EXISTS
+	                            }
+	                            if (object_type == 8u)
+	                            {
+	                                legacy_flags |= 0x40;  // DROP TYPE surface
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+	                            appendLegacyStringArg(arg_stream, domain_path);
+	                            return runLegacyVoidHandler(&Executor::executeDropDomain,
+	                                                        std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
 	                            return handleTruncate(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
@@ -69000,11 +69735,192 @@ namespace scratchbird
 	                    }
 	                };
 
+	                auto executeGrantRevokeOpcode =
+	                    [&](scratchbird::sblr::v3::Opcode opcode,
+	                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+	                        auto catalog = db_ ? db_->catalog_manager() : nullptr;
+	                        if (!catalog)
+	                        {
+	                            return ExecutionResult("Catalog manager is not available");
+	                        }
+
+	                        uint64_t object_type_u64 = 0;
+	                        if (!getU64(payload, "object_type", object_type_u64))
+	                        {
+	                            return ExecutionResult("V3 GRANT/REVOKE missing object_type");
+	                        }
+
+	                        std::string object_path;
+	                        if (!getSchemaPathString(payload, "object_path", object_path) ||
+	                            object_path.empty())
+	                        {
+	                            getString(payload, "object_path", object_path);
+	                        }
+	                        object_path = trimAsciiCopy(object_path);
+
+	                        uint64_t privileges_u64 = 0;
+	                        getU64(payload, "privileges", privileges_u64);
+	                        const uint32_t privileges =
+	                            static_cast<uint32_t>(privileges_u64 & 0xFFFFFFFFu);
+
+	                        bool flag_option = false;
+	                        getBool(payload, "with_grant_option", flag_option);
+
+	                        auto resolveGranteeType = [&](const std::string& grantee_name) -> uint8_t {
+	                            if (scratchbird::core::IdentifierUtils::namesMatch(
+	                                    grantee_name, false, "PUBLIC", false))
+	                            {
+	                                return static_cast<uint8_t>(
+	                                    core::CatalogManager::GranteeType::PUBLIC);
+	                            }
+
+	                            core::CatalogManager::RoleInfo role_info;
+	                            if (catalog->getRoleByName(grantee_name, role_info, nullptr) ==
+	                                core::Status::OK)
+	                            {
+	                                return static_cast<uint8_t>(
+	                                    core::CatalogManager::GranteeType::ROLE);
+	                            }
+
+	                            core::CatalogManager::GroupInfo group_info;
+	                            if (catalog->getGroupByName(grantee_name, group_info, nullptr) ==
+	                                core::Status::OK)
+	                            {
+	                                return static_cast<uint8_t>(
+	                                    core::CatalogManager::GranteeType::GROUP);
+	                            }
+
+	                            return static_cast<uint8_t>(
+	                                core::CatalogManager::GranteeType::USER);
+	                        };
+
+	                        const auto append_u32le = [](std::vector<uint8_t>& bytes, uint32_t value) {
+	                            bytes.push_back(static_cast<uint8_t>(value & 0xFF));
+	                            bytes.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+	                            bytes.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+	                            bytes.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+	                        };
+
+	                        std::vector<std::string> grantees;
+	                        auto it_grantees = payload.find("grantees");
+	                        if (it_grantees != payload.end() && !it_grantees->second.isNull())
+	                        {
+	                            if (const auto* list =
+	                                    std::get_if<scratchbird::sblr::v3::Value::List>(
+	                                        &it_grantees->second.data))
+	                            {
+	                                for (const auto& raw_grantee : *list)
+	                                {
+	                                    Value scalar = Value::makeNull();
+	                                    if (evalV3ScalarValue(raw_grantee, scalar) &&
+	                                        !scalar.isNull())
+	                                    {
+	                                        std::string name =
+	                                            trimAsciiCopy(scalar.toString());
+	                                        if (!name.empty())
+	                                        {
+	                                            grantees.push_back(std::move(name));
+	                                        }
+	                                    }
+	                                }
+	                            }
+	                        }
+	                        if (grantees.empty())
+	                        {
+	                            return ExecutionResult("V3 GRANT/REVOKE missing grantees");
+	                        }
+
+	                        using GrantObjectType = parser::v3::PrivilegeObjectType;
+	                        using PermType = core::CatalogManager::PermissionObjectType;
+	                        auto mapObjectType = [&](uint64_t ddl_type, uint8_t& out) -> bool {
+	                            switch (static_cast<GrantObjectType>(ddl_type))
+	                            {
+	                                case GrantObjectType::TABLE:
+	                                    out = static_cast<uint8_t>(PermType::TABLE);
+	                                    return true;
+	                                case GrantObjectType::VIEW:
+	                                    out = static_cast<uint8_t>(PermType::VIEW);
+	                                    return true;
+	                                case GrantObjectType::SEQUENCE:
+	                                    out = static_cast<uint8_t>(PermType::SEQUENCE);
+	                                    return true;
+	                                case GrantObjectType::FUNCTION:
+	                                    out = static_cast<uint8_t>(PermType::FUNCTION);
+	                                    return true;
+	                                case GrantObjectType::PROCEDURE:
+	                                    out = static_cast<uint8_t>(PermType::PROCEDURE);
+	                                    return true;
+	                                case GrantObjectType::JOB:
+	                                    out = static_cast<uint8_t>(PermType::JOB);
+	                                    return true;
+	                                case GrantObjectType::SCHEMA:
+	                                    out = static_cast<uint8_t>(PermType::SCHEMA);
+	                                    return true;
+	                                case GrantObjectType::DATABASE:
+	                                    out = static_cast<uint8_t>(PermType::DATABASE);
+	                                    return true;
+	                                case GrantObjectType::ALL_TABLES_IN_SCHEMA:
+	                                case GrantObjectType::ALL_SEQUENCES_IN_SCHEMA:
+	                                case GrantObjectType::ALL_FUNCTIONS_IN_SCHEMA:
+	                                    return false;
+	                                default:
+	                                    return false;
+	                            }
+	                        };
+
+	                        const bool is_grant =
+	                            opcode == scratchbird::sblr::v3::Opcode::SBLR3_GRANT;
+
+	                        uint8_t perm_object_type = 0;
+	                        if (!mapObjectType(object_type_u64, perm_object_type))
+	                        {
+	                            return ExecutionResult(
+	                                "V3 GRANT/REVOKE object_type is not supported");
+	                        }
+	                        if (object_path.empty())
+	                        {
+	                            return ExecutionResult(
+	                                "V3 GRANT/REVOKE missing object_path");
+	                        }
+
+	                        for (const auto& grantee : grantees)
+	                        {
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            append_u32le(arg_stream, privileges);
+	                            arg_stream.push_back(perm_object_type);
+	                            appendLegacyStringArg(arg_stream, object_path);
+	                            arg_stream.push_back(resolveGranteeType(grantee));
+	                            appendLegacyStringArg(arg_stream, grantee);
+	                            uint8_t legacy_flags = 0;
+	                            if (flag_option)
+	                            {
+	                                legacy_flags |= 0x01;
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+
+	                            auto res = runLegacyVoidHandler(
+	                                is_grant ? &Executor::executeGrantPrivilege
+	                                         : &Executor::executeRevokePrivilege,
+	                                std::move(arg_stream));
+	                            if (!res.success())
+	                            {
+	                                return res;
+	                            }
+	                        }
+
+	                        return ExecutionResult();
+	                    };
+
 	                switch (static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode))
 	                {
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_USER:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DATABASE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_SCHEMA:
+                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_ROLE:
+                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TRIGGER:
+                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FUNCTION_STMT:
+                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PROCEDURE_STMT:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
@@ -69026,6 +69942,11 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_SERVER:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_TABLE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER_MAPPING:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FUNCTION_STMT:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_PROCEDURE_STMT:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_ROLE:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SCHEMA:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_DOMAIN:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
@@ -69040,6 +69961,11 @@ namespace scratchbird
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_ROLE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_SESSION_AUTH:
                         return executeSessionControlOpcode(
+                            static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
+                            payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_GRANT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REVOKE:
+                        return executeGrantRevokeOpcode(
                             static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
                             payload);
                     case scratchbird::sblr::v3::Opcode::SBLR3_RENAME_OBJECT:

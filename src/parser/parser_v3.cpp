@@ -3421,11 +3421,18 @@ std::string Parser::captureStatementBody() {
         return std::string(text.substr(first, last_pos - first + 1));
     };
 
+    auto is_begin_token = [&]() -> bool {
+        return check(TokenType::KW_BEGIN) || checkContextual("BEGIN");
+    };
+    auto is_end_token = [&]() -> bool {
+        return check(TokenType::KW_END) || checkContextual("END");
+    };
+
     while (!isAtEnd()) {
-        if (check(TokenType::KW_BEGIN)) {
+        if (is_begin_token()) {
             saw_begin = true;
             begin_depth++;
-        } else if (check(TokenType::KW_END)) {
+        } else if (is_end_token()) {
             if (saw_begin && begin_depth > 0) {
                 begin_depth--;
                 if (begin_depth == 0) {
@@ -17340,10 +17347,17 @@ MergeStmt* Parser::parseMerge() {
     }
 
     // USING source
-    expectContextual("USING", "Expected USING");
+    if (!(match(TokenType::KW_USING) || matchContextual("USING"))) {
+        error("Expected USING");
+        return nullptr;
+    }
 
     if (match(TokenType::LEFT_PAREN)) {
         // Subquery
+        if (!match(TokenType::KW_SELECT)) {
+            error("Expected SELECT in MERGE USING subquery");
+            return nullptr;
+        }
         stmt->source_query = parseSelect();
         expect(TokenType::RIGHT_PAREN, "Expected ) after subquery");
     } else {

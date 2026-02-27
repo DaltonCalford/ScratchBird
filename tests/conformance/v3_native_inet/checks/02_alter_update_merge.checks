@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS v3inet.v3_alter_case;|||Rows affected: 0
+CREATE TABLE v3inet.v3_alter_case (id INTEGER PRIMARY KEY, state VARCHAR(32), qty INTEGER);|||Rows affected: 0
+INSERT INTO v3inet.v3_alter_case (id, state, qty) VALUES (1, 'old', 10), (2, 'old', 20);|||Rows affected: 2
+UPDATE v3inet.v3_alter_case SET qty = qty + 5, state = 'updated' WHERE id = 2;|||Rows affected: 1
+SELECT 'ASSERT|alter|updated_qty|' || CAST(qty AS VARCHAR(20)) FROM v3inet.v3_alter_case WHERE id = 2;|||ASSERT|alter|updated_qty|25
+DROP TABLE IF EXISTS v3inet.v3_merge_target;|||Rows affected: 0
+DROP TABLE IF EXISTS v3inet.v3_merge_source;|||Rows affected: 0
+CREATE TABLE v3inet.v3_merge_target (id INTEGER PRIMARY KEY, qty INTEGER);|||Rows affected: 0
+CREATE TABLE v3inet.v3_merge_source (id INTEGER PRIMARY KEY, qty INTEGER);|||Rows affected: 0
+INSERT INTO v3inet.v3_merge_target (id, qty) VALUES (1, 10), (2, 20);|||Rows affected: 2
+INSERT INTO v3inet.v3_merge_source (id, qty) VALUES (2, 200), (3, 300);|||Rows affected: 2
+MERGE INTO v3inet.v3_merge_target AS t USING (SELECT id, qty FROM v3inet.v3_merge_source) AS s ON t.id = s.id WHEN MATCHED THEN UPDATE SET qty = s.qty WHEN NOT MATCHED THEN INSERT (id, qty) VALUES (s.id, s.qty);|||Rows affected: 2
+SELECT 'ASSERT|merge|total_rows|' || CAST(COUNT(*) AS VARCHAR(20)) FROM v3inet.v3_merge_target;|||ASSERT|merge|total_rows|3
+SELECT 'ASSERT|merge|id2_qty|' || CAST(qty AS VARCHAR(20)) FROM v3inet.v3_merge_target WHERE id = 2;|||ASSERT|merge|id2_qty|200
+SELECT 'ASSERT|merge|id3_exists|' || CAST(COUNT(*) AS VARCHAR(20)) FROM v3inet.v3_merge_target WHERE id = 3;|||ASSERT|merge|id3_exists|1

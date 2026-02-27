@@ -104,7 +104,7 @@ extern const std::unordered_map<std::string, std::string> kOpcodeSchemaMapGenera
     {"SBLR3_LABEL", "SCHEMA_PSQL_LABEL"},
     {"SBLR3_LIKE", "SCHEMA_EXPR_LIKE"},
     {"SBLR3_LOOP", "SCHEMA_PSQL_LOOP"},
-    {"SBLR3_MERGE", "SCHEMA_MERGE"},
+    {"SBLR3_MERGE_START", "SCHEMA_MERGE"},
     {"SBLR3_NOT_BETWEEN", "SCHEMA_EXPR_BETWEEN"},
     {"SBLR3_NOT_IN", "SCHEMA_EXPR_IN"},
     {"SBLR3_NOT_LIKE", "SCHEMA_EXPR_LIKE"},

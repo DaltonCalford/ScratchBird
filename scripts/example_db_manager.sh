@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DRIVER_ROOT="${REPO_ROOT}-driver"
+WORKSPACE_ROOT="$(cd "${REPO_ROOT}/.." && pwd)"
 
 MODE=""
 EXAMPLE_ROOT=""
@@ -17,6 +18,8 @@ TOKEN_FILE=""
 SERVER_LOG=""
 BOOTSTRAP_LOG=""
 SEED_MARKER=""
+EXAMPLE_BUNDLE_MARKER=""
+EXAMPLE_BUNDLE_LOG=""
 RUNTIME_ENV_FILE=""
 CONNECTIONS_JSON_FILE=""
 
@@ -28,6 +31,10 @@ FB_PORT=""
 
 SERVER_BIN=""
 ISQL_BIN=""
+PG_ISQL_BIN=""
+MY_ISQL_BIN=""
+FB_ISQL_BIN=""
+DID_IMPORT_BUNDLE="0"
 
 BOOTSTRAP_USER="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_USER:-bootstrap_admin}"
 BOOTSTRAP_TOKEN="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_TOKEN:-SbExampleBootstrap_2026!}"
@@ -53,6 +60,8 @@ RUN_AS_USER="${SCRATCHBIRD_EXAMPLE_RUN_AS_USER:-$(id -un)}"
 RUN_AS_GROUP="${SCRATCHBIRD_EXAMPLE_RUN_AS_GROUP:-$(id -gn)}"
 
 BOOTSTRAP_SQL="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL:-${REPO_ROOT}/tests/compatibility/scratchbird/example_sql/00_bootstrap_seed.sql}"
+EXAMPLE_BUNDLE_ROOT="${SCRATCHBIRD_EXAMPLE_BUNDLE_ROOT:-${WORKSPACE_ROOT}/local_work/findings/example_script_bundle_2}"
+EXAMPLE_BUNDLE_IMPORTER="${SCRATCHBIRD_EXAMPLE_BUNDLE_IMPORTER:-${REPO_ROOT}/scripts/emulation/import_example_bundle.py}"
 
 log() {
     printf '[example-db] %s\n' "$*"
@@ -83,6 +92,11 @@ Environment:
   SCRATCHBIRD_SB_SERVER              Override sb_server binary
   SCRATCHBIRD_SB_ISQL                Override sb_isql binary
   SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL  Override bootstrap/seed SQL script path
+  SCRATCHBIRD_EXAMPLE_BUNDLE_ROOT    Bundle root (default ../local_work/findings/example_script_bundle_2)
+  SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE  Run bundle importer during setup (default 1)
+  SCRATCHBIRD_EXAMPLE_IMPORT_TIMEOUT_SEC  Per-script timeout (default 90)
+  SCRATCHBIRD_EXAMPLE_IMPORT_STRICT_NATIVE_CORE  Hard-fail if any native-v3 import fails (default 0)
+  SCRATCHBIRD_EXAMPLE_IMPORT_STRICT_EMULATION    Hard-fail if any emulation import fails (default 0)
 EOF
 }
 
@@ -117,6 +131,22 @@ resolve_binaries() {
         "${REPO_ROOT}/build/src/cli/sb_isql" \
         "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_isql")" \
         || die "sb_isql not found. Build ScratchBird-driver CLI first."
+
+    PG_ISQL_BIN="$(resolve_binary SCRATCHBIRD_PG_ISQL \
+        "${REPO_ROOT}/build/src/sb_pg_isql" \
+        "${REPO_ROOT}/build/src/cli/sb_pg_isql" \
+        "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_pg_isql" || true)"
+
+    MY_ISQL_BIN="$(resolve_binary SCRATCHBIRD_MY_ISQL \
+        "${REPO_ROOT}/build/src/sb_my_isql" \
+        "${REPO_ROOT}/build/src/cli/sb_my_isql" \
+        "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_my_isql" || true)"
+
+    FB_ISQL_BIN="$(resolve_binary SCRATCHBIRD_FB_ISQL \
+        "${REPO_ROOT}/build/src/sb_fb_isql" \
+        "${REPO_ROOT}/build/src/cli/sb_fb_isql" \
+        "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_fb_isql" \
+        "$(command -v isql-fb 2>/dev/null || true)" || true)"
 }
 
 set_mode_paths() {
@@ -151,6 +181,8 @@ set_mode_paths() {
     SERVER_LOG="${LOG_DIR}/sb_server.log"
     BOOTSTRAP_LOG="${LOG_DIR}/bootstrap_seed.out"
     SEED_MARKER="${EXAMPLE_ROOT}/.seeded"
+    EXAMPLE_BUNDLE_MARKER="${EXAMPLE_ROOT}/.example_bundle_seeded"
+    EXAMPLE_BUNDLE_LOG="${LOG_DIR}/example_bundle_import.out"
     RUNTIME_ENV_FILE="${PROFILE_DIR}/runtime.env"
     CONNECTIONS_JSON_FILE="${PROFILE_DIR}/connections.json"
 }
@@ -354,11 +386,78 @@ run_bootstrap_seed() {
     touch "${SEED_MARKER}"
 }
 
+run_example_bundle_import() {
+    DID_IMPORT_BUNDLE="0"
+    local enabled="${SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE:-1}"
+    if [[ "${enabled}" == "0" ]]; then
+        log "example bundle import disabled (SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE=0)"
+        return 0
+    fi
+
+    if [[ ! -f "${EXAMPLE_BUNDLE_IMPORTER}" ]]; then
+        log "example bundle importer missing, skipping: ${EXAMPLE_BUNDLE_IMPORTER}"
+        return 0
+    fi
+    if [[ ! -f "${EXAMPLE_BUNDLE_ROOT}/manifest.csv" ]]; then
+        log "example bundle manifest missing, skipping: ${EXAMPLE_BUNDLE_ROOT}/manifest.csv"
+        return 0
+    fi
+
+    : > "${EXAMPLE_BUNDLE_LOG}"
+    local import_timeout="${SCRATCHBIRD_EXAMPLE_IMPORT_TIMEOUT_SEC:-90}"
+    local strict_native_core="${SCRATCHBIRD_EXAMPLE_IMPORT_STRICT_NATIVE_CORE:-0}"
+    local strict_emulation="${SCRATCHBIRD_EXAMPLE_IMPORT_STRICT_EMULATION:-0}"
+    local output_root="${PROFILE_DIR}/example_bundle"
+    local -a cmd=(
+        python3 "${EXAMPLE_BUNDLE_IMPORTER}"
+        --bundle-root "${EXAMPLE_BUNDLE_ROOT}"
+        --output-root "${output_root}"
+        --timeout-sec "${import_timeout}"
+        --native-isql "${ISQL_BIN}"
+        --native-host "${BIND_HOST}"
+        --native-port "${NATIVE_PORT}"
+        --native-db "${MAIN_DB}"
+        --native-user "${ADMIN_USER}"
+        --native-password "${ADMIN_PASSWORD}"
+        --pg-isql "${PG_ISQL_BIN}"
+        --pg-host "${BIND_HOST}"
+        --pg-port "${PG_PORT}"
+        --pg-db "${PG_DB}"
+        --pg-user "${PG_USER}"
+        --pg-password "${PG_PASSWORD}"
+        --my-isql "${MY_ISQL_BIN}"
+        --my-host "${BIND_HOST}"
+        --my-port "${MYSQL_PORT}"
+        --my-db "${MYSQL_DB}"
+        --my-user "${MYSQL_USER}"
+        --my-password "${MYSQL_PASSWORD}"
+        --fb-isql "${FB_ISQL_BIN}"
+        --fb-work-db-root "${EXAMPLE_ROOT}/emulated/firebird"
+    )
+    if [[ "${strict_native_core}" == "1" ]]; then
+        cmd+=(--strict-native-core)
+    fi
+    if [[ "${strict_emulation}" == "1" ]]; then
+        cmd+=(--strict-emulation)
+    fi
+
+    if ! "${cmd[@]}" > "${EXAMPLE_BUNDLE_LOG}" 2>&1; then
+        tail -n 200 "${EXAMPLE_BUNDLE_LOG}" >&2 || true
+        die "example bundle import failed"
+    fi
+
+    DID_IMPORT_BUNDLE="1"
+    touch "${EXAMPLE_BUNDLE_MARKER}"
+}
+
 write_connection_profiles() {
     cat > "${RUNTIME_ENV_FILE}" <<EOF
 export SCRATCHBIRD_EXAMPLE_ROOT='${EXAMPLE_ROOT}'
 export SCRATCHBIRD_SB_SERVER='${SERVER_BIN}'
 export SCRATCHBIRD_SB_ISQL='${ISQL_BIN}'
+export SCRATCHBIRD_PG_ISQL='${PG_ISQL_BIN}'
+export SCRATCHBIRD_MY_ISQL='${MY_ISQL_BIN}'
+export SCRATCHBIRD_FB_ISQL='${FB_ISQL_BIN}'
 
 export SCRATCHBIRD_NATIVE_HOST='${BIND_HOST}'
 export SCRATCHBIRD_NATIVE_PORT='${NATIVE_PORT}'
@@ -393,6 +492,13 @@ EOF
   "generated_by": "scripts/example_db_manager.sh",
   "mode": "${MODE}",
   "root": "${EXAMPLE_ROOT}",
+  "example_bundle_summary": "${PROFILE_DIR}/example_bundle/SUMMARY.json",
+  "clients": {
+    "sb_isql": "${ISQL_BIN}",
+    "sb_pg_isql": "${PG_ISQL_BIN}",
+    "sb_my_isql": "${MY_ISQL_BIN}",
+    "sb_fb_isql": "${FB_ISQL_BIN}"
+  },
   "native": {
     "host": "${BIND_HOST}",
     "port": ${NATIVE_PORT},
@@ -433,6 +539,7 @@ print_status() {
     log "db=${DB_FILE}"
     log "config=${CONF_FILE}"
     log "seeded=$([[ -f "${SEED_MARKER}" ]] && echo yes || echo no)"
+    log "example_bundle_seeded=$([[ -f "${EXAMPLE_BUNDLE_MARKER}" ]] && echo yes || echo no)"
     if [[ -n "${pid}" ]] && pid_is_running "${pid}"; then
         log "server=running pid=${pid}"
     else
@@ -458,6 +565,13 @@ dynamic_setup() {
     start_server
     run_bootstrap_seed
     write_connection_profiles
+    run_example_bundle_import
+    if [[ "${DID_IMPORT_BUNDLE}" == "1" ]]; then
+        log "restarting listeners after example bundle import"
+        stop_server
+        start_server
+        write_connection_profiles
+    fi
     print_status
 }
 
@@ -494,6 +608,15 @@ static_up() {
         run_bootstrap_seed
     fi
     write_connection_profiles
+    if [[ ! -f "${EXAMPLE_BUNDLE_MARKER}" ]]; then
+        run_example_bundle_import
+        if [[ "${DID_IMPORT_BUNDLE}" == "1" ]]; then
+            log "restarting listeners after example bundle import"
+            stop_server
+            start_server
+            write_connection_profiles
+        fi
+    fi
     print_status
 }
 
@@ -514,6 +637,13 @@ static_refresh() {
     start_server
     run_bootstrap_seed
     write_connection_profiles
+    run_example_bundle_import
+    if [[ "${DID_IMPORT_BUNDLE}" == "1" ]]; then
+        log "restarting listeners after example bundle import"
+        stop_server
+        start_server
+        write_connection_profiles
+    fi
     print_status
 }
 

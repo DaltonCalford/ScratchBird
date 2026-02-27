@@ -1,0 +1,1 @@
+CQL SELECT * FROM t;

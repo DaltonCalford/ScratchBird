@@ -625,6 +625,10 @@ bool encodeValue(const FieldDef& field, const Value& value, Buffer& out, DecodeE
                 FieldDef f{field.name, FieldType::BYTES, {}};
                 return encodeValue(f, value, out, err);
             }
+            if (field.ref == "TYPE_SPEC" || field.ref == "type_spec") {
+                FieldDef f{field.name, FieldType::TYPE_SPEC, {}};
+                return encodeValue(f, value, out, err);
+            }
             if (field.ref == "u8") { FieldDef f{field.name, FieldType::U8, {}}; return encodeValue(f, value, out, err); }
             if (field.ref == "u16") { FieldDef f{field.name, FieldType::U16, {}}; return encodeValue(f, value, out, err); }
             if (field.ref == "u32") { FieldDef f{field.name, FieldType::U32, {}}; return encodeValue(f, value, out, err); }
@@ -831,6 +835,10 @@ bool decodeValue(const FieldDef& field, const uint8_t* data, size_t size, size_t
             }
             if (field.ref == "bytes") {
                 FieldDef f{field.name, FieldType::BYTES, {}};
+                return decodeValue(f, data, size, offset, out, err);
+            }
+            if (field.ref == "TYPE_SPEC" || field.ref == "type_spec") {
+                FieldDef f{field.name, FieldType::TYPE_SPEC, {}};
                 return decodeValue(f, data, size, offset, out, err);
             }
             if (field.ref == "u8") { FieldDef f{field.name, FieldType::U8, {}}; return decodeValue(f, data, size, offset, out, err); }

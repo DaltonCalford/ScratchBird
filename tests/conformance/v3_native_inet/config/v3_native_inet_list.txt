@@ -1,0 +1,24 @@
+# mode|sql_file_relative_to_suite|expected_file_relative_to_suite
+pass|sql/01_insert_variants.sql|expected/01_insert_variants.expected
+pass|sql/02_alter_update_merge.sql|expected/02_alter_update_merge.expected
+pass|sql/03_delete_truncate.sql|expected/03_delete_truncate.expected
+pass|sql/04_foreign_key.sql|expected/04_foreign_key.expected
+pass|sql/05_index_predicate.sql|expected/05_index_predicate.expected
+pass|sql/06_select_join_cte.sql|expected/06_select_join_cte.expected
+pass|sql/07_transactions_savepoint.sql|expected/07_transactions_savepoint.expected
+pass|sql/08_routines_trigger.sql|expected/08_routines_trigger.expected
+pass|sql/09_security_default_access_public.sql|expected/09_security_default_access_public.expected
+pass|sql/10_security_ownership_alter_owner.sql|expected/10_security_ownership_alter_owner.expected
+pass|sql/11_security_grants_dml_execute_view.sql|expected/11_security_grants_dml_execute_view.expected
+pass|sql/12_security_show_visibility.sql|expected/12_security_show_visibility.expected
+pass|sql/13_security_row_level_security.sql|expected/13_security_row_level_security.expected
+pass|sql/14_security_column_level.sql|expected/14_security_column_level.expected
+pass|sql/15_security_domain_masking.sql|expected/15_security_domain_masking.expected
+pass|sql/16_modal_surfaces.sql|expected/16_modal_surfaces.expected
+pass|sql/17_parser_misc_show_set.sql|expected/17_parser_misc_show_set.expected
+pass|sql/18_dtype_surface_smoke.sql|expected/18_dtype_surface_smoke.expected
+pass|sql/93_canonical_redis_runtime.sql|expected/93_canonical_redis_runtime.expected
+pass|sql/94_canonical_search_runtime.sql|expected/94_canonical_search_runtime.expected
+fail|sql/90_deprecated_alias_filter_doc.sql|expected/90_deprecated_alias_filter_doc.expected
+fail|sql/91_deprecated_alias_ann.sql|expected/91_deprecated_alias_ann.expected
+fail|sql/92_deprecated_engine_aliases.sql|expected/92_deprecated_engine_aliases.expected

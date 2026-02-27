@@ -1,0 +1,11 @@
+engine,upstream_candidate,v3_target_surface,planned_v3_case,status
+redis,tests/unit/type/stream.tcl,STREAM and STREAM GROUP commands,v3_stream_group_roundtrip,pending_translation
+redis,tests/unit/type/stream-cgroups.tcl,STREAM GROUP CREATE/READ/CLAIM,v3_stream_group_consumer_flow,pending_translation
+redis,tests/vectorset/vectorset.tcl,VECTOR ANN QUERY and vector index operations,v3_vector_ann_regression,pending_translation
+mongo,jstests/change_streams/whole_db_resumability.js,STREAM/CHANGE notification surface,v3_stream_resume_semantics,pending_translation
+mongo,jstests/change_streams/lookup_post_image.js,document stream post-image semantics,v3_doc_stream_postimage,pending_translation
+mongo,jstests/with_mongot/search_mocked/search_meta_no_docs.js,SEARCH DSL no-result behavior,v3_search_dsl_empty_result,pending_translation
+neo4j,community/server-test-utils/src/main/java/org/neo4j/server/http/cypher/integration/TransactionConditions.java,GRAPH MATCH transactional behavior,v3_graph_match_tx_conditions,pending_translation
+neo4j,community/security/src/main/java/org/neo4j/server/security/auth/AuthProcedures.java,AUTH procedure integration surface,v3_auth_procedure_surface,pending_translation
+cassandra,test/distributed/org/apache/cassandra/distributed/test/cql3/MultiNodeTableWalkTest.java,DML scan consistency and partition traversal,v3_scan_consistency_walk,pending_translation
+cassandra,test/distributed/org/apache/cassandra/distributed/test/auth/RoleRevocationTest.java,role revoke/grant behavior,v3_role_revocation_regression,pending_translation

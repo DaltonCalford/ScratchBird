@@ -1,0 +1,7 @@
+DROP VIEW IF EXISTS v3_sec_col_view;|||Rows affected: 0
+DROP TABLE IF EXISTS v3_sec_col_base;|||Rows affected: 0
+CREATE TABLE v3_sec_col_base (id INTEGER PRIMARY KEY, public_col VARCHAR(32), private_col VARCHAR(32));|||Rows affected: 0
+INSERT INTO v3_sec_col_base (id, public_col, private_col) VALUES (1, 'p1', 's1');|||Rows affected: 1
+CREATE VIEW v3_sec_col_view AS SELECT id, public_col FROM v3_sec_col_base;|||Rows affected: 0
+SHOW VIEW v3_sec_col_view;|||public_col
+SELECT 'ASSERT|sec_col|view_rows|' || CAST(COUNT(*) AS VARCHAR(20)) FROM v3_sec_col_view;|||ASSERT|sec_col|view_rows|1

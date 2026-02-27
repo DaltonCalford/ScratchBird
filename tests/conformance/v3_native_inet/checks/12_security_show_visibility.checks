@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS v3_sec_show_public_obj;|||Rows affected: 0
+CREATE TABLE v3_sec_show_public_obj (id INTEGER PRIMARY KEY, payload VARCHAR(32));|||Rows affected: 0
+SHOW TABLES;|||v3_sec_show_public_obj
+SHOW GRANTS FOR sb_admin;|||Grantee
