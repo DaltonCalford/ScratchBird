@@ -1,0 +1,10 @@
+SELECT COUNT(*) FROM vw_join_scan_a a JOIN vw_join_scan_b b ON b.a_id = a.id;
+SELECT SUM(b.metric) FROM vw_join_scan_a a JOIN vw_join_scan_b b ON b.a_id = a.id;
+SELECT a.grp, COUNT(*) FROM vw_join_scan_a a JOIN vw_join_scan_b b ON b.a_id = a.id GROUP BY a.grp;
+SELECT COUNT(*) FROM vw_join_scan_a a LEFT JOIN vw_join_scan_b b ON b.a_id = a.id;
+SELECT COUNT(*) FROM vw_join_scan_a a JOIN vw_join_scan_b b ON b.a_id = a.id;
+SELECT SUM(b.metric) FROM vw_join_scan_a a JOIN vw_join_scan_b b ON b.a_id = a.id;
+SELECT a.grp, COUNT(*) FROM vw_join_scan_a a JOIN vw_join_scan_b b ON b.a_id = a.id GROUP BY a.grp;
+SELECT COUNT(*) FROM vw_join_scan_a a LEFT JOIN vw_join_scan_b b ON b.a_id = a.id;
+SELECT COUNT(*) FROM vw_join_scan_a a JOIN vw_join_scan_b b ON b.a_id = a.id;
+SELECT SUM(b.metric) FROM vw_join_scan_a a JOIN vw_join_scan_b b ON b.a_id = a.id;

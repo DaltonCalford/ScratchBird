@@ -1,0 +1,16 @@
+UPDATE vw_update_hotset SET score = score + 1 WHERE id IN (1,2,3,4);
+UPDATE vw_update_hotset SET score = score + 1 WHERE id IN (5,6,7,8);
+UPDATE vw_update_hotset SET score = score - 1 WHERE id IN (1,3,5,7);
+UPDATE vw_update_hotset SET score = score + 2 WHERE id IN (2,4,6,8);
+SELECT COUNT(*) FROM vw_update_hotset WHERE score > 0;
+UPDATE vw_update_hotset SET score = score + 1 WHERE id IN (1,2,3,4);
+UPDATE vw_update_hotset SET score = score + 1 WHERE id IN (5,6,7,8);
+UPDATE vw_update_hotset SET score = score - 1 WHERE id IN (1,3,5,7);
+UPDATE vw_update_hotset SET score = score + 2 WHERE id IN (2,4,6,8);
+SELECT SUM(score) FROM vw_update_hotset;
+UPDATE vw_update_hotset SET score = score + 1 WHERE id IN (1,2,3,4);
+UPDATE vw_update_hotset SET score = score + 1 WHERE id IN (5,6,7,8);
+UPDATE vw_update_hotset SET score = score - 1 WHERE id IN (1,3,5,7);
+UPDATE vw_update_hotset SET score = score + 2 WHERE id IN (2,4,6,8);
+SELECT AVG(score) FROM vw_update_hotset;
+UPDATE vw_update_hotset SET score = score + 1 WHERE id IN (1,2,3,4);

@@ -1,0 +1,148 @@
+version: 2
+cases:
+  - id: ddl_create_table_basic
+    tier: 0
+    tags: [ddl]
+    expectation: must_match
+    lanes: [firebird, postgresql, mysql]
+    surfaces:
+      firebird:
+        setup: cases/sql/firebird/ddl_create_table_basic.setup.sql
+        exec: cases/sql/firebird/ddl_create_table_basic.exec.sql
+        teardown: cases/sql/firebird/ddl_create_table_basic.teardown.sql
+      postgresql:
+        setup: cases/sql/postgresql/ddl_create_table_basic.setup.sql
+        exec: cases/sql/postgresql/ddl_create_table_basic.exec.sql
+        teardown: cases/sql/postgresql/ddl_create_table_basic.teardown.sql
+      mysql:
+        setup: cases/sql/mysql/ddl_create_table_basic.setup.sql
+        exec: cases/sql/mysql/ddl_create_table_basic.exec.sql
+        teardown: cases/sql/mysql/ddl_create_table_basic.teardown.sql
+    compare:
+      order_sensitive: false
+
+  - id: dml_insert_multirow
+    tier: 0
+    tags: [dml, insert]
+    expectation: must_match
+    lanes: [firebird, postgresql, mysql]
+    surfaces:
+      firebird:
+        setup: cases/sql/firebird/dml_insert_multirow.setup.sql
+        exec: cases/sql/firebird/dml_insert_multirow.exec.sql
+        teardown: cases/sql/firebird/dml_insert_multirow.teardown.sql
+      postgresql:
+        setup: cases/sql/postgresql/dml_insert_multirow.setup.sql
+        exec: cases/sql/postgresql/dml_insert_multirow.exec.sql
+        teardown: cases/sql/postgresql/dml_insert_multirow.teardown.sql
+      mysql:
+        setup: cases/sql/mysql/dml_insert_multirow.setup.sql
+        exec: cases/sql/mysql/dml_insert_multirow.exec.sql
+        teardown: cases/sql/mysql/dml_insert_multirow.teardown.sql
+    compare:
+      order_sensitive: false
+
+  - id: dml_update_delete
+    tier: 0
+    tags: [dml, update, delete]
+    expectation: must_match
+    lanes: [firebird, postgresql, mysql]
+    surfaces:
+      firebird:
+        setup: cases/sql/firebird/dml_update_delete.setup.sql
+        exec: cases/sql/firebird/dml_update_delete.exec.sql
+        teardown: cases/sql/firebird/dml_update_delete.teardown.sql
+      postgresql:
+        setup: cases/sql/postgresql/dml_update_delete.setup.sql
+        exec: cases/sql/postgresql/dml_update_delete.exec.sql
+        teardown: cases/sql/postgresql/dml_update_delete.teardown.sql
+      mysql:
+        setup: cases/sql/mysql/dml_update_delete.setup.sql
+        exec: cases/sql/mysql/dml_update_delete.exec.sql
+        teardown: cases/sql/mysql/dml_update_delete.teardown.sql
+    compare:
+      order_sensitive: false
+
+  - id: dml_join_aggregate
+    tier: 0
+    tags: [dml, select, join, aggregate]
+    expectation: must_match
+    lanes: [firebird, postgresql, mysql]
+    surfaces:
+      firebird:
+        setup: cases/sql/firebird/dml_join_aggregate.setup.sql
+        exec: cases/sql/firebird/dml_join_aggregate.exec.sql
+        teardown: cases/sql/firebird/dml_join_aggregate.teardown.sql
+      postgresql:
+        setup: cases/sql/postgresql/dml_join_aggregate.setup.sql
+        exec: cases/sql/postgresql/dml_join_aggregate.exec.sql
+        teardown: cases/sql/postgresql/dml_join_aggregate.teardown.sql
+      mysql:
+        setup: cases/sql/mysql/dml_join_aggregate.setup.sql
+        exec: cases/sql/mysql/dml_join_aggregate.exec.sql
+        teardown: cases/sql/mysql/dml_join_aggregate.teardown.sql
+    compare:
+      order_sensitive: false
+
+  - id: tx_commit_visibility
+    tier: 0
+    tags: [transaction, dml]
+    expectation: must_match
+    lanes: [firebird, postgresql, mysql]
+    surfaces:
+      firebird:
+        setup: cases/sql/firebird/tx_commit_visibility.setup.sql
+        exec: cases/sql/firebird/tx_commit_visibility.exec.sql
+        teardown: cases/sql/firebird/tx_commit_visibility.teardown.sql
+      postgresql:
+        setup: cases/sql/postgresql/tx_commit_visibility.setup.sql
+        exec: cases/sql/postgresql/tx_commit_visibility.exec.sql
+        teardown: cases/sql/postgresql/tx_commit_visibility.teardown.sql
+      mysql:
+        setup: cases/sql/mysql/tx_commit_visibility.setup.sql
+        exec: cases/sql/mysql/tx_commit_visibility.exec.sql
+        teardown: cases/sql/mysql/tx_commit_visibility.teardown.sql
+    compare:
+      order_sensitive: false
+
+  - id: tx_rollback_visibility
+    tier: 0
+    tags: [transaction, dml]
+    expectation: must_match
+    lanes: [firebird, postgresql, mysql]
+    surfaces:
+      firebird:
+        setup: cases/sql/firebird/tx_rollback_visibility.setup.sql
+        exec: cases/sql/firebird/tx_rollback_visibility.exec.sql
+        teardown: cases/sql/firebird/tx_rollback_visibility.teardown.sql
+      postgresql:
+        setup: cases/sql/postgresql/tx_rollback_visibility.setup.sql
+        exec: cases/sql/postgresql/tx_rollback_visibility.exec.sql
+        teardown: cases/sql/postgresql/tx_rollback_visibility.teardown.sql
+      mysql:
+        setup: cases/sql/mysql/tx_rollback_visibility.setup.sql
+        exec: cases/sql/mysql/tx_rollback_visibility.exec.sql
+        teardown: cases/sql/mysql/tx_rollback_visibility.teardown.sql
+    compare:
+      order_sensitive: false
+
+  - id: index_lookup_predicates
+    tier: 0
+    tags: [index, select, predicate]
+    expectation: must_match
+    lanes: [firebird, postgresql, mysql]
+    surfaces:
+      firebird:
+        setup: cases/sql/firebird/index_lookup_predicates.setup.sql
+        exec: cases/sql/firebird/index_lookup_predicates.exec.sql
+        teardown: cases/sql/firebird/index_lookup_predicates.teardown.sql
+      postgresql:
+        setup: cases/sql/postgresql/index_lookup_predicates.setup.sql
+        exec: cases/sql/postgresql/index_lookup_predicates.exec.sql
+        teardown: cases/sql/postgresql/index_lookup_predicates.teardown.sql
+      mysql:
+        setup: cases/sql/mysql/index_lookup_predicates.setup.sql
+        exec: cases/sql/mysql/index_lookup_predicates.exec.sql
+        teardown: cases/sql/mysql/index_lookup_predicates.teardown.sql
+    compare:
+      order_sensitive: false

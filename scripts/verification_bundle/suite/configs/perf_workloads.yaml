@@ -1,0 +1,103 @@
+version: 2
+defaults:
+  timeout_seconds: 300
+workloads:
+  - id: insert_single
+    tags: [dml, insert, concurrency]
+    lanes: [native, firebird, postgresql, mysql]
+    operations_per_worker: 20
+    concurrency: [1, 8, 32]
+    setup_sql:
+      native: cases/workloads/sql/native/insert_single.setup.sql
+      firebird: cases/workloads/sql/firebird/insert_single.setup.sql
+      postgresql: cases/workloads/sql/postgresql/insert_single.setup.sql
+      mysql: cases/workloads/sql/mysql/insert_single.setup.sql
+    run_sql:
+      native: cases/workloads/sql/native/insert_single.run.sql
+      firebird: cases/workloads/sql/firebird/insert_single.run.sql
+      postgresql: cases/workloads/sql/postgresql/insert_single.run.sql
+      mysql: cases/workloads/sql/mysql/insert_single.run.sql
+    teardown_sql:
+      native: cases/workloads/sql/native/insert_single.teardown.sql
+      firebird: cases/workloads/sql/firebird/insert_single.teardown.sql
+      postgresql: cases/workloads/sql/postgresql/insert_single.teardown.sql
+      mysql: cases/workloads/sql/mysql/insert_single.teardown.sql
+    thresholds:
+      min_tps: 50
+      max_p95_ms: 4000
+      max_error_rate: 0.0
+
+  - id: update_hotset
+    tags: [dml, update, concurrency]
+    lanes: [native, firebird, postgresql, mysql]
+    operations_per_worker: 16
+    concurrency: [1, 8, 32]
+    setup_sql:
+      native: cases/workloads/sql/native/update_hotset.setup.sql
+      firebird: cases/workloads/sql/firebird/update_hotset.setup.sql
+      postgresql: cases/workloads/sql/postgresql/update_hotset.setup.sql
+      mysql: cases/workloads/sql/mysql/update_hotset.setup.sql
+    run_sql:
+      native: cases/workloads/sql/native/update_hotset.run.sql
+      firebird: cases/workloads/sql/firebird/update_hotset.run.sql
+      postgresql: cases/workloads/sql/postgresql/update_hotset.run.sql
+      mysql: cases/workloads/sql/mysql/update_hotset.run.sql
+    teardown_sql:
+      native: cases/workloads/sql/native/update_hotset.teardown.sql
+      firebird: cases/workloads/sql/firebird/update_hotset.teardown.sql
+      postgresql: cases/workloads/sql/postgresql/update_hotset.teardown.sql
+      mysql: cases/workloads/sql/mysql/update_hotset.teardown.sql
+    thresholds:
+      min_tps: 25
+      max_p95_ms: 6000
+      max_error_rate: 0.0
+
+  - id: point_select_index
+    tags: [select, index, concurrency]
+    lanes: [native, firebird, postgresql, mysql]
+    operations_per_worker: 24
+    concurrency: [1, 8, 32, 64]
+    setup_sql:
+      native: cases/workloads/sql/native/point_select_index.setup.sql
+      firebird: cases/workloads/sql/firebird/point_select_index.setup.sql
+      postgresql: cases/workloads/sql/postgresql/point_select_index.setup.sql
+      mysql: cases/workloads/sql/mysql/point_select_index.setup.sql
+    run_sql:
+      native: cases/workloads/sql/native/point_select_index.run.sql
+      firebird: cases/workloads/sql/firebird/point_select_index.run.sql
+      postgresql: cases/workloads/sql/postgresql/point_select_index.run.sql
+      mysql: cases/workloads/sql/mysql/point_select_index.run.sql
+    teardown_sql:
+      native: cases/workloads/sql/native/point_select_index.teardown.sql
+      firebird: cases/workloads/sql/firebird/point_select_index.teardown.sql
+      postgresql: cases/workloads/sql/postgresql/point_select_index.teardown.sql
+      mysql: cases/workloads/sql/mysql/point_select_index.teardown.sql
+    thresholds:
+      min_tps: 100
+      max_p95_ms: 3000
+      max_error_rate: 0.0
+
+  - id: join_scan
+    tags: [select, join, concurrency]
+    lanes: [native, firebird, postgresql, mysql]
+    operations_per_worker: 10
+    concurrency: [1, 8, 16]
+    setup_sql:
+      native: cases/workloads/sql/native/join_scan.setup.sql
+      firebird: cases/workloads/sql/firebird/join_scan.setup.sql
+      postgresql: cases/workloads/sql/postgresql/join_scan.setup.sql
+      mysql: cases/workloads/sql/mysql/join_scan.setup.sql
+    run_sql:
+      native: cases/workloads/sql/native/join_scan.run.sql
+      firebird: cases/workloads/sql/firebird/join_scan.run.sql
+      postgresql: cases/workloads/sql/postgresql/join_scan.run.sql
+      mysql: cases/workloads/sql/mysql/join_scan.run.sql
+    teardown_sql:
+      native: cases/workloads/sql/native/join_scan.teardown.sql
+      firebird: cases/workloads/sql/firebird/join_scan.teardown.sql
+      postgresql: cases/workloads/sql/postgresql/join_scan.teardown.sql
+      mysql: cases/workloads/sql/mysql/join_scan.teardown.sql
+    thresholds:
+      min_tps: 10
+      max_p95_ms: 8000
+      max_error_rate: 0.0

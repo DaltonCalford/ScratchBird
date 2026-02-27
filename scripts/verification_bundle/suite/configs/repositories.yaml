@@ -1,0 +1,77 @@
+version: 1
+defaults:
+  repo_root: repos
+  core_engine_ids:
+    - mysql_server
+    - postgresql
+    - firebird
+repositories:
+  - id: scratchbird
+    group: scratchbird
+    url: https://github.com/DaltonCalford/ScratchBird.git
+    path: ScratchBird
+  - id: scratchbird_driver
+    group: scratchbird
+    url: https://github.com/DaltonCalford/ScratchBird-driver.git
+    path: ScratchBird-driver
+  - id: scratchbird_ai
+    group: scratchbird
+    url: https://github.com/DaltonCalford/ScratchBird-ai.git
+    path: ScratchBird-ai
+  - id: scratchrobin
+    group: scratchbird
+    url: https://github.com/DaltonCalford/ScratchRobin.git
+    path: ScratchRobin
+
+  - id: mysql_server
+    group: engines
+    url: https://github.com/mysql/mysql-server.git
+    path: mysql-server
+  - id: postgresql
+    group: engines
+    url: https://git.postgresql.org/git/postgresql.git
+    path: postgresql
+  - id: firebird
+    group: engines
+    url: https://github.com/FirebirdSQL/firebird.git
+    path: firebird
+  - id: cassandra
+    group: engines
+    url: https://github.com/apache/cassandra.git
+    path: cassandra
+  - id: milvus
+    group: engines
+    url: https://github.com/milvus-io/milvus.git
+    path: milvus
+  - id: mongodb
+    group: engines
+    url: https://github.com/mongodb/mongo.git
+    path: mongo
+  - id: neo4j
+    group: engines
+    url: https://github.com/neo4j/neo4j.git
+    path: neo4j
+  - id: redis
+    group: engines
+    url: https://github.com/redis/redis.git
+    path: redis
+  - id: mariadb
+    group: engines
+    url: https://github.com/MariaDB/server.git
+    path: server
+  - id: influxdb
+    group: engines
+    url: https://github.com/influxdata/influxdb.git
+    path: influxdb
+  - id: clickhouse
+    group: engines
+    url: https://github.com/ClickHouse/ClickHouse.git
+    path: ClickHouse
+  - id: opensearch
+    group: engines
+    url: https://github.com/opensearch-project/OpenSearch.git
+    path: OpenSearch
+  - id: duckdb
+    group: engines
+    url: https://github.com/duckdb/duckdb.git
+    path: duckdb

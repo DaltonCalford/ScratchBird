@@ -1,0 +1,163 @@
+version: 2
+defaults:
+  timeout_seconds: 300
+engines:
+  - id: scratchbird_native
+    family: scratchbird
+    mode: native
+    lane: native
+    enabled: true
+    client: sb_isql
+    client_candidates:
+      - "{repo_root}/ScratchBird/build/src/sb_isql"
+      - "{repo_root}/ScratchBird/build/src/cli/sb_isql"
+      - "{repo_root}/ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_isql"
+      - "sb_isql"
+    connect:
+      host: 127.0.0.1
+      port: 13092
+      database: main
+      user: sb_admin
+      password: SbAdmin_Compat1!
+      mode: local-ipc
+      ipc_method: tcp
+    env_overrides:
+      host: SB_VERIFY_SB_NATIVE_HOST
+      port: SB_VERIFY_SB_NATIVE_PORT
+      database: SB_VERIFY_SB_NATIVE_DB
+      user: SB_VERIFY_SB_NATIVE_USER
+      password: SB_VERIFY_SB_NATIVE_PASSWORD
+
+  - id: scratchbird_emulated_firebird
+    family: scratchbird
+    mode: emulated
+    emulates: firebird
+    lane: firebird
+    enabled: true
+    client: isql-fb
+    client_candidates:
+      - "isql-fb"
+      - "isql"
+    connect:
+      host: 127.0.0.1
+      port: 13050
+      database: compat_firebird
+      user: SYSDBA
+      password: SysDbaCompat_1!
+    env_overrides:
+      host: SB_VERIFY_SB_FB_HOST
+      port: SB_VERIFY_SB_FB_PORT
+      database: SB_VERIFY_SB_FB_DB
+      user: SB_VERIFY_SB_FB_USER
+      password: SB_VERIFY_SB_FB_PASSWORD
+
+  - id: ref_firebird
+    family: reference
+    mode: native
+    engine: firebird
+    lane: firebird
+    enabled: true
+    client: isql-fb
+    client_candidates:
+      - "isql-fb"
+      - "isql"
+    connect:
+      host: 127.0.0.1
+      port: 3050
+      database: /firebird/data/ref_verify_firebird.fdb
+      user: SYSDBA
+      password: masterkey
+    env_overrides:
+      host: SB_VERIFY_REF_FB_HOST
+      port: SB_VERIFY_REF_FB_PORT
+      database: SB_VERIFY_REF_FB_DB
+      user: SB_VERIFY_REF_FB_USER
+      password: SB_VERIFY_REF_FB_PASSWORD
+
+  - id: scratchbird_emulated_postgresql
+    family: scratchbird
+    mode: emulated
+    emulates: postgresql
+    lane: postgresql
+    enabled: true
+    client: psql
+    client_candidates:
+      - "psql"
+    connect:
+      host: 127.0.0.1
+      port: 15432
+      database: regression
+      user: pg_admin
+      password: PgAdmin_Compat1!
+    env_overrides:
+      host: SB_VERIFY_SB_PG_HOST
+      port: SB_VERIFY_SB_PG_PORT
+      database: SB_VERIFY_SB_PG_DB
+      user: SB_VERIFY_SB_PG_USER
+      password: SB_VERIFY_SB_PG_PASSWORD
+
+  - id: ref_postgresql
+    family: reference
+    mode: native
+    engine: postgresql
+    lane: postgresql
+    enabled: true
+    client: psql
+    client_candidates:
+      - "psql"
+    connect:
+      host: 127.0.0.1
+      port: 5432
+      database: postgres
+      user: postgres
+      password: postgres
+    env_overrides:
+      host: SB_VERIFY_REF_PG_HOST
+      port: SB_VERIFY_REF_PG_PORT
+      database: SB_VERIFY_REF_PG_DB
+      user: SB_VERIFY_REF_PG_USER
+      password: SB_VERIFY_REF_PG_PASSWORD
+
+  - id: scratchbird_emulated_mysql
+    family: scratchbird
+    mode: emulated
+    emulates: mysql
+    lane: mysql
+    enabled: true
+    client: mysql
+    client_candidates:
+      - "mysql"
+    connect:
+      host: 127.0.0.1
+      port: 13306
+      database: compat_mysql
+      user: root
+      password: RootCompat_1!
+    env_overrides:
+      host: SB_VERIFY_SB_MY_HOST
+      port: SB_VERIFY_SB_MY_PORT
+      database: SB_VERIFY_SB_MY_DB
+      user: SB_VERIFY_SB_MY_USER
+      password: SB_VERIFY_SB_MY_PASSWORD
+
+  - id: ref_mysql
+    family: reference
+    mode: native
+    engine: mysql
+    lane: mysql
+    enabled: true
+    client: mysql
+    client_candidates:
+      - "mysql"
+    connect:
+      host: 127.0.0.1
+      port: 3306
+      database: mysql
+      user: root
+      password: root
+    env_overrides:
+      host: SB_VERIFY_REF_MY_HOST
+      port: SB_VERIFY_REF_MY_PORT
+      database: SB_VERIFY_REF_MY_DB
+      user: SB_VERIFY_REF_MY_USER
+      password: SB_VERIFY_REF_MY_PASSWORD

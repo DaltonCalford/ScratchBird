@@ -7,6 +7,30 @@
 
 ## 📊 Available Scripts
 
+### Verification Bundle (External Beta Validation)
+
+Portable object: `scripts/verification_bundle/`
+
+Use:
+```bash
+cd scripts/verification_bundle
+sudo ./SB_Dev_Bootstrap.sh --yes
+```
+
+This provisions host dependencies, creates the `scratchbird` user/group, clones/updates source repos, runs full build + `ctest`, runs verification lanes, and emits a support zip artifact.
+
+Legacy non-root entrypoint remains available:
+```bash
+./bootstrap.sh
+```
+
+For an already-provisioned local developer environment (repos already pulled, tools already installed), run:
+```bash
+./scripts/run_fresh_local_verification.sh
+```
+
+This archives prior verification artifacts, restarts the runtime stack, and executes a fresh verification pass.
+
 ### 1. generate-project-stats.sh
 Generates comprehensive project statistics.
 

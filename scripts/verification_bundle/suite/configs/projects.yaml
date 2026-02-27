@@ -1,0 +1,51 @@
+version: 1
+projects:
+  - name: ScratchBird
+    path: ScratchBird
+  - name: ScratchBird-driver
+    path: ScratchBird-driver
+  - name: ScratchBird-ai
+    path: ScratchBird-ai
+  - name: ScratchRobin
+    path: ScratchRobin
+
+source_globs:
+  - "**/*.c"
+  - "**/*.cc"
+  - "**/*.cpp"
+  - "**/*.cxx"
+  - "**/*.h"
+  - "**/*.hpp"
+  - "**/*.rs"
+  - "**/*.go"
+  - "**/*.java"
+  - "**/*.kt"
+  - "**/*.swift"
+  - "**/*.cs"
+  - "**/*.py"
+  - "**/*.js"
+  - "**/*.ts"
+  - "**/*.sql"
+
+test_hints:
+  dir_patterns:
+    - "/test/"
+    - "/tests/"
+    - "/spec/"
+    - "/specs/"
+    - "/__tests__/"
+  file_patterns:
+    - "test_"
+    - "_test."
+    - ".spec."
+
+ignore_dirs:
+  - ".git"
+  - "build"
+  - "out"
+  - "dist"
+  - ".venv"
+  - "node_modules"
+  - ".gradle"
+  - ".idea"
+  - ".vscode"
