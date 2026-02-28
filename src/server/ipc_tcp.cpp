@@ -135,9 +135,12 @@ static void setSocketTimeout(socket_t sock, uint32_t timeout_ms, bool for_recv) 
 
 class TCPConnection final : public IPCConnection {
 public:
-    explicit TCPConnection(socket_t sock, const std::string& remote_addr)
+    explicit TCPConnection(socket_t sock,
+                           const std::string& remote_addr,
+                           std::atomic<uint32_t>* connection_count)
         : sock_(sock)
         , remote_address_(remote_addr)
+        , connection_count_(connection_count)
         , state_(ConnectionState::CONNECTED)
     {
         stats_.connected_at = std::chrono::steady_clock::now();
@@ -309,6 +312,7 @@ public:
 #endif
             closesocket_impl(sock_);
             sock_ = INVALID_SOCKET_VALUE;
+            decrementConnectionCount();
         }
         state_ = ConnectionState::DISCONNECTED;
     }
@@ -357,8 +361,24 @@ public:
     }
 
 private:
+    void decrementConnectionCount() {
+        if (!connection_count_) {
+            return;
+        }
+        uint32_t current = connection_count_->load(std::memory_order_relaxed);
+        while (current > 0) {
+            if (connection_count_->compare_exchange_weak(current,
+                                                         current - 1,
+                                                         std::memory_order_relaxed,
+                                                         std::memory_order_relaxed)) {
+                break;
+            }
+        }
+    }
+
     socket_t sock_ = INVALID_SOCKET_VALUE;
     std::string remote_address_;
+    std::atomic<uint32_t>* connection_count_ = nullptr;
     ConnectionState state_ = ConnectionState::DISCONNECTED;
     ConnectionStats stats_;
 };
@@ -523,13 +543,15 @@ public:
         setNonBlocking(client_sock, false);
 
         // Create connection object
-        auto conn = std::make_unique<TCPConnection>(client_sock, remote_addr);
+        connection_count_++;
+
+        auto conn = std::make_unique<TCPConnection>(client_sock,
+                                                    remote_addr,
+                                                    &connection_count_);
 
         // Set timeouts
         conn->setReadTimeout(config_.read_timeout_ms);
         conn->setWriteTimeout(config_.write_timeout_ms);
-
-        connection_count_++;
         return conn;
     }
 
@@ -683,7 +705,7 @@ public:
 
         // Create connection
         std::string remote_addr = "tcp:127.0.0.1:" + std::to_string(config_.tcp_port);
-        connection_ = std::make_unique<TCPConnection>(sock, remote_addr);
+        connection_ = std::make_unique<TCPConnection>(sock, remote_addr, nullptr);
 
         // Set timeouts
         connection_->setReadTimeout(config_.read_timeout_ms);

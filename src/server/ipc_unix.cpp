@@ -59,9 +59,12 @@ namespace server {
 
 class UnixSocketConnection final : public IPCConnection {
 public:
-    explicit UnixSocketConnection(int fd, const std::string& remote_addr)
+    explicit UnixSocketConnection(int fd,
+                                  const std::string& remote_addr,
+                                  std::atomic<uint32_t>* connection_count)
         : fd_(fd)
         , remote_address_(remote_addr)
+        , connection_count_(connection_count)
         , state_(ConnectionState::CONNECTED)
     {
         stats_.connected_at = std::chrono::steady_clock::now();
@@ -199,6 +202,7 @@ public:
             ::shutdown(fd_, SHUT_RDWR);
             ::close(fd_);
             fd_ = -1;
+            decrementConnectionCount();
         }
         state_ = ConnectionState::DISCONNECTED;
     }
@@ -290,8 +294,24 @@ public:
     }
 
 private:
+    void decrementConnectionCount() {
+        if (!connection_count_) {
+            return;
+        }
+        uint32_t current = connection_count_->load(std::memory_order_relaxed);
+        while (current > 0) {
+            if (connection_count_->compare_exchange_weak(current,
+                                                         current - 1,
+                                                         std::memory_order_relaxed,
+                                                         std::memory_order_relaxed)) {
+                break;
+            }
+        }
+    }
+
     int fd_ = -1;
     std::string remote_address_;
+    std::atomic<uint32_t>* connection_count_ = nullptr;
     ConnectionState state_ = ConnectionState::DISCONNECTED;
     ConnectionStats stats_;
 };
@@ -474,13 +494,15 @@ public:
 #endif
 
         // Create connection object
-        auto conn = std::make_unique<UnixSocketConnection>(client_fd, remote_addr);
+        connection_count_++;
+
+        auto conn = std::make_unique<UnixSocketConnection>(client_fd,
+                                                           remote_addr,
+                                                           &connection_count_);
 
         // Set timeouts
         conn->setReadTimeout(config_.read_timeout_ms);
         conn->setWriteTimeout(config_.write_timeout_ms);
-
-        connection_count_++;
         return conn;
     }
 
@@ -518,12 +540,6 @@ public:
 
     const IPCServerConfig& getConfig() const override {
         return config_;
-    }
-
-    void decrementConnectionCount() {
-        if (connection_count_ > 0) {
-            connection_count_--;
-        }
     }
 
 private:
@@ -658,7 +674,7 @@ public:
 
         // Create connection
         std::string remote_addr = "unix:" + socket_path_;
-        connection_ = std::make_unique<UnixSocketConnection>(fd, remote_addr);
+        connection_ = std::make_unique<UnixSocketConnection>(fd, remote_addr, nullptr);
 
         // Set timeouts
         connection_->setReadTimeout(config_.read_timeout_ms);
