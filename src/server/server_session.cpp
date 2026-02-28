@@ -1831,13 +1831,6 @@ void ServerSession::requestShutdown() {
 
 core::Status ServerSession::processMessage(const protocol::Message& msg, core::ErrorContext* ctx) {
     protocol::MessageType type = msg.getType();
-    if (state_ == SessionState::CREATED && type != protocol::MessageType::CONNECT_REQUEST) {
-        std::fprintf(stderr,
-                     "[ipc_debug] server session %s unexpected first message type=%s payload_len=%u\n",
-                     sessionIdString().c_str(),
-                     protocol::messageTypeToString(type),
-                     static_cast<unsigned>(msg.getPayloadLength()));
-    }
 
     switch (type) {
         case protocol::MessageType::CONNECT_REQUEST:
@@ -1886,12 +1879,6 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
         &has_bound_db_uuid);
 
     if (status != core::Status::OK) {
-        std::fprintf(stderr,
-                     "[ipc_debug] server session %s CONNECT_REQUEST parse failure type=%s payload_len=%u detail=%s\n",
-                     sessionIdString().c_str(),
-                     protocol::messageTypeToString(msg.getType()),
-                     static_cast<unsigned>(msg.getPayloadLength()),
-                     (ctx && !ctx->message.empty()) ? ctx->message.c_str() : "none");
         sendError("Invalid connect request");
         return status;
     }
@@ -2669,23 +2656,29 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
 }
 
 core::Status ServerSession::handleDisconnect(const protocol::Message& msg, core::ErrorContext* ctx) {
-    std::fprintf(stderr,
-                 "[ipc_debug] server session %s received DISCONNECT\n",
-                 sessionIdString().c_str());
     state_ = SessionState::CLOSING;
     pending_mfa_auth_ = PendingMfaAuthState{};
 
     // Fire ON DISCONNECT database triggers (Firebird-style) before closing
     fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_DISCONNECT);
 
-    // Detach to dormant transaction so a privileged client can reattach later.
+    // Preserve dormant state only for explicit transactions. Autocommit sessions
+    // should release backend slots immediately on disconnect.
     if (conn_ctx_) {
-        core::ID dormant_id;
-        core::Status detach_status = database_->detachToDormant(conn_ctx_, dormant_id, ctx);
-        if (detach_status != core::Status::OK) {
-            // Fallback to hard rollback if we cannot persist dormant state.
+        const bool preserve_dormant =
+            !conn_ctx_->autocommitMode() || conn_ctx_->autocommitSuspended();
+
+        if (preserve_dormant) {
+            core::ID dormant_id;
+            core::Status detach_status = database_->detachToDormant(conn_ctx_, dormant_id, ctx);
+            if (detach_status != core::Status::OK) {
+                // Fallback to hard rollback if we cannot persist dormant state.
+                conn_ctx_->shutdownTransaction(ctx);
+                stats_.transactions_rolled_back++;
+                conn_ctx_.reset();
+            }
+        } else {
             conn_ctx_->shutdownTransaction(ctx);
-            stats_.transactions_rolled_back++;
             conn_ctx_.reset();
         }
     }
