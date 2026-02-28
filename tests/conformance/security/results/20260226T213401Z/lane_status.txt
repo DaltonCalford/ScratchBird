@@ -1,0 +1,1 @@
+SEC_LANE_STATUS|postgresql|FAIL|normalized mismatch

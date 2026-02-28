@@ -1,0 +1,2 @@
+STEP_RESULT|wire_protocol|compat_postgresql|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T142923Z/logs/compat_postgresql.log
+STEP_RESULT|wire_protocol|compat_mysql|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T142923Z/logs/compat_mysql.log

@@ -1,0 +1,7 @@
+Query OK
+Query OK
+Query OK
+Query OK
+Query OK, 1 rows affected
+Query OK
+Error: Parse error at line 2, column 15: Expected expression (SQLSTATE 42000)

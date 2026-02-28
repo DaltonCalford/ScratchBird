@@ -1,0 +1,1 @@
+Error: DROP TABLE resolve failed for sb_tx_truth: Object not found (SQLSTATE XX000)

@@ -55,6 +55,9 @@ FB_PASSWORD="${SCRATCHBIRD_EXAMPLE_FB_PASSWORD:-SysDbaCompat_1!}"
 FB_DB="${SCRATCHBIRD_EXAMPLE_FB_DB:-compat_firebird}"
 
 MAIN_DB="${SCRATCHBIRD_EXAMPLE_MAIN_DB:-main}"
+AUTH_METHODS="${SCRATCHBIRD_EXAMPLE_AUTH_METHODS:-password}"
+AUTH_PASSWORD_HASH="${SCRATCHBIRD_EXAMPLE_AUTH_PASSWORD_HASH:-argon2id}"
+AUTH_ALLOW_SUPERUSER_REMOTE="${SCRATCHBIRD_EXAMPLE_ALLOW_SUPERUSER_REMOTE:-true}"
 
 RUN_AS_USER="${SCRATCHBIRD_EXAMPLE_RUN_AS_USER:-$(id -un)}"
 RUN_AS_GROUP="${SCRATCHBIRD_EXAMPLE_RUN_AS_GROUP:-$(id -gn)}"
@@ -92,6 +95,9 @@ Environment:
   SCRATCHBIRD_SB_SERVER              Override sb_server binary
   SCRATCHBIRD_SB_ISQL                Override sb_isql binary
   SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL  Override bootstrap/seed SQL script path
+  SCRATCHBIRD_EXAMPLE_AUTH_METHODS   Auth methods list (default password)
+  SCRATCHBIRD_EXAMPLE_AUTH_PASSWORD_HASH Password hash algorithm (default argon2id)
+  SCRATCHBIRD_EXAMPLE_ALLOW_SUPERUSER_REMOTE Allow remote superuser auth (default true)
   SCRATCHBIRD_EXAMPLE_BUNDLE_ROOT    Bundle root (default ../local_work/findings/example_script_bundle_2)
   SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE  Run bundle importer during setup (default 1)
   SCRATCHBIRD_EXAMPLE_IMPORT_TIMEOUT_SEC  Per-script timeout (default 90)
@@ -218,9 +224,9 @@ mysql_port = ${MYSQL_PORT}
 fb_port = ${FB_PORT}
 
 [authentication]
-methods = password
-password_hash = argon2id
-allow_superuser_remote = true
+methods = ${AUTH_METHODS}
+password_hash = ${AUTH_PASSWORD_HASH}
+allow_superuser_remote = ${AUTH_ALLOW_SUPERUSER_REMOTE}
 
 [logging]
 level = info

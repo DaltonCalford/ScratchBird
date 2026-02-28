@@ -21,6 +21,7 @@ This is not a GA/production declaration. It is a beta engineering baseline.
 ## Project Documentation
 
 - [docs/README.md](docs/README.md)
+- [docs/documentation/README.md](docs/documentation/README.md)
 - [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)
 - [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)
 - [docs/BUILD.md](docs/BUILD.md)

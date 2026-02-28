@@ -1,0 +1,3 @@
+LANE_STATUS|postgresql|PASS|matched expected output
+LANE_STATUS|mysql|PASS|matched expected output
+LANE_STATUS|firebird|FAIL|normalized output mismatch

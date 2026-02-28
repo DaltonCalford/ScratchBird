@@ -1,0 +1,1 @@
+Error: V3 CREATE DATABASE options key missing (SQLSTATE HY000)

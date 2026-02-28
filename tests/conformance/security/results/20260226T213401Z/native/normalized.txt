@@ -1,0 +1,9 @@
+SEC_RESULT|SEC-001|PASS|native_rls_allow
+SEC_RESULT|SEC-002|PASS|native_rls_deny
+SEC_RESULT|SEC-003|PASS|native_column_allow
+SEC_RESULT|SEC-004|PASS|native_column_deny
+SEC_RESULT|SEC-005|PASS|native_domain_masking_privileged
+SEC_RESULT|SEC-006|PASS|native_domain_masking_unprivileged
+SEC_RESULT|SEC-007|PASS|native_domain_encryption_allow
+SEC_RESULT|SEC-008|PASS|native_domain_encryption_deny
+SEC_RESULT|SEC-009|PASS|native_audit_visibility

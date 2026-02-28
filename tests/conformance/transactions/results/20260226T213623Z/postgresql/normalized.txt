@@ -1,0 +1,3 @@
+ROW_RESULT|TX-004|NA|error_rollback_requires_harness
+ROW_RESULT|TX-005|NA|isolation_requires_multi_session
+ROW_RESULT|TX-006|NA|lock_conflict_requires_multi_session

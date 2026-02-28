@@ -1,0 +1,3 @@
+LANE_STATUS|postgresql|NA|runner command not configured
+LANE_STATUS|mysql|NA|runner command not configured
+LANE_STATUS|firebird|NA|runner command not configured

@@ -1,0 +1,179 @@
+CREATE TABLE IF NOT EXISTS onek (
+    unique1 int4, unique2 int4, two int4, four int4, ten int4, twenty int4,
+    hundred int4, thousand int4, twothousand int4, fivethous int4, tenthous int4,
+    odd int4, even int4, stringu1 varchar(32), stringu2 varchar(32), string4 varchar(32)
+);
+DELETE FROM onek;
+INSERT INTO onek VALUES
+    (0, 999, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 'ATAAAA', 'ATAAAA', 'AAAA'),
+    (1, 998, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 'BBAAAA', 'BBAAAA', 'BBBB'),
+    (2, 997, 0, 2, 2, 2, 2, 2, 2, 2, 2, 0, 1, 'CCAAAA', 'CCAAAA', 'CCCC');
+
+CREATE TABLE IF NOT EXISTS onek2 (
+    unique1 int4, unique2 int4, two int4, four int4, ten int4, twenty int4,
+    hundred int4, thousand int4, twothousand int4, fivethous int4, tenthous int4,
+    odd int4, even int4, stringu1 varchar(32), stringu2 varchar(32), string4 varchar(32)
+);
+DELETE FROM onek2;
+INSERT INTO onek2 SELECT * FROM onek;
+
+CREATE TABLE IF NOT EXISTS tenk1 (
+    unique1 int4, unique2 int4, two int4, four int4, ten int4, twenty int4,
+    hundred int4, thousand int4, twothousand int4, fivethous int4, tenthous int4,
+    odd int4, even int4, stringu1 varchar(32), stringu2 varchar(32), string4 varchar(32)
+);
+DELETE FROM tenk1;
+INSERT INTO tenk1 SELECT * FROM onek;
+
+CREATE TABLE IF NOT EXISTS tenk2 (
+    unique1 int4, unique2 int4, two int4, four int4, ten int4, twenty int4,
+    hundred int4, thousand int4, twothousand int4, fivethous int4, tenthous int4,
+    odd int4, even int4, stringu1 varchar(32), stringu2 varchar(32), string4 varchar(32)
+);
+DELETE FROM tenk2;
+INSERT INTO tenk2 SELECT * FROM tenk1;
+
+CREATE TABLE IF NOT EXISTS person (
+    name text, age int4, location text
+);
+DELETE FROM person;
+INSERT INTO person VALUES ('alice', 21, '(0,0)'), ('bob', 35, '(1,1)');
+
+CREATE TABLE IF NOT EXISTS emp (
+    name text, age int4, location text, salary int4, manager text
+);
+DELETE FROM emp;
+INSERT INTO emp VALUES ('eve', 40, '(2,2)', 1000, 'alice');
+
+CREATE TABLE IF NOT EXISTS student (
+    name text, age int4, location text, gpa float8
+);
+DELETE FROM student;
+INSERT INTO student VALUES ('sam', 19, '(3,3)', 3.8);
+
+CREATE TABLE IF NOT EXISTS stud_emp (
+    name text, age int4, location text, salary int4, manager text, gpa float8, percent int4
+);
+DELETE FROM stud_emp;
+INSERT INTO stud_emp VALUES ('pat', 22, '(4,4)', 900, 'eve', 3.6, 50);
+
+CREATE TABLE IF NOT EXISTS int8_tbl (q1 int8, q2 int8);
+DELETE FROM int8_tbl;
+INSERT INTO int8_tbl VALUES (123, 456), (4567890123456789, 123);
+SELECT * FROM onek
+   WHERE onek.unique1 < 10
+   ORDER BY onek.unique1;
+
+SELECT onek.unique1, onek.stringu1 FROM onek
+   WHERE onek.unique1 < 20
+   ORDER BY unique1 using >;
+
+SELECT onek.unique1, onek.stringu1 FROM onek
+   WHERE onek.unique1 > 980
+   ORDER BY stringu1 using <;
+
+SELECT onek.unique1, onek.string4 FROM onek
+   WHERE onek.unique1 > 980
+   ORDER BY string4 using <, unique1 using >;
+
+SELECT onek.unique1, onek.string4 FROM onek
+   WHERE onek.unique1 > 980
+   ORDER BY string4 using >, unique1 using <;
+
+SELECT onek.unique1, onek.string4 FROM onek
+   WHERE onek.unique1 < 20
+   ORDER BY unique1 using >, string4 using <;
+
+SELECT onek.unique1, onek.string4 FROM onek
+   WHERE onek.unique1 < 20
+   ORDER BY unique1 using <, string4 using >;
+
+ANALYZE onek2;
+
+SET enable_seqscan TO off;
+
+SET enable_bitmapscan TO off;
+
+SET enable_sort TO off;
+
+SELECT onek2.* FROM onek2 WHERE onek2.unique1 < 10;
+
+SELECT onek2.unique1, onek2.stringu1 FROM onek2
+    WHERE onek2.unique1 < 20
+    ORDER BY unique1 using >;
+
+SELECT onek2.unique1, onek2.stringu1 FROM onek2
+   WHERE onek2.unique1 > 980;
+
+RESET enable_seqscan;
+
+RESET enable_bitmapscan;
+
+RESET enable_sort;
+
+CREATE TEMP TABLE foo (f1 int);
+
+INSERT INTO foo VALUES (42),(3),(10),(7),(null),(null),(1);
+
+SELECT * FROM foo ORDER BY f1;
+
+SELECT * FROM foo ORDER BY f1 ASC;
+
+SELECT * FROM foo ORDER BY f1 NULLS FIRST;
+
+SELECT * FROM foo ORDER BY f1 DESC;
+
+SELECT * FROM foo ORDER BY f1 DESC NULLS LAST;
+
+SET enable_sort = false;
+
+SELECT * FROM foo ORDER BY f1;
+
+SELECT * FROM foo ORDER BY f1 NULLS FIRST;
+
+SELECT * FROM foo ORDER BY f1 DESC;
+
+SELECT * FROM foo ORDER BY f1 DESC NULLS LAST;
+
+SELECT * FROM foo ORDER BY f1;
+
+SELECT * FROM foo ORDER BY f1 NULLS FIRST;
+
+SELECT * FROM foo ORDER BY f1 DESC;
+
+SELECT * FROM foo ORDER BY f1 DESC NULLS LAST;
+
+SELECT * FROM foo ORDER BY f1;
+
+SELECT * FROM foo ORDER BY f1 NULLS FIRST;
+
+SELECT * FROM foo ORDER BY f1 DESC;
+
+SELECT * FROM foo ORDER BY f1 DESC NULLS LAST;
+
+select * from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
+
+select unique2 from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
+
+select * from onek2 where unique2 = 11 and stringu1 < 'B';
+
+select unique2 from onek2 where unique2 = 11 and stringu1 < 'B';
+
+select unique2 from onek2 where unique2 = 11 and stringu1 < 'B' for update;
+
+select unique2 from onek2 where unique2 = 11 and stringu1 < 'C';
+
+SET enable_indexscan TO off;
+
+select unique2 from onek2 where unique2 = 11 and stringu1 < 'B';
+
+RESET enable_indexscan;
+
+select unique1, unique2 from onek2
+  where (unique2 = 11 or unique1 = 0) and stringu1 < 'B';
+
+select unique1, unique2 from onek2
+  where (unique2 = 11 and stringu1 < 'B') or unique1 = 0;
+
+SELECT 1 AS x ORDER BY x;
+

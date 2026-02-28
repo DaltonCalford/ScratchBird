@@ -1,0 +1,145 @@
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
++----+----+------+
+| a  | b  | c    |
++----+----+------+
+| 5  | 10 | foo  |
+| 10 | 15 | NULL |
++----+----+------+
+(2 rows)
+OK
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(2 rows)
+OK
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(2 rows)
+OK
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(2 rows)
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(2 rows)
+OK
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(4 rows)
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(4 rows)
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(4 rows)
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(4 rows)
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(4 rows)
++------+------+------+
+| a    | b    | c    |
++------+------+------+
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
+| NULL | NULL | foo  |
+| NULL | NULL | NULL |
++------+------+------+
+(4 rows)
+OK
+OK
++------+------+-------+
+| a    | b    | expr1 |
++------+------+-------+
+| NULL | NULL | NULL  |
+| NULL | NULL | NULL  |
+| NULL | NULL | NULL  |
+| NULL | NULL | NULL  |
++------+------+-------+
+(4 rows)
++------+------+-------+
+| a    | b    | expr1 |
++------+------+-------+
+| NULL | NULL | NULL  |
+| NULL | NULL | NULL  |
+| NULL | NULL | NULL  |
+| NULL | NULL | NULL  |
++------+------+-------+
+(4 rows)
+OK
+OK

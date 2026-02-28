@@ -1,0 +1,8 @@
+STEP_RESULT|wire_protocol|compat_postgresql|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T143537Z/logs/compat_postgresql.log
+STEP_RESULT|wire_protocol|compat_mysql|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T143537Z/logs/compat_mysql.log
+STEP_RESULT|wire_protocol|compat_firebird|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T143537Z/logs/compat_firebird.log
+STEP_RESULT|wire_protocol|pg_frame_conformance|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T143537Z/logs/pg_frame_conformance.log
+STEP_RESULT|wire_protocol|mysql_frame_conformance|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T143537Z/logs/mysql_frame_conformance.log
+STEP_RESULT|wire_protocol|firebird_frame_conformance|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T143537Z/logs/firebird_frame_conformance.log
+STEP_RESULT|wire_protocol|generic_protocol_frame_conformance|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T143537Z/logs/generic_protocol_frame_conformance.log
+STEP_RESULT|end_to_end_sql|compat_scratchbird_native|PASS|/home/dcalford/CliWork/ScratchBird/tests/conformance/public_beta/results/20260227T143537Z/logs/compat_scratchbird_native.log

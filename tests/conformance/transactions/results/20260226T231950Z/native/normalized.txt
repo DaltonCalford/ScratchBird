@@ -1,0 +1,6 @@
+ROW_RESULT|TX-001|PASS|committed transaction visible
+ROW_RESULT|TX-002|PASS|aborted transaction not visible
+ROW_RESULT|TX-003|PASS|rollback to earlier savepoint invalidated nested savepoint
+ROW_RESULT|TX-004|PASS|failed commit path followed by rollback produced ABORTED
+ROW_RESULT|TX-005|PASS|older snapshot hid active xid; newer snapshot saw committed xid
+ROW_RESULT|TX-006|PASS|conflict status=3003

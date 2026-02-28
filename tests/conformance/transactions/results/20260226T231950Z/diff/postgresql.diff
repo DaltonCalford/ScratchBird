@@ -1,0 +1,11 @@
+--- /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/tests_conformance/transaction_truth.expected	2026-02-26 16:20:23.065042964 -0500
++++ /home/dcalford/CliWork/ScratchBird/tests/conformance/transactions/results/20260226T231950Z/postgresql/normalized.txt	2026-02-26 18:19:54.074341306 -0500
+@@ -1,6 +1,8 @@
+ ROW_RESULT|TX-001|PASS|commit_visibility
++ROW_RESULT|TX-001|FAIL|commit_visibility
+ ROW_RESULT|TX-002|PASS|rollback_invisibility
+ ROW_RESULT|TX-003|PASS|savepoint_rollback
++ROW_RESULT|TX-003|FAIL|savepoint_rollback
+ ROW_RESULT|TX-004|NA|error_rollback_requires_harness
+ ROW_RESULT|TX-005|NA|isolation_requires_multi_session
+ ROW_RESULT|TX-006|NA|lock_conflict_requires_multi_session

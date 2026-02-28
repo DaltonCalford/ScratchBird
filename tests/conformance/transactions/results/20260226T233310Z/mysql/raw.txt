@@ -1,0 +1,2 @@
+Query OK
+Error: SET variable not supported: database (SQLSTATE HY000)

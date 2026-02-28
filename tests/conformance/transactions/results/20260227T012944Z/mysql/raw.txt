@@ -1,0 +1,1 @@
+Error: Emulation server type mismatch (SQLSTATE HY000)

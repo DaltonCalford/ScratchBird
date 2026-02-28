@@ -1,0 +1,6 @@
+OK
+OK
+OK
+OK
+OK
+Error: Parse error at line 1, column 29: Unexpected token after statement (SQLSTATE 42601)

@@ -1,0 +1,9 @@
+--- /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/tests_conformance/transaction_truth.expected	2026-02-26 16:20:23.070427664 -0500
++++ /home/dcalford/CliWork/ScratchBird/tests/conformance/transactions/results/20260227T013917Z/firebird/normalized.txt	2026-02-26 20:39:20.634153863 -0500
+@@ -1,6 +1,3 @@
+-ROW_RESULT|TX-001|PASS|commit_visibility
+-ROW_RESULT|TX-002|PASS|rollback_invisibility
+-ROW_RESULT|TX-003|PASS|savepoint_rollback
+ ROW_RESULT|TX-004|NA|error_rollback_requires_harness
+ ROW_RESULT|TX-005|NA|isolation_requires_multi_session
+ ROW_RESULT|TX-006|NA|lock_conflict_requires_multi_session

@@ -1,0 +1,1 @@
+Connection failed: Access denied for user 'root': BRG_0406: semantic class bridge requires explicit runtime closure for SBLR3_CREATE_SCHEMA

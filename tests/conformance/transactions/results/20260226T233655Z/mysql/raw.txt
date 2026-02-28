@@ -1,0 +1,2 @@
+Query OK
+Error: Schema not found: emulated.mysql.localhost.databases.main (table 'emulated.mysql.localhost.databases.main.sb_tx_truth') (SQLSTATE HY000)
