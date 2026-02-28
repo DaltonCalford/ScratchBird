@@ -45680,12 +45680,15 @@ namespace scratchbird
 
             auto getTableRef = [&](const scratchbird::sblr::v3::Value& value,
                                    std::string& table_path_out,
-                                   std::string& alias_out) -> bool {
+                                   std::string& alias_out,
+                                   std::optional<scratchbird::sblr::v3::Instruction>* query_out = nullptr) -> bool {
                 const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data);
                 if (!obj)
                 {
                     return false;
                 }
+                table_path_out.clear();
+                alias_out.clear();
                 auto it_path = obj->find("table_path");
                 if (it_path != obj->end())
                 {
@@ -45694,6 +45697,21 @@ namespace scratchbird
                 if (!getString(*obj, "alias", alias_out))
                 {
                     alias_out.clear();
+                }
+                if (query_out)
+                {
+                    query_out->reset();
+                    auto it_query = obj->find("query");
+                    if (it_query != obj->end() && !it_query->second.isNull())
+                    {
+                        scratchbird::sblr::v3::Instruction query_inst;
+                        if (!getInstrFromValue(it_query->second, query_inst))
+                        {
+                            return false;
+                        }
+                        *query_out = std::move(query_inst);
+                    }
+                    return !table_path_out.empty() || query_out->has_value();
                 }
                 return !table_path_out.empty();
             };
@@ -54857,7 +54875,53 @@ namespace scratchbird
 
                         auto loadTable = [&](const std::string& path,
                                              const std::string& alias,
+                                             const std::optional<scratchbird::sblr::v3::Instruction>& query,
                                              TableData& out) -> ExecutionResult {
+                            const std::string display_name = path.empty() ? "<derived>" : path;
+                            if (query.has_value())
+                            {
+                                auto query_res = execStmt(*query);
+                                if (!query_res.success())
+                                {
+                                    return query_res;
+                                }
+                                if (!query_res.hasResultSet() || !query_res.resultSet())
+                                {
+                                    return ExecutionResult("Derived table query did not produce a result set");
+                                }
+
+                                auto* query_rs = query_res.resultSet();
+                                TableData derived_table;
+                                derived_table.info.table_name = display_name;
+                                derived_table.alias = alias.empty() ? display_name : alias;
+                                derived_table.columns.reserve(query_rs->columnCount());
+                                for (size_t i = 0; i < query_rs->columnCount(); ++i)
+                                {
+                                    core::CatalogManager::ColumnInfo info;
+                                    info.column_name = query_rs->columnName(i);
+                                    info.data_type = static_cast<uint16_t>(query_rs->columnType(i));
+                                    info.nullable = true;
+                                    derived_table.columns.push_back(std::move(info));
+                                }
+                                derived_table.rows.reserve(query_rs->rowCount());
+                                for (size_t r = 0; r < query_rs->rowCount(); ++r)
+                                {
+                                    std::vector<Value> row_values;
+                                    row_values.reserve(query_rs->columnCount());
+                                    for (size_t c = 0; c < query_rs->columnCount(); ++c)
+                                    {
+                                        row_values.push_back(query_rs->getValue(r, c));
+                                    }
+                                    derived_table.rows.push_back(std::move(row_values));
+                                }
+                                out = std::move(derived_table);
+                                return ExecutionResult();
+                            }
+
+                            if (path.empty())
+                            {
+                                return ExecutionResult("V3 SELECT table reference is missing table_path");
+                            }
                             std::string cte_key = normalize_cte_name(path);
                             auto cte_it = cte_results_.find(cte_key);
                             if (cte_it == cte_results_.end())
@@ -55343,7 +55407,8 @@ namespace scratchbird
 
                         std::string table_path;
                         std::string table_alias;
-                        if (!getTableRef(payload.at("from"), table_path, table_alias))
+                        std::optional<scratchbird::sblr::v3::Instruction> from_query;
+                        if (!getTableRef(payload.at("from"), table_path, table_alias, &from_query))
                         {
                             {
                             }
@@ -55351,7 +55416,7 @@ namespace scratchbird
                         }
 
                         TableData base_table;
-                        auto base_res = loadTable(table_path, table_alias, base_table);
+                        auto base_res = loadTable(table_path, table_alias, from_query, base_table);
                         if (!base_res.success())
                         {
                             return base_res;
@@ -55362,7 +55427,9 @@ namespace scratchbird
                         };
                         std::unordered_set<std::string> accessible_column_set;
                         bool column_restricted_select = false;
-                        if (conn_ctx_ && !isEffectiveSuperuser())
+                        if (conn_ctx_ &&
+                            !isEffectiveSuperuser() &&
+                            !isZeroUuid(base_table.info.table_id))
                         {
                             bool has_table_select = checkPermission(
                                 base_table.info.table_id,
@@ -55398,6 +55465,88 @@ namespace scratchbird
                             return accessible_column_set.find(normalize_name(col_name))
                                 != accessible_column_set.end();
                         };
+
+                        struct SelectAliasMapRestore {
+                            std::unordered_map<std::string, size_t>* slot = nullptr;
+                            std::unordered_map<std::string, size_t> saved;
+                            ~SelectAliasMapRestore()
+                            {
+                                if (slot)
+                                {
+                                    *slot = std::move(saved);
+                                }
+                            }
+                        };
+                        SelectAliasMapRestore select_alias_map_restore{
+                            &current_row_alias_map_,
+                            current_row_alias_map_};
+
+                        struct SelectSourceBinding {
+                            std::string alias;
+                            std::string table_name;
+                            size_t offset = 0;
+                            size_t width = 0;
+                        };
+                        auto add_alias_column_bindings =
+                            [&](std::unordered_map<std::string, size_t>& out,
+                                const std::string& qualifier,
+                                const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                size_t base_index,
+                                size_t width) {
+                                if (qualifier.empty() || width == 0 || base_index >= columns.size())
+                                {
+                                    return;
+                                }
+
+                                auto add_for_qualifier = [&](const std::string& raw_qualifier) {
+                                    if (raw_qualifier.empty())
+                                    {
+                                        return;
+                                    }
+                                    const std::string q = core::IdentifierUtils::toUpper(raw_qualifier);
+                                    const size_t max_count = std::min(width, columns.size() - base_index);
+                                    for (size_t i = 0; i < max_count; ++i)
+                                    {
+                                        const std::string key =
+                                            q + "." +
+                                            core::IdentifierUtils::toUpper(columns[base_index + i].column_name);
+                                        out[key] = base_index + i;
+                                    }
+                                };
+
+                                add_for_qualifier(qualifier);
+                                auto parts = splitSchemaComponents(qualifier);
+                                if (!parts.empty())
+                                {
+                                    add_for_qualifier(parts.back());
+                                }
+                            };
+                        auto build_select_alias_map =
+                            [&](const std::vector<core::CatalogManager::ColumnInfo>& columns,
+                                const std::vector<SelectSourceBinding>& bindings) {
+                                std::unordered_map<std::string, size_t> out;
+                                for (const auto& binding : bindings)
+                                {
+                                    add_alias_column_bindings(out,
+                                                              binding.alias,
+                                                              columns,
+                                                              binding.offset,
+                                                              binding.width);
+                                    add_alias_column_bindings(out,
+                                                              binding.table_name,
+                                                              columns,
+                                                              binding.offset,
+                                                              binding.width);
+                                }
+                                return out;
+                            };
+
+                        std::vector<SelectSourceBinding> source_bindings;
+                        source_bindings.push_back(
+                            SelectSourceBinding{base_table.alias,
+                                                base_table.info.table_name,
+                                                0,
+                                                base_table.columns.size()});
 
                         struct JoinSpec {
                             TableData table;
@@ -55463,12 +55612,13 @@ namespace scratchbird
                                 }
                                 std::string right_path;
                                 std::string right_alias;
-                                if (!getTableRef(it_right->second, right_path, right_alias))
+                                std::optional<scratchbird::sblr::v3::Instruction> right_query;
+                                if (!getTableRef(it_right->second, right_path, right_alias, &right_query))
                                 {
                                     return ExecutionResult("V3 SELECT join right table invalid");
                                 }
                                 TableData right_table;
-                                auto right_res = loadTable(right_path, right_alias, right_table);
+                                auto right_res = loadTable(right_path, right_alias, right_query, right_table);
                                 if (!right_res.success())
                                 {
                                     return right_res;
@@ -55534,6 +55684,13 @@ namespace scratchbird
                             std::vector<std::vector<Value>> new_rows;
                             std::vector<core::CatalogManager::ColumnInfo> combined_columns = all_columns;
                             combined_columns.insert(combined_columns.end(), right.columns.begin(), right.columns.end());
+                            std::vector<SelectSourceBinding> join_bindings = source_bindings;
+                            join_bindings.push_back(
+                                SelectSourceBinding{right.alias,
+                                                    right.info.table_name,
+                                                    all_columns.size(),
+                                                    right.columns.size()});
+                            current_row_alias_map_ = build_select_alias_map(combined_columns, join_bindings);
 
                             std::vector<std::string> using_cols = join.using_cols;
                             if (join.is_natural)
@@ -55650,7 +55807,9 @@ namespace scratchbird
 
                             combined_rows = std::move(new_rows);
                             all_columns = std::move(combined_columns);
+                            source_bindings = std::move(join_bindings);
                         }
+                        current_row_alias_map_ = build_select_alias_map(all_columns, source_bindings);
 
                         struct ProjectionItem {
                             enum class Kind { STAR, TABLE_STAR, EXPR } kind = Kind::EXPR;
@@ -55849,6 +56008,7 @@ namespace scratchbird
                         {
                             const auto& row_values = combined_rows[i];
                             if (!has_joins &&
+                                !isZeroUuid(base_table.info.table_id) &&
                                 !checkRLSPolicies(base_table.info.table_id,
                                                   row_values,
                                                   base_table.columns,

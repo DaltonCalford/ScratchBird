@@ -5594,6 +5594,9 @@ Value V3Emitter::toTableRef(parser::v3::TableRefNode* node) {
     Value::Object o;
     if (node->ref_type == parser::v3::TableRefNode::Type::TABLE) {
         o["table_path"] = toSchemaPath(node->table_path);
+    } else if (node->ref_type == parser::v3::TableRefNode::Type::SUBQUERY && node->subquery) {
+        o["table_path"] = Value(Value::List{});
+        o["query"] = Value(makeInstr(emitStatement(node->subquery)));
     } else {
         // Subquery/function references are encoded as empty table_path with alias only (placeholder).
         o["table_path"] = Value(Value::List{});

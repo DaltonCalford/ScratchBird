@@ -806,6 +806,21 @@ set_tests_properties(IPC_Integration_Harness PROPERTIES
     TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
+# v3 parser/emitter/executor derived-table regression coverage
+add_executable(test_v3_derived_table integration/test_v3_derived_table.cpp)
+target_link_libraries(test_v3_derived_table
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME V3_Derived_Table COMMAND test_v3_derived_table)
+set_tests_properties(V3_Derived_Table PROPERTIES
+    LABELS "integration;v3;parser;derived_table"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
 # 4.1.6-4.1.7: COPY 1GB Memory Test
 add_executable(test_copy_1gb integration/test_copy_1gb.cpp)
 target_link_libraries(test_copy_1gb
