@@ -1791,15 +1791,25 @@ core::Status ServerSession::run() {
         }
     }
 
-    // If the client vanished without a DISCONNECT message, preserve the transaction if possible.
+    // If the client vanished without a DISCONNECT message, only preserve a dormant
+    // transaction when the session is inside an explicit transaction block.
+    // Autocommit sessions should release backend slots immediately.
     if (conn_ctx_ && state_ != SessionState::CLOSED && state_ != SessionState::CLOSING) {
         fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_DISCONNECT);
 
-        core::ErrorContext detach_ctx;
-        core::ID dormant_id;
-        core::Status detach_status = database_->detachToDormant(conn_ctx_, dormant_id, &detach_ctx);
-        if (detach_status != core::Status::OK) {
-            conn_ctx_->shutdownTransaction(&detach_ctx);
+        const bool preserve_dormant =
+            !conn_ctx_->autocommitMode() || conn_ctx_->autocommitSuspended();
+
+        core::ErrorContext cleanup_ctx;
+        if (preserve_dormant) {
+            core::ID dormant_id;
+            core::Status detach_status = database_->detachToDormant(conn_ctx_, dormant_id, &cleanup_ctx);
+            if (detach_status != core::Status::OK) {
+                conn_ctx_->shutdownTransaction(&cleanup_ctx);
+                conn_ctx_.reset();
+            }
+        } else {
+            conn_ctx_->shutdownTransaction(&cleanup_ctx);
             conn_ctx_.reset();
         }
     }
@@ -1821,6 +1831,13 @@ void ServerSession::requestShutdown() {
 
 core::Status ServerSession::processMessage(const protocol::Message& msg, core::ErrorContext* ctx) {
     protocol::MessageType type = msg.getType();
+    if (state_ == SessionState::CREATED && type != protocol::MessageType::CONNECT_REQUEST) {
+        std::fprintf(stderr,
+                     "[ipc_debug] server session %s unexpected first message type=%s payload_len=%u\n",
+                     sessionIdString().c_str(),
+                     protocol::messageTypeToString(type),
+                     static_cast<unsigned>(msg.getPayloadLength()));
+    }
 
     switch (type) {
         case protocol::MessageType::CONNECT_REQUEST:
@@ -1869,6 +1886,12 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
         &has_bound_db_uuid);
 
     if (status != core::Status::OK) {
+        std::fprintf(stderr,
+                     "[ipc_debug] server session %s CONNECT_REQUEST parse failure type=%s payload_len=%u detail=%s\n",
+                     sessionIdString().c_str(),
+                     protocol::messageTypeToString(msg.getType()),
+                     static_cast<unsigned>(msg.getPayloadLength()),
+                     (ctx && !ctx->message.empty()) ? ctx->message.c_str() : "none");
         sendError("Invalid connect request");
         return status;
     }

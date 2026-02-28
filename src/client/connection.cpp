@@ -76,6 +76,7 @@ namespace client {
 namespace {
 std::string bytesToHex(const std::vector<uint8_t>& data);
 std::string formatUuidBytes(const std::vector<uint8_t>& data);
+std::string describeUnexpectedResponse(const protocol::Message& response);
 
 bool authDebugEnabled() {
     return true;
@@ -88,6 +89,42 @@ bool authDebugEnabled() {
              std::strcmp(value, "FALSE") == 0 ||
              std::strcmp(value, "no") == 0 ||
              std::strcmp(value, "NO") == 0);
+}
+
+std::string describeUnexpectedResponse(const protocol::Message& response) {
+    std::string out = std::string("Unexpected response type: ") +
+        protocol::messageTypeToString(response.getType());
+
+    if (response.getType() == protocol::MessageType::QUERY_ERROR) {
+        uint32_t error_code = 0;
+        std::string sqlstate;
+        std::string message;
+        std::string detail;
+        std::string hint;
+        core::ErrorContext parse_ctx;
+        if (protocol::ProtocolCodec::parseQueryError(
+                response, error_code, sqlstate, message, detail, hint, &parse_ctx) ==
+            core::Status::OK) {
+            out += " [code=" + std::to_string(error_code);
+            if (!sqlstate.empty()) {
+                out += " sqlstate=" + sqlstate;
+            }
+            if (!message.empty()) {
+                out += " message=\"" + message + "\"";
+            }
+            if (!detail.empty()) {
+                out += " detail=\"" + detail + "\"";
+            }
+            if (!hint.empty()) {
+                out += " hint=\"" + hint + "\"";
+            }
+            out += "]";
+        } else if (!parse_ctx.message.empty()) {
+            out += " [query_error_parse_failed=\"" + parse_ctx.message + "\"]";
+        }
+    }
+
+    return out;
 }
 
 int64_t floorDiv(int64_t a, int64_t b) {
@@ -1436,7 +1473,7 @@ public:
         }
 
         if (response.getType() != protocol::MessageType::CONNECT_RESPONSE) {
-            last_error_ = "Unexpected response type";
+            last_error_ = describeUnexpectedResponse(response);
             state_ = ConnectionState::ERROR_STATE;
             return core::Status::PROTOCOL_VIOLATION;
         }
@@ -1998,7 +2035,7 @@ public:
         }
 
         if (response_msg.getType() != protocol::MessageType::AUTH_RESPONSE) {
-            last_error_ = "Unexpected response type";
+            last_error_ = describeUnexpectedResponse(response_msg);
             return core::Status::PROTOCOL_VIOLATION;
         }
 
