@@ -27,6 +27,8 @@ If you have taken the time to pull it down, let me know in the message boards an
   - `run.sh` — build and start the SSH-ready container bound to your chosen workspace path.
   - `start-scratchbird-environment.sh` — generated into your workspace root; starts ScratchBird and configured emulation listeners inside the container.
 
+Latest docker-ready release bundle: [v0.5.1](https://github.com/DaltonCalford/ScratchBird/releases/tag/v0.5.1)
+
 Typical workflow:
 ```bash
 cd ScratchBird/scripts/dev-unified
