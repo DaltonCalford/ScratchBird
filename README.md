@@ -16,6 +16,25 @@ This whole thing is to create the database I always wanted.  So far, it appears 
 
 If you have taken the time to pull it down, let me know in the message boards and I can let you know what is and is not ready for testing.
 
+## Docker Development Environment
+
+- Use the unified environment scripts under `scripts/dev-unified/` to bootstrap and run a full Linux SSH container for building and testing all ScratchBird-related repos.
+- Scripts are versioned with this repo and are intended to stay in sync with the source: [scripts/dev-unified/README.md](scripts/dev-unified/README.md)
+- Main helpers:
+  - `bootstrap-workspace.sh` — one-command workflow to download/refresh repos, install local mutable build scripts, and optionally start the container.
+  - `sync-repos.sh` — clone/refresh source repos into your chosen working directory.
+  - `install-workspace-build-scripts.sh` — install/update mutable `build-*.sh` and `test-*.sh` scripts directly in your workspace root.
+  - `run.sh` — build and start the SSH-ready container bound to your chosen workspace path.
+  - `start-scratchbird-environment.sh` — generated into your workspace root; starts ScratchBird and configured emulation listeners inside the container.
+
+Typical workflow:
+```bash
+cd ScratchBird/scripts/dev-unified
+./bootstrap-workspace.sh --workspace /home/<user>/CliWork --all --start --ip 127.0.0.5 --port 2222
+```
+
+Inside SSH, from your mounted workspace (for example `~/CliWork`), run local build/test scripts such as `./build-scratchbird.sh`, `./build-scratchbird-ai.sh`, `./build-all.sh`, and `./test-all.sh`.
+
 Thanks Again,
 
 Dalton
