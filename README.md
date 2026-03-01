@@ -2,6 +2,26 @@
 
 ScratchBird is a database engine with a canonical v3 SQL parser/runtime surface and protocol emulation adapters.
 
+I have been working on it for a while and it is a bit of a passion project.
+
+I created a script that I used for moving my dev environment around in, which I shared as the dev install file.
+
+Honestly, I never thought anyone would run it - I have asked friends to test it, but outside of a small group, I never really thought this project was interesting enough to pay attention to.
+
+I have been using github as a place to store my work against an AI deleting my entire local repo (the whole directory because it lost track of what directory it was in when doing a cleanup of the build directory).  So, I have not been diligent to have the latest material on it.   Given the feedback, I am humbled.  I am going to be more attentive to keeping the four repositories in a stable state.
+
+If you have questions - feel free to ask, I can explain why I made the decisions I did and what I am doing for testing/verification.
+
+This whole thing is to create the database I always wanted.  So far, it appears to be getting closer.
+
+If you have taken the time to pull it down, let me know in the message boards and I can let you know what is and is not ready for testing.
+
+Thanks Again,
+
+Dalton
+
+
+
 ## Public Beta 1 Scope
 
 ScratchBird is at **public beta 1** for **code and tests**.
