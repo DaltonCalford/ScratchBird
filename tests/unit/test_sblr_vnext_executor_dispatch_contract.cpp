@@ -440,7 +440,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
         Value::Object payload;
     };
 
-    const std::array<DispatchCase, 14> cases = {{
+    const std::array<DispatchCase, 13> cases = {{
         {static_cast<uint16_t>(Opcode::SBLR3_OP_DOC_PATH_FILTER),
          "SBLR3_OP_DOC_PATH_FILTER",
          Value::Object{{"path_id", Value(static_cast<uint64_t>(11))},
@@ -456,10 +456,6 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
          Value::Object{{"table_id", Value(static_cast<uint64_t>(22))},
                        {"proj_bitmap", Value(Value::Bytes{0x0F})},
                        {"predicate_bitmap", Value(Value::Bytes{0xAA, 0xBB})}}},
-        {static_cast<uint16_t>(Opcode::SBLR3_OP_SEARCH_DSL_EVAL),
-         "SBLR3_OP_SEARCH_DSL_EVAL",
-         Value::Object{{"dsl_blob_ref", Value(static_cast<uint64_t>(5001))},
-                       {"scorer_id", Value(static_cast<uint64_t>(1))}}},
         {static_cast<uint16_t>(Opcode::SBLR3_OP_VECTOR_ANN),
          "SBLR3_OP_VECTOR_ANN",
          Value::Object{{"index_id", Value(static_cast<uint64_t>(99))},
@@ -755,6 +751,67 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
                       {"options", Value(Value::Object{{"engine", Value(std::string("native"))}})}});
 
     ASSERT_TRUE(result.success()) << result.error();
+
+    EXPECT_EQ(reject_before,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       SearchDslOpcodeRoutesWithoutDeterministicBridgeReject)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
+
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_SEARCH_DSL_EVAL),
+        Value::Object{{"dsl_payload_json", Value(std::string("{\"query\":{\"match_all\":{}}}"))},
+                      {"target_index", Value(static_cast<uint64_t>(1))},
+                      {"dsl_blob_ref", Value(static_cast<uint64_t>(1))},
+                      {"scorer_id", Value(static_cast<uint64_t>(1))}});
+
+    ASSERT_TRUE(result.success()) << result.error();
+
+    EXPECT_EQ(reject_before,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       RedisOpcodesRouteWithoutDeterministicBridgeReject)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
+
+    const std::array<Opcode, 7> cases = {{
+        Opcode::SBLR3_REDIS_STRING,
+        Opcode::SBLR3_REDIS_HASH,
+        Opcode::SBLR3_REDIS_LIST,
+        Opcode::SBLR3_REDIS_SET,
+        Opcode::SBLR3_REDIS_ZSET,
+        Opcode::SBLR3_REDIS_STREAM,
+        Opcode::SBLR3_REDIS_PUBSUB,
+    }};
+
+    for (const auto opcode : cases)
+    {
+        Instruction query_expr;
+        query_expr.opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_STRING);
+        query_expr.flags = 0;
+        query_expr.payload =
+            Value(Value::Object{{"value", Value(std::string("{\"op\":\"ping\"}"))}});
+
+        ExecutionResult result = executeVNext(
+            static_cast<uint16_t>(opcode),
+            Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                          {"namespace_path",
+                           Value(Value::List{Value(std::string("users")),
+                                             Value(std::string("redis"))})},
+                          {"query_expr",
+                           Value(std::make_shared<Instruction>(std::move(query_expr)))},
+                          {"options", Value(Value::Object{{"mode", Value(std::string("compat"))}})}});
+        ASSERT_TRUE(result.success()) << result.error();
+    }
 
     EXPECT_EQ(reject_before,
               metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
@@ -1285,11 +1342,6 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
             {"proj_bitmap", Value(Value::Bytes{0x0F})},
             {"predicate_bitmap", Value(Value::Bytes{0xAA, 0xBB})}};
     };
-    auto makeSearchDslPayload = []() -> Value::Object {
-        return Value::Object{
-            {"dsl_blob_ref", Value(static_cast<uint64_t>(5001))},
-            {"scorer_id", Value(static_cast<uint64_t>(1))}};
-    };
     auto makeVectorAnnPayload = []() -> Value::Object {
         return Value::Object{
             {"index_id", Value(static_cast<uint64_t>(99))},
@@ -1360,11 +1412,10 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
             << result.error();
     };
 
-    const std::array<Opcode, 7> bridge_expr = {{
+    const std::array<Opcode, 6> bridge_expr = {{
         Opcode::SBLR3_OP_DOC_PATH_FILTER,
         Opcode::SBLR3_OP_TS_BUCKET_AGG,
         Opcode::SBLR3_OP_COL_SCAN,
-        Opcode::SBLR3_OP_SEARCH_DSL_EVAL,
         Opcode::SBLR3_OP_VECTOR_ANN,
         Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE,
         Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE,
@@ -1411,7 +1462,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_ADMIN_VALIDATE,
     }};
 
-    const std::array<Opcode, 27> bridge_multi_model = {{
+    const std::array<Opcode, 20> bridge_multi_model = {{
         Opcode::SBLR3_CQL_KEYSPACE,
         Opcode::SBLR3_CQL_BATCH,
         Opcode::SBLR3_CQL_TTL,
@@ -1424,13 +1475,6 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_CYPHER_MERGE,
         Opcode::SBLR3_CYPHER_UNWIND,
         Opcode::SBLR3_CYPHER_CALL,
-        Opcode::SBLR3_REDIS_STRING,
-        Opcode::SBLR3_REDIS_HASH,
-        Opcode::SBLR3_REDIS_LIST,
-        Opcode::SBLR3_REDIS_SET,
-        Opcode::SBLR3_REDIS_ZSET,
-        Opcode::SBLR3_REDIS_STREAM,
-        Opcode::SBLR3_REDIS_PUBSUB,
         Opcode::SBLR3_MILVUS_CREATE_COLLECTION,
         Opcode::SBLR3_MILVUS_DROP_COLLECTION,
         Opcode::SBLR3_MILVUS_CREATE_INDEX,
@@ -1494,9 +1538,6 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
                 break;
             case Opcode::SBLR3_OP_COL_SCAN:
                 assertBridgeReject(opcode, makeColScanPayload());
-                break;
-            case Opcode::SBLR3_OP_SEARCH_DSL_EVAL:
-                assertBridgeReject(opcode, makeSearchDslPayload());
                 break;
             case Opcode::SBLR3_OP_VECTOR_ANN:
                 assertBridgeReject(opcode, makeVectorAnnPayload());
