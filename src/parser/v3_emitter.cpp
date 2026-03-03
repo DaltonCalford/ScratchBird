@@ -1541,6 +1541,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             if (s->temporary) flags |= 0x0004;
             if (s->materialized) flags |= 0x0008;
             if (s->with_check_option) flags |= 0x0010;
+            if (s->with_data) flags |= 0x0020;
             payload["flags"] = Value(flags);
             payload["path"] = toSchemaPath(s->view_path);
             Value::List cols;
@@ -1733,7 +1734,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.opcode = op(Opcode::SBLR3_CREATE_PACKAGE_STMT);
             inst.flags = 0;
             Value::Object payload;
-            payload["name"] = toIdent(s->package_path.objectName());
+            payload["name"] = toSchemaPath(s->package_path);
             if (s->header != parser::v3::StringPool::INVALID_ID) {
                 std::string header(pool_.get(s->header));
                 payload["spec"] = Value(Value::Bytes(header.begin(), header.end()));
@@ -1909,6 +1910,8 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.opcode = op(Opcode::SBLR3_CREATE_SYNONYM);
             inst.flags = 0;
             Value::Object payload;
+            payload["is_public"] = Value(s->is_public);
+            payload["target_type"] = Value(uint64_t(static_cast<uint8_t>(s->target_type)));
             payload["name"] = toSchemaPath(s->synonym_path);
             payload["target"] = toSchemaPath(s->target_path);
             inst.payload = Value(std::move(payload));
@@ -1920,9 +1923,14 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.opcode = op(Opcode::SBLR3_CREATE_UDR);
             inst.flags = 0;
             Value::Object payload;
-            payload["name"] = toIdent(s->udr_path.objectName());
+            payload["udr_type"] = Value(uint64_t(static_cast<uint8_t>(s->udr_type)));
+            payload["name"] = toSchemaPath(s->udr_path);
             payload["library_path"] = Value(std::string(s->library_path));
             payload["entry_point"] = Value(std::string(s->entry_point));
+            payload["has_signature"] = Value(s->has_signature);
+            if (s->has_signature) {
+                payload["signature"] = Value(std::string(s->signature));
+            }
             payload["options"] = Value(Value::Object{
                 {"count", Value(uint64_t(0))},
                 {"key", Value(std::string())},
@@ -1956,6 +1964,20 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
                 std::string body(pool_.get(s->external_command));
                 payload["command"] = Value(Value::Bytes(body.begin(), body.end()));
             }
+            payload["has_measurement"] = Value(s->has_measurement);
+            Value::Object measurement_options;
+            for (const auto& opt : s->measurement_options) {
+                if (opt.first == parser::v3::StringPool::INVALID_ID) {
+                    continue;
+                }
+                std::string key(pool_.get(opt.first));
+                std::string value;
+                if (opt.second != parser::v3::StringPool::INVALID_ID) {
+                    value = std::string(pool_.get(opt.second));
+                }
+                measurement_options[std::move(key)] = Value(std::move(value));
+            }
+            payload["measurement_options"] = Value(std::move(measurement_options));
             payload["options"] = Value(Value::Object{
                 {"count", Value(uint64_t(0))},
                 {"key", Value(std::string())},
@@ -1969,7 +1991,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.opcode = op(Opcode::SBLR3_CREATE_EXCEPTION_STMT);
             inst.flags = 0;
             Value::Object payload;
-            payload["name"] = toIdent(s->exception_path.objectName());
+            payload["name"] = toSchemaPath(s->exception_path);
             if (s->message != parser::v3::StringPool::INVALID_ID) {
                 payload["message"] = Value(std::string(pool_.get(s->message)));
             } else {
@@ -2850,6 +2872,9 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
             if (key_text == "admin.validate") {
                 return emit_multi_model(Opcode::SBLR3_ADMIN_VALIDATE, 30);
             }
+            if (key_text.rfind("cluster.ddl.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS, 32);
+            }
             if (key_text.rfind("cluster.workload_class.create.", 0) == 0) {
                 return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS, 32);
             }
@@ -2906,6 +2931,9 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
             }
             if (key_text == "service.channel.progress") {
                 return emit_multi_model(Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS, 50);
+            }
+            if (key_text.rfind("cube.ddl.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CUBE_DDL, 51);
             }
             if (key_text.rfind("cube.ddl.create.", 0) == 0) {
                 return emit_multi_model(Opcode::SBLR3_CUBE_DDL, 51);
@@ -2983,6 +3011,23 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
                 if (s->partition_strategy != parser::v3::StringPool::INVALID_ID) payload["partition_strategy"] = toIdent(s->partition_strategy);
                 if (s->partition_expression != parser::v3::StringPool::INVALID_ID) payload["partition_expression"] = toIdent(s->partition_expression);
                 if (s->partition_shard != parser::v3::StringPool::INVALID_ID) payload["partition_shard"] = toIdent(s->partition_shard);
+            }
+            if (s->has_measurement) {
+                payload["has_measurement"] = Value(true);
+                payload["drop_measurement"] = Value(s->drop_measurement);
+                Value::Object measurement_options;
+                for (const auto& opt : s->measurement_options) {
+                    if (opt.first == parser::v3::StringPool::INVALID_ID) {
+                        continue;
+                    }
+                    std::string key(pool_.get(opt.first));
+                    std::string value;
+                    if (opt.second != parser::v3::StringPool::INVALID_ID) {
+                        value = std::string(pool_.get(opt.second));
+                    }
+                    measurement_options[std::move(key)] = Value(std::move(value));
+                }
+                payload["measurement_options"] = Value(std::move(measurement_options));
             }
             Value::List depends;
             for (auto id : s->depends_on) depends.push_back(toIdent(id));
@@ -3190,13 +3235,37 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
             return makeDrop(Opcode::SBLR3_DROP_DOMAIN, s->types.front(), 8, flags);
         }
         case parser::v3::ASTKind::DropFunctionStmt:
-            return makeDrop(Opcode::SBLR3_DROP_FUNCTION_STMT, static_cast<parser::v3::DropFunctionStmt*>(stmt)->functions.front(), 9);
+            {
+                auto* s = static_cast<parser::v3::DropFunctionStmt*>(stmt);
+                return makeDrop(Opcode::SBLR3_DROP_FUNCTION_STMT,
+                                s->functions.front(),
+                                9,
+                                s->if_exists ? 0x01 : 0x00);
+            }
         case parser::v3::ASTKind::DropProcedureStmt:
-            return makeDrop(Opcode::SBLR3_DROP_PROCEDURE_STMT, static_cast<parser::v3::DropProcedureStmt*>(stmt)->procedures.front(), 10);
+            {
+                auto* s = static_cast<parser::v3::DropProcedureStmt*>(stmt);
+                return makeDrop(Opcode::SBLR3_DROP_PROCEDURE_STMT,
+                                s->procedures.front(),
+                                10,
+                                s->if_exists ? 0x01 : 0x00);
+            }
         case parser::v3::ASTKind::DropTriggerStmt:
-            return makeDrop(Opcode::SBLR3_DROP_TRIGGER, static_cast<parser::v3::DropTriggerStmt*>(stmt)->triggers.front(), 11);
+            {
+                auto* s = static_cast<parser::v3::DropTriggerStmt*>(stmt);
+                return makeDrop(Opcode::SBLR3_DROP_TRIGGER,
+                                s->triggers.front(),
+                                11,
+                                s->if_exists ? 0x01 : 0x00);
+            }
         case parser::v3::ASTKind::DropPackageStmt:
-            return makeDrop(Opcode::SBLR3_DROP_PACKAGE_STMT, static_cast<parser::v3::DropPackageStmt*>(stmt)->packages.front(), 12);
+            {
+                auto* s = static_cast<parser::v3::DropPackageStmt*>(stmt);
+                return makeDrop(Opcode::SBLR3_DROP_PACKAGE_STMT,
+                                s->packages.front(),
+                                12,
+                                s->if_exists ? 0x01 : 0x00);
+            }
         case parser::v3::ASTKind::DropRoleStmt:
             return makeDrop(Opcode::SBLR3_DROP_ROLE, static_cast<parser::v3::DropRoleStmt*>(stmt)->roles.front(), 13);
         case parser::v3::ASTKind::DropGroupStmt:
@@ -3204,7 +3273,13 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
         case parser::v3::ASTKind::DropUserStmt:
             return makeDrop(Opcode::SBLR3_DROP_USER, static_cast<parser::v3::DropUserStmt*>(stmt)->users.front(), 14);
         case parser::v3::ASTKind::DropExceptionStmt:
-            return makeDrop(Opcode::SBLR3_DROP_EXCEPTION_STMT, static_cast<parser::v3::DropExceptionStmt*>(stmt)->exceptions.front(), 24);
+            {
+                auto* s = static_cast<parser::v3::DropExceptionStmt*>(stmt);
+                return makeDrop(Opcode::SBLR3_DROP_EXCEPTION_STMT,
+                                s->exceptions.front(),
+                                24,
+                                s->if_exists ? 0x01 : 0x00);
+            }
         case parser::v3::ASTKind::DropPolicyStmt: {
             auto* s = static_cast<parser::v3::DropPolicyStmt*>(stmt);
             Instruction inst;
@@ -3239,9 +3314,23 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
                 return makeDrop(Opcode::SBLR3_DROP_USER_MAPPING, path, 33);
             }
         case parser::v3::ASTKind::DropSynonymStmt:
-            return makeDrop(Opcode::SBLR3_DROP_SYNONYM, static_cast<parser::v3::DropSynonymStmt*>(stmt)->synonyms.front(), 38);
+            {
+                auto* s = static_cast<parser::v3::DropSynonymStmt*>(stmt);
+                uint64_t flags = 0;
+                if (s->if_exists) flags |= 0x01;
+                if (s->cascade) flags |= 0x02;
+                if (s->restrict) flags |= 0x04;
+                if (s->is_public) flags |= 0x08;
+                return makeDrop(Opcode::SBLR3_DROP_SYNONYM, s->synonyms.front(), 38, flags);
+            }
         case parser::v3::ASTKind::DropUdrStmt:
-            return makeDrop(Opcode::SBLR3_DROP_UDR, static_cast<parser::v3::DropUdrStmt*>(stmt)->udrs.front(), 23);
+            {
+                auto* s = static_cast<parser::v3::DropUdrStmt*>(stmt);
+                uint64_t flags = 0;
+                if (s->if_exists) flags |= 0x01;
+                if (s->cascade) flags |= 0x02;
+                return makeDrop(Opcode::SBLR3_DROP_UDR, s->udrs.front(), 23, flags);
+            }
         case parser::v3::ASTKind::DropJobStmt:
             {
                 auto* s = static_cast<parser::v3::DropJobStmt*>(stmt);

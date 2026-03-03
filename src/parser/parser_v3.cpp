@@ -658,19 +658,9 @@ Statement* Parser::parseStatementInternal() {
         if (!requireFeature(kFeatureDocPathFilter)) return nullptr;
         return parseDocPathFilterSurface();
     }
-    if (checkContextual("FILTER")) {
-        errorCode("PRS_0505",
-                  "FILTER DOC PATH alias is not supported in v3; use DOC PATH FILTER ...");
-        return nullptr;
-    }
     if (checkContextual("TS")) {
         if (!requireFeature(kFeatureTsBucketAgg)) return nullptr;
         return parseTimeBucketAggSurface();
-    }
-    if (checkContextual("AGGREGATE")) {
-        errorCode("PRS_0505",
-                  "AGGREGATE TIME BUCKET alias is not supported in v3; use TS BUCKET AGG ...");
-        return nullptr;
     }
     if (checkContextual("SEARCH") || check(TokenType::KW_JOIN) ||
         checkContextual("JOIN") || checkContextual("PERCOLATOR")) {
@@ -681,11 +671,6 @@ Statement* Parser::parseStatementInternal() {
         if (!requireFeature(kFeatureVectorAnn)) return nullptr;
         return parseVectorAnnSurface();
     }
-    if (checkContextual("ANN")) {
-        errorCode("PRS_0505",
-                  "ANN alias is not supported in v3; use VECTOR ANN QUERY ...");
-        return nullptr;
-    }
     if (checkContextual("GRAPH")) {
         return parseGraphPathSurface();
     }
@@ -695,14 +680,6 @@ Statement* Parser::parseStatementInternal() {
             caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "GRAPH")) {
             return parseGraphPathSurface();
         }
-    }
-    if (checkContextual("CQL") ||
-        checkContextual("MONGO") ||
-        checkContextual("CYPHER") ||
-        checkContextual("MILVUS")) {
-        errorCode("PRS_0505",
-                  "Engine-prefixed NoSQL aliases are not supported in v3");
-        return nullptr;
     }
     if (checkContextual("REDIS")) {
         Token lookahead = state_.lexer().peekToken();
@@ -715,16 +692,6 @@ Statement* Parser::parseStatementInternal() {
             return parseRedisStreamGroupSurface();
         }
         return parseNoSqlSurface();
-    }
-    if (matchContextual("EVAL")) {
-        errorCode("PRS_0505",
-                  "EVAL LUA alias is not supported in v3; use REDIS LUA EVAL ...");
-        return nullptr;
-    }
-    if (matchContextual("XGROUP") || matchContextual("XREADGROUP") || matchContextual("XCLAIM")) {
-        errorCode("PRS_0505",
-                  "Redis X* aliases are not supported in v3; use REDIS STREAM GROUP ...");
-        return nullptr;
     }
     if (checkContextual("HYBRID") || checkContextual("BRIDGE")) {
         if (!requireFeature(kFeatureHybridBridgeHint)) return nullptr;
@@ -1091,49 +1058,21 @@ Statement* Parser::parseCreate() {
         unlogged = true;
     }
 
-    // Check for MATERIALIZED (for CREATE MATERIALIZED VIEW)
+    // CREATE MATERIALIZED VIEW prefix form is removed in v3 canonical grammar.
+    // Materialization must be expressed via explicit CREATE/ALTER VIEW options.
     bool materialized = false;
     if (checkContextual("MATERIALIZED")) {
-        matchContextual("MATERIALIZED");
-        materialized = true;
+        errorCode("PRS_0505",
+                  "CREATE MATERIALIZED VIEW is not supported in v3; use CREATE VIEW ... MATERIALIZED");
+        return nullptr;
     }
 
     // Dispatch based on object type
-    if (matchContextual("SEARCH")) {
-        if (matchContextual("INDEX")) {
-            errorCode("PRS_0505",
-                      "CREATE SEARCH INDEX is not supported in v3; use CREATE INDEX ... USING FULLTEXT");
-            return nullptr;
-        }
-        errorCode("PRS_0505", "Expected INDEX after CREATE SEARCH");
+
+    if (matchContextual("MEASUREMENT") || matchContextual("SCHEDULE")) {
+        errorCode("PRS_0505",
+                  "Top-level CREATE MEASUREMENT/SCHEDULE is not supported in v3; use CREATE JOB ...");
         return nullptr;
-    }
-
-    if (matchContextual("VECTOR")) {
-        if (matchContextual("INDEX")) {
-            errorCode("PRS_0505",
-                      "CREATE VECTOR INDEX is not supported in v3; use CREATE INDEX ... USING HNSW");
-            return nullptr;
-        }
-        errorCode("PRS_0505", "Expected INDEX after CREATE VECTOR");
-        return nullptr;
-    }
-
-    if (matchContextual("MEASUREMENT")) {
-        if (or_alter) {
-            errorCode("PRS_0505", "CREATE OR ALTER is not supported for MEASUREMENT");
-        }
-        return parseCreateMeasurement();
-    }
-
-    if (matchContextual("SCHEDULE")) {
-        if (or_alter) {
-            errorCode("PRS_0505", "CREATE OR ALTER is not supported for SCHEDULE");
-        }
-        if (!requireFeature(kFeatureScheduleRruleSurface)) {
-            return nullptr;
-        }
-        return parseCreateSchedule();
     }
 
     if (matchContextual("CONNECTION")) {
@@ -1310,7 +1249,8 @@ Statement* Parser::parseCreate() {
         auto* stmt = parseCreateView(or_replace || or_alter);
         if (stmt) {
             stmt->temporary = temporary;
-            stmt->materialized = materialized;
+            // Prefix form is rejected in v3. Preserve/merge view-level option parsing.
+            stmt->materialized = stmt->materialized || materialized;
         }
         return stmt;
     }
@@ -1666,6 +1606,102 @@ CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
         return StringPool::INVALID_ID;
     };
 
+    auto parse_measurement_key = [&]() -> StringPool::StringId {
+        if (matchContextual("ENABLED")) {
+            return stringPool().intern("ENABLED");
+        }
+        if (matchContextual("WINDOW")) {
+            return stringPool().intern("WINDOW");
+        }
+        if (matchContextual("RETENTION")) {
+            return stringPool().intern("RETENTION");
+        }
+        if (matchContextual("GRANULARITY")) {
+            return stringPool().intern("GRANULARITY");
+        }
+        if (!isIdentifier()) {
+            error("Expected MEASUREMENT option key");
+            return StringPool::INVALID_ID;
+        }
+        auto key = current().value.string_id;
+        advance();
+        return key;
+    };
+
+    auto parse_measurement_value = [&]() -> StringPool::StringId {
+        if (check(TokenType::COMMA) || check(TokenType::RIGHT_PAREN)) {
+            error("Expected MEASUREMENT option value");
+            return StringPool::INVALID_ID;
+        }
+
+        std::string_view input = state_.lexer().input();
+        size_t start = current().span.start.offset;
+        size_t end = start;
+        bool saw_token = false;
+        int depth = 0;
+        Token last = current();
+
+        while (!isAtEnd()) {
+            if (check(TokenType::COMMA) && depth == 0) {
+                break;
+            }
+            if (check(TokenType::RIGHT_PAREN) && depth == 0) {
+                break;
+            }
+            if (check(TokenType::LEFT_PAREN)) {
+                depth++;
+            } else if (check(TokenType::RIGHT_PAREN) && depth > 0) {
+                depth--;
+            }
+            last = current();
+            saw_token = true;
+            advance();
+        }
+
+        if (saw_token) {
+            end = last.span.start.offset + last.span.length;
+            if (end > input.size()) {
+                end = input.size();
+            }
+        }
+
+        if (!saw_token || end <= start) {
+            error("Expected MEASUREMENT option value");
+            return StringPool::INVALID_ID;
+        }
+
+        std::string_view text = input.substr(start, end - start);
+        size_t trim_start = text.find_first_not_of(" \t\r\n");
+        if (trim_start == std::string_view::npos) {
+            error("Expected MEASUREMENT option value");
+            return StringPool::INVALID_ID;
+        }
+        size_t trim_end = text.find_last_not_of(" \t\r\n");
+        return stringPool().intern(text.substr(trim_start, trim_end - trim_start + 1));
+    };
+
+    auto parse_measurement_clause = [&]() {
+        stmt->has_measurement = true;
+        stmt->measurement_options.clear();
+        expect(TokenType::LEFT_PAREN, "Expected '(' after MEASUREMENT");
+        if (check(TokenType::RIGHT_PAREN)) {
+            error("MEASUREMENT clause must include at least one option");
+        }
+        while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+            auto key = parse_measurement_key();
+            expect(TokenType::EQUAL, "Expected '=' after MEASUREMENT option key");
+            auto value = parse_measurement_value();
+            stmt->measurement_options.emplace_back(key, value);
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after MEASUREMENT options");
+        if (stmt->measurement_options.empty()) {
+            error("MEASUREMENT clause must include at least one option");
+        }
+    };
+
     bool has_schedule = false;
 
     while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
@@ -1678,6 +1714,8 @@ CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
         if (checkContextual("SCHEDULE")) {
             parse_schedule();
             has_schedule = true;
+        } else if (matchContextual("MEASUREMENT")) {
+            parse_measurement_clause();
         } else if (matchContextual("DEPENDS")) {
             if (!(match(TokenType::KW_ON) || matchContextual("ON"))) {
                 error("Expected ON after DEPENDS");
@@ -4446,6 +4484,9 @@ CreateDomainStmt* Parser::parseCreateDomain() {
     stmt->domain_path = parseSchemaPath(state_);
     if (stmt->domain_path.isEmpty()) {
         error("Expected domain name");
+    } else if (stmt->domain_path.components.size() != 1) {
+        errorCode("PRS_0505",
+                  "DOMAIN names are global and must not be schema-qualified");
     }
 
     // Optional AS keyword
@@ -6618,30 +6659,10 @@ Statement* Parser::parseAlterUser() {
 Statement* Parser::parseAlter() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
-    if (matchContextual("SEARCH")) {
-        if (matchContextual("INDEX")) {
-            errorCode("PRS_0505",
-                      "ALTER SEARCH INDEX is not supported in v3; use ALTER INDEX ... REBUILD");
-            return nullptr;
-        }
-        errorCode("PRS_0505", "Expected INDEX after ALTER SEARCH");
+    if (matchContextual("MEASUREMENT") || matchContextual("SCHEDULE")) {
+        errorCode("PRS_0505",
+                  "Top-level ALTER MEASUREMENT/SCHEDULE is not supported in v3; use ALTER JOB ...");
         return nullptr;
-    }
-    if (matchContextual("VECTOR")) {
-        if (matchContextual("INDEX")) {
-            errorCode("PRS_0505",
-                      "ALTER VECTOR INDEX is not supported in v3; use ALTER INDEX ... REBUILD");
-            return nullptr;
-        }
-        errorCode("PRS_0505", "Expected INDEX after ALTER VECTOR");
-        return nullptr;
-    }
-    if (matchContextual("MEASUREMENT")) return parseAlterMeasurement();
-    if (matchContextual("SCHEDULE")) {
-        if (!requireFeature(kFeatureScheduleRruleSurface)) {
-            return nullptr;
-        }
-        return parseAlterSchedule();
     }
     if (matchContextual("CONNECTION")) {
         if (!matchContextual("RULE")) {
@@ -6711,7 +6732,9 @@ Statement* Parser::parseAlter() {
     }
     if (matchContextual("SYSTEM")) return parseAlterSystem();
 
-    auto parse_rename_move = [&](DdlObjectType object_type) -> Statement* {
+    auto parse_rename_move = [&](DdlObjectType object_type,
+                                 bool require_explicit_parent = false,
+                                 const char* object_label = "OBJECT") -> Statement* {
         SourceLocation start = currentLocation();
 
         bool if_exists = false;
@@ -6721,6 +6744,13 @@ Statement* Parser::parseAlter() {
         }
 
         SchemaPath object_path = parseSchemaPath(state_);
+        if (require_explicit_parent && object_path.components.size() < 2) {
+            errorCode(
+                "PRS_0505",
+                std::string("ALTER ") + object_label +
+                    " requires explicit parent-qualified reference");
+            return nullptr;
+        }
 
         if (matchContextual("RENAME")) {
             expectContextual("TO", "Expected TO after RENAME");
@@ -6746,6 +6776,92 @@ Statement* Parser::parseAlter() {
         }
 
         error("Expected RENAME TO or SET SCHEMA after object name");
+        return nullptr;
+    };
+
+    auto parse_alter_synonym = [&](bool is_public) -> Statement* {
+        SourceLocation start = currentLocation();
+        SchemaPath synonym_path = parseSchemaPath(state_);
+        if (synonym_path.isEmpty()) {
+            error("Expected synonym name");
+            return nullptr;
+        }
+
+        std::string synonym_name = schemaPathToString(synonym_path, stringPool());
+        auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+            auto* lit = arena_.create<LiteralExpr>();
+            lit->literal_type = LiteralType::STRING;
+            lit->string_value = stringPool().intern(payload);
+            return lit;
+        };
+
+        if (matchContextual("RENAME")) {
+            expectContextual("TO", "Expected TO after RENAME");
+            auto* stmt = arena_.create<RenameObjectStmt>();
+            stmt->object_type = DdlObjectType::SYNONYM;
+            stmt->object_path = synonym_path;
+            stmt->new_name = expectIdentifier("Expected new synonym name");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        if (match(TokenType::KW_SET)) {
+            if (matchContextual("SCHEMA")) {
+                if (is_public) {
+                    errorCode("PRS_0505",
+                              "ALTER PUBLIC SYNONYM does not support SET SCHEMA");
+                    return nullptr;
+                }
+                auto* stmt = arena_.create<MoveObjectStmt>();
+                stmt->object_type = DdlObjectType::SYNONYM;
+                stmt->object_path = synonym_path;
+                stmt->target_schema = parseSchemaPath(state_);
+                stmt->span = makeSpan(start);
+                return stmt;
+            }
+
+            if (matchContextual("TARGET")) {
+                SchemaPath target_path = parseSchemaPath(state_);
+                if (target_path.isEmpty()) {
+                    error("Expected target object path after SET TARGET");
+                    return nullptr;
+                }
+                auto* stmt = arena_.create<AlterSystemStmt>();
+                stmt->name = stringPool().intern(
+                    std::string(is_public ? "synonym.public.set_target." : "synonym.set_target.") +
+                    synonym_name);
+                stmt->value = make_payload_literal(schemaPathToString(target_path, stringPool()));
+                stmt->span = makeSpan(start);
+                return stmt;
+            }
+
+            if (check(TokenType::LEFT_PAREN)) {
+                auto* stmt = arena_.create<AlterSystemStmt>();
+                stmt->name = stringPool().intern(
+                    std::string(is_public ? "synonym.public.set." : "synonym.set.") + synonym_name);
+                stmt->value = make_payload_literal(captureStatementBody());
+                stmt->span = makeSpan(start);
+                return stmt;
+            }
+
+            error("Expected SCHEMA, TARGET, or '(' after SET in ALTER SYNONYM");
+            return nullptr;
+        }
+
+        if (matchContextual("RESET")) {
+            if (!check(TokenType::LEFT_PAREN)) {
+                error("Expected '(' after RESET in ALTER SYNONYM");
+                return nullptr;
+            }
+            auto* stmt = arena_.create<AlterSystemStmt>();
+            stmt->name = stringPool().intern(
+                std::string(is_public ? "synonym.public.reset." : "synonym.reset.") + synonym_name);
+            stmt->value = make_payload_literal(captureStatementBody());
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        error("Expected RENAME, SET, or RESET after synonym name");
         return nullptr;
     };
 
@@ -6875,6 +6991,11 @@ Statement* Parser::parseAlter() {
             error("Expected index name");
             return nullptr;
         }
+        if (index_path.components.size() < 2) {
+            errorCode("PRS_0505",
+                      "ALTER INDEX requires explicit parent-qualified index reference");
+            return nullptr;
+        }
 
         if (matchContextual("RENAME")) {
             expectContextual("TO", "Expected TO after RENAME");
@@ -6949,6 +7070,10 @@ Statement* Parser::parseAlter() {
             }
             stmt->target_filespace = parseSchemaPath(state_);
             stmt->has_target_filespace = !stmt->target_filespace.isEmpty();
+            if (stmt->has_target_filespace && stmt->target_filespace.components.size() != 1) {
+                errorCode("PRS_0505",
+                          "FILESPACE/TABLESPACE names are database-scoped and must not be schema-qualified");
+            }
             parse_maintenance_mode(stmt);
             if (match(TokenType::KW_WITH)) {
                 parse_option_set_list(stmt, "WITH");
@@ -6986,10 +7111,14 @@ Statement* Parser::parseAlter() {
     }
     if (matchContextual("SEQUENCE")) return parse_rename_move(DdlObjectType::SEQUENCE);
     if (matchContextual("DOMAIN")) return parse_rename_move(DdlObjectType::DOMAIN);
-    if (matchContextual("TRIGGER")) return parse_rename_move(DdlObjectType::TRIGGER);
+    if (matchContextual("TRIGGER")) {
+        return parse_rename_move(DdlObjectType::TRIGGER, true, "TRIGGER");
+    }
     if (matchContextual("FUNCTION")) return parse_rename_move(DdlObjectType::FUNCTION);
     if (matchContextual("PROCEDURE")) return parse_rename_move(DdlObjectType::PROCEDURE);
     if (matchContextual("PACKAGE")) return parse_rename_move(DdlObjectType::PACKAGE);
+    if (matchContextual("EXCEPTION")) return parse_rename_move(DdlObjectType::EXCEPTION);
+    if (matchContextual("UDR")) return parse_rename_move(DdlObjectType::UDR);
     if (matchContextual("TABLESPACE")) return parse_rename_move(DdlObjectType::TABLESPACE);
     if (matchContextual("ROLE")) return parse_rename_move(DdlObjectType::ROLE);
     if (matchContextual("USER")) {
@@ -6999,7 +7128,14 @@ Statement* Parser::parseAlter() {
         return parseAlterUser();
     }
     if (matchContextual("GROUP")) return parse_rename_move(DdlObjectType::GROUP);
-    if (matchContextual("SYNONYM")) return parse_rename_move(DdlObjectType::SYNONYM);
+    if (matchContextual("PUBLIC")) {
+        if (matchContextual("SYNONYM")) {
+            return parse_alter_synonym(true);
+        }
+        errorCode("PRS_0505", "Expected SYNONYM after ALTER PUBLIC");
+        return nullptr;
+    }
+    if (matchContextual("SYNONYM")) return parse_alter_synonym(false);
     if (matchContextual("SERVER")) return parse_rename_move(DdlObjectType::FOREIGN_SERVER);
     if (matchContextual("FOREIGN")) {
         expectContextual("TABLE", "Expected TABLE after FOREIGN");
@@ -7289,6 +7425,9 @@ AlterDomainStmt* Parser::parseAlterDomain() {
     stmt->domain_path = parseSchemaPath(state_);
     if (stmt->domain_path.isEmpty()) {
         error("Expected domain name");
+    } else if (stmt->domain_path.components.size() != 1) {
+        errorCode("PRS_0505",
+                  "DOMAIN names are global and must not be schema-qualified");
     }
 
     if (match(TokenType::KW_SET)) {
@@ -7592,6 +7731,103 @@ AlterJobStmt* Parser::parseAlterJob() {
         return true;
     };
 
+    auto parse_measurement_key = [&]() -> StringPool::StringId {
+        if (matchContextual("ENABLED")) {
+            return stringPool().intern("ENABLED");
+        }
+        if (matchContextual("WINDOW")) {
+            return stringPool().intern("WINDOW");
+        }
+        if (matchContextual("RETENTION")) {
+            return stringPool().intern("RETENTION");
+        }
+        if (matchContextual("GRANULARITY")) {
+            return stringPool().intern("GRANULARITY");
+        }
+        if (!isIdentifier()) {
+            error("Expected MEASUREMENT option key");
+            return StringPool::INVALID_ID;
+        }
+        auto key = current().value.string_id;
+        advance();
+        return key;
+    };
+
+    auto parse_measurement_value = [&]() -> StringPool::StringId {
+        if (check(TokenType::COMMA) || check(TokenType::RIGHT_PAREN)) {
+            error("Expected MEASUREMENT option value");
+            return StringPool::INVALID_ID;
+        }
+
+        std::string_view input = state_.lexer().input();
+        size_t start = current().span.start.offset;
+        size_t end = start;
+        bool saw_token = false;
+        int depth = 0;
+        Token last = current();
+
+        while (!isAtEnd()) {
+            if (check(TokenType::COMMA) && depth == 0) {
+                break;
+            }
+            if (check(TokenType::RIGHT_PAREN) && depth == 0) {
+                break;
+            }
+            if (check(TokenType::LEFT_PAREN)) {
+                depth++;
+            } else if (check(TokenType::RIGHT_PAREN) && depth > 0) {
+                depth--;
+            }
+            last = current();
+            saw_token = true;
+            advance();
+        }
+
+        if (saw_token) {
+            end = last.span.start.offset + last.span.length;
+            if (end > input.size()) {
+                end = input.size();
+            }
+        }
+
+        if (!saw_token || end <= start) {
+            error("Expected MEASUREMENT option value");
+            return StringPool::INVALID_ID;
+        }
+
+        std::string_view text = input.substr(start, end - start);
+        size_t trim_start = text.find_first_not_of(" \t\r\n");
+        if (trim_start == std::string_view::npos) {
+            error("Expected MEASUREMENT option value");
+            return StringPool::INVALID_ID;
+        }
+        size_t trim_end = text.find_last_not_of(" \t\r\n");
+        return stringPool().intern(text.substr(trim_start, trim_end - trim_start + 1));
+    };
+
+    auto parse_measurement_clause = [&]() {
+        stmt->has_measurement = true;
+        stmt->drop_measurement = false;
+        stmt->measurement_options.clear();
+        expect(TokenType::LEFT_PAREN, "Expected '(' after MEASUREMENT");
+        if (check(TokenType::RIGHT_PAREN)) {
+            error("MEASUREMENT clause must include at least one option");
+        }
+        while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+            auto key = parse_measurement_key();
+            expect(TokenType::EQUAL, "Expected '=' after MEASUREMENT option key");
+            auto value = parse_measurement_value();
+            stmt->measurement_options.emplace_back(key, value);
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after MEASUREMENT options");
+        if (stmt->measurement_options.empty()) {
+            error("MEASUREMENT clause must include at least one option");
+        }
+    };
+
     auto parse_job_body = [&]() {
         if (match(TokenType::KW_AS) || matchContextual("AS")) {
             stmt->has_job_body = true;
@@ -7647,11 +7883,20 @@ AlterJobStmt* Parser::parseAlterJob() {
                 stmt->secret_value = current().value.string_id;
                 advance();
             }
-        } else if ((match(TokenType::KW_DROP) || matchContextual("DROP")) &&
-                   matchContextual("SECRET")) {
-            stmt->has_secret = true;
-            stmt->drop_secret = true;
-            stmt->secret_key = expectIdentifier("Expected secret key after DROP SECRET");
+        } else if (saw_set && matchContextual("MEASUREMENT")) {
+            parse_measurement_clause();
+        } else if (match(TokenType::KW_DROP) || matchContextual("DROP")) {
+            if (matchContextual("MEASUREMENT")) {
+                stmt->has_measurement = true;
+                stmt->drop_measurement = true;
+                stmt->measurement_options.clear();
+            } else if (matchContextual("SECRET")) {
+                stmt->has_secret = true;
+                stmt->drop_secret = true;
+                stmt->secret_key = expectIdentifier("Expected secret key after DROP SECRET");
+            } else {
+                error("Expected MEASUREMENT or SECRET after DROP");
+            }
         } else if (parse_schedule()) {
             // handled
         } else if (parse_job_body()) {
@@ -7732,7 +7977,7 @@ AlterJobStmt* Parser::parseAlterJob() {
             }
         } else {
             if (saw_set) {
-                error("Expected SCHEDULE, STATE, MAX_RETRIES, RETRY_BACKOFF, TIMEOUT, RUN AS, DESCRIPTION, AS, CALL, EXEC, DEPENDS ON, PARTITION BY, ON COMPLETION, or CLASS after SET");
+                error("Expected SCHEDULE, MEASUREMENT, STATE, MAX_RETRIES, RETRY_BACKOFF, TIMEOUT, RUN AS, DESCRIPTION, AS, CALL, EXEC, DEPENDS ON, PARTITION BY, ON COMPLETION, or CLASS after SET");
             }
             break;
         }
@@ -7982,6 +8227,10 @@ AlterTableStmt* Parser::parseAlterTable() {
         if (matchContextual("TABLESPACE")) {
             stmt->action = AlterTableAction::SET_TABLESPACE;
             stmt->tablespace = parseSchemaPath(state_);
+            if (!stmt->tablespace.isEmpty() && stmt->tablespace.components.size() != 1) {
+                errorCode("PRS_0505",
+                          "TABLESPACE names are database-scoped and must not be schema-qualified");
+            }
         } else if (matchContextual("SCHEMA")) {
             stmt->action = AlterTableAction::SET_SCHEMA;
             stmt->target_schema = parseSchemaPath(state_);
@@ -8053,29 +8302,10 @@ AlterTableStmt* Parser::parseAlterTable() {
 Statement* Parser::parseDrop() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
-    if (matchContextual("SEARCH")) {
-        if (matchContextual("INDEX")) {
-            errorCode("PRS_0505",
-                      "DROP SEARCH INDEX is not supported in v3; use DROP INDEX");
-            return nullptr;
-        }
-        errorCode("PRS_0505", "Expected INDEX after DROP SEARCH");
-        return nullptr;
-    }
-    if (matchContextual("VECTOR")) {
-        if (matchContextual("INDEX")) {
-            errorCode("PRS_0505",
-                      "DROP VECTOR INDEX is not supported in v3; use DROP INDEX");
-            return nullptr;
-        }
-        errorCode("PRS_0505", "Expected INDEX after DROP VECTOR");
-        return nullptr;
-    }
     if (matchContextual("SCHEDULE")) {
-        if (!requireFeature(kFeatureScheduleRruleSurface)) {
-            return nullptr;
-        }
-        return parseDropSchedule();
+        errorCode("PRS_0505",
+                  "Top-level DROP SCHEDULE is not supported in v3; use ALTER/DROP JOB ...");
+        return nullptr;
     }
     if (matchContextual("CONNECTION")) {
         if (!matchContextual("RULE")) {
@@ -8162,6 +8392,17 @@ Statement* Parser::parseDrop() {
     }
     if (matchContextual("EXCEPTION")) return parseDropException();
     if (matchContextual("SEQUENCE")) return parseDropSequence();
+    if (matchContextual("PUBLIC")) {
+        if (matchContextual("SYNONYM")) {
+            auto* stmt = parseDropSynonym();
+            if (stmt) {
+                stmt->is_public = true;
+            }
+            return stmt;
+        }
+        errorCode("PRS_0505", "Expected SYNONYM after DROP PUBLIC");
+        return nullptr;
+    }
     if (matchContextual("SYNONYM")) return parseDropSynonym();
     if (matchContextual("UDR")) return parseDropUdr();
     if (matchContextual("SERVER")) return parseDropForeignServer();
@@ -8179,10 +8420,9 @@ Statement* Parser::parseDrop() {
         return parseDropForeignTable();
     }
     if (matchContextual("MATERIALIZED")) {
-        expectContextual("VIEW", "Expected VIEW after MATERIALIZED");
-        auto* stmt = parseDropView();
-        if (stmt) stmt->materialized = true;
-        return stmt;
+        errorCode("PRS_0505",
+                  "DROP MATERIALIZED VIEW is not supported in v3; use DROP VIEW");
+        return nullptr;
     }
 
     error("Expected object type after DROP");
@@ -8506,7 +8746,12 @@ DropDomainStmt* Parser::parseDropDomain() {
     }
 
     do {
-        stmt->domains.push_back(parseSchemaPath(state_));
+        SchemaPath domain_path = parseSchemaPath(state_);
+        if (!domain_path.isEmpty() && domain_path.components.size() != 1) {
+            errorCode("PRS_0505",
+                      "DOMAIN names are global and must not be schema-qualified");
+        }
+        stmt->domains.push_back(std::move(domain_path));
     } while (match(TokenType::COMMA));
 
     if (matchContextual("CASCADE")) {
@@ -8580,7 +8825,12 @@ DropIndexStmt* Parser::parseDropIndex() {
 
     // Index names
     do {
-        stmt->indexes.push_back(parseSchemaPath(state_));
+        SchemaPath index_path = parseSchemaPath(state_);
+        if (!index_path.isEmpty() && index_path.components.size() < 2) {
+            errorCode("PRS_0505",
+                      "DROP INDEX requires explicit parent-qualified index reference");
+        }
+        stmt->indexes.push_back(std::move(index_path));
     } while (match(TokenType::COMMA));
 
     // CASCADE
@@ -8660,7 +8910,12 @@ DropTriggerStmt* Parser::parseDropTrigger() {
     }
 
     do {
-        stmt->triggers.push_back(parseSchemaPath(state_));
+        SchemaPath trigger_path = parseSchemaPath(state_);
+        if (!trigger_path.isEmpty() && trigger_path.components.size() < 2) {
+            errorCode("PRS_0505",
+                      "DROP TRIGGER requires explicit parent-qualified trigger reference");
+        }
+        stmt->triggers.push_back(std::move(trigger_path));
     } while (match(TokenType::COMMA));
 
     stmt->span = makeSpan(start);
@@ -8892,6 +9147,12 @@ DropSynonymStmt* Parser::parseDropSynonym() {
     do {
         stmt->synonyms.push_back(parseSchemaPath(state_));
     } while (match(TokenType::COMMA));
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    } else if (matchContextual("RESTRICT")) {
+        stmt->restrict = true;
+    }
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -12808,7 +13069,10 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
                    std::equal(prefix, prefix + n, upper_name.begin());
         };
 
-        if (starts_with("DOC_PATH_") ||
+        if (starts_with("FN_GET")) {
+            errorCode("PRS_0506",
+                      "Legacy FN_GET* function names are not supported in v3; use EXTRACT(<selector> FROM <expr>)");
+        } else if (starts_with("DOC_PATH_") ||
             starts_with("TS_") ||
             starts_with("SEARCH_") ||
             starts_with("VECTOR_")) {
@@ -14145,6 +14409,47 @@ ShowStmt* Parser::parseShow() {
         return false;
     };
 
+    auto matchSchemaPathCurrentSchemaVariable = [&]() -> bool {
+        auto next_is = [&](const char* word) -> bool {
+            Token lookahead = state_.lexer().peekToken();
+            return lookahead.type == TokenType::IDENTIFIER &&
+                   caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), word);
+        };
+
+        if (matchContextual("CURRENT_SCHEMA")) {
+            stmt->show_type = ShowStmt::ShowType::VARIABLE;
+            stmt->name = stringPool().intern("CURRENT_SCHEMA");
+            return true;
+        }
+        if (matchContextual("SEARCH_PATH") || matchContextual("SCHEMA_PATH")) {
+            stmt->show_type = ShowStmt::ShowType::VARIABLE;
+            stmt->name = stringPool().intern("SEARCH_PATH");
+            return true;
+        }
+        if (checkContextual("CURRENT") && next_is("SCHEMA")) {
+            matchContextual("CURRENT");
+            matchContextual("SCHEMA");
+            stmt->show_type = ShowStmt::ShowType::VARIABLE;
+            stmt->name = stringPool().intern("CURRENT_SCHEMA");
+            return true;
+        }
+        if (checkContextual("SEARCH") && next_is("PATH")) {
+            matchContextual("SEARCH");
+            matchContextual("PATH");
+            stmt->show_type = ShowStmt::ShowType::VARIABLE;
+            stmt->name = stringPool().intern("SEARCH_PATH");
+            return true;
+        }
+        if (checkContextual("SCHEMA") && next_is("PATH")) {
+            matchContextual("SCHEMA");
+            matchContextual("PATH");
+            stmt->show_type = ShowStmt::ShowType::VARIABLE;
+            stmt->name = stringPool().intern("SEARCH_PATH");
+            return true;
+        }
+        return false;
+    };
+
     // Canonical prefix form:
     // SHOW [IN|FROM <path>] <object_type> ...
     if (check(TokenType::KW_IN) || check(TokenType::KW_FROM)) {
@@ -14200,6 +14505,10 @@ ShowStmt* Parser::parseShow() {
         expectContextual("ISOLATION", "Expected ISOLATION after TRANSACTION");
         expectContextual("LEVEL", "Expected LEVEL after ISOLATION");
         stmt->show_type = ShowStmt::ShowType::TRANSACTION_ISOLATION_LEVEL;
+    }
+    // SHOW CURRENT SCHEMA / SHOW CURRENT_SCHEMA / SHOW SEARCH PATH / SHOW SEARCH_PATH / SHOW SCHEMA PATH
+    else if (matchSchemaPathCurrentSchemaVariable()) {
+        // Handled by helper.
     }
     // SHOW TABLES [FROM db] [LIKE pattern]
     else if (matchContextual("TABLES")) {
@@ -15426,6 +15735,25 @@ Statement* Parser::parseCreateClusterControl() {
         return lit;
     };
 
+    if (canStartSchemaPath(state_) &&
+        !checkContextual("WORKLOAD") &&
+        !checkContextual("ADMISSION")) {
+        SchemaPath cluster_path = parseSchemaPath(state_);
+        if (cluster_path.isEmpty()) {
+            error("Expected cluster name");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+        std::string cluster_name = schemaPathToString(cluster_path, stringPool());
+        std::string payload = captureStatementBody();
+        stmt->name = stringPool().intern("cluster.ddl.create." + cluster_name);
+        if (!payload.empty()) {
+            stmt->value = make_payload_literal(payload);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     std::string family;
     if (matchContextual("WORKLOAD")) {
         if (matchContextual("CLASS")) {
@@ -15471,6 +15799,88 @@ Statement* Parser::parseAlterClusterControl() {
         lit->string_value = stringPool().intern(payload);
         return lit;
     };
+
+    if (canStartSchemaPath(state_) &&
+        !checkContextual("SET") &&
+        !checkContextual("WORKLOAD") &&
+        !checkContextual("ADMISSION")) {
+        SchemaPath cluster_path = parseSchemaPath(state_);
+        if (cluster_path.isEmpty()) {
+            error("Expected cluster name");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        std::string cluster_name = schemaPathToString(cluster_path, stringPool());
+        auto finalize_stmt = [&](const char* action, std::string payload) -> Statement* {
+            stmt->name = stringPool().intern(std::string("cluster.ddl.") + action + "." + cluster_name);
+            if (!payload.empty()) {
+                stmt->value = make_payload_literal(payload);
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        };
+
+        if (match(TokenType::KW_SET) || matchContextual("SET")) {
+            if (matchContextual("STATE")) {
+                if (!isIdentifier()) {
+                    error("Expected cluster state after SET STATE");
+                    return finalize_stmt("set_state", "");
+                }
+                std::string state = std::string(stringPool().get(current().value.string_id));
+                std::string state_upper = toUpperAscii(state);
+                if (state_upper != "ONLINE" && state_upper != "OFFLINE" &&
+                    state_upper != "DEGRADED" && state_upper != "MAINTENANCE") {
+                    errorCode("PRS_0504", "Unknown cluster state");
+                }
+                advance();
+                std::string payload = state;
+                std::string tail = captureStatementBody();
+                if (!tail.empty()) {
+                    payload.push_back(' ');
+                    payload.append(tail);
+                }
+                return finalize_stmt("set_state", payload);
+            }
+            if (!check(TokenType::LEFT_PAREN)) {
+                error("Expected '(' after SET in ALTER CLUSTER");
+                return finalize_stmt("set", "");
+            }
+            return finalize_stmt("set", captureStatementBody());
+        }
+
+        if (matchContextual("RESET")) {
+            if (!check(TokenType::LEFT_PAREN)) {
+                error("Expected '(' after RESET in ALTER CLUSTER");
+                return finalize_stmt("reset", "");
+            }
+            return finalize_stmt("reset", captureStatementBody());
+        }
+
+        if (matchContextual("RENAME")) {
+            expectContextual("TO", "Expected TO after RENAME");
+            StringPool::StringId new_name = expectIdentifier("Expected new cluster name");
+            return finalize_stmt("rename", std::string(stringPool().get(new_name)));
+        }
+
+        if (matchContextual("START")) {
+            return finalize_stmt("start", captureStatementBody());
+        }
+        if (matchContextual("STOP")) {
+            return finalize_stmt("stop", captureStatementBody());
+        }
+        if (matchContextual("REFRESH")) {
+            if (match(TokenType::KW_WITH) || check(TokenType::LEFT_PAREN)) {
+                return finalize_stmt("refresh", captureStatementBody());
+            }
+            return finalize_stmt("refresh", "");
+        }
+
+        errorCode("PRS_0505",
+                  "Expected SET, RESET, RENAME, SET STATE, START, STOP, or REFRESH after ALTER CLUSTER <name>");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
 
     std::string family;
     if (matchContextual("SET")) {
@@ -15528,6 +15938,65 @@ Statement* Parser::parseDropClusterControl() {
         lit->string_value = stringPool().intern(payload);
         return lit;
     };
+
+    bool if_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    if (canStartSchemaPath(state_) &&
+        !checkContextual("WORKLOAD") &&
+        !checkContextual("ADMISSION")) {
+        std::vector<SchemaPath> cluster_paths;
+        do {
+            cluster_paths.push_back(parseSchemaPath(state_));
+        } while (match(TokenType::COMMA));
+
+        bool cascade = false;
+        bool restrict = false;
+        if (matchContextual("CASCADE")) {
+            cascade = true;
+        } else if (matchContextual("RESTRICT")) {
+            restrict = true;
+        }
+
+        std::string payload = captureStatementBody();
+        std::string names_payload;
+        for (size_t i = 0; i < cluster_paths.size(); ++i) {
+            if (i > 0) {
+                names_payload.push_back(',');
+            }
+            names_payload.append(schemaPathToString(cluster_paths[i], stringPool()));
+        }
+
+        if (cluster_paths.size() == 1 && !cascade && !restrict) {
+            stmt->name = stringPool().intern("cluster.ddl.drop." + names_payload);
+            if (if_exists || !payload.empty()) {
+                if (if_exists) {
+                    if (!payload.empty()) payload.insert(0, ";");
+                    payload.insert(0, "IF_EXISTS=1");
+                }
+                stmt->value = make_payload_literal(payload);
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        std::string composite_payload = "NAMES=" + names_payload;
+        if (if_exists) composite_payload.append(";IF_EXISTS=1");
+        if (cascade) composite_payload.append(";CASCADE=1");
+        if (restrict) composite_payload.append(";RESTRICT=1");
+        if (!payload.empty()) {
+            composite_payload.push_back(';');
+            composite_payload.append(payload);
+        }
+
+        stmt->name = stringPool().intern("cluster.ddl.drop");
+        stmt->value = make_payload_literal(composite_payload);
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
 
     std::string family;
     if (matchContextual("WORKLOAD")) {
@@ -15648,12 +16117,12 @@ Statement* Parser::parseCreateCubeControl() {
         if_not_exists = true;
     }
 
-    StringPool::StringId cube_name_id = expectIdentifier("Expected cube name after CREATE CUBE");
-    std::string cube_name = std::string(stringPool().get(cube_name_id));
-    std::string payload = captureStatementBody();
-    if (payload.empty()) {
-        errorCode("PRS_0504", "CREATE CUBE requires definition payload");
+    SchemaPath cube_path = parseSchemaPath(state_);
+    if (cube_path.isEmpty()) {
+        error("Expected cube name after CREATE CUBE");
     }
+    std::string cube_name = schemaPathToString(cube_path, stringPool());
+    std::string payload = captureStatementBody();
 
     if (if_not_exists) {
         if (!payload.empty()) {
@@ -15679,15 +16148,66 @@ Statement* Parser::parseAlterCubeControl() {
         return lit;
     };
 
-    StringPool::StringId cube_name_id = expectIdentifier("Expected cube name after ALTER CUBE");
-    std::string cube_name = std::string(stringPool().get(cube_name_id));
-    std::string payload = captureStatementBody();
-    if (payload.empty()) {
-        errorCode("PRS_0504", "ALTER CUBE requires action payload");
+    SchemaPath cube_path = parseSchemaPath(state_);
+    if (cube_path.isEmpty()) {
+        error("Expected cube name after ALTER CUBE");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+    std::string cube_name = schemaPathToString(cube_path, stringPool());
+
+    auto finalize_stmt = [&](const char* action, std::string payload) -> Statement* {
+        stmt->name = stringPool().intern(std::string("cube.ddl.") + action + "." + cube_name);
+        if (!payload.empty()) {
+            stmt->value = make_payload_literal(payload);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    };
+
+    if (match(TokenType::KW_SET) || matchContextual("SET")) {
+        if (!check(TokenType::LEFT_PAREN)) {
+            error("Expected '(' after SET in ALTER CUBE");
+            return finalize_stmt("set", "");
+        }
+        return finalize_stmt("set", captureStatementBody());
     }
 
-    stmt->name = stringPool().intern("cube.ddl.alter." + cube_name);
-    stmt->value = make_payload_literal(payload);
+    if (matchContextual("RESET")) {
+        if (!check(TokenType::LEFT_PAREN)) {
+            error("Expected '(' after RESET in ALTER CUBE");
+            return finalize_stmt("reset", "");
+        }
+        return finalize_stmt("reset", captureStatementBody());
+    }
+
+    if (matchContextual("RENAME")) {
+        expectContextual("TO", "Expected TO after RENAME");
+        StringPool::StringId new_name = expectIdentifier("Expected new cube name");
+        return finalize_stmt("rename", std::string(stringPool().get(new_name)));
+    }
+
+    if (matchContextual("START")) {
+        return finalize_stmt("start", captureStatementBody());
+    }
+    if (matchContextual("STOP")) {
+        return finalize_stmt("stop", captureStatementBody());
+    }
+    if (matchContextual("REBUILD")) {
+        if (match(TokenType::KW_WITH) || check(TokenType::LEFT_PAREN)) {
+            return finalize_stmt("rebuild", captureStatementBody());
+        }
+        return finalize_stmt("rebuild", "");
+    }
+    if (matchContextual("REFRESH")) {
+        if (match(TokenType::KW_WITH) || check(TokenType::LEFT_PAREN)) {
+            return finalize_stmt("refresh", captureStatementBody());
+        }
+        return finalize_stmt("refresh", "");
+    }
+
+    errorCode("PRS_0505",
+              "Expected SET, RESET, RENAME, START, STOP, REBUILD, or REFRESH after ALTER CUBE <name>");
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -15709,21 +16229,54 @@ Statement* Parser::parseDropCubeControl() {
         if_exists = true;
     }
 
-    StringPool::StringId cube_name_id = expectIdentifier("Expected cube name after DROP CUBE");
-    std::string cube_name = std::string(stringPool().get(cube_name_id));
+    std::vector<SchemaPath> cube_paths;
+    do {
+        cube_paths.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    bool cascade = false;
+    bool restrict = false;
+    if (matchContextual("CASCADE")) {
+        cascade = true;
+    } else if (matchContextual("RESTRICT")) {
+        restrict = true;
+    }
+
     std::string payload = captureStatementBody();
-
-    if (if_exists) {
-        if (!payload.empty()) {
-            payload.insert(0, ";");
+    std::string names_payload;
+    for (size_t i = 0; i < cube_paths.size(); ++i) {
+        if (i > 0) {
+            names_payload.push_back(',');
         }
-        payload.insert(0, "IF_EXISTS=1");
+        names_payload.append(schemaPathToString(cube_paths[i], stringPool()));
     }
 
-    stmt->name = stringPool().intern("cube.ddl.drop." + cube_name);
-    if (!payload.empty()) {
-        stmt->value = make_payload_literal(payload);
+    if (cube_paths.size() == 1 && !cascade && !restrict) {
+        if (if_exists) {
+            if (!payload.empty()) {
+                payload.insert(0, ";");
+            }
+            payload.insert(0, "IF_EXISTS=1");
+        }
+        stmt->name = stringPool().intern("cube.ddl.drop." + names_payload);
+        if (!payload.empty()) {
+            stmt->value = make_payload_literal(payload);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
     }
+
+    std::string composite_payload = "NAMES=" + names_payload;
+    if (if_exists) composite_payload.append(";IF_EXISTS=1");
+    if (cascade) composite_payload.append(";CASCADE=1");
+    if (restrict) composite_payload.append(";RESTRICT=1");
+    if (!payload.empty()) {
+        composite_payload.push_back(';');
+        composite_payload.append(payload);
+    }
+
+    stmt->name = stringPool().intern("cube.ddl.drop");
+    stmt->value = make_payload_literal(composite_payload);
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -17144,6 +17697,126 @@ CommentStmt* Parser::parseComment() {
             out_type = CommentObjectType::CONSTRAINT;
             return true;
         }
+        if (matchContextual("DOMAIN")) {
+            out_type = CommentObjectType::DOMAIN;
+            return true;
+        }
+        if (matchContextual("TYPE")) {
+            out_type = CommentObjectType::TYPE;
+            return true;
+        }
+        if (matchContextual("PACKAGE")) {
+            out_type = CommentObjectType::PACKAGE;
+            return true;
+        }
+        if (matchContextual("EXCEPTION")) {
+            out_type = CommentObjectType::EXCEPTION;
+            return true;
+        }
+        if (matchContextual("UDR")) {
+            out_type = CommentObjectType::UDR;
+            return true;
+        }
+        if (matchContextual("USER")) {
+            if (matchContextual("MAPPING")) {
+                out_type = CommentObjectType::USER_MAPPING;
+            } else {
+                out_type = CommentObjectType::USER;
+            }
+            return true;
+        }
+        if (matchContextual("GROUP")) {
+            out_type = CommentObjectType::GROUP;
+            return true;
+        }
+        if (matchContextual("POLICY")) {
+            out_type = CommentObjectType::POLICY;
+            return true;
+        }
+        if (matchContextual("TOKEN")) {
+            out_type = CommentObjectType::TOKEN;
+            return true;
+        }
+        if (matchContextual("QUOTA")) {
+            expectContextual("PROFILE", "Expected PROFILE after QUOTA");
+            out_type = CommentObjectType::QUOTA_PROFILE;
+            return true;
+        }
+        if (matchContextual("CONNECTION")) {
+            expectContextual("RULE", "Expected RULE after CONNECTION");
+            out_type = CommentObjectType::CONNECTION_RULE;
+            return true;
+        }
+        if (matchContextual("SERVER")) {
+            out_type = CommentObjectType::SERVER;
+            return true;
+        }
+        if (matchContextual("FOREIGN")) {
+            if (matchContextual("DATA")) {
+                expectContextual("WRAPPER", "Expected WRAPPER after FOREIGN DATA");
+                out_type = CommentObjectType::FOREIGN_DATA_WRAPPER;
+                return true;
+            }
+            if (matchContextual("TABLE")) {
+                out_type = CommentObjectType::FOREIGN_TABLE;
+                return true;
+            }
+            error("Expected TABLE or DATA WRAPPER after FOREIGN");
+            return false;
+        }
+        if (matchContextual("SYNONYM")) {
+            out_type = CommentObjectType::SYNONYM;
+            return true;
+        }
+        if (matchContextual("PUBLIC")) {
+            if (matchContextual("SYNONYM")) {
+                out_type = CommentObjectType::PUBLIC_SYNONYM;
+                return true;
+            }
+            if (matchContextual("PUBLICATION")) {
+                out_type = CommentObjectType::PUBLICATION;
+                return true;
+            }
+            error("Expected SYNONYM or PUBLICATION after PUBLIC");
+            return false;
+        }
+        if (matchContextual("PUBLICATION")) {
+            out_type = CommentObjectType::PUBLICATION;
+            return true;
+        }
+        if (matchContextual("SUBSCRIPTION")) {
+            out_type = CommentObjectType::SUBSCRIPTION;
+            return true;
+        }
+        if (matchContextual("REPLICATION")) {
+            expectContextual("CHANNEL", "Expected CHANNEL after REPLICATION");
+            out_type = CommentObjectType::REPLICATION_CHANNEL;
+            return true;
+        }
+        if (matchContextual("JOB")) {
+            out_type = CommentObjectType::JOB;
+            return true;
+        }
+        if (matchContextual("EVENT")) {
+            out_type = CommentObjectType::EVENT;
+            return true;
+        }
+        if (matchContextual("TABLESPACE")) {
+            out_type = CommentObjectType::TABLESPACE;
+            return true;
+        }
+        if (matchContextual("FILESPACE")) {
+            out_type = CommentObjectType::FILESPACE;
+            return true;
+        }
+        if (matchContextual("CLUSTER")) {
+            out_type = CommentObjectType::CLUSTER;
+            return true;
+        }
+        if (matchContextual("CUBE")) {
+            out_type = CommentObjectType::CUBE;
+            return true;
+        }
         return false;
     };
 
@@ -17176,27 +17849,49 @@ CommentStmt* Parser::parseComment() {
     // Compatibility grammar:
     // COMMENT ON <object_type> <path> IS ...
     if (parseObjectType(stmt->object_type)) {
-        stmt->object_path = parseSchemaPath(state_);
+        if (stmt->object_type == CommentObjectType::USER_MAPPING) {
+            expectContextual("FOR", "Expected FOR after COMMENT ON USER MAPPING");
 
-        if (stmt->object_type == CommentObjectType::FUNCTION ||
-            stmt->object_type == CommentObjectType::PROCEDURE) {
-            skipSignatureList();
-        } else if (stmt->object_type == CommentObjectType::TRIGGER) {
-            if (matchContextual("ON")) {
-                SchemaPath parent = parseSchemaPath(state_);
-                if (!stmt->object_path.components.empty()) {
-                    SchemaPath qualified = parent;
-                    qualified.components.push_back(stmt->object_path.components.back());
-                    stmt->object_path = std::move(qualified);
+            StringPool::StringId principal = StringPool::INVALID_ID;
+            if (matchContextual("CURRENT_USER")) {
+                principal = stringPool().intern("CURRENT_USER");
+            } else if (matchContextual("SESSION_USER")) {
+                principal = stringPool().intern("SESSION_USER");
+            } else if (matchContextual("PUBLIC")) {
+                principal = stringPool().intern("PUBLIC");
+            } else if (matchContextual("USER")) {
+                if (isIdentifier()) {
+                    principal = expectIdentifier("Expected user name");
+                } else {
+                    principal = stringPool().intern("CURRENT_USER");
                 }
+            } else if (isIdentifier()) {
+                principal = expectIdentifier("Expected principal name");
+            } else {
+                error("Expected principal after COMMENT ON USER MAPPING FOR");
             }
-        } else if (stmt->object_type == CommentObjectType::CONSTRAINT) {
-            if (matchContextual("ON")) {
-                SchemaPath parent = parseSchemaPath(state_);
-                if (!stmt->object_path.components.empty()) {
-                    SchemaPath qualified = parent;
-                    qualified.components.push_back(stmt->object_path.components.back());
-                    stmt->object_path = std::move(qualified);
+
+            expectContextual("SERVER", "Expected SERVER after USER MAPPING principal");
+            stmt->object_path = parseSchemaPath(state_);
+            if (principal != StringPool::INVALID_ID) {
+                stmt->object_path.components.push_back(principal);
+            }
+        } else {
+            stmt->object_path = parseSchemaPath(state_);
+
+            if (stmt->object_type == CommentObjectType::FUNCTION ||
+                stmt->object_type == CommentObjectType::PROCEDURE) {
+                skipSignatureList();
+            } else if (stmt->object_type == CommentObjectType::TRIGGER ||
+                       stmt->object_type == CommentObjectType::CONSTRAINT ||
+                       stmt->object_type == CommentObjectType::POLICY) {
+                if (matchContextual("ON")) {
+                    SchemaPath parent = parseSchemaPath(state_);
+                    if (!stmt->object_path.components.empty()) {
+                        SchemaPath qualified = parent;
+                        qualified.components.push_back(stmt->object_path.components.back());
+                        stmt->object_path = std::move(qualified);
+                    }
                 }
             }
         }
@@ -17297,32 +17992,223 @@ CommentStmt* Parser::parseDropComment() {
             out_type = CommentObjectType::CONSTRAINT;
             return true;
         }
+        if (matchContextual("DOMAIN")) {
+            out_type = CommentObjectType::DOMAIN;
+            return true;
+        }
+        if (matchContextual("TYPE")) {
+            out_type = CommentObjectType::TYPE;
+            return true;
+        }
+        if (matchContextual("PACKAGE")) {
+            out_type = CommentObjectType::PACKAGE;
+            return true;
+        }
+        if (matchContextual("EXCEPTION")) {
+            out_type = CommentObjectType::EXCEPTION;
+            return true;
+        }
+        if (matchContextual("UDR")) {
+            out_type = CommentObjectType::UDR;
+            return true;
+        }
+        if (matchContextual("USER")) {
+            if (matchContextual("MAPPING")) {
+                out_type = CommentObjectType::USER_MAPPING;
+            } else {
+                out_type = CommentObjectType::USER;
+            }
+            return true;
+        }
+        if (matchContextual("GROUP")) {
+            out_type = CommentObjectType::GROUP;
+            return true;
+        }
+        if (matchContextual("POLICY")) {
+            out_type = CommentObjectType::POLICY;
+            return true;
+        }
+        if (matchContextual("TOKEN")) {
+            out_type = CommentObjectType::TOKEN;
+            return true;
+        }
+        if (matchContextual("QUOTA")) {
+            expectContextual("PROFILE", "Expected PROFILE after QUOTA");
+            out_type = CommentObjectType::QUOTA_PROFILE;
+            return true;
+        }
+        if (matchContextual("CONNECTION")) {
+            expectContextual("RULE", "Expected RULE after CONNECTION");
+            out_type = CommentObjectType::CONNECTION_RULE;
+            return true;
+        }
+        if (matchContextual("SERVER")) {
+            out_type = CommentObjectType::SERVER;
+            return true;
+        }
+        if (matchContextual("FOREIGN")) {
+            if (matchContextual("DATA")) {
+                expectContextual("WRAPPER", "Expected WRAPPER after FOREIGN DATA");
+                out_type = CommentObjectType::FOREIGN_DATA_WRAPPER;
+                return true;
+            }
+            if (matchContextual("TABLE")) {
+                out_type = CommentObjectType::FOREIGN_TABLE;
+                return true;
+            }
+            error("Expected TABLE or DATA WRAPPER after FOREIGN");
+            return false;
+        }
+        if (matchContextual("SYNONYM")) {
+            out_type = CommentObjectType::SYNONYM;
+            return true;
+        }
+        if (matchContextual("PUBLIC")) {
+            if (matchContextual("SYNONYM")) {
+                out_type = CommentObjectType::PUBLIC_SYNONYM;
+                return true;
+            }
+            if (matchContextual("PUBLICATION")) {
+                out_type = CommentObjectType::PUBLICATION;
+                return true;
+            }
+            error("Expected SYNONYM or PUBLICATION after PUBLIC");
+            return false;
+        }
+        if (matchContextual("PUBLICATION")) {
+            out_type = CommentObjectType::PUBLICATION;
+            return true;
+        }
+        if (matchContextual("SUBSCRIPTION")) {
+            out_type = CommentObjectType::SUBSCRIPTION;
+            return true;
+        }
+        if (matchContextual("REPLICATION")) {
+            expectContextual("CHANNEL", "Expected CHANNEL after REPLICATION");
+            out_type = CommentObjectType::REPLICATION_CHANNEL;
+            return true;
+        }
+        if (matchContextual("JOB")) {
+            out_type = CommentObjectType::JOB;
+            return true;
+        }
+        if (matchContextual("EVENT")) {
+            out_type = CommentObjectType::EVENT;
+            return true;
+        }
+        if (matchContextual("TABLESPACE")) {
+            out_type = CommentObjectType::TABLESPACE;
+            return true;
+        }
+        if (matchContextual("FILESPACE")) {
+            out_type = CommentObjectType::FILESPACE;
+            return true;
+        }
+        if (matchContextual("CLUSTER")) {
+            out_type = CommentObjectType::CLUSTER;
+            return true;
+        }
+        if (matchContextual("CUBE")) {
+            out_type = CommentObjectType::CUBE;
+            return true;
+        }
         return false;
     };
 
-    StringPool::StringId object_name = expectIdentifier("Expected object name after DROP COMMENT ON");
-    expectContextual("OF", "Expected OF after object name");
-    if (!parseObjectType(stmt->object_type)) {
-        error("Expected object type after DROP COMMENT ON <name> OF");
-        return nullptr;
-    }
-    if (!(match(TokenType::KW_IN) || match(TokenType::KW_FROM))) {
-        error("Expected IN/FROM after DROP COMMENT ON <name> OF <type>");
-        return nullptr;
+    auto skipSignatureList = [&]() {
+        if (!match(TokenType::LEFT_PAREN)) {
+            return;
+        }
+        int depth = 1;
+        while (!isAtEnd() && depth > 0) {
+            if (match(TokenType::LEFT_PAREN)) {
+                depth++;
+            } else if (match(TokenType::RIGHT_PAREN)) {
+                depth--;
+            } else {
+                advance();
+            }
+        }
+    };
+
+    auto enforceParentRule = [&](CommentObjectType type, const SchemaPath& path) {
+        if (type == CommentObjectType::COLUMN ||
+            type == CommentObjectType::CONSTRAINT ||
+            type == CommentObjectType::INDEX) {
+            if (path.components.size() < 2) {
+                error("Parent path is required for DROP COMMENT ON COLUMN/CONSTRAINT/INDEX");
+            }
+        }
+    };
+
+    if (parseObjectType(stmt->object_type)) {
+        if (stmt->object_type == CommentObjectType::USER_MAPPING) {
+            expectContextual("FOR", "Expected FOR after DROP COMMENT ON USER MAPPING");
+
+            StringPool::StringId principal = StringPool::INVALID_ID;
+            if (matchContextual("CURRENT_USER")) {
+                principal = stringPool().intern("CURRENT_USER");
+            } else if (matchContextual("SESSION_USER")) {
+                principal = stringPool().intern("SESSION_USER");
+            } else if (matchContextual("PUBLIC")) {
+                principal = stringPool().intern("PUBLIC");
+            } else if (matchContextual("USER")) {
+                if (isIdentifier()) {
+                    principal = expectIdentifier("Expected user name");
+                } else {
+                    principal = stringPool().intern("CURRENT_USER");
+                }
+            } else if (isIdentifier()) {
+                principal = expectIdentifier("Expected principal name");
+            } else {
+                error("Expected principal after DROP COMMENT ON USER MAPPING FOR");
+            }
+
+            expectContextual("SERVER", "Expected SERVER after USER MAPPING principal");
+            stmt->object_path = parseSchemaPath(state_);
+            if (principal != StringPool::INVALID_ID) {
+                stmt->object_path.components.push_back(principal);
+            }
+        } else {
+            stmt->object_path = parseSchemaPath(state_);
+
+            if (stmt->object_type == CommentObjectType::FUNCTION ||
+                stmt->object_type == CommentObjectType::PROCEDURE) {
+                skipSignatureList();
+            } else if (stmt->object_type == CommentObjectType::TRIGGER ||
+                       stmt->object_type == CommentObjectType::CONSTRAINT ||
+                       stmt->object_type == CommentObjectType::POLICY) {
+                if (matchContextual("ON")) {
+                    SchemaPath parent = parseSchemaPath(state_);
+                    if (!stmt->object_path.components.empty()) {
+                        SchemaPath qualified = parent;
+                        qualified.components.push_back(stmt->object_path.components.back());
+                        stmt->object_path = std::move(qualified);
+                    }
+                }
+            }
+        }
+    } else {
+        StringPool::StringId object_name = expectIdentifier("Expected object name after DROP COMMENT ON");
+        expectContextual("OF", "Expected OF after object name");
+        if (!parseObjectType(stmt->object_type)) {
+            error("Expected object type after DROP COMMENT ON <name> OF");
+            return nullptr;
+        }
+        if (!(match(TokenType::KW_IN) || match(TokenType::KW_FROM))) {
+            error("Expected IN/FROM after DROP COMMENT ON <name> OF <type>");
+            return nullptr;
+        }
+
+        SchemaPath parent_path = parseSchemaPath(state_);
+        stmt->object_path = parent_path;
+        stmt->object_path.components.push_back(object_name);
+        if (stmt->object_type == CommentObjectType::COLUMN) {
+            stmt->column_name = object_name;
+        }
     }
 
-    SchemaPath parent_path = parseSchemaPath(state_);
-    stmt->object_path = parent_path;
-    stmt->object_path.components.push_back(object_name);
-    if (stmt->object_type == CommentObjectType::COLUMN) {
-        stmt->column_name = object_name;
-    }
-    if ((stmt->object_type == CommentObjectType::COLUMN ||
-         stmt->object_type == CommentObjectType::CONSTRAINT ||
-         stmt->object_type == CommentObjectType::INDEX) &&
-        stmt->object_path.components.size() < 2) {
-        error("Parent path is required for DROP COMMENT ON COLUMN/CONSTRAINT/INDEX");
-    }
+    enforceParentRule(stmt->object_type, stmt->object_path);
 
     stmt->is_null = true;
     stmt->action = CommentStmt::Action::DROP;

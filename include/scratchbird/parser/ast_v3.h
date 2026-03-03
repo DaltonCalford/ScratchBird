@@ -1368,6 +1368,8 @@ public:
     int64_t interval_seconds = 0;
     StringPool::StringId starts_at = StringPool::INVALID_ID;
     StringPool::StringId ends_at = StringPool::INVALID_ID;
+    bool has_measurement = false;
+    std::vector<std::pair<StringPool::StringId, StringPool::StringId>> measurement_options;
 
     bool has_max_retries = false;
     uint32_t max_retries = 0;
@@ -1411,6 +1413,9 @@ public:
     int64_t interval_seconds = 0;
     StringPool::StringId starts_at = StringPool::INVALID_ID;
     StringPool::StringId ends_at = StringPool::INVALID_ID;
+    bool has_measurement = false;
+    bool drop_measurement = false;
+    std::vector<std::pair<StringPool::StringId, StringPool::StringId>> measurement_options;
 
     bool has_job_body = false;
     JobType job_type = JobType::SQL;
@@ -2188,6 +2193,9 @@ public:
     void accept(ASTVisitor& visitor) override;
 
     bool if_exists = false;
+    bool is_public = false;
+    bool cascade = false;
+    bool restrict = false;
     std::vector<SchemaPath> synonyms;
 };
 
@@ -2435,7 +2443,33 @@ enum class CommentObjectType : uint8_t {
     SCHEMA,
     DATABASE,
     ROLE,
-    CONSTRAINT
+    CONSTRAINT,
+    DOMAIN,
+    TYPE,
+    PACKAGE,
+    EXCEPTION,
+    UDR,
+    USER,
+    GROUP,
+    POLICY,
+    TOKEN,
+    QUOTA_PROFILE,
+    CONNECTION_RULE,
+    SERVER,
+    FOREIGN_DATA_WRAPPER,
+    FOREIGN_TABLE,
+    USER_MAPPING,
+    SYNONYM,
+    PUBLIC_SYNONYM,
+    JOB,
+    PUBLICATION,
+    SUBSCRIPTION,
+    REPLICATION_CHANNEL,
+    EVENT,
+    TABLESPACE,
+    FILESPACE,
+    CLUSTER,
+    CUBE
 };
 
 /**

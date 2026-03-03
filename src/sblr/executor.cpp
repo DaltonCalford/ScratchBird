@@ -5861,6 +5861,28 @@ namespace scratchbird
 
             if (isTableScopedType(expected_type) && path.components.size() <= 2)
             {
+                status = catalog->resolveObjectPath(path, expected_type, opts,
+                                                    object_id_out, resolved_type_out, ctx);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+                if (resolved_out)
+                {
+                    auto resolve_status = catalog->resolveObjectId(object_id_out, *resolved_out, ctx);
+                    if (resolve_status != core::Status::OK)
+                    {
+                        return resolve_status;
+                    }
+                }
+                return core::Status::OK;
+            }
+
+            const bool use_legacy_table_scoped_resolver = false;
+            if (use_legacy_table_scoped_resolver &&
+                isTableScopedType(expected_type) &&
+                path.components.size() <= 2)
+            {
                 const bool has_parent_object_name = (path.components.size() == 2);
                 std::string object_name =
                     has_parent_object_name ? path.components.back() : path.components.front();
@@ -10196,6 +10218,12 @@ namespace scratchbird
 
             // Read index name (string)
             std::string index_name = readString();
+            auto index_components = splitSchemaComponents(index_name);
+            if (index_components.size() < 2)
+            {
+                throw std::runtime_error(
+                    "DROP INDEX requires parent-qualified name (table.index)");
+            }
 
             // Read IF EXISTS flag
             uint8_t if_exists = bytecode_[pc_++];
@@ -10235,6 +10263,12 @@ namespace scratchbird
             // ALTER INDEX name {ACTIVE|INACTIVE|SET (...)}
 
             std::string index_name = readString();
+            auto index_components = splitSchemaComponents(index_name);
+            if (index_components.size() < 2)
+            {
+                throw std::runtime_error(
+                    "ALTER INDEX requires parent-qualified name (table.index)");
+            }
             uint8_t action = readByte();
 
             ErrorContext ctx;
@@ -10883,7 +10917,7 @@ namespace scratchbird
                         {
                             core::ErrorContext trig_ctx;
                             auto trig_status = db_->catalog_manager()->enableTrigger(
-                                trig.trigger_name, enable, &trig_ctx);
+                                trig.trigger_id, enable, &trig_ctx);
                             if (trig_status != core::Status::OK)
                             {
                                 std::string err_msg = "Failed to update trigger '" +
@@ -10898,17 +10932,22 @@ namespace scratchbird
                     }
                     else
                     {
-                        core::CatalogManager::TriggerInfo trigger_info;
-                        if (db_->catalog_manager()->getTriggerByName(trigger_name,
-                                                                    trigger_info, &ctx) != core::Status::OK)
+                        std::string qualified_trigger = table_name + "." + trigger_name;
+                        core::ID trigger_id;
+                        core::CatalogManager::ObjectType resolved_type;
+                        auto resolve_status = resolveObjectIdForQualifiedName(
+                            qualified_trigger,
+                            core::CatalogManager::ObjectType::TRIGGER,
+                            trigger_id,
+                            resolved_type,
+                            nullptr,
+                            &ctx,
+                            false);
+                        if (resolve_status != core::Status::OK)
                         {
                             throw std::runtime_error("Trigger not found: " + trigger_name);
                         }
-                        if (trigger_info.table_id != table_info.table_id)
-                        {
-                            throw std::runtime_error("Trigger does not belong to table: " + trigger_name);
-                        }
-                        status = db_->catalog_manager()->enableTrigger(trigger_name, enable, &ctx);
+                        status = db_->catalog_manager()->enableTrigger(trigger_id, enable, &ctx);
                         if (status != core::Status::OK)
                         {
                             std::string err_msg = "Failed to update trigger '" + trigger_name + "'";
@@ -13128,6 +13167,38 @@ namespace scratchbird
                         return core::CatalogManager::ObjectType::ROLE;
                     case parser::CommentObjectType::CONSTRAINT:
                         return core::CatalogManager::ObjectType::CONSTRAINT;
+                    case parser::CommentObjectType::DOMAIN:
+                        return core::CatalogManager::ObjectType::DOMAIN;
+                    case parser::CommentObjectType::TYPE:
+                        return core::CatalogManager::ObjectType::COMPOSITE_TYPE;
+                    case parser::CommentObjectType::PACKAGE:
+                        return core::CatalogManager::ObjectType::PACKAGE;
+                    case parser::CommentObjectType::EXCEPTION:
+                        return core::CatalogManager::ObjectType::EXCEPTION;
+                    case parser::CommentObjectType::UDR:
+                        return core::CatalogManager::ObjectType::UDR;
+                    case parser::CommentObjectType::USER:
+                        return core::CatalogManager::ObjectType::USER;
+                    case parser::CommentObjectType::GROUP:
+                        return core::CatalogManager::ObjectType::GROUP;
+                    case parser::CommentObjectType::POLICY:
+                        return core::CatalogManager::ObjectType::POLICY;
+                    case parser::CommentObjectType::SERVER:
+                        return core::CatalogManager::ObjectType::FOREIGN_SERVER;
+                    case parser::CommentObjectType::FOREIGN_TABLE:
+                        return core::CatalogManager::ObjectType::FOREIGN_TABLE;
+                    case parser::CommentObjectType::USER_MAPPING:
+                        return core::CatalogManager::ObjectType::USER_MAPPING;
+                    case parser::CommentObjectType::SYNONYM:
+                    case parser::CommentObjectType::PUBLIC_SYNONYM:
+                        return core::CatalogManager::ObjectType::SYNONYM;
+                    case parser::CommentObjectType::JOB:
+                        return core::CatalogManager::ObjectType::JOB;
+                    case parser::CommentObjectType::TABLESPACE:
+                    case parser::CommentObjectType::FILESPACE:
+                        return core::CatalogManager::ObjectType::TABLESPACE;
+                    case parser::CommentObjectType::CLUSTER:
+                        return core::CatalogManager::ObjectType::CLUSTER;
                     default:
                         return core::CatalogManager::ObjectType::UNKNOWN;
                 }
@@ -29766,11 +29837,19 @@ namespace scratchbird
                 error(err_msg);
             }
 
-            core::CatalogManager::TriggerInfo stored_trigger;
-            if (db_->catalog_manager()->getTriggerByName(trigger_name, stored_trigger, &err_ctx) == core::Status::OK)
+            std::string qualified_trigger = table_name + "." + trigger_name;
+            core::ID trigger_id;
+            core::CatalogManager::ResolvedObject resolved_trigger;
+            if (resolveObjectIdForQualifiedName(
+                    qualified_trigger,
+                    core::CatalogManager::ObjectType::TRIGGER,
+                    trigger_id,
+                    resolved_type,
+                    &resolved_trigger,
+                    &err_ctx,
+                    false) == core::Status::OK)
             {
-                recordObjectDefinition(core::CatalogManager::ObjectType::TRIGGER,
-                                       stored_trigger.trigger_id);
+                recordObjectDefinition(core::CatalogManager::ObjectType::TRIGGER, trigger_id);
             }
         }
 
@@ -29779,33 +29858,37 @@ namespace scratchbird
             // Wave 2: Trigger Executor Implementation
             std::string trigger_name = readString();
             std::string table_name = readString();
-
-            core::ErrorContext err_ctx;
-            core::CatalogManager::TriggerInfo trigger_info;
-            auto status = db_->catalog_manager()->getTriggerByName(trigger_name, trigger_info, &err_ctx);
-            if (status != core::Status::OK)
+            if (table_name.empty())
             {
-                std::string qualified_trigger = table_name.empty()
-                    ? trigger_name
-                    : table_name + "." + trigger_name;
-                core::ID trigger_id;
-                core::CatalogManager::ObjectType resolved_type;
-                core::CatalogManager::ResolvedObject resolved_trigger;
-                status = resolveObjectIdForQualifiedName(
-                    qualified_trigger, core::CatalogManager::ObjectType::TRIGGER,
-                    trigger_id, resolved_type, &resolved_trigger, &err_ctx, false);
-                if (status != core::Status::OK)
-                {
-                    error("Trigger '" + trigger_name + "' not found");
-                }
-                status = db_->catalog_manager()->getTrigger(trigger_id, trigger_info, &err_ctx);
-                if (status != core::Status::OK)
-                {
-                    error("Trigger '" + trigger_name + "' not found");
-                }
+                error("DROP TRIGGER requires parent-qualified table name");
             }
 
-            status = db_->catalog_manager()->dropTrigger(trigger_info.trigger_name, &err_ctx);
+            core::ErrorContext err_ctx;
+            std::string qualified_trigger = table_name + "." + trigger_name;
+            core::ID trigger_id;
+            core::CatalogManager::ObjectType resolved_type;
+            core::CatalogManager::ResolvedObject resolved_trigger;
+            auto status = resolveObjectIdForQualifiedName(
+                qualified_trigger,
+                core::CatalogManager::ObjectType::TRIGGER,
+                trigger_id,
+                resolved_type,
+                &resolved_trigger,
+                &err_ctx,
+                false);
+            if (status != core::Status::OK)
+            {
+                error("Trigger '" + trigger_name + "' not found");
+            }
+
+            core::CatalogManager::TriggerInfo trigger_info;
+            status = db_->catalog_manager()->getTrigger(trigger_id, trigger_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                error("Trigger '" + trigger_name + "' not found");
+            }
+
+            status = db_->catalog_manager()->dropTrigger(trigger_info.trigger_id, &err_ctx);
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Failed to drop trigger";
@@ -48575,6 +48658,7 @@ namespace scratchbird
                 const bool temporary = (flags & 0x0004) != 0;
                 const bool materialized = (flags & 0x0008) != 0;
                 const bool check_option = (flags & 0x0010) != 0;
+                const bool with_data = (flags & 0x0020) != 0;
 
                 core::ID schema_id;
                 std::string resolved_view_name;
@@ -48829,7 +48913,8 @@ namespace scratchbird
                                                             column_names,
                                                             core::ID{},
                                                             &ctx,
-                                                            temp_opts_ptr);
+                                                            temp_opts_ptr,
+                                                            with_data);
                 if (status != core::Status::OK)
                 {
                     std::string err_msg = ctx.message.empty()
@@ -50358,7 +50443,7 @@ namespace scratchbird
                             {
                                 core::ErrorContext trig_ctx;
                                 auto trig_status = db_->catalog_manager()->enableTrigger(
-                                    trig.trigger_name, enable, &trig_ctx);
+                                    trig.trigger_id, enable, &trig_ctx);
                                 if (trig_status != core::Status::OK)
                                 {
                                     std::string err_msg = "Failed to update trigger '" +
@@ -50383,17 +50468,38 @@ namespace scratchbird
                             {
                                 return ExecutionResult("ALTER TABLE TRIGGER missing name");
                             }
-                            core::CatalogManager::TriggerInfo trigger_info;
-                            if (db_->catalog_manager()->getTriggerByName(trigger_name,
-                                                                        trigger_info, &ctx) != core::Status::OK)
+                            std::vector<core::CatalogManager::TriggerInfo> triggers;
+                            if (db_->catalog_manager()->listAllTriggersForTable(
+                                    table_info.table_id,
+                                    triggers,
+                                    &ctx) != core::Status::OK)
+                            {
+                                return ExecutionResult("Failed to list triggers for table");
+                            }
+                            core::ID trigger_id{};
+                            bool found = false;
+                            for (const auto& trig : triggers)
+                            {
+                                if (!core::IdentifierUtils::namesMatch(
+                                        trigger_name,
+                                        false,
+                                        trig.trigger_name,
+                                        trig.name_is_delimited))
+                                {
+                                    continue;
+                                }
+                                trigger_id = trig.trigger_id;
+                                found = true;
+                                break;
+                            }
+                            if (!found)
                             {
                                 return ExecutionResult("Trigger not found: " + trigger_name);
                             }
-                            if (trigger_info.table_id != table_info.table_id)
-                            {
-                                return ExecutionResult("Trigger does not belong to table: " + trigger_name);
-                            }
-                            auto status = db_->catalog_manager()->enableTrigger(trigger_name, enable, &ctx);
+                            auto status = db_->catalog_manager()->enableTrigger(
+                                trigger_id,
+                                enable,
+                                &ctx);
                             if (status != core::Status::OK)
                             {
                                 std::string err_msg = "Failed to update trigger '" + trigger_name + "'";
@@ -66192,6 +66298,38 @@ namespace scratchbird
 	                                    return core::CatalogManager::ObjectType::ROLE;
 	                                case parser::CommentObjectType::CONSTRAINT:
 	                                    return core::CatalogManager::ObjectType::CONSTRAINT;
+	                                case parser::CommentObjectType::DOMAIN:
+	                                    return core::CatalogManager::ObjectType::DOMAIN;
+	                                case parser::CommentObjectType::TYPE:
+	                                    return core::CatalogManager::ObjectType::COMPOSITE_TYPE;
+	                                case parser::CommentObjectType::PACKAGE:
+	                                    return core::CatalogManager::ObjectType::PACKAGE;
+	                                case parser::CommentObjectType::EXCEPTION:
+	                                    return core::CatalogManager::ObjectType::EXCEPTION;
+	                                case parser::CommentObjectType::UDR:
+	                                    return core::CatalogManager::ObjectType::UDR;
+	                                case parser::CommentObjectType::USER:
+	                                    return core::CatalogManager::ObjectType::USER;
+	                                case parser::CommentObjectType::GROUP:
+	                                    return core::CatalogManager::ObjectType::GROUP;
+	                                case parser::CommentObjectType::POLICY:
+	                                    return core::CatalogManager::ObjectType::POLICY;
+	                                case parser::CommentObjectType::SERVER:
+	                                    return core::CatalogManager::ObjectType::FOREIGN_SERVER;
+	                                case parser::CommentObjectType::FOREIGN_TABLE:
+	                                    return core::CatalogManager::ObjectType::FOREIGN_TABLE;
+	                                case parser::CommentObjectType::USER_MAPPING:
+	                                    return core::CatalogManager::ObjectType::USER_MAPPING;
+	                                case parser::CommentObjectType::SYNONYM:
+	                                case parser::CommentObjectType::PUBLIC_SYNONYM:
+	                                    return core::CatalogManager::ObjectType::SYNONYM;
+	                                case parser::CommentObjectType::JOB:
+	                                    return core::CatalogManager::ObjectType::JOB;
+	                                case parser::CommentObjectType::TABLESPACE:
+	                                case parser::CommentObjectType::FILESPACE:
+	                                    return core::CatalogManager::ObjectType::TABLESPACE;
+	                                case parser::CommentObjectType::CLUSTER:
+	                                    return core::CatalogManager::ObjectType::CLUSTER;
 	                                default:
 	                                    return core::CatalogManager::ObjectType::UNKNOWN;
 	                            }
@@ -68754,6 +68892,73 @@ namespace scratchbird
                                                            mapping_info.mapping_id);
                                     return ExecutionResult();
                                 }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_SYNONYM: {
+                                    std::string synonym_name;
+                                    if (!getSchemaPathString(payload, "name", synonym_name) ||
+                                        synonym_name.empty())
+                                    {
+                                        getString(payload, "name", synonym_name);
+                                    }
+                                    if (synonym_name.empty())
+                                    {
+                                        return ExecutionResult("V3 CREATE SYNONYM missing name");
+                                    }
+
+                                    std::string target_path;
+                                    if (!getSchemaPathString(payload, "target", target_path) ||
+                                        target_path.empty())
+                                    {
+                                        getString(payload, "target", target_path);
+                                    }
+                                    if (target_path.empty())
+                                    {
+                                        return ExecutionResult("V3 CREATE SYNONYM missing target");
+                                    }
+
+                                    bool is_public = false;
+                                    getBool(payload, "is_public", is_public);
+
+                                    uint64_t target_type_u64 =
+                                        static_cast<uint64_t>(parser::v3::DdlObjectType::TABLE);
+                                    getU64(payload, "target_type", target_type_u64);
+
+                                    std::vector<uint8_t> arg_stream;
+                                    arg_stream.reserve(256);
+                                    arg_stream.push_back(is_public ? 1 : 0);
+                                    arg_stream.push_back(
+                                        static_cast<uint8_t>(target_type_u64 & 0xFFu));
+                                    appendLegacyStringArg(arg_stream, synonym_name);
+                                    appendLegacyStringArg(arg_stream, target_path);
+                                    return runLegacyVoidHandler(&Executor::executeCreateSynonym,
+                                                                std::move(arg_stream));
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SYNONYM: {
+                                    std::string synonym_name;
+                                    if (!getSchemaPathString(payload, "path", synonym_name) ||
+                                        synonym_name.empty())
+                                    {
+                                        getString(payload, "path", synonym_name);
+                                    }
+                                    if (synonym_name.empty())
+                                    {
+                                        return ExecutionResult("V3 DROP SYNONYM missing path");
+                                    }
+
+                                    uint64_t flags_u64 = 0;
+                                    getU64(payload, "flags", flags_u64);
+                                    if (flags_u64 > 0xFFu)
+                                    {
+                                        return ExecutionResult("V3 DROP SYNONYM flags out of range");
+                                    }
+
+                                    std::vector<uint8_t> arg_stream;
+                                    arg_stream.reserve(128);
+                                    arg_stream.push_back(
+                                        static_cast<uint8_t>(flags_u64 & 0xFFu));
+                                    appendLegacyStringArg(arg_stream, synonym_name);
+                                    return runLegacyVoidHandler(&Executor::executeDropSynonym,
+                                                                std::move(arg_stream));
+                                }
                                 case scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA:
                                     return ExecutionResult(
                                         "IMPORT FOREIGN SCHEMA execution is not available in this cycle");
@@ -68847,6 +69052,1393 @@ namespace scratchbird
 	                                               });
 	                                return out;
 	                            };
+	                            std::string key_lower = to_lower(key);
+
+	                            auto handleSynonymSetTarget =
+	                                [&](const std::string& prefix, bool is_public) -> ExecutionResult {
+	                                auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+	                                if (!catalog)
+	                                {
+	                                    return ExecutionResult("Catalog manager not available");
+	                                }
+
+	                                if (key.size() <= prefix.size())
+	                                {
+	                                    return ExecutionResult("V3 ALTER SYSTEM missing synonym name");
+	                                }
+
+	                                std::string synonym_name = trimAsciiCopy(key.substr(prefix.size()));
+	                                std::string target_path = trimAsciiCopy(v.toString());
+	                                if (synonym_name.empty())
+	                                {
+	                                    return ExecutionResult("V3 ALTER SYSTEM missing synonym name");
+	                                }
+	                                if (target_path.empty())
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 ALTER SYSTEM synonym target cannot be empty");
+	                                }
+
+	                                auto components = splitSchemaComponents(synonym_name);
+	                                std::string schema_name;
+	                                std::string local_name = synonym_name;
+	                                if (components.size() >= 2)
+	                                {
+	                                    std::vector<std::string> schema_components(
+	                                        components.begin(), components.end() - 1);
+	                                    schema_name = joinSchemaComponents(schema_components, 0);
+	                                    local_name = components.back();
+	                                }
+
+	                                if (is_public && !schema_name.empty())
+	                                {
+	                                    return ExecutionResult(
+	                                        "ALTER PUBLIC SYNONYM SET TARGET does not accept schema qualification");
+	                                }
+
+	                                core::CatalogManager::SynonymInfo synonym_info;
+	                                core::ErrorContext err_ctx;
+
+	                                if (is_public)
+	                                {
+	                                    std::vector<core::CatalogManager::SynonymInfo> public_synonyms;
+	                                    auto status = catalog->listPublicSynonyms(public_synonyms, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "ALTER PUBLIC SYNONYM SET TARGET failed";
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+
+	                                    bool found = false;
+	                                    for (const auto& entry : public_synonyms)
+	                                    {
+	                                        if (!core::IdentifierUtils::namesMatch(
+	                                                local_name,
+	                                                false,
+	                                                entry.synonym_name,
+	                                                entry.name_is_delimited))
+	                                        {
+	                                            continue;
+	                                        }
+	                                        if (found)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Ambiguous public synonym name: " + local_name);
+	                                        }
+	                                        synonym_info = entry;
+	                                        found = true;
+	                                    }
+
+	                                    if (!found)
+	                                    {
+	                                        return ExecutionResult(
+	                                            "Public synonym not found: " + local_name);
+	                                    }
+	                                }
+	                                else
+	                                {
+	                                    core::ID schema_id{};
+	                                    if (!schema_name.empty())
+	                                    {
+	                                        core::CatalogManager::SchemaInfo schema_info;
+	                                        auto status =
+	                                            catalog->getSchema(schema_name, schema_info, &err_ctx);
+	                                        if (status != core::Status::OK)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Schema not found for ALTER SYNONYM SET TARGET");
+	                                        }
+	                                        schema_id = schema_info.schema_id;
+	                                    }
+	                                    else if (conn_ctx_)
+	                                    {
+	                                        schema_id = conn_ctx_->getCurrentSchemaId();
+	                                    }
+
+	                                    auto status = catalog->getSynonymByName(
+	                                        schema_id, local_name, synonym_info, &err_ctx);
+	                                    if (status != core::Status::OK || synonym_info.is_public)
+	                                    {
+	                                        return ExecutionResult("Synonym not found: " + synonym_name);
+	                                    }
+	                                }
+
+	                                auto status =
+	                                    catalog->dropSynonym(synonym_info.synonym_id, &err_ctx);
+	                                if (status != core::Status::OK)
+	                                {
+	                                    std::string err_msg = "ALTER SYNONYM SET TARGET failed";
+	                                    if (!err_ctx.message.empty())
+	                                    {
+	                                        err_msg += ": " + err_ctx.message;
+	                                    }
+	                                    return ExecutionResult(err_msg);
+	                                }
+	                                deleteObjectDefinition(core::CatalogManager::ObjectType::SYNONYM,
+	                                                       synonym_info.synonym_id);
+
+	                                core::ID synonym_id;
+	                                status = catalog->createSynonym(
+	                                    synonym_info.schema_id,
+	                                    synonym_info.synonym_name,
+	                                    target_path,
+	                                    synonym_info.target_type,
+	                                    synonym_info.is_public,
+	                                    synonym_id,
+	                                    &err_ctx);
+	                                if (status != core::Status::OK)
+	                                {
+	                                    std::string err_msg =
+	                                        "ALTER SYNONYM SET TARGET failed while recreating synonym";
+	                                    if (!err_ctx.message.empty())
+	                                    {
+	                                        err_msg += ": " + err_ctx.message;
+	                                    }
+	                                    return ExecutionResult(err_msg);
+	                                }
+
+	                                recordObjectDefinition(core::CatalogManager::ObjectType::SYNONYM,
+	                                                       synonym_id);
+	                                return ExecutionResult();
+	                            };
+
+	                            if (key_lower.rfind("synonym.set_target.", 0) == 0)
+	                            {
+	                                return handleSynonymSetTarget("synonym.set_target.", false);
+	                            }
+	                            if (key_lower.rfind("synonym.public.set_target.", 0) == 0)
+	                            {
+	                                return handleSynonymSetTarget("synonym.public.set_target.", true);
+	                            }
+	                            if (key_lower.rfind("synonym.set.", 0) == 0 ||
+	                                key_lower.rfind("synonym.public.set.", 0) == 0 ||
+	                                key_lower.rfind("synonym.reset.", 0) == 0 ||
+	                                key_lower.rfind("synonym.public.reset.", 0) == 0)
+	                            {
+	                                return ExecutionResult(
+	                                    "ALTER SYNONYM option SET/RESET execution is not available in this cycle");
+	                            }
+
+	                            if (key_lower.rfind("replication.", 0) == 0)
+	                            {
+	                                auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+	                                if (!catalog)
+	                                {
+	                                    return ExecutionResult("Catalog manager not available");
+	                                }
+
+	                                const std::string payload_text = trimAsciiCopy(v.toString());
+	                                std::unordered_map<std::string, std::string> payload_pairs;
+
+	                                auto normalizeToken = [&](const std::string& token) -> std::string {
+	                                    std::string out = trimAsciiCopy(token);
+	                                    while (!out.empty() &&
+	                                           (out.front() == '\'' || out.front() == '"' ||
+	                                            out.front() == '`'))
+	                                    {
+	                                        out.erase(out.begin());
+	                                    }
+	                                    while (!out.empty() &&
+	                                           (out.back() == '\'' || out.back() == '"' ||
+	                                            out.back() == '`' || out.back() == ',' ||
+	                                            out.back() == ';' || out.back() == ')' ||
+	                                            out.back() == '('))
+	                                    {
+	                                        out.pop_back();
+	                                    }
+	                                    return trimAsciiCopy(out);
+	                                };
+
+	                                auto parseSemicolonPairs = [&](const std::string& text) {
+	                                    size_t start = 0;
+	                                    while (start <= text.size())
+	                                    {
+	                                        size_t end = text.find(';', start);
+	                                        std::string token = (end == std::string::npos)
+	                                            ? text.substr(start)
+	                                            : text.substr(start, end - start);
+	                                        token = trimAsciiCopy(token);
+	                                        if (!token.empty())
+	                                        {
+	                                            size_t eq = token.find('=');
+	                                            if (eq != std::string::npos)
+	                                            {
+	                                                std::string flag_key =
+	                                                    toUpperAsciiCopy(trimAsciiCopy(token.substr(0, eq)));
+	                                                std::string flag_value =
+	                                                    normalizeToken(token.substr(eq + 1));
+	                                                if (!flag_key.empty())
+	                                                {
+	                                                    payload_pairs[flag_key] = flag_value;
+	                                                }
+	                                            }
+	                                        }
+
+	                                        if (end == std::string::npos)
+	                                        {
+	                                            break;
+	                                        }
+	                                        start = end + 1;
+	                                    }
+	                                };
+
+	                                auto tokenizePayload = [&](const std::string& text) {
+	                                    std::vector<std::string> tokens;
+	                                    std::string current;
+	                                    auto flush = [&]() {
+	                                        if (!current.empty())
+	                                        {
+	                                            std::string normalized = normalizeToken(current);
+	                                            if (!normalized.empty())
+	                                            {
+	                                                tokens.push_back(std::move(normalized));
+	                                            }
+	                                            current.clear();
+	                                        }
+	                                    };
+
+	                                    for (char ch : text)
+	                                    {
+	                                        if (std::isspace(static_cast<unsigned char>(ch)) != 0 ||
+	                                            ch == ',' || ch == ';' || ch == '(' || ch == ')')
+	                                        {
+	                                            flush();
+	                                            continue;
+	                                        }
+	                                        current.push_back(ch);
+	                                    }
+	                                    flush();
+	                                    return tokens;
+	                                };
+
+	                                parseSemicolonPairs(payload_text);
+	                                std::vector<std::string> payload_tokens =
+	                                    tokenizePayload(payload_text);
+	                                std::vector<std::string> payload_tokens_upper;
+	                                payload_tokens_upper.reserve(payload_tokens.size());
+	                                for (const auto& token : payload_tokens)
+	                                {
+	                                    payload_tokens_upper.push_back(toUpperAsciiCopy(token));
+	                                }
+
+	                                auto hasTruthyPayloadFlag = [&](const std::string& flag) -> bool {
+	                                    auto it = payload_pairs.find(flag);
+	                                    if (it == payload_pairs.end())
+	                                    {
+	                                        return false;
+	                                    }
+	                                    return isTruthySetting(it->second.c_str());
+	                                };
+
+	                                bool if_exists = hasTruthyPayloadFlag("IF_EXISTS");
+	                                bool if_not_exists = hasTruthyPayloadFlag("IF_NOT_EXISTS");
+	                                bool cascade = hasTruthyPayloadFlag("CASCADE");
+	                                bool restrict = hasTruthyPayloadFlag("RESTRICT");
+	                                const std::string payload_upper = toUpperAsciiCopy(payload_text);
+	                                if (payload_upper.find("IF EXISTS") != std::string::npos)
+	                                {
+	                                    if_exists = true;
+	                                }
+	                                if (payload_upper.find("IF NOT EXISTS") != std::string::npos)
+	                                {
+	                                    if_not_exists = true;
+	                                }
+	                                if (payload_upper.find("CASCADE") != std::string::npos)
+	                                {
+	                                    cascade = true;
+	                                }
+	                                if (payload_upper.find("RESTRICT") != std::string::npos)
+	                                {
+	                                    restrict = true;
+	                                }
+
+	                                if (if_exists && if_not_exists)
+	                                {
+	                                    return ExecutionResult(
+	                                        "Replication payload cannot include both IF_EXISTS and IF_NOT_EXISTS");
+	                                }
+	                                if (cascade && restrict)
+	                                {
+	                                    return ExecutionResult(
+	                                        "Replication payload cannot include both CASCADE and RESTRICT");
+	                                }
+
+	                                auto extractKeySuffixName =
+	                                    [&](const std::string& prefix_lower) -> std::string {
+	                                    if (key_lower.rfind(prefix_lower, 0) != 0)
+	                                    {
+	                                        return std::string();
+	                                    }
+	                                    if (key.size() <= prefix_lower.size())
+	                                    {
+	                                        return std::string();
+	                                    }
+	                                    return trimAsciiCopy(key.substr(prefix_lower.size()));
+	                                };
+
+	                                auto parseDirectionText =
+	                                    [&](const std::string& text,
+	                                        core::CatalogManager::ReplicationDirection& direction_out)
+	                                    -> bool {
+	                                    std::string upper = toUpperAsciiCopy(trimAsciiCopy(text));
+	                                    if (upper == "ONE_WAY" || upper == "ONEWAY" ||
+	                                        upper == "ONE-WAY")
+	                                    {
+	                                        direction_out =
+	                                            core::CatalogManager::ReplicationDirection::ONE_WAY;
+	                                        return true;
+	                                    }
+	                                    if (upper == "BIDIRECTIONAL" || upper == "TWO_WAY" ||
+	                                        upper == "TWOWAY" || upper == "TWO-WAY")
+	                                    {
+	                                        direction_out =
+	                                            core::CatalogManager::ReplicationDirection::BIDIRECTIONAL;
+	                                        return true;
+	                                    }
+	                                    return false;
+	                                };
+
+	                                auto parseChannelStateText =
+	                                    [&](const std::string& text,
+	                                        core::CatalogManager::ReplicationChannelState& state_out)
+	                                    -> bool {
+	                                    std::string upper = toUpperAsciiCopy(trimAsciiCopy(text));
+	                                    if (upper == "INIT")
+	                                    {
+	                                        state_out = core::CatalogManager::ReplicationChannelState::INIT;
+	                                        return true;
+	                                    }
+	                                    if (upper == "SNAPSHOT")
+	                                    {
+	                                        state_out =
+	                                            core::CatalogManager::ReplicationChannelState::SNAPSHOT;
+	                                        return true;
+	                                    }
+	                                    if (upper == "CATCHUP")
+	                                    {
+	                                        state_out =
+	                                            core::CatalogManager::ReplicationChannelState::CATCHUP;
+	                                        return true;
+	                                    }
+	                                    if (upper == "STREAMING")
+	                                    {
+	                                        state_out =
+	                                            core::CatalogManager::ReplicationChannelState::STREAMING;
+	                                        return true;
+	                                    }
+	                                    if (upper == "PAUSED")
+	                                    {
+	                                        state_out =
+	                                            core::CatalogManager::ReplicationChannelState::PAUSED;
+	                                        return true;
+	                                    }
+	                                    if (upper == "DEGRADED")
+	                                    {
+	                                        state_out =
+	                                            core::CatalogManager::ReplicationChannelState::DEGRADED;
+	                                        return true;
+	                                    }
+	                                    if (upper == "FENCED")
+	                                    {
+	                                        state_out =
+	                                            core::CatalogManager::ReplicationChannelState::FENCED;
+	                                        return true;
+	                                    }
+	                                    if (upper == "STOPPED")
+	                                    {
+	                                        state_out =
+	                                            core::CatalogManager::ReplicationChannelState::STOPPED;
+	                                        return true;
+	                                    }
+	                                    if (upper == "FAILED")
+	                                    {
+	                                        state_out =
+	                                            core::CatalogManager::ReplicationChannelState::FAILED;
+	                                        return true;
+	                                    }
+	                                    return false;
+	                                };
+
+	                                auto lookupPayloadName = [&](const std::string& key_name) {
+	                                    auto from_pairs = payload_pairs.find(key_name);
+	                                    if (from_pairs != payload_pairs.end())
+	                                    {
+	                                        return normalizeToken(from_pairs->second);
+	                                    }
+	                                    for (size_t i = 0; i < payload_tokens.size(); ++i)
+	                                    {
+	                                        const std::string& token_upper = payload_tokens_upper[i];
+	                                        if (token_upper == key_name)
+	                                        {
+	                                            if (i + 1 < payload_tokens.size())
+	                                            {
+	                                                return normalizeToken(payload_tokens[i + 1]);
+	                                            }
+	                                            break;
+	                                        }
+	                                        size_t eq = payload_tokens[i].find('=');
+	                                        if (eq != std::string::npos)
+	                                        {
+	                                            std::string lhs = toUpperAsciiCopy(
+	                                                trimAsciiCopy(payload_tokens[i].substr(0, eq)));
+	                                            if (lhs == key_name)
+	                                            {
+	                                                return normalizeToken(payload_tokens[i].substr(eq + 1));
+	                                            }
+	                                        }
+	                                    }
+	                                    return std::string();
+	                                };
+
+	                                auto parseDirectionFromPayload =
+	                                    [&](core::CatalogManager::ReplicationDirection& direction_out,
+	                                        bool& has_direction_out,
+	                                        std::string& error_out) {
+	                                    has_direction_out = false;
+	                                    error_out.clear();
+	                                    std::optional<core::CatalogManager::ReplicationDirection> parsed;
+	                                    auto assign_direction =
+	                                        [&](core::CatalogManager::ReplicationDirection dir) -> bool {
+	                                        if (!parsed.has_value())
+	                                        {
+	                                            parsed = dir;
+	                                            return true;
+	                                        }
+	                                        return *parsed == dir;
+	                                    };
+
+	                                    auto it_direction = payload_pairs.find("DIRECTION");
+	                                    if (it_direction != payload_pairs.end())
+	                                    {
+	                                        core::CatalogManager::ReplicationDirection parsed_dir;
+	                                        if (!parseDirectionText(it_direction->second, parsed_dir))
+	                                        {
+	                                            error_out = "Replication channel direction is invalid";
+	                                            return;
+	                                        }
+	                                        parsed = parsed_dir;
+	                                    }
+
+	                                    for (size_t i = 0; i < payload_tokens.size(); ++i)
+	                                    {
+	                                        core::CatalogManager::ReplicationDirection parsed_dir;
+	                                        const std::string& token_upper = payload_tokens_upper[i];
+	                                        if (parseDirectionText(token_upper, parsed_dir))
+	                                        {
+	                                            if (!assign_direction(parsed_dir))
+	                                            {
+	                                                error_out =
+	                                                    "Replication channel direction is ambiguous";
+	                                                return;
+	                                            }
+	                                            continue;
+	                                        }
+
+	                                        if (token_upper == "ONE" && i + 1 < payload_tokens.size() &&
+	                                            payload_tokens_upper[i + 1] == "WAY")
+	                                        {
+	                                            if (!assign_direction(
+	                                                    core::CatalogManager::ReplicationDirection::ONE_WAY))
+	                                            {
+	                                                error_out =
+	                                                    "Replication channel direction is ambiguous";
+	                                                return;
+	                                            }
+	                                            continue;
+	                                        }
+	                                        if (token_upper == "TWO" && i + 1 < payload_tokens.size() &&
+	                                            payload_tokens_upper[i + 1] == "WAY")
+	                                        {
+	                                            if (!assign_direction(core::CatalogManager::
+	                                                                      ReplicationDirection::
+	                                                                          BIDIRECTIONAL))
+	                                            {
+	                                                error_out =
+	                                                    "Replication channel direction is ambiguous";
+	                                                return;
+	                                            }
+	                                            continue;
+	                                        }
+
+	                                        if (token_upper == "DIRECTION" &&
+	                                            i + 1 < payload_tokens.size())
+	                                        {
+	                                            if (!parseDirectionText(payload_tokens[i + 1], parsed_dir))
+	                                            {
+	                                                error_out =
+	                                                    "Replication channel direction is invalid";
+	                                                return;
+	                                            }
+	                                            if (!assign_direction(parsed_dir))
+	                                            {
+	                                                error_out =
+	                                                    "Replication channel direction is ambiguous";
+	                                                return;
+	                                            }
+	                                            continue;
+	                                        }
+
+	                                        size_t eq = payload_tokens[i].find('=');
+	                                        if (eq != std::string::npos)
+	                                        {
+	                                            std::string lhs = toUpperAsciiCopy(
+	                                                trimAsciiCopy(payload_tokens[i].substr(0, eq)));
+	                                            if (lhs == "DIRECTION")
+	                                            {
+	                                                if (!parseDirectionText(
+	                                                        payload_tokens[i].substr(eq + 1),
+	                                                        parsed_dir))
+	                                                {
+	                                                    error_out =
+	                                                        "Replication channel direction is invalid";
+	                                                    return;
+	                                                }
+	                                                if (!assign_direction(parsed_dir))
+	                                                {
+	                                                    error_out =
+	                                                        "Replication channel direction is ambiguous";
+	                                                    return;
+	                                                }
+	                                            }
+	                                        }
+	                                    }
+
+	                                    if (parsed.has_value())
+	                                    {
+	                                        direction_out = *parsed;
+	                                        has_direction_out = true;
+	                                    }
+	                                };
+
+	                                auto parseChannelStateFromPayload =
+	                                    [&](core::CatalogManager::ReplicationChannelState& state_out,
+	                                        bool& has_state_out,
+	                                        std::string& error_out) {
+	                                    has_state_out = false;
+	                                    error_out.clear();
+	                                    std::optional<core::CatalogManager::ReplicationChannelState> parsed;
+	                                    auto assign_state =
+	                                        [&](core::CatalogManager::ReplicationChannelState state)
+	                                        -> bool {
+	                                        if (!parsed.has_value())
+	                                        {
+	                                            parsed = state;
+	                                            return true;
+	                                        }
+	                                        return *parsed == state;
+	                                    };
+
+	                                    auto it_state = payload_pairs.find("STATE");
+	                                    if (it_state != payload_pairs.end())
+	                                    {
+	                                        core::CatalogManager::ReplicationChannelState parsed_state;
+	                                        if (!parseChannelStateText(it_state->second, parsed_state))
+	                                        {
+	                                            error_out = "Replication channel state is invalid";
+	                                            return;
+	                                        }
+	                                        parsed = parsed_state;
+	                                    }
+
+	                                    for (size_t i = 0; i < payload_tokens.size(); ++i)
+	                                    {
+	                                        core::CatalogManager::ReplicationChannelState parsed_state;
+	                                        const std::string& token_upper = payload_tokens_upper[i];
+	                                        if (parseChannelStateText(token_upper, parsed_state))
+	                                        {
+	                                            if (!assign_state(parsed_state))
+	                                            {
+	                                                error_out = "Replication channel state is ambiguous";
+	                                                return;
+	                                            }
+	                                            continue;
+	                                        }
+
+	                                        if (token_upper == "STATE" &&
+	                                            i + 1 < payload_tokens.size())
+	                                        {
+	                                            if (!parseChannelStateText(payload_tokens[i + 1],
+	                                                                       parsed_state))
+	                                            {
+	                                                error_out =
+	                                                    "Replication channel state is invalid";
+	                                                return;
+	                                            }
+	                                            if (!assign_state(parsed_state))
+	                                            {
+	                                                error_out =
+	                                                    "Replication channel state is ambiguous";
+	                                                return;
+	                                            }
+	                                            continue;
+	                                        }
+
+	                                        size_t eq = payload_tokens[i].find('=');
+	                                        if (eq != std::string::npos)
+	                                        {
+	                                            std::string lhs = toUpperAsciiCopy(
+	                                                trimAsciiCopy(payload_tokens[i].substr(0, eq)));
+	                                            if (lhs == "STATE")
+	                                            {
+	                                                if (!parseChannelStateText(
+	                                                        payload_tokens[i].substr(eq + 1),
+	                                                        parsed_state))
+	                                                {
+	                                                    error_out =
+	                                                        "Replication channel state is invalid";
+	                                                    return;
+	                                                }
+	                                                if (!assign_state(parsed_state))
+	                                                {
+	                                                    error_out =
+	                                                        "Replication channel state is ambiguous";
+	                                                    return;
+	                                                }
+	                                            }
+	                                        }
+	                                    }
+
+	                                    if (parsed.has_value())
+	                                    {
+	                                        state_out = *parsed;
+	                                        has_state_out = true;
+	                                    }
+	                                };
+
+	                                auto resolvePublicationByName =
+	                                    [&](const std::string& publication_name,
+	                                        core::CatalogManager::PublicationCatalogInfo& publication_out,
+	                                        bool& found_out) -> ExecutionResult {
+	                                    found_out = false;
+	                                    std::vector<core::CatalogManager::PublicationCatalogInfo> rows;
+	                                    core::ErrorContext err_ctx;
+	                                    auto status =
+	                                        catalog->listPublicationCatalogEntries(rows, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to list publications";
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+
+	                                    for (const auto& row : rows)
+	                                    {
+	                                        if (!core::IdentifierUtils::namesMatch(
+	                                                publication_name, false,
+	                                                row.publication_name, false))
+	                                        {
+	                                            continue;
+	                                        }
+	                                        if (found_out)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Ambiguous publication name: " +
+	                                                publication_name);
+	                                        }
+	                                        publication_out = row;
+	                                        found_out = true;
+	                                    }
+
+	                                    return ExecutionResult();
+	                                };
+
+	                                auto resolveSubscriptionByName =
+	                                    [&](const std::string& subscription_name,
+	                                        core::CatalogManager::SubscriptionCatalogInfo& subscription_out,
+	                                        bool& found_out) -> ExecutionResult {
+	                                    found_out = false;
+	                                    std::vector<core::CatalogManager::SubscriptionCatalogInfo> rows;
+	                                    core::ErrorContext err_ctx;
+	                                    auto status =
+	                                        catalog->listSubscriptionCatalogEntries(rows, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to list subscriptions";
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+
+	                                    for (const auto& row : rows)
+	                                    {
+	                                        if (!core::IdentifierUtils::namesMatch(
+	                                                subscription_name, false,
+	                                                row.subscription_name, false))
+	                                        {
+	                                            continue;
+	                                        }
+	                                        if (found_out)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Ambiguous subscription name: " +
+	                                                subscription_name);
+	                                        }
+	                                        subscription_out = row;
+	                                        found_out = true;
+	                                    }
+
+	                                    return ExecutionResult();
+	                                };
+
+	                                auto resolveChannelByName =
+	                                    [&](const std::string& channel_name,
+	                                        core::CatalogManager::ReplicationChannelCatalogInfo& channel_out,
+	                                        bool& found_out) -> ExecutionResult {
+	                                    found_out = false;
+	                                    std::vector<
+	                                        core::CatalogManager::ReplicationChannelCatalogInfo> rows;
+	                                    core::ErrorContext err_ctx;
+	                                    auto status =
+	                                        catalog->listReplicationChannelCatalogEntries(rows, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to list replication channels";
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+
+	                                    for (const auto& row : rows)
+	                                    {
+	                                        if (!core::IdentifierUtils::namesMatch(
+	                                                channel_name, false,
+	                                                row.channel_name, false))
+	                                        {
+	                                            continue;
+	                                        }
+	                                        if (found_out)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Ambiguous replication channel name: " +
+	                                                channel_name);
+	                                        }
+	                                        channel_out = row;
+	                                        found_out = true;
+	                                    }
+
+	                                    return ExecutionResult();
+	                                };
+
+	                                auto resolveActorId = [&]() -> core::ID {
+	                                    core::ID actor_id =
+	                                        conn_ctx_ ? conn_ctx_->getCurrentUserId() : core::ID{};
+	                                    if (isZeroUuid(actor_id))
+	                                    {
+	                                        core::ErrorContext actor_ctx;
+	                                        actor_id = catalog->getSystemUserId(&actor_ctx);
+	                                    }
+	                                    return actor_id;
+	                                };
+
+	                                auto bumpModeVersion =
+	                                    [&](core::CatalogManager::ReplicationChannelCatalogInfo& info)
+	                                    -> ExecutionResult {
+	                                    if (info.mode_version ==
+	                                        std::numeric_limits<uint64_t>::max())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "Replication channel mode_version overflow");
+	                                    }
+	                                    info.mode_version += 1;
+	                                    return ExecutionResult();
+	                                };
+
+	                                if (key_lower.rfind("replication.publication.create.", 0) == 0)
+	                                {
+	                                    std::string publication_name = extractKeySuffixName(
+	                                        "replication.publication.create.");
+	                                    if (publication_name.empty())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER SYSTEM missing publication name");
+	                                    }
+
+	                                    core::CatalogManager::PublicationCatalogInfo existing;
+	                                    bool found = false;
+	                                    ExecutionResult resolve_result =
+	                                        resolvePublicationByName(
+	                                            publication_name, existing, found);
+	                                    if (!resolve_result.success())
+	                                    {
+	                                        return resolve_result;
+	                                    }
+	                                    if (found)
+	                                    {
+	                                        if (if_not_exists)
+	                                        {
+	                                            return ExecutionResult();
+	                                        }
+	                                        return ExecutionResult(
+	                                            "Publication already exists: " +
+	                                            publication_name);
+	                                    }
+
+	                                    core::ID owner_id = resolveActorId();
+	                                    if (isZeroUuid(owner_id))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "Unable to resolve owner for publication create");
+	                                    }
+
+	                                    core::CatalogManager::PublicationCatalogInfo info;
+	                                    info.publication_id = core::generateUuidV7();
+	                                    info.publication_name = publication_name;
+	                                    info.owner_id = owner_id;
+
+	                                    core::ErrorContext err_ctx;
+	                                    auto status =
+	                                        catalog->upsertPublicationCatalogEntry(info, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to create publication: " +
+	                                            publication_name;
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+	                                    return ExecutionResult();
+	                                }
+
+	                                if (key_lower.rfind("replication.publication.drop.", 0) == 0)
+	                                {
+	                                    std::string publication_name = extractKeySuffixName(
+	                                        "replication.publication.drop.");
+	                                    if (publication_name.empty())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER SYSTEM missing publication name");
+	                                    }
+
+	                                    core::CatalogManager::PublicationCatalogInfo existing;
+	                                    bool found = false;
+	                                    ExecutionResult resolve_result =
+	                                        resolvePublicationByName(
+	                                            publication_name, existing, found);
+	                                    if (!resolve_result.success())
+	                                    {
+	                                        return resolve_result;
+	                                    }
+	                                    if (!found)
+	                                    {
+	                                        if (if_exists)
+	                                        {
+	                                            return ExecutionResult();
+	                                        }
+	                                        return ExecutionResult(
+	                                            "Publication not found: " + publication_name);
+	                                    }
+
+	                                    core::ErrorContext err_ctx;
+	                                    auto status = catalog->deletePublicationCatalogEntry(
+	                                        existing.publication_id, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to drop publication: " +
+	                                            publication_name;
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+	                                    return ExecutionResult();
+	                                }
+
+	                                if (key_lower.rfind("replication.subscription.create.", 0) == 0)
+	                                {
+	                                    std::string subscription_name = extractKeySuffixName(
+	                                        "replication.subscription.create.");
+	                                    if (subscription_name.empty())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER SYSTEM missing subscription name");
+	                                    }
+
+	                                    core::CatalogManager::SubscriptionCatalogInfo existing;
+	                                    bool found = false;
+	                                    ExecutionResult resolve_result =
+	                                        resolveSubscriptionByName(
+	                                            subscription_name, existing, found);
+	                                    if (!resolve_result.success())
+	                                    {
+	                                        return resolve_result;
+	                                    }
+	                                    if (found)
+	                                    {
+	                                        if (if_not_exists)
+	                                        {
+	                                            return ExecutionResult();
+	                                        }
+	                                        return ExecutionResult(
+	                                            "Subscription already exists: " +
+	                                            subscription_name);
+	                                    }
+
+	                                    core::ID owner_id = resolveActorId();
+	                                    if (isZeroUuid(owner_id))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "Unable to resolve owner for subscription create");
+	                                    }
+
+	                                    core::CatalogManager::SubscriptionCatalogInfo info;
+	                                    info.subscription_id = core::generateUuidV7();
+	                                    info.subscription_name = subscription_name;
+	                                    info.owner_id = owner_id;
+
+	                                    core::ErrorContext err_ctx;
+	                                    auto status = catalog->upsertSubscriptionCatalogEntry(
+	                                        info, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to create subscription: " +
+	                                            subscription_name;
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+	                                    return ExecutionResult();
+	                                }
+
+	                                if (key_lower.rfind("replication.subscription.drop.", 0) == 0)
+	                                {
+	                                    std::string subscription_name = extractKeySuffixName(
+	                                        "replication.subscription.drop.");
+	                                    if (subscription_name.empty())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER SYSTEM missing subscription name");
+	                                    }
+
+	                                    core::CatalogManager::SubscriptionCatalogInfo existing;
+	                                    bool found = false;
+	                                    ExecutionResult resolve_result =
+	                                        resolveSubscriptionByName(
+	                                            subscription_name, existing, found);
+	                                    if (!resolve_result.success())
+	                                    {
+	                                        return resolve_result;
+	                                    }
+	                                    if (!found)
+	                                    {
+	                                        if (if_exists)
+	                                        {
+	                                            return ExecutionResult();
+	                                        }
+	                                        return ExecutionResult(
+	                                            "Subscription not found: " +
+	                                            subscription_name);
+	                                    }
+
+	                                    core::ErrorContext err_ctx;
+	                                    auto status = catalog->deleteSubscriptionCatalogEntry(
+	                                        existing.subscription_id, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to drop subscription: " +
+	                                            subscription_name;
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+	                                    return ExecutionResult();
+	                                }
+
+	                                if (key_lower.rfind("replication.channel.create.", 0) == 0)
+	                                {
+	                                    std::string channel_name = extractKeySuffixName(
+	                                        "replication.channel.create.");
+	                                    if (channel_name.empty())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER SYSTEM missing replication channel name");
+	                                    }
+
+	                                    core::CatalogManager::ReplicationChannelCatalogInfo existing;
+	                                    bool found = false;
+	                                    ExecutionResult resolve_result = resolveChannelByName(
+	                                        channel_name, existing, found);
+	                                    if (!resolve_result.success())
+	                                    {
+	                                        return resolve_result;
+	                                    }
+	                                    if (found)
+	                                    {
+	                                        if (if_not_exists)
+	                                        {
+	                                            return ExecutionResult();
+	                                        }
+	                                        return ExecutionResult(
+	                                            "Replication channel already exists: " +
+	                                            channel_name);
+	                                    }
+
+	                                    core::ID actor_id = resolveActorId();
+	                                    if (isZeroUuid(actor_id))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "Unable to resolve creator for channel create");
+	                                    }
+
+	                                    core::CatalogManager::ReplicationDirection direction =
+	                                        core::CatalogManager::ReplicationDirection::ONE_WAY;
+	                                    bool has_direction = false;
+	                                    std::string direction_err;
+	                                    parseDirectionFromPayload(direction,
+	                                                              has_direction,
+	                                                              direction_err);
+	                                    if (!direction_err.empty())
+	                                    {
+	                                        return ExecutionResult(direction_err);
+	                                    }
+
+	                                    std::string publication_name =
+	                                        lookupPayloadName("PUBLICATION");
+	                                    std::string subscription_name =
+	                                        lookupPayloadName("SUBSCRIPTION");
+	                                    core::CatalogManager::PublicationCatalogInfo publication_info;
+	                                    core::CatalogManager::SubscriptionCatalogInfo subscription_info;
+	                                    bool publication_found = false;
+	                                    bool subscription_found = false;
+
+	                                    if (direction ==
+	                                        core::CatalogManager::ReplicationDirection::ONE_WAY)
+	                                    {
+	                                        if (publication_name.empty())
+	                                        {
+	                                            return ExecutionResult(
+	                                                "One-way replication channel create requires PUBLICATION name in payload");
+	                                        }
+	                                        if (subscription_name.empty())
+	                                        {
+	                                            return ExecutionResult(
+	                                                "One-way replication channel create requires SUBSCRIPTION name in payload");
+	                                        }
+	                                    }
+
+	                                    if (!publication_name.empty())
+	                                    {
+	                                        resolve_result = resolvePublicationByName(
+	                                            publication_name, publication_info, publication_found);
+	                                        if (!resolve_result.success())
+	                                        {
+	                                            return resolve_result;
+	                                        }
+	                                        if (!publication_found)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Publication not found: " + publication_name);
+	                                        }
+	                                    }
+
+	                                    if (!subscription_name.empty())
+	                                    {
+	                                        resolve_result = resolveSubscriptionByName(
+	                                            subscription_name, subscription_info, subscription_found);
+	                                        if (!resolve_result.success())
+	                                        {
+	                                            return resolve_result;
+	                                        }
+	                                        if (!subscription_found)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Subscription not found: " + subscription_name);
+	                                        }
+	                                    }
+
+	                                    core::CatalogManager::ReplicationChannelCatalogInfo info;
+	                                    info.replication_channel_id = core::generateUuidV7();
+	                                    info.channel_name = channel_name;
+	                                    info.direction = direction;
+	                                    info.created_by_id = actor_id;
+	                                    info.mode_version = 1;
+	                                    info.has_publication_id = publication_found;
+	                                    if (publication_found)
+	                                    {
+	                                        info.publication_id = publication_info.publication_id;
+	                                    }
+	                                    info.has_subscription_id = subscription_found;
+	                                    if (subscription_found)
+	                                    {
+	                                        info.subscription_id = subscription_info.subscription_id;
+	                                    }
+
+	                                    core::ErrorContext err_ctx;
+	                                    auto status =
+	                                        catalog->upsertReplicationChannelCatalogEntry(info, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to create replication channel: " +
+	                                            channel_name;
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+	                                    return ExecutionResult();
+	                                }
+
+	                                if (key_lower.rfind("replication.channel.drop.", 0) == 0)
+	                                {
+	                                    std::string channel_name = extractKeySuffixName(
+	                                        "replication.channel.drop.");
+	                                    if (channel_name.empty())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER SYSTEM missing replication channel name");
+	                                    }
+
+	                                    core::CatalogManager::ReplicationChannelCatalogInfo existing;
+	                                    bool found = false;
+	                                    ExecutionResult resolve_result = resolveChannelByName(
+	                                        channel_name, existing, found);
+	                                    if (!resolve_result.success())
+	                                    {
+	                                        return resolve_result;
+	                                    }
+	                                    if (!found)
+	                                    {
+	                                        if (if_exists)
+	                                        {
+	                                            return ExecutionResult();
+	                                        }
+	                                        return ExecutionResult(
+	                                            "Replication channel not found: " + channel_name);
+	                                    }
+
+	                                    core::ErrorContext err_ctx;
+	                                    auto status = catalog->deleteReplicationChannelCatalogEntry(
+	                                        existing.replication_channel_id, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to drop replication channel: " +
+	                                            channel_name;
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+	                                    return ExecutionResult();
+	                                }
+
+	                                if (key_lower.rfind("replication.channel.alter.", 0) == 0)
+	                                {
+	                                    std::string channel_name = extractKeySuffixName(
+	                                        "replication.channel.alter.");
+	                                    if (channel_name.empty())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER SYSTEM missing replication channel name");
+	                                    }
+
+	                                    core::CatalogManager::ReplicationChannelCatalogInfo channel_info;
+	                                    bool found = false;
+	                                    ExecutionResult resolve_result = resolveChannelByName(
+	                                        channel_name, channel_info, found);
+	                                    if (!resolve_result.success())
+	                                    {
+	                                        return resolve_result;
+	                                    }
+	                                    if (!found)
+	                                    {
+	                                        return ExecutionResult(
+	                                            "Replication channel not found: " + channel_name);
+	                                    }
+
+	                                    core::CatalogManager::ReplicationDirection parsed_direction;
+	                                    bool has_direction = false;
+	                                    std::string direction_err;
+	                                    parseDirectionFromPayload(parsed_direction,
+	                                                              has_direction,
+	                                                              direction_err);
+	                                    if (!direction_err.empty())
+	                                    {
+	                                        return ExecutionResult(direction_err);
+	                                    }
+
+	                                    core::CatalogManager::ReplicationChannelState parsed_state;
+	                                    bool has_state = false;
+	                                    std::string state_err;
+	                                    parseChannelStateFromPayload(parsed_state,
+	                                                                 has_state,
+	                                                                 state_err);
+	                                    if (!state_err.empty())
+	                                    {
+	                                        return ExecutionResult(state_err);
+	                                    }
+
+	                                    if (has_direction)
+	                                    {
+	                                        channel_info.direction = parsed_direction;
+	                                    }
+	                                    if (has_state)
+	                                    {
+	                                        channel_info.channel_state = parsed_state;
+	                                    }
+
+	                                    std::string publication_name =
+	                                        lookupPayloadName("PUBLICATION");
+	                                    std::string subscription_name =
+	                                        lookupPayloadName("SUBSCRIPTION");
+	                                    if (!publication_name.empty())
+	                                    {
+	                                        core::CatalogManager::PublicationCatalogInfo publication_info;
+	                                        bool publication_found = false;
+	                                        resolve_result = resolvePublicationByName(
+	                                            publication_name, publication_info, publication_found);
+	                                        if (!resolve_result.success())
+	                                        {
+	                                            return resolve_result;
+	                                        }
+	                                        if (!publication_found)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Publication not found: " + publication_name);
+	                                        }
+	                                        channel_info.has_publication_id = true;
+	                                        channel_info.publication_id =
+	                                            publication_info.publication_id;
+	                                    }
+
+	                                    if (!subscription_name.empty())
+	                                    {
+	                                        core::CatalogManager::SubscriptionCatalogInfo subscription_info;
+	                                        bool subscription_found = false;
+	                                        resolve_result = resolveSubscriptionByName(
+	                                            subscription_name,
+	                                            subscription_info,
+	                                            subscription_found);
+	                                        if (!resolve_result.success())
+	                                        {
+	                                            return resolve_result;
+	                                        }
+	                                        if (!subscription_found)
+	                                        {
+	                                            return ExecutionResult(
+	                                                "Subscription not found: " +
+	                                                subscription_name);
+	                                        }
+	                                        channel_info.has_subscription_id = true;
+	                                        channel_info.subscription_id =
+	                                            subscription_info.subscription_id;
+	                                    }
+
+	                                    if (channel_info.direction ==
+	                                            core::CatalogManager::ReplicationDirection::ONE_WAY &&
+	                                        (!channel_info.has_publication_id ||
+	                                         !channel_info.has_subscription_id))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "One-way replication channel alter requires publication and subscription linkage");
+	                                    }
+
+	                                    ExecutionResult bump_result =
+	                                        bumpModeVersion(channel_info);
+	                                    if (!bump_result.success())
+	                                    {
+	                                        return bump_result;
+	                                    }
+
+	                                    core::ErrorContext err_ctx;
+	                                    auto status = catalog->upsertReplicationChannelCatalogEntry(
+	                                        channel_info, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to alter replication channel: " +
+	                                            channel_name;
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+	                                    return ExecutionResult();
+	                                }
+
+	                                if (key_lower.rfind("replication.channel.resync.", 0) == 0)
+	                                {
+	                                    std::string channel_name = extractKeySuffixName(
+	                                        "replication.channel.resync.");
+	                                    if (channel_name.empty())
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER SYSTEM missing replication channel name");
+	                                    }
+
+	                                    core::CatalogManager::ReplicationChannelCatalogInfo channel_info;
+	                                    bool found = false;
+	                                    ExecutionResult resolve_result = resolveChannelByName(
+	                                        channel_name, channel_info, found);
+	                                    if (!resolve_result.success())
+	                                    {
+	                                        return resolve_result;
+	                                    }
+	                                    if (!found)
+	                                    {
+	                                        return ExecutionResult(
+	                                            "Replication channel not found: " + channel_name);
+	                                    }
+
+	                                    channel_info.channel_state =
+	                                        core::CatalogManager::ReplicationChannelState::CATCHUP;
+	                                    ExecutionResult bump_result =
+	                                        bumpModeVersion(channel_info);
+	                                    if (!bump_result.success())
+	                                    {
+	                                        return bump_result;
+	                                    }
+
+	                                    core::ErrorContext err_ctx;
+	                                    auto status = catalog->upsertReplicationChannelCatalogEntry(
+	                                        channel_info, &err_ctx);
+	                                    if (status != core::Status::OK)
+	                                    {
+	                                        std::string err_msg =
+	                                            "Failed to resync replication channel: " +
+	                                            channel_name;
+	                                        if (!err_ctx.message.empty())
+	                                        {
+	                                            err_msg += ": " + err_ctx.message;
+	                                        }
+	                                        return ExecutionResult(err_msg);
+	                                    }
+	                                    return ExecutionResult();
+	                                }
+
+	                                return ExecutionResult(
+	                                    "Replication ALTER SYSTEM key is not supported: " + key);
+	                            }
+
 	                            auto dot = key.find('.');
 	                            std::string section;
 	                            std::string setting;
@@ -69722,6 +71314,144 @@ namespace scratchbird
 	                            return runLegacyVoidHandler(&Executor::executeCreateProcedureStatement,
 	                                                        std::move(arg_stream));
 	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PACKAGE_STMT: {
+	                            std::string package_name;
+	                            if (!getSchemaPathString(payload, "name", package_name) ||
+	                                package_name.empty())
+	                            {
+	                                getString(payload, "name", package_name);
+	                            }
+	                            package_name = trimAsciiCopy(package_name);
+	                            if (package_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE PACKAGE missing name");
+	                            }
+
+	                            bool or_replace = false;
+	                            getBool(payload, "or_replace", or_replace);
+	                            uint8_t flags = or_replace ? 0x01 : 0x00;
+
+	                            std::string package_spec;
+	                            auto it_spec = payload.find("spec");
+	                            if (it_spec != payload.end() && !it_spec->second.isNull())
+	                            {
+	                                if (const auto* bytes =
+	                                        std::get_if<scratchbird::sblr::v3::Value::Bytes>(
+	                                            &it_spec->second.data))
+	                                {
+	                                    package_spec.assign(bytes->begin(), bytes->end());
+	                                }
+	                                else if (const auto* scalar =
+	                                             std::get_if<std::string>(&it_spec->second.data))
+	                                {
+	                                    package_spec = *scalar;
+	                                }
+	                            }
+
+	                            std::string package_body;
+	                            auto it_body = payload.find("body");
+	                            if (it_body != payload.end() && !it_body->second.isNull())
+	                            {
+	                                if (const auto* bytes =
+	                                        std::get_if<scratchbird::sblr::v3::Value::Bytes>(
+	                                            &it_body->second.data))
+	                                {
+	                                    package_body.assign(bytes->begin(), bytes->end());
+	                                }
+	                                else if (const auto* scalar =
+	                                             std::get_if<std::string>(&it_body->second.data))
+	                                {
+	                                    package_body = *scalar;
+	                                }
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(256 + package_spec.size() + package_body.size());
+	                            arg_stream.push_back(flags);
+	                            appendLegacyStringArg(arg_stream, package_name);
+	                            appendLegacyStringArg(arg_stream, package_spec);
+	                            appendLegacyStringArg(arg_stream, package_body);
+	                            return runLegacyVoidHandler(&Executor::executeCreatePackageStatement,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_EXCEPTION_STMT: {
+	                            std::string exception_name;
+	                            if (!getSchemaPathString(payload, "name", exception_name) ||
+	                                exception_name.empty())
+	                            {
+	                                getString(payload, "name", exception_name);
+	                            }
+	                            exception_name = trimAsciiCopy(exception_name);
+	                            if (exception_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE EXCEPTION missing name");
+	                            }
+
+	                            bool or_replace = false;
+	                            getBool(payload, "or_replace", or_replace);
+	                            uint8_t flags = or_replace ? 0x01 : 0x00;
+
+	                            std::string message;
+	                            getString(payload, "message", message);
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128 + message.size());
+	                            arg_stream.push_back(flags);
+	                            appendLegacyStringArg(arg_stream, exception_name);
+	                            appendLegacyStringArg(arg_stream, message);
+	                            return runLegacyVoidHandler(&Executor::executeCreateExceptionStatement,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_UDR: {
+	                            uint64_t udr_type_u64 = 0;
+	                            getU64(payload, "udr_type", udr_type_u64);
+	                            if (udr_type_u64 > 2u)
+	                            {
+	                                return ExecutionResult("V3 CREATE UDR invalid udr_type");
+	                            }
+
+	                            std::string udr_name;
+	                            if (!getSchemaPathString(payload, "name", udr_name) ||
+	                                udr_name.empty())
+	                            {
+	                                getString(payload, "name", udr_name);
+	                            }
+	                            udr_name = trimAsciiCopy(udr_name);
+	                            if (udr_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE UDR missing name");
+	                            }
+
+	                            std::string library_path;
+	                            std::string entry_point;
+	                            if (!getString(payload, "library_path", library_path) ||
+	                                library_path.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE UDR missing library_path");
+	                            }
+	                            if (!getString(payload, "entry_point", entry_point) ||
+	                                entry_point.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE UDR missing entry_point");
+	                            }
+
+	                            bool has_signature = false;
+	                            getBool(payload, "has_signature", has_signature);
+	                            std::string signature;
+	                            getString(payload, "signature", signature);
+	                            has_signature = has_signature || !signature.empty();
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(192 + signature.size());
+	                            arg_stream.push_back(static_cast<uint8_t>(udr_type_u64 & 0xFFu));
+	                            appendLegacyStringArg(arg_stream, udr_name);
+	                            appendLegacyStringArg(arg_stream, library_path);
+	                            appendLegacyStringArg(arg_stream, entry_point);
+	                            arg_stream.push_back(has_signature ? 1 : 0);
+	                            appendLegacyStringArg(arg_stream, signature);
+	                            return runLegacyVoidHandler(&Executor::executeCreateUdr,
+	                                                        std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                            return handleCreateTable(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
@@ -69746,6 +71476,67 @@ namespace scratchbird
                                 case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_TABLE:
                                 case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER_MAPPING:
                                     return executeV3FdwMutationOpcode(opcode, payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TRIGGER: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+	                            bool if_exists = (flags_value & 0x01u) != 0;
+
+	                            std::string trigger_path;
+	                            if (!getSchemaPathString(payload, "path", trigger_path) ||
+	                                trigger_path.empty())
+	                            {
+	                                getString(payload, "name", trigger_path);
+	                            }
+	                            trigger_path = trimAsciiCopy(trigger_path);
+	                            if (trigger_path.empty())
+	                            {
+	                                return ExecutionResult("V3 DROP TRIGGER missing path");
+	                            }
+
+	                            auto parts = splitSchemaComponents(trigger_path);
+	                            if (parts.size() < 2)
+	                            {
+	                                return ExecutionResult(
+	                                    "V3 DROP TRIGGER requires parent-qualified path");
+	                            }
+
+	                            std::string trigger_name = parts.back();
+	                            std::vector<std::string> table_components(parts.begin(),
+	                                                                      parts.end() - 1);
+	                            std::string table_path = joinSchemaComponents(table_components, 0);
+
+	                            core::ID trigger_id;
+	                            core::CatalogManager::ObjectType resolved_type;
+	                            core::ErrorContext resolve_ctx;
+	                            auto resolve_status = resolveObjectIdForQualifiedName(
+	                                table_path + "." + trigger_name,
+	                                core::CatalogManager::ObjectType::TRIGGER,
+	                                trigger_id,
+	                                resolved_type,
+	                                nullptr,
+	                                &resolve_ctx,
+	                                false);
+	                            if (resolve_status != core::Status::OK)
+	                            {
+	                                if (if_exists && resolve_status == core::Status::NOT_FOUND)
+	                                {
+	                                    return ExecutionResult();
+	                                }
+	                                std::string err_msg = "Trigger not found: " + trigger_path;
+	                                if (!resolve_ctx.message.empty())
+	                                {
+	                                    err_msg += ": " + resolve_ctx.message;
+	                                }
+	                                return ExecutionResult(err_msg);
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            appendLegacyStringArg(arg_stream, trigger_name);
+	                            appendLegacyStringArg(arg_stream, table_path);
+	                            return runLegacyVoidHandler(&Executor::executeDropTrigger,
+	                                                        std::move(arg_stream));
+	                        }
 		                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
 		                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
                                 case scratchbird::sblr::v3::Opcode::SBLR3_DROP_VIEW:
@@ -69783,6 +71574,57 @@ namespace scratchbird
 	                                    ? &Executor::executeDropFunctionStatement
 	                                    : &Executor::executeDropProcedureStatement,
 	                                std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_PACKAGE_STMT:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_EXCEPTION_STMT:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_UDR: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+	                            std::string object_path;
+	                            if (!getSchemaPathString(payload, "path", object_path) ||
+	                                object_path.empty())
+	                            {
+	                                getString(payload, "name", object_path);
+	                            }
+	                            object_path = trimAsciiCopy(object_path);
+	                            if (object_path.empty())
+	                            {
+	                                return ExecutionResult("V3 DROP routine-family object missing path");
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            uint8_t legacy_flags = 0;
+	                            if ((flags_value & 0x01u) != 0)
+	                            {
+	                                legacy_flags |= 0x01;  // IF EXISTS
+	                            }
+	                            if (opcode == scratchbird::sblr::v3::Opcode::SBLR3_DROP_UDR &&
+	                                (flags_value & 0x02u) != 0)
+	                            {
+	                                legacy_flags |= 0x02;  // CASCADE
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+	                            appendLegacyStringArg(arg_stream, object_path);
+
+	                            switch (opcode)
+	                            {
+	                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_PACKAGE_STMT:
+	                                    return runLegacyVoidHandler(
+	                                        &Executor::executeDropPackageStatement,
+	                                        std::move(arg_stream));
+	                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_EXCEPTION_STMT:
+	                                    return runLegacyVoidHandler(
+	                                        &Executor::executeDropExceptionStatement,
+	                                        std::move(arg_stream));
+	                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_UDR:
+	                                    return runLegacyVoidHandler(
+	                                        &Executor::executeDropUdr,
+	                                        std::move(arg_stream));
+	                                default:
+	                                    break;
+	                            }
+	                            return ExecutionResult("Unsupported DROP routine-family opcode");
 	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_ROLE: {
 	                            uint64_t flags_value = 0;
@@ -70081,6 +71923,9 @@ namespace scratchbird
                         case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TRIGGER:
                         case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FUNCTION_STMT:
                         case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PROCEDURE_STMT:
+                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PACKAGE_STMT:
+                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_EXCEPTION_STMT:
+                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_UDR:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
@@ -70095,6 +71940,7 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_TABLE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_USER_MAPPING:
                             case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_USER_MAPPING:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_SYNONYM:
                             case scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
@@ -70102,8 +71948,13 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_SERVER:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_TABLE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER_MAPPING:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TRIGGER:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SYNONYM:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FUNCTION_STMT:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_PROCEDURE_STMT:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_PACKAGE_STMT:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_EXCEPTION_STMT:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_UDR:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_ROLE:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SCHEMA:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_DOMAIN:
@@ -74744,6 +76595,16 @@ namespace scratchbird
             {
                 deps.push_back(readString());
             }
+            std::vector<std::pair<std::string, std::string>> measurement_options;
+            if (flags & 0x0080) {
+                uint64_t measurement_count = readUVarint();
+                measurement_options.reserve(measurement_count);
+                for (uint64_t i = 0; i < measurement_count; ++i) {
+                    std::string key = readString();
+                    std::string value = readString();
+                    measurement_options.emplace_back(std::move(key), std::move(value));
+                }
+            }
 
             core::CatalogManager::JobInfo existing_job;
             core::ErrorContext err_ctx;
@@ -74795,6 +76656,19 @@ namespace scratchbird
                 return static_cast<uint64_t>(micros / 1000);
             };
 
+            auto encode_measurement_options = [](const std::vector<std::pair<std::string, std::string>>& options) {
+                std::string encoded;
+                for (size_t i = 0; i < options.size(); ++i) {
+                    if (i > 0) {
+                        encoded.push_back('\n');
+                    }
+                    encoded.append(options[i].first);
+                    encoded.push_back('=');
+                    encoded.append(options[i].second);
+                }
+                return encoded;
+            };
+
             core::CatalogManager::JobInfo job;
             job.job_name = job_name;
             job.job_type = static_cast<core::CatalogManager::JobType>(job_type_raw);
@@ -74805,6 +76679,12 @@ namespace scratchbird
             job.interval_seconds = interval_seconds;
             job.partition_strategy = partition_strategy;
             job.partition_expression = partition_expression;
+            job.has_measurement = (flags & 0x0080) != 0;
+            if (job.has_measurement) {
+                job.measurement_options = encode_measurement_options(measurement_options);
+            } else {
+                job.measurement_options.clear();
+            }
             if (!job_class.empty()) {
                 std::string normalized;
                 normalized.reserve(job_class.size());
@@ -75017,6 +76897,21 @@ namespace scratchbird
                 secret_key = readString();
                 secret_value = readString();
             }
+            bool has_measurement_clause = (flags & 0x8000) != 0;
+            bool drop_measurement = false;
+            std::vector<std::pair<std::string, std::string>> measurement_options;
+            if (has_measurement_clause) {
+                drop_measurement = readByte() != 0;
+                if (!drop_measurement) {
+                    uint64_t measurement_count = readUVarint();
+                    measurement_options.reserve(measurement_count);
+                    for (uint64_t i = 0; i < measurement_count; ++i) {
+                        std::string key = readString();
+                        std::string value = readString();
+                        measurement_options.emplace_back(std::move(key), std::move(value));
+                    }
+                }
+            }
 
             core::CatalogManager::JobInfo job;
             core::ErrorContext err_ctx;
@@ -75054,6 +76949,19 @@ namespace scratchbird
                     error("Timestamp must be non-negative: " + value);
                 }
                 return static_cast<uint64_t>(micros / 1000);
+            };
+
+            auto encode_measurement_options = [](const std::vector<std::pair<std::string, std::string>>& options) {
+                std::string encoded;
+                for (size_t i = 0; i < options.size(); ++i) {
+                    if (i > 0) {
+                        encoded.push_back('\n');
+                    }
+                    encoded.append(options[i].first);
+                    encoded.push_back('=');
+                    encoded.append(options[i].second);
+                }
+                return encoded;
             };
 
             if (flags & 0x01) {
@@ -75175,6 +77083,15 @@ namespace scratchbird
                             error("Permission denied: EXECUTE EXTERNAL JOB privilege required");
                         }
                     }
+                }
+            }
+            if (has_measurement_clause) {
+                if (drop_measurement) {
+                    job.has_measurement = false;
+                    job.measurement_options.clear();
+                } else {
+                    job.has_measurement = true;
+                    job.measurement_options = encode_measurement_options(measurement_options);
                 }
             }
 
@@ -75829,7 +77746,15 @@ namespace scratchbird
         {
             uint8_t flags = readByte();
             bool if_exists = flags & 0x01;
+            bool cascade = flags & 0x02;
+            bool restrict_mode = flags & 0x04;
+            bool is_public = flags & 0x08;
             std::string synonym_name = readString();
+
+            if (cascade && restrict_mode)
+            {
+                error("DROP SYNONYM cannot specify both CASCADE and RESTRICT");
+            }
 
             auto components = splitSchemaComponents(synonym_name);
             std::string schema_name;
@@ -75841,38 +77766,90 @@ namespace scratchbird
                 local_name = components.back();
             }
 
-            core::ID schema_id{};
             core::ErrorContext err_ctx;
-            if (!schema_name.empty())
+            core::CatalogManager::SynonymInfo synonym_info;
+            core::Status status = core::Status::OK;
+
+            if (is_public)
             {
-                core::CatalogManager::SchemaInfo schema_info;
-                auto status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
+                if (!schema_name.empty())
+                {
+                    error("DROP PUBLIC SYNONYM does not accept schema qualification");
+                }
+
+                std::vector<core::CatalogManager::SynonymInfo> public_synonyms;
+                status = db_->catalog_manager()->listPublicSynonyms(public_synonyms, &err_ctx);
                 if (status != core::Status::OK)
+                {
+                    std::string err_msg = "DROP PUBLIC SYNONYM failed";
+                    if (!err_ctx.message.empty())
+                    {
+                        err_msg += ": " + err_ctx.message;
+                    }
+                    error(err_msg);
+                }
+
+                bool found = false;
+                for (const auto& entry : public_synonyms)
+                {
+                    if (!core::IdentifierUtils::namesMatch(
+                            local_name, false, entry.synonym_name, entry.name_is_delimited))
+                    {
+                        continue;
+                    }
+                    if (found)
+                    {
+                        error("Ambiguous public synonym name: " + local_name);
+                    }
+                    synonym_info = entry;
+                    found = true;
+                }
+
+                if (!found)
                 {
                     if (if_exists)
                     {
                         return;
                     }
-                    error("Schema not found for DROP SYNONYM");
+                    error("Public synonym not found: " + local_name);
                 }
-                schema_id = schema_info.schema_id;
             }
-            else if (conn_ctx_)
+            else
             {
-                schema_id = conn_ctx_->getCurrentSchemaId();
-            }
-
-            core::CatalogManager::SynonymInfo synonym_info;
-            auto status = db_->catalog_manager()->getSynonymByName(schema_id, local_name, synonym_info, &err_ctx);
-            if (status != core::Status::OK)
-            {
-                if (if_exists)
+                core::ID schema_id{};
+                if (!schema_name.empty())
                 {
-                    return;
+                    core::CatalogManager::SchemaInfo schema_info;
+                    status = db_->catalog_manager()->getSchema(schema_name, schema_info, &err_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        if (if_exists)
+                        {
+                            return;
+                        }
+                        error("Schema not found for DROP SYNONYM");
+                    }
+                    schema_id = schema_info.schema_id;
                 }
-                error("Synonym not found: " + synonym_name);
+                else if (conn_ctx_)
+                {
+                    schema_id = conn_ctx_->getCurrentSchemaId();
+                }
+
+                status = db_->catalog_manager()->getSynonymByName(
+                    schema_id, local_name, synonym_info, &err_ctx);
+                if (status != core::Status::OK || synonym_info.is_public)
+                {
+                    if (if_exists)
+                    {
+                        return;
+                    }
+                    error("Synonym not found: " + synonym_name);
+                }
             }
 
+            (void)cascade;
+            (void)restrict_mode;
             status = db_->catalog_manager()->dropSynonym(synonym_info.synonym_id, &err_ctx);
             if (status != core::Status::OK)
             {

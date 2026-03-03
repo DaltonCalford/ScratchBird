@@ -1270,6 +1270,17 @@ namespace scratchbird::core
         switch (event.event_type)
         {
             case DomainControlPlaneEventType::CREATE:
+            {
+                auto existing = domain_hashes_.find(event.domain_id);
+                if (existing != domain_hashes_.end() && existing->second != event.definition_hash)
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::DUPLICATE_OBJECT,
+                                      "Domain identity conflict detected; group consensus required");
+                    return Status::DUPLICATE_OBJECT;
+                }
+            }
+                [[fallthrough]];
             case DomainControlPlaneEventType::ALTER:
                 domain_hashes_[event.domain_id] = event.definition_hash;
                 break;

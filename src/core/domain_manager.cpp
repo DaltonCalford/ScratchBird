@@ -18,6 +18,7 @@
 #include "scratchbird/core/composite.h"
 #include "scratchbird/core/utf8_utils.h"
 #include "scratchbird/core/normalization.h"
+#include "scratchbird/core/cluster_write_safety.h"
 #include "scratchbird/core/domain_validation.h"
 #include "scratchbird/core/quality_pipeline.h"
 #include <cstring>
@@ -296,6 +297,20 @@ namespace scratchbird::core
             return kNamespace;
         }
 
+        auto domainIdentityNamespaceUuid() -> const ID&
+        {
+            static const ID kNamespace = [] {
+                ID id{};
+                const bool ok = parseUuidLiteral("1cc0f343-1406-4d4c-a38d-a94535b536eb", id);
+                if (!ok)
+                {
+                    return ID{};
+                }
+                return id;
+            }();
+            return kNamespace;
+        }
+
         auto uuidV5(const ID& ns_uuid, const std::string& name) -> ID
         {
             unsigned char hash[SHA_DIGEST_LENGTH];
@@ -483,6 +498,17 @@ namespace scratchbird::core
                           canonicalSystemDomainKey(domain_name, base_type, "", precision, scale));
         }
 
+        auto canonicalUserDomainIdentityKey(const std::string& domain_name) -> std::string
+        {
+            return "domain|global|" + IdentifierUtils::toUpper(domain_name);
+        }
+
+        auto deterministicUserDomainId(const std::string& domain_name) -> ID
+        {
+            return uuidV5(domainIdentityNamespaceUuid(),
+                          canonicalUserDomainIdentityKey(domain_name));
+        }
+
         auto deterministicSystemDomainId(const SystemDomainDef& def,
                                          ErrorContext* ctx) -> ID
         {
@@ -532,6 +558,123 @@ namespace scratchbird::core
             return tag;
         }
 
+        auto canonicalDomainDefinition(const DomainInfo& domain) -> std::string
+        {
+            std::ostringstream out;
+            out << "name=" << IdentifierUtils::toUpper(domain.domain_name)
+                << ";type=" << static_cast<uint32_t>(domain.domain_type)
+                << ";base=" << static_cast<uint32_t>(domain.base_type)
+                << ";precision=" << domain.precision
+                << ";scale=" << domain.scale
+                << ";nullable=" << (domain.nullable ? "1" : "0")
+                << ";default=" << domain.default_value
+                << ";parent=" << domain.parent_domain_id.toString()
+                << ";collation=" << domain.collation_name
+                << ";dialect=" << normalizeEngineTag(domain.dialect_tag)
+                << ";compat=" << domain.compat_name
+                << ";enum_wrap=" << (domain.enum_wrap ? "1" : "0");
+
+            std::vector<std::string> constraint_tokens;
+            constraint_tokens.reserve(domain.constraints.size());
+            for (const auto& constraint : domain.constraints)
+            {
+                std::ostringstream token;
+                token << static_cast<uint32_t>(constraint.type) << ":"
+                      << constraint.name << ":" << constraint.expression;
+                constraint_tokens.push_back(token.str());
+            }
+            std::sort(constraint_tokens.begin(), constraint_tokens.end());
+            for (const auto& token : constraint_tokens)
+            {
+                out << ";c=" << token;
+            }
+
+            for (const auto& field : domain.fields)
+            {
+                out << ";f=" << field.name
+                    << ":" << static_cast<uint32_t>(field.type)
+                    << ":" << field.precision
+                    << ":" << field.scale
+                    << ":" << (field.nullable ? "1" : "0")
+                    << ":" << field.default_value
+                    << ":" << field.domain_id.toString();
+            }
+            for (const auto& enum_value : domain.enum_values)
+            {
+                out << ";e=" << enum_value.position << ":" << enum_value.label;
+            }
+            for (const auto& allowed : domain.variant_allowed_types)
+            {
+                out << ";v=" << static_cast<uint32_t>(allowed.type)
+                    << ":" << allowed.precision
+                    << ":" << allowed.scale
+                    << ":" << (allowed.with_time_zone ? "1" : "0")
+                    << ":" << allowed.domain_id.toString();
+            }
+            out << ";set=" << static_cast<uint32_t>(domain.set_element_type.type)
+                << ":" << domain.set_element_type.precision
+                << ":" << domain.set_element_type.scale
+                << ":" << (domain.set_element_type.with_time_zone ? "1" : "0")
+                << ":" << domain.set_element_type.domain_id.toString();
+            out << ";range_subtype=" << static_cast<uint32_t>(domain.range_info.subtype.type)
+                << ":" << domain.range_info.subtype.precision
+                << ":" << domain.range_info.subtype.scale
+                << ":" << (domain.range_info.subtype.with_time_zone ? "1" : "0")
+                << ":" << domain.range_info.subtype.domain_id.toString()
+                << ";range_collation=" << domain.range_info.subtype_collation
+                << ";range_opclass=" << domain.range_info.subtype_opclass
+                << ";range_canonical=" << domain.range_info.canonical_function
+                << ";range_diff=" << domain.range_info.subtype_diff_function
+                << ";range_multirange=" << (domain.range_info.multirange ? "1" : "0");
+            out << ";base_recv=" << domain.base_info.receive_function
+                << ";base_send=" << domain.base_info.send_function
+                << ";base_input=" << domain.base_info.input_function
+                << ";base_output=" << domain.base_info.output_function
+                << ";base_typmod_in=" << domain.base_info.typmod_in_function
+                << ";base_typmod_out=" << domain.base_info.typmod_out_function
+                << ";base_analyze=" << domain.base_info.analyze_function
+                << ";base_alignment=" << domain.base_info.alignment
+                << ";base_storage_mode=" << domain.base_info.storage_mode
+                << ";base_storage_type=" << static_cast<uint32_t>(domain.base_info.storage.type)
+                << ":" << domain.base_info.storage.precision
+                << ":" << domain.base_info.storage.scale
+                << ":" << (domain.base_info.storage.with_time_zone ? "1" : "0")
+                << ":" << domain.base_info.storage.domain_id.toString()
+                << ";base_category=" << domain.base_info.category
+                << ";base_preferred=" << (domain.base_info.preferred ? "1" : "0")
+                << ";base_has_preferred=" << (domain.base_info.has_preferred ? "1" : "0")
+                << ";shell_finalized=" << (domain.shell_finalized ? "1" : "0");
+            return out.str();
+        }
+
+        auto domainControlPlaneReplicaCatalog() -> DomainControlPlaneReplicaCatalog&
+        {
+            static DomainControlPlaneReplicaCatalog catalog;
+            return catalog;
+        }
+
+        auto appendDomainControlPlaneEvent(Database* db,
+                                           const DomainInfo& domain,
+                                           DomainControlPlaneEventType event_type,
+                                           ErrorContext* ctx) -> Status
+        {
+            DomainControlPlaneEvent event{};
+            const uint64_t epoch = (db && db->cluster_config_epoch() != 0)
+                                       ? db->cluster_config_epoch()
+                                       : 1;
+            event.cluster_config_epoch = epoch;
+            event.schema_epoch = epoch;
+            event.event_type = event_type;
+            event.domain_id = domain.domain_id;
+            if (event_type != DomainControlPlaneEventType::DROP)
+            {
+                const std::string canonical_definition = canonicalDomainDefinition(domain);
+                event.definition_hash =
+                    DomainControlPlaneReplicaCatalog::computeDefinitionHash(canonical_definition);
+            }
+            return domainControlPlaneReplicaCatalog().appendEvent(event, ctx);
+        }
+
         auto isSystemDomainName(const std::string& domain_name) -> bool
         {
             const std::string upper = IdentifierUtils::toUpper(domain_name);
@@ -544,6 +687,7 @@ namespace scratchbird::core
                                       bool allow_system_reserved_name,
                                       ErrorContext* ctx) -> Status
         {
+            (void)schema_id;
             if (domain_name.empty())
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain name cannot be empty");
@@ -560,14 +704,11 @@ namespace scratchbird::core
             for (const auto& [existing_id, existing] : domain_cache)
             {
                 (void)existing_id;
-                if (existing.schema_id != schema_id)
-                {
-                    continue;
-                }
                 if (IdentifierUtils::namesMatch(domain_name, false,
                                                 existing.domain_name, false))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Domain name already exists");
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                      "Domain name already exists (domains are globally scoped)");
                     return Status::FILE_EXISTS;
                 }
             }
@@ -576,6 +717,7 @@ namespace scratchbird::core
         }
 
         auto resolveDomainCreateId(const std::unordered_map<ID, DomainInfo>& domain_cache,
+                                   const std::string& domain_name,
                                    const std::optional<ID>& fixed_domain_id,
                                    ID& domain_id_out,
                                    ErrorContext* ctx) -> Status
@@ -586,7 +728,7 @@ namespace scratchbird::core
             }
             else
             {
-                domain_id_out = generateUuidV7();
+                domain_id_out = deterministicUserDomainId(domain_name);
             }
 
             if (isZeroUuidLocal(domain_id_out))
@@ -595,9 +737,19 @@ namespace scratchbird::core
                 return Status::INVALID_ARGUMENT;
             }
 
-            if (domain_cache.find(domain_id_out) != domain_cache.end())
+            auto existing = domain_cache.find(domain_id_out);
+            if (existing != domain_cache.end())
             {
-                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Domain ID already exists");
+                if (IdentifierUtils::namesMatch(domain_name, false,
+                                                existing->second.domain_name, false))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Domain already exists");
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                      "Domain identity conflict requires group consensus");
+                }
                 return Status::FILE_EXISTS;
             }
 
@@ -1993,6 +2145,21 @@ namespace scratchbird::core
             }
         }
 
+        for (const auto& [id, info] : domain_cache_)
+        {
+            (void)id;
+            status = appendDomainControlPlaneEvent(db_,
+                                                   info,
+                                                   DomainControlPlaneEventType::CREATE,
+                                                   ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status,
+                                  "Failed to seed domain control-plane catalog");
+                return status;
+            }
+        }
+
         LOG_INFO(CATALOG, "Loaded %u domains", domain_count_);
         return Status::OK;
     }
@@ -2018,7 +2185,7 @@ namespace scratchbird::core
         {
             return status;
         }
-        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        status = resolveDomainCreateId(domain_cache_, domain_name, options.fixed_domain_id, domain_id, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -2106,14 +2273,12 @@ namespace scratchbird::core
                                  DomainInfo& info,
                                  ErrorContext* ctx) -> Status
     {
+        (void)schema_id;
         std::lock_guard<std::mutex> lock(mutex_);
 
         for (const auto& [id, domain_info] : domain_cache_)
         {
-            if (!isZeroUuidLocal(schema_id) && domain_info.schema_id != schema_id)
-            {
-                continue;
-            }
+            (void)id;
             if (IdentifierUtils::namesMatch(domain_name, false /*search_delimited*/,
                                             domain_info.domain_name, false /*stored_delimited*/))
             {
@@ -2419,6 +2584,18 @@ namespace scratchbird::core
             return Status::CONSTRAINT_VIOLATION;
         }
 
+        const DomainInfo dropped_domain = it->second;
+        status = appendDomainControlPlaneEvent(db_,
+                                               dropped_domain,
+                                               DomainControlPlaneEventType::DROP,
+                                               ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status,
+                              "Domain identity conflict requires group consensus");
+            return status;
+        }
+
         // Delete from catalog
         status = deleteDomainRecord(domain_id, ctx);
         if (status != Status::OK && status != Status::NOT_FOUND)
@@ -2475,7 +2652,6 @@ namespace scratchbird::core
 
         DomainInfo old_info = it->second;
 
-        const std::string dialect_tag = IdentifierUtils::toUpper(old_info.dialect_tag);
         for (const auto& [id, info] : domain_cache_)
         {
             if (id == domain_id)
@@ -2485,12 +2661,9 @@ namespace scratchbird::core
             if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
                                                info.domain_name, false /*existing_is_delimited*/))
             {
-                if (IdentifierUtils::toUpper(info.dialect_tag) == dialect_tag)
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
-                                      "Domain name already exists for dialect");
-                    return Status::FILE_EXISTS;
-                }
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                  "Domain name already exists (domains are globally scoped)");
+                return Status::FILE_EXISTS;
             }
         }
 
@@ -3314,7 +3487,7 @@ namespace scratchbird::core
             field_names.insert(field.name);
         }
 
-        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        status = resolveDomainCreateId(domain_cache_, domain_name, options.fixed_domain_id, domain_id, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -3501,7 +3674,7 @@ namespace scratchbird::core
             }
         }
 
-        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        status = resolveDomainCreateId(domain_cache_, domain_name, options.fixed_domain_id, domain_id, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -3774,7 +3947,7 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        status = resolveDomainCreateId(domain_cache_, domain_name, options.fixed_domain_id, domain_id, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -4145,7 +4318,7 @@ namespace scratchbird::core
             type_set.insert(key);
         }
 
-        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        status = resolveDomainCreateId(domain_cache_, domain_name, options.fixed_domain_id, domain_id, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -4235,7 +4408,7 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        status = resolveDomainCreateId(domain_cache_, domain_name, options.fixed_domain_id, domain_id, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -4298,7 +4471,7 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        status = resolveDomainCreateId(domain_cache_, domain_name, options.fixed_domain_id, domain_id, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -4353,7 +4526,7 @@ namespace scratchbird::core
         {
             return status;
         }
-        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        status = resolveDomainCreateId(domain_cache_, domain_name, options.fixed_domain_id, domain_id, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -5397,6 +5570,18 @@ namespace scratchbird::core
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
             return Status::INVALID_ARGUMENT;
+        }
+
+        const bool exists_in_cache = domain_cache_.find(domain.domain_id) != domain_cache_.end();
+        const DomainControlPlaneEventType event_type =
+            exists_in_cache ? DomainControlPlaneEventType::ALTER
+                            : DomainControlPlaneEventType::CREATE;
+        status = appendDomainControlPlaneEvent(db_, domain, event_type, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status,
+                              "Domain identity conflict requires group consensus");
+            return status;
         }
 
         uint32_t current_page = domains_table_page_;

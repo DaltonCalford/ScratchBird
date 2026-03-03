@@ -5348,6 +5348,9 @@ bool hasTriggerNameConflictInTable(
         uint64_t starts_at;
         uint64_t ends_at;
         char schedule_tz[64];
+        uint8_t has_measurement;
+        uint8_t measurement_reserved[7];
+        char measurement_options[1024];
         uint64_t next_run_time;
         char partition_strategy[64];
         ID partition_shard_uuid;
@@ -17067,9 +17070,41 @@ bool hasTriggerNameConflictInTable(
                 {
                     for (const auto& path_entry : search_path)
                     {
-                        auto entry_components = splitSchemaPath(path_entry);
                         ID schema_id;
-                        Status res = resolve_schema_path(PathType::ABSOLUTE, entry_components, schema_id);
+                        Status res = Status::NOT_FOUND;
+                        if (path_entry.empty())
+                        {
+                            continue;
+                        }
+
+                        if (path_entry == ".")
+                        {
+                            if (isZeroUuidLocal(current_schema_id))
+                            {
+                                continue;
+                            }
+                            schema_id = current_schema_id;
+                            res = Status::OK;
+                        }
+                        else if (path_entry.size() > 1 && path_entry.front() == '.')
+                        {
+                            if (isZeroUuidLocal(current_schema_id))
+                            {
+                                continue;
+                            }
+                            auto relative_components =
+                                splitSchemaPath(path_entry.substr(1));
+                            res = resolve_schema_path(PathType::CURRENT,
+                                                      relative_components,
+                                                      schema_id);
+                        }
+                        else
+                        {
+                            auto entry_components = splitSchemaPath(path_entry);
+                            res = resolve_schema_path(PathType::ABSOLUTE,
+                                                      entry_components,
+                                                      schema_id);
+                        }
                         if (res == Status::NOT_FOUND)
                         {
                             continue;
@@ -24518,7 +24553,8 @@ bool hasTriggerNameConflictInTable(
         // Check if tablespace name already exists
         for (const auto &[id, info] : tablespace_cache_)
         {
-            if (info.tablespace_name == tablespace_name)
+            if (IdentifierUtils::namesConflict(tablespace_name, false /*new_is_delimited*/,
+                                               info.tablespace_name, false /*stored_is_delimited*/))
             {
                 SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
                                   ("Tablespace '" + tablespace_name + "' already exists").c_str());
@@ -25000,17 +25036,6 @@ bool hasTriggerNameConflictInTable(
             return Status::INVALID_ARGUMENT;
         }
 
-        // Check if new name already exists
-        for (const auto &[id, info] : tablespace_cache_)
-        {
-            if (info.tablespace_name == new_name)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
-                                  ("Tablespace '" + new_name + "' already exists").c_str());
-                return Status::FILE_EXISTS;
-            }
-        }
-
         // Find tablespace by old name
         uint16_t ts_id = 0;
         TablespaceInfo *ts_info = nullptr;
@@ -25018,7 +25043,8 @@ bool hasTriggerNameConflictInTable(
 
         for (auto &[id, info] : tablespace_cache_)
         {
-            if (info.tablespace_name == old_name)
+            if (IdentifierUtils::namesConflict(old_name, false /*new_is_delimited*/,
+                                               info.tablespace_name, false /*stored_is_delimited*/))
             {
                 ts_id = id;
                 ts_info = &info;
@@ -25039,6 +25065,22 @@ bool hasTriggerNameConflictInTable(
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot rename primary tablespace");
             return Status::INVALID_ARGUMENT;
+        }
+
+        // Check if new name already exists on another tablespace
+        for (const auto &[id, info] : tablespace_cache_)
+        {
+            if (id == ts_id)
+            {
+                continue;
+            }
+            if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                               info.tablespace_name, false /*stored_is_delimited*/))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
+                                  ("Tablespace '" + new_name + "' already exists").c_str());
+                return Status::FILE_EXISTS;
+            }
         }
 
         // Update in-memory cache
@@ -25247,7 +25289,8 @@ bool hasTriggerNameConflictInTable(
         // Check for name conflicts
         for (const auto &[ts_id, ts_info] : tablespace_cache_)
         {
-            if (ts_info.tablespace_name == final_name)
+            if (IdentifierUtils::namesConflict(final_name, false /*new_is_delimited*/,
+                                               ts_info.tablespace_name, false /*stored_is_delimited*/))
             {
                 ::close(fd);
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -28629,18 +28672,18 @@ auto CatalogManager::createTrigger(const TriggerInfo &trigger, ErrorContext *ctx
 }
 
 // Internal helper (assumes trigger_mutex_ and dependency_cache_mutex_ already held)
-auto CatalogManager::dropTriggerInternal(const std::string &trigger_name, ErrorContext *ctx) -> Status
+auto CatalogManager::dropTriggerInternal(const ID &trigger_id, ErrorContext *ctx) -> Status
 {
     // NO LOCK - caller must hold trigger_mutex_ and dependency_cache_mutex_
 
-    ID trigger_id{};
-    Status lookup_status =
-        resolveTriggerIdByUnscopedName(trigger_cache_, trigger_name, trigger_id, ctx);
-    if (lookup_status != Status::OK)
+    auto trigger_it = trigger_cache_.find(trigger_id);
+    if (trigger_it == trigger_cache_.end())
     {
-        return lookup_status;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger does not exist");
+        return Status::NOT_FOUND;
     }
-    const auto& trigger_info = trigger_cache_[trigger_id];
+    const auto trigger_info = trigger_it->second;
+    const std::string trigger_name = trigger_info.trigger_name;
 
     // Mark trigger record invalid on disk before cache eviction.
     auto predicate = [&trigger_id](const TriggerRecord& rec) {
@@ -28678,10 +28721,30 @@ auto CatalogManager::dropTriggerInternal(const std::string &trigger_name, ErrorC
     return Status::OK;
 }
 
+// Internal helper (assumes trigger_mutex_ and dependency_cache_mutex_ already held)
+auto CatalogManager::dropTriggerInternal(const std::string &trigger_name, ErrorContext *ctx) -> Status
+{
+    ID trigger_id{};
+    Status lookup_status =
+        resolveTriggerIdByUnscopedName(trigger_cache_, trigger_name, trigger_id, ctx);
+    if (lookup_status != Status::OK)
+    {
+        return lookup_status;
+    }
+
+    return dropTriggerInternal(trigger_id, ctx);
+}
+
 auto CatalogManager::dropTrigger(const std::string &trigger_name, ErrorContext *ctx) -> Status
 {
     std::scoped_lock lock(trigger_mutex_, dependency_cache_mutex_);
     return dropTriggerInternal(trigger_name, ctx);
+}
+
+auto CatalogManager::dropTrigger(const ID &trigger_id, ErrorContext *ctx) -> Status
+{
+    std::scoped_lock lock(trigger_mutex_, dependency_cache_mutex_);
+    return dropTriggerInternal(trigger_id, ctx);
 }
 
 // Internal helper (assumes trigger_mutex_ already held)
@@ -28812,7 +28875,56 @@ auto CatalogManager::enableTrigger(const std::string &trigger_name, bool enable,
     {
         return lookup_status;
     }
-    
+
+    auto trigger_it = trigger_cache_.find(trigger_id);
+    if (trigger_it == trigger_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger does not exist");
+        return Status::NOT_FOUND;
+    }
+
+    uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+
+    auto predicate = [&trigger_id](const TriggerRecord& rec) {
+        return rec.trigger_id == trigger_id && rec.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<TriggerRecord>(triggers_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return result.status;
+    }
+
+    TriggerRecord updated = result.record;
+    updated.enabled = enable ? 1 : 0;
+    updated.last_modified_time = now;
+
+    Status persist_status = updateRecordInHeapPage(triggers_table_page_, result.slot_index,
+                                                   updated, ctx);
+    if (persist_status != Status::OK)
+    {
+        return persist_status;
+    }
+
+    trigger_it->second.enabled = enable;
+
+    LOG_INFO(CATALOG, "Trigger '%s' %s", trigger_it->second.trigger_name.c_str(),
+             enable ? "enabled" : "disabled");
+
+    return Status::OK;
+}
+
+auto CatalogManager::enableTrigger(const ID &trigger_id, bool enable,
+                                   ErrorContext *ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(trigger_mutex_);
+
+    auto trigger_it = trigger_cache_.find(trigger_id);
+    if (trigger_it == trigger_cache_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Trigger does not exist");
+        return Status::NOT_FOUND;
+    }
+
     uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
 
     auto predicate = [&trigger_id](const TriggerRecord& rec) {
@@ -28836,9 +28948,9 @@ auto CatalogManager::enableTrigger(const std::string &trigger_name, bool enable,
     }
 
     // Update enabled status in cache after persistence.
-    trigger_cache_[trigger_id].enabled = enable;
-    
-    LOG_INFO(CATALOG, "Trigger '%s' %s", trigger_name.c_str(),
+    trigger_it->second.enabled = enable;
+
+    LOG_INFO(CATALOG, "Trigger '%s' %s", trigger_it->second.trigger_name.c_str(),
              enable ? "enabled" : "disabled");
 
     return Status::OK;
@@ -34696,7 +34808,8 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
                                   const std::vector<std::string>& column_names,
                                   const ID& materialized_table_id,
                                   ErrorContext* ctx,
-                                  const TempObjectOptions* temp_opts) -> Status
+                                  const TempObjectOptions* temp_opts,
+                                  bool with_data) -> Status
 {
     std::lock_guard<std::mutex> lock(view_cache_mutex_);
 
@@ -34748,7 +34861,12 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
         // Update materialized view properties if materialized
         if (materialized) {
             view.materialized_table_id = materialized_table_id;
-            view.last_refresh_time = std::chrono::system_clock::now().time_since_epoch().count();
+            view.last_refresh_time = with_data
+                ? std::chrono::system_clock::now().time_since_epoch().count()
+                : 0;
+        } else {
+            view.materialized_table_id = ID{};
+            view.last_refresh_time = 0;
         }
 
         if (view.temp_metadata_scope != TempMetadataScope::SESSION)
@@ -34789,7 +34907,9 @@ auto CatalogManager::createView(const ID& schema_id, const std::string& name,
     // ALPHA Phase 1 - Materialized Views
     if (materialized) {
         view.materialized_table_id = materialized_table_id;  // Physical table ID passed from executor
-        view.last_refresh_time = std::chrono::system_clock::now().time_since_epoch().count();  // Set refresh time on creation
+        view.last_refresh_time = with_data
+            ? std::chrono::system_clock::now().time_since_epoch().count()
+            : 0;
     } else {
         view.materialized_table_id = ID{};
         view.last_refresh_time = 0;
@@ -40822,6 +40942,8 @@ auto CatalogManager::ensureJobCacheLoaded(ErrorContext* ctx) -> Status
         info.starts_at = rec.starts_at;
         info.ends_at = rec.ends_at;
         info.schedule_tz = rec.schedule_tz;
+        info.has_measurement = rec.has_measurement != 0;
+        info.measurement_options = rec.measurement_options;
         info.next_run_time = rec.next_run_time;
         info.on_completion = static_cast<JobOnCompletion>(rec.on_completion);
         info.partition_strategy = rec.partition_strategy;
@@ -40930,6 +41052,8 @@ auto CatalogManager::createJob(const JobInfo& job_in, ID& job_id_out,
     record.starts_at = job_in.starts_at;
     record.ends_at = job_in.ends_at;
     copyStringField(record.schedule_tz, job_in.schedule_tz);
+    record.has_measurement = job_in.has_measurement ? 1 : 0;
+    copyStringField(record.measurement_options, job_in.measurement_options);
     record.next_run_time = job_in.next_run_time == 0 ? currentTimeMs() : job_in.next_run_time;
     copyStringField(record.partition_strategy, job_in.partition_strategy);
     record.partition_shard_uuid = job_in.partition_shard_uuid;
@@ -41006,6 +41130,8 @@ auto CatalogManager::getJobByName(const std::string& job_name, JobInfo& job_out,
     job_out.starts_at = result.record.starts_at;
     job_out.ends_at = result.record.ends_at;
     job_out.schedule_tz = result.record.schedule_tz;
+    job_out.has_measurement = result.record.has_measurement != 0;
+    job_out.measurement_options = result.record.measurement_options;
     job_out.next_run_time = result.record.next_run_time;
     job_out.on_completion = static_cast<JobOnCompletion>(result.record.on_completion);
     job_out.partition_strategy = result.record.partition_strategy;
@@ -41061,6 +41187,8 @@ auto CatalogManager::getJob(const ID& job_id, JobInfo& job_out,
     job_out.starts_at = result.record.starts_at;
     job_out.ends_at = result.record.ends_at;
     job_out.schedule_tz = result.record.schedule_tz;
+    job_out.has_measurement = result.record.has_measurement != 0;
+    job_out.measurement_options = result.record.measurement_options;
     job_out.next_run_time = result.record.next_run_time;
     job_out.on_completion = static_cast<JobOnCompletion>(result.record.on_completion);
     job_out.partition_strategy = result.record.partition_strategy;
@@ -41103,6 +41231,8 @@ auto CatalogManager::updateJob(const JobInfo& job_in, ErrorContext* ctx) -> Stat
     updated.starts_at = job_in.starts_at;
     updated.ends_at = job_in.ends_at;
     copyStringField(updated.schedule_tz, job_in.schedule_tz);
+    updated.has_measurement = job_in.has_measurement ? 1 : 0;
+    copyStringField(updated.measurement_options, job_in.measurement_options);
     updated.next_run_time = job_in.next_run_time;
     updated.on_completion = static_cast<uint8_t>(job_in.on_completion);
     copyStringField(updated.partition_strategy, job_in.partition_strategy);

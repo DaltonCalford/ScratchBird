@@ -1119,6 +1119,8 @@ public:
             uint64_t starts_at = 0;
             uint64_t ends_at = 0;
             std::string schedule_tz;
+            bool has_measurement = false;
+            std::string measurement_options;
             uint64_t next_run_time = 0;
             JobOnCompletion on_completion = JobOnCompletion::PRESERVE;
             std::string partition_strategy;
@@ -7310,7 +7312,8 @@ public:
                         bool materialized, const std::vector<std::string>& column_names,
                         const ID& materialized_table_id = ID{},
                         ErrorContext* ctx = nullptr,
-                        const TempObjectOptions* temp_opts = nullptr) -> Status;
+                        const TempObjectOptions* temp_opts = nullptr,
+                        bool with_data = true) -> Status;
 
         auto dropView(const ID& view_id, bool cascade,
                       ErrorContext* ctx = nullptr) -> Status;
@@ -11607,6 +11610,7 @@ public:
         auto createTrigger(const TriggerInfo &trigger, ErrorContext *ctx = nullptr) -> Status;
         
         auto dropTrigger(const std::string &trigger_name, ErrorContext *ctx = nullptr) -> Status;
+        auto dropTrigger(const ID &trigger_id, ErrorContext *ctx = nullptr) -> Status;
         
         auto getTrigger(const ID &trigger_id, TriggerInfo &info, ErrorContext *ctx = nullptr)
             -> Status;
@@ -11622,6 +11626,8 @@ public:
                                      ErrorContext *ctx = nullptr) -> Status;
         
         auto enableTrigger(const std::string &trigger_name, bool enable,
+                           ErrorContext *ctx = nullptr) -> Status;
+        auto enableTrigger(const ID &trigger_id, bool enable,
                            ErrorContext *ctx = nullptr) -> Status;
 
         // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2) =====
@@ -12663,6 +12669,7 @@ public:
         // Internal trigger helpers (assume trigger_mutex_ already held)
         auto getTriggerInternal(const ID& trigger_id, TriggerInfo& info, ErrorContext* ctx) -> Status;
         auto dropTriggerInternal(const std::string& trigger_name, ErrorContext* ctx) -> Status;
+        auto dropTriggerInternal(const ID& trigger_id, ErrorContext* ctx) -> Status;
 
         // Scheduler job cache helpers (assume mutex_ already held)
         auto ensureJobCacheLoaded(ErrorContext* ctx) -> Status;

@@ -1,18 +1,7 @@
 # ScratchBird
 
-ScratchBird is a database engine with a canonical v3 SQL parser/runtime surface and protocol emulation adapters.
-
-I have been working on it for a while and it is a bit of a passion project.
-
-I created a script that I used for moving my dev environment around in, which I shared as the dev install file.
-
-Honestly, I never thought anyone would run it - I have asked friends to test it, but outside of a small group, I never really thought this project was interesting enough to pay attention to.
-
-I have been using github as a place to store my work against an AI deleting my entire local repo (the whole directory because it lost track of what directory it was in when doing a cleanup of the build directory).  So, I have not been diligent to have the latest material on it.   Given the feedback, I am humbled.  I am going to be more attentive to keeping the four repositories in a stable state.
-
-If you have questions - feel free to ask, I can explain why I made the decisions I did and what I am doing for testing/verification.
-
-This whole thing is to create the database I always wanted.  So far, it appears to be getting closer.
+**Why ScratchBird Exists**  
+I built ScratchBird to create the database I always wanted: one where developers and teams can organize data like code, move objects while they’re live, and upgrade without downtime — without limits or complicated workarounds. Everything else — clustering, recursive schemas, versioned compute, deterministic replay — exists just to make those goals real. Git support came later, because developers asked for it. ScratchBird is still a work-in-progress passion project, and I welcome curious testers, questions, and feedback.
 
 If you have taken the time to pull it down, let me know in the message boards and I can let you know what is and is not ready for testing.
 
@@ -30,6 +19,7 @@ If you have taken the time to pull it down, let me know in the message boards an
 Latest docker-ready release bundle: [v0.5.1](https://github.com/DaltonCalford/ScratchBird/releases/tag/v0.5.1)
 
 Typical workflow:
+
 ```bash
 cd ScratchBird/scripts/dev-unified
 ./bootstrap-workspace.sh --workspace /home/<user>/CliWork --all --start --ip 127.0.0.5 --port 2222
@@ -40,8 +30,6 @@ Inside SSH, from your mounted workspace (for example `~/CliWork`), run local bui
 Thanks Again,
 
 Dalton
-
-
 
 ## Public Beta 1 Scope
 
