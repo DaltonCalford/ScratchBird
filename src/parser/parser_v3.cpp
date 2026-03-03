@@ -15,6 +15,7 @@
 
 #include "scratchbird/parser/parser_v3.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/sblr/extract_element_catalog.h"
 #include <cctype>
 #include <cstring>
 #include <algorithm>
@@ -303,6 +304,11 @@ constexpr char kFeatureSecurityQuotaProfileDdl[] = "F_SECURITY_QUOTA_PROFILE_DDL
 constexpr char kFeatureSecurityModelPolicyDdl[] = "F_SECURITY_MODEL_POLICY_DDL";
 constexpr char kFeatureLanguageUdrCompileBridge[] = "F_LANGUAGE_UDR_COMPILE_BRIDGE";
 constexpr char kFeatureEmbeddedSqlTemplateCompile[] = "F_EMBEDDED_SQL_TEMPLATE_COMPILE";
+constexpr char kFeatureDmlMysqlOnDuplicateKey[] = "F_DML_MYSQL_ON_DUPLICATE_KEY";
+constexpr char kFeatureDmlUpdateOrderLimit[] = "F_DML_UPDATE_ORDER_LIMIT";
+constexpr char kFeatureDmlDeleteOrderLimit[] = "F_DML_DELETE_ORDER_LIMIT";
+constexpr char kFeatureDmlWritableCte[] = "F_DML_WRITABLE_CTE";
+constexpr char kFeatureDmlMergeNotMatchedBySource[] = "F_DML_MERGE_NOT_MATCHED_BY_SOURCE";
 
 std::string toUpperAscii(std::string value) {
     for (char& ch : value) {
@@ -421,7 +427,12 @@ std::set<std::string> Parser::defaultCapabilitySetForProfile(std::string_view pr
             kFeatureSecurityQuotaProfileDdl,
             kFeatureSecurityModelPolicyDdl,
             kFeatureLanguageUdrCompileBridge,
-            kFeatureEmbeddedSqlTemplateCompile
+            kFeatureEmbeddedSqlTemplateCompile,
+            kFeatureDmlMysqlOnDuplicateKey,
+            kFeatureDmlUpdateOrderLimit,
+            kFeatureDmlDeleteOrderLimit,
+            kFeatureDmlWritableCte,
+            kFeatureDmlMergeNotMatchedBySource
         };
     }
     return {};
@@ -9640,16 +9651,19 @@ Statement* Parser::parseWithStatement() {
         return stmt;
     }
     if (match(TokenType::KW_INSERT)) {
+        if (!requireFeature(kFeatureDmlWritableCte)) return nullptr;
         auto* stmt = parseInsert();
         stmt->with = with;
         return stmt;
     }
     if (match(TokenType::KW_UPDATE)) {
+        if (!requireFeature(kFeatureDmlWritableCte)) return nullptr;
         auto* stmt = parseUpdate();
         stmt->with = with;
         return stmt;
     }
     if (match(TokenType::KW_DELETE)) {
+        if (!requireFeature(kFeatureDmlWritableCte)) return nullptr;
         auto* stmt = parseDelete();
         stmt->with = with;
         return stmt;
@@ -10937,6 +10951,9 @@ InsertStmt* Parser::parseInsert() {
         if (matchContextual("CONFLICT")) {
             parseOnConflict(stmt);
         } else if (matchContextual("DUPLICATE")) {
+            if (!requireFeature(kFeatureDmlMysqlOnDuplicateKey)) {
+                return stmt;
+            }
             errorCode("PRS_0505",
                       "ON DUPLICATE KEY UPDATE is not supported in v3; use ON CONFLICT DO UPDATE");
             if (matchContextual("KEY")) {
@@ -11267,6 +11284,16 @@ UpdateStmt* Parser::parseUpdate() {
 
     if (match(TokenType::KW_ORDER)) {
         matchContextual("BY");
+        if (!requireFeature(kFeatureDmlUpdateOrderLimit)) {
+            while (!isAtEnd() &&
+                   !checkContextual("RETURNING") &&
+                   !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
         errorCode("PRS_0505",
                   "UPDATE ... ORDER BY ... LIMIT is not supported in v3; use canonical key-subquery rewrite");
         while (!isAtEnd() &&
@@ -11278,6 +11305,16 @@ UpdateStmt* Parser::parseUpdate() {
         }
     }
     if (match(TokenType::KW_LIMIT)) {
+        if (!requireFeature(kFeatureDmlUpdateOrderLimit)) {
+            while (!isAtEnd() &&
+                   !checkContextual("RETURNING") &&
+                   !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
         errorCode("PRS_0505",
                   "UPDATE ... ORDER BY ... LIMIT is not supported in v3; use canonical key-subquery rewrite");
         if (!isAtEnd() &&
@@ -11394,6 +11431,16 @@ DeleteStmt* Parser::parseDelete() {
 
     if (match(TokenType::KW_ORDER)) {
         matchContextual("BY");
+        if (!requireFeature(kFeatureDmlDeleteOrderLimit)) {
+            while (!isAtEnd() &&
+                   !checkContextual("RETURNING") &&
+                   !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
         errorCode("PRS_0505",
                   "DELETE ... ORDER BY ... LIMIT is not supported in v3; use canonical key-subquery rewrite");
         while (!isAtEnd() &&
@@ -11405,6 +11452,16 @@ DeleteStmt* Parser::parseDelete() {
         }
     }
     if (match(TokenType::KW_LIMIT)) {
+        if (!requireFeature(kFeatureDmlDeleteOrderLimit)) {
+            while (!isAtEnd() &&
+                   !checkContextual("RETURNING") &&
+                   !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
         errorCode("PRS_0505",
                   "DELETE ... ORDER BY ... LIMIT is not supported in v3; use canonical key-subquery rewrite");
         if (!isAtEnd() &&
@@ -13412,13 +13469,32 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
                 return expr;
             }
 
-            Expression* field_expr = parseAddExpr();
+            auto* extract_expr = arena_.create<ExtractExpr>();
+            extract_expr->selector = parseElementSelector();
+            auto emit_unknown_extract_field = [&](const std::string& field_name) {
+                errorCode("PRS_0506", "EXTRACT_FIELD_UNKNOWN(" + toUpperAscii(field_name) + ")");
+            };
+            if (extract_expr->selector.kind == ElementSelector::Kind::IDENTIFIER) {
+                std::string field_name;
+                if (extract_expr->selector.identifier != StringPool::INVALID_ID) {
+                    field_name = std::string(stringPool().get(extract_expr->selector.identifier));
+                }
+                if (!scratchbird::sblr::resolveExtractFieldName(field_name).has_value()) {
+                    emit_unknown_extract_field(field_name);
+                }
+            } else if (extract_expr->selector.kind == ElementSelector::Kind::STRING_LITERAL) {
+                std::string field_name;
+                if (extract_expr->selector.string_literal != StringPool::INVALID_ID) {
+                    field_name = std::string(stringPool().get(extract_expr->selector.string_literal));
+                }
+                if (!scratchbird::sblr::resolveExtractFieldName(field_name).has_value()) {
+                    emit_unknown_extract_field(field_name);
+                }
+            }
             expect(TokenType::KW_FROM, "Expected FROM in EXTRACT expression");
-            Expression* value_expr = parseExpression();
-            expr->arguments.push_back(field_expr);
-            expr->arguments.push_back(value_expr);
+            extract_expr->source = parseExpression();
             expect(TokenType::RIGHT_PAREN, "Expected ')' after EXTRACT expression");
-            return expr;
+            return extract_expr;
         }
 
         if (upper_name == "POSITION")
@@ -13701,6 +13777,26 @@ Expression* Parser::parseExtractExpr() {
     auto* expr = arena_.create<ExtractExpr>();
     expect(TokenType::LEFT_PAREN, "Expected '(' after EXTRACT");
     expr->selector = parseElementSelector();
+    auto emit_unknown_extract_field = [&](const std::string& field_name) {
+        errorCode("PRS_0506", "EXTRACT_FIELD_UNKNOWN(" + toUpperAscii(field_name) + ")");
+    };
+    if (expr->selector.kind == ElementSelector::Kind::IDENTIFIER) {
+        std::string field_name;
+        if (expr->selector.identifier != StringPool::INVALID_ID) {
+            field_name = std::string(stringPool().get(expr->selector.identifier));
+        }
+        if (!scratchbird::sblr::resolveExtractFieldName(field_name).has_value()) {
+            emit_unknown_extract_field(field_name);
+        }
+    } else if (expr->selector.kind == ElementSelector::Kind::STRING_LITERAL) {
+        std::string field_name;
+        if (expr->selector.string_literal != StringPool::INVALID_ID) {
+            field_name = std::string(stringPool().get(expr->selector.string_literal));
+        }
+        if (!scratchbird::sblr::resolveExtractFieldName(field_name).has_value()) {
+            emit_unknown_extract_field(field_name);
+        }
+    }
     expect(TokenType::KW_FROM, "Expected FROM in EXTRACT expression");
     expr->source = parseExpression();
     expect(TokenType::RIGHT_PAREN, "Expected ')' after EXTRACT expression");
@@ -18921,6 +19017,10 @@ MergeStmt* Parser::parseMerge() {
             // Check for BY SOURCE (SQL Server extension)
             if (matchContextual("BY")) {
                 expectContextual("SOURCE", "Expected SOURCE after BY");
+                if (!requireFeature(kFeatureDmlMergeNotMatchedBySource)) {
+                    stmt->span = makeSpan(start);
+                    return stmt;
+                }
                 MergeStmt::WhenNotMatchedBySource when;
 
                 if (match(TokenType::KW_AND)) {

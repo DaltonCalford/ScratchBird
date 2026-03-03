@@ -1407,6 +1407,54 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesFirebirdUpsertAndOverridingAliase
     }
 }
 
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalDmlEquivalentsForCompatibilityFamilies) {
+    {
+        Parser parser(
+            "INSERT INTO docs (id, name) VALUES (1, 'alpha') "
+            "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::InsertStmt);
+        auto* stmt = static_cast<InsertStmt*>(result.statement());
+        ASSERT_NE(stmt->on_conflict, nullptr);
+        EXPECT_EQ(stmt->on_conflict->action, ConflictAction::UPDATE);
+        ASSERT_EQ(stmt->on_conflict->columns.size(), 1u);
+    }
+
+    {
+        Parser parser(
+            "UPDATE docs SET active = 0 "
+            "WHERE id IN (SELECT id FROM docs ORDER BY id LIMIT 10)");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::UpdateStmt);
+        auto* stmt = static_cast<UpdateStmt*>(result.statement());
+        ASSERT_NE(stmt->where, nullptr);
+    }
+
+    {
+        Parser parser(
+            "DELETE FROM docs "
+            "WHERE id IN (SELECT id FROM docs ORDER BY id LIMIT 10)");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::DeleteStmt);
+        auto* stmt = static_cast<DeleteStmt*>(result.statement());
+        ASSERT_NE(stmt->where, nullptr);
+    }
+
+    {
+        Parser parser(
+            "MERGE INTO target_docs t USING source_docs s ON t.id = s.id "
+            "WHEN NOT MATCHED BY SOURCE THEN DELETE");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::MergeStmt);
+        auto* stmt = static_cast<MergeStmt*>(result.statement());
+        ASSERT_EQ(stmt->when_not_matched_by_source.size(), 1u);
+    }
+}
+
 TEST(ParserV3NativeExtensionSurfaceTest, ParsesTypeOfAndDeclareExternalFunctionAliases) {
     {
         Parser parser("CREATE TABLE docs_t (id TYPE OF COLUMN docs.id, code TYPE OF doc_code_dom)");
@@ -2188,6 +2236,27 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsDisabledFeatureStatementsDetermi
         "PRS_0503"));
     EXPECT_TRUE(hasErrorCode(
         parseWithDisabledFeatures("CREATE POLICY p1 ON t1 USING (1 = 1)", {"F_SECURITY_MODEL_POLICY_DDL"}),
+        "PRS_0503"));
+    EXPECT_TRUE(hasErrorCode(
+        parseWithDisabledFeatures("WITH c AS (SELECT 1) INSERT INTO t (id) VALUES (1)",
+                                  {"F_DML_WRITABLE_CTE"}),
+        "PRS_0503"));
+    EXPECT_TRUE(hasErrorCode(
+        parseWithDisabledFeatures(
+            "MERGE INTO t USING s ON t.id = s.id WHEN NOT MATCHED BY SOURCE THEN DELETE",
+            {"F_DML_MERGE_NOT_MATCHED_BY_SOURCE"}),
+        "PRS_0503"));
+    EXPECT_TRUE(hasErrorCode(
+        parseWithDisabledFeatures("INSERT INTO t (id) VALUES (1) ON DUPLICATE KEY UPDATE id = 2",
+                                  {"F_DML_MYSQL_ON_DUPLICATE_KEY"}),
+        "PRS_0503"));
+    EXPECT_TRUE(hasErrorCode(
+        parseWithDisabledFeatures("UPDATE t SET id = 1 ORDER BY id LIMIT 1",
+                                  {"F_DML_UPDATE_ORDER_LIMIT"}),
+        "PRS_0503"));
+    EXPECT_TRUE(hasErrorCode(
+        parseWithDisabledFeatures("DELETE FROM t ORDER BY id LIMIT 1",
+                                  {"F_DML_DELETE_ORDER_LIMIT"}),
         "PRS_0503"));
 }
 
