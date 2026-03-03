@@ -89,8 +89,9 @@ TEST_F(SqlToSblrTraceDeterminismTest, NormalizationMakesEquivalentSqlStable) {
 
 TEST_F(SqlToSblrTraceDeterminismTest, RepeatCompileHasIdenticalDigests) {
     const std::string sql =
-        "CREATE SCHEDULE sch_daily RRULE 'FREQ=DAILY;INTERVAL=1' "
-        "DTSTART '2026-02-17T00:00:00' TZ 'UTC'";
+        "CREATE JOB sch_daily "
+        "SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' "
+        "AS SQL 'SELECT 1'";
 
     auto trace_a = trace(sql);
     auto trace_b = trace(sql);
@@ -211,9 +212,9 @@ TEST_F(SqlToSblrTraceDeterminismTest, NativeExtensionCorpusCompilesToDeterminist
         "CREATE INDEX idx_search ON docs USING FULLTEXT (title, body)",
         "CREATE INDEX idx_vec ON docs USING HNSW (embedding) WITH (metric='COSINE', topk_default=25)",
         "ALTER INDEX idx_search REBUILD ONLINE",
-        "CREATE MEASUREMENT cpu (host STRING, usage_user DOUBLE)",
-        "ALTER MEASUREMENT cpu RETENTION '30d'",
-        "CREATE SCHEDULE sch_daily RRULE 'FREQ=DAILY;INTERVAL=1' DTSTART '2026-02-17T00:00:00' TZ 'UTC'",
+        "CREATE JOB cpu_job MEASUREMENT (retention='30d') SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' AS SQL 'SELECT 1'",
+        "ALTER JOB cpu_job SET MEASUREMENT (retention='30d')",
+        "CREATE JOB sch_daily SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' AS SQL 'SELECT 1'",
         "SELECT id FROM docs ORDER BY id FETCH FIRST 10 ROWS WITH TIES",
         "SELECT DISTINCT ON (user_id) user_id, created_at FROM logs ORDER BY user_id, created_at DESC",
         "SELECT id FROM docs FOR NO KEY UPDATE",
@@ -245,6 +246,10 @@ TEST_F(SqlToSblrTraceDeterminismTest, NativeExtensionCorpusCompilesToDeterminist
         "SET SESSION AUTHORIZATION app_user",
         "EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT JSON) SELECT id FROM docs",
         "ALTER TABLE docs ENABLE ROW LEVEL SECURITY",
+        "CREATE DOMAIN positive_int AS INT NOT NULL",
+        "ALTER DOMAIN positive_int SET DEFAULT 1",
+        "DROP DOMAIN positive_int",
+        "ALTER INDEX idx_orders RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)",
         "CREATE CONNECTION RULE ch_src ORDER 5 MATCH (TRANSPORT=TLS, SOURCE='10.0.0.0/8', PRINCIPAL='ch_%') "
         "REQUIRE (TLS=TLS, PROVIDER=INTERNAL) ACTION ALLOW EXPECT VERSION 1",
         "CREATE TOKEN ifx_reader WITH SCOPE (ALLOW BUCKET 'cpu_metrics' ACTION READ)",
@@ -252,6 +257,13 @@ TEST_F(SqlToSblrTraceDeterminismTest, NativeExtensionCorpusCompilesToDeterminist
         "REVOKE TOKEN ifx_reader",
         "COMPILE EMBEDDED PAYLOAD native, SQL_TEXT, payload_trace, sig_trace",
         "COMPILE SQL TEMPLATE tpl_trace USING 'SELECT 1' PROFILE native SIGNATURE sig_trace",
+        "CREATE REPLICATION CHANNEL repl_one DIRECTION ONE_WAY SOURCE db_a TARGET db_b",
+        "ALTER REPLICATION CHANNEL repl_one SET DIRECTION BIDIRECTIONAL",
+        "RESYNC REPLICATION CHANNEL repl_one FORCE",
+        "DROP REPLICATION CHANNEL IF EXISTS repl_one CASCADE",
+        "CREATE EXCEPTION ex_test 'boom'",
+        "DROP EXCEPTION ex_test",
+        "DROP PACKAGE pkg_test",
         "SEARCH JOIN FIELD MAPPING INDEX 17 FIELD rel_join PARENT parent_doc CHILD child_doc ROUTING REQUIRED",
         "SEARCH PERCOLATOR FIELD INDEX 41 FIELD query_match QUERY_PARSER SIMPLE",
         "GRAPH PATH MATCH PATTERN rel_path MIN_HOPS 1 MAX_HOPS 4 CYCLE_POLICY NO_REPEAT",
@@ -308,9 +320,9 @@ TEST_F(SqlToSblrTraceDeterminismTest, GoldenConformanceVectorsReplayDeterministi
         {"NP025-GOLD-020", "CREATE POLICY p1 ON t1 USING (1 = 1)"},
         {"NP025-GOLD-021", "ALTER POLICY p1 ON t1 USING (2 = 2)"},
         {"NP025-GOLD-022", "DROP POLICY IF EXISTS p1 ON t1"},
-        {"NP025-GOLD-023", "CREATE SCHEDULE sch_daily RRULE 'FREQ=DAILY;INTERVAL=1' DTSTART '2026-02-17T00:00:00' TZ 'UTC'"},
-        {"NP025-GOLD-024", "ALTER SCHEDULE sch_daily SET RRULE_SET ('FREQ=DAILY;BYDAY=MO', 'FREQ=DAILY;BYDAY=TU') DTSTART '2026-02-17T00:00:00' TZ 'UTC'"},
-        {"NP025-GOLD-025", "DROP SCHEDULE sch_daily"},
+        {"NP025-GOLD-023", "CREATE JOB sch_daily SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' AS SQL 'SELECT 1'"},
+        {"NP025-GOLD-024", "ALTER JOB sch_daily SCHEDULE = CRON 'FREQ=DAILY;BYDAY=MO,TU'"},
+        {"NP025-GOLD-025", "DROP JOB sch_daily"},
         {"NP025-GOLD-026", "UDR COMPILE EMBEDDED PAYLOAD PROFILE native FORMAT SQL_TEXT BYTES payload_trace SESSION_SIGNATURE sig_trace"},
         {"NP025-GOLD-027", "UDR VALIDATE SQL TEMPLATE TEMPLATE_ID tpl_trace SQL_TEXT 'SELECT 1' PROFILE native SESSION_SIGNATURE sig_trace"},
         {"NP040-GOLD-001", "SELECT id FROM docs ORDER BY id FETCH FIRST 10 ROWS WITH TIES"},
@@ -341,6 +353,17 @@ TEST_F(SqlToSblrTraceDeterminismTest, GoldenConformanceVectorsReplayDeterministi
         {"NP040-GOLD-026", "SET ROLE app_readonly"},
         {"NP040-GOLD-027", "EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT JSON) SELECT id FROM docs"},
         {"NP040-GOLD-028", "ALTER TABLE docs ENABLE ROW LEVEL SECURITY"},
+        {"NP050-GOLD-001", "CREATE DOMAIN positive_int AS INT NOT NULL"},
+        {"NP050-GOLD-002", "ALTER DOMAIN positive_int SET DEFAULT 1"},
+        {"NP050-GOLD-003", "DROP DOMAIN positive_int"},
+        {"NP050-GOLD-004", "ALTER INDEX idx_orders RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)"},
+        {"NP050-GOLD-005", "CREATE REPLICATION CHANNEL repl_one DIRECTION ONE_WAY SOURCE db_a TARGET db_b"},
+        {"NP050-GOLD-006", "ALTER REPLICATION CHANNEL repl_one SET DIRECTION BIDIRECTIONAL"},
+        {"NP050-GOLD-007", "RESYNC REPLICATION CHANNEL repl_one FORCE"},
+        {"NP050-GOLD-008", "DROP REPLICATION CHANNEL IF EXISTS repl_one CASCADE"},
+        {"NP050-GOLD-009", "CREATE EXCEPTION ex_test 'boom'"},
+        {"NP050-GOLD-010", "DROP EXCEPTION ex_test"},
+        {"NP050-GOLD-011", "DROP PACKAGE pkg_test"},
         {"NP043-GOLD-001", "SEARCH JOIN FIELD MAPPING INDEX 17 FIELD rel_join PARENT parent_doc CHILD child_doc ROUTING REQUIRED"},
         {"NP043-GOLD-002", "SEARCH PERCOLATOR FIELD INDEX 41 FIELD query_match QUERY_PARSER SIMPLE"},
         {"NP043-GOLD-003", "GRAPH PATH MATCH PATTERN rel_path MIN_HOPS 1 MAX_HOPS 4 CYCLE_POLICY NO_REPEAT"},
@@ -415,7 +438,7 @@ TEST_F(SqlToSblrTraceDeterminismTest, GoldenRejectVectorsRemainDeterministic) {
         {"NP025-REJ-005", "HYBRID BRIDGE EXCHANGE SOURCE_TRACK 1 TARGET_TRACK 2 MODE BAD", "PRS_0504"},
         {"NP025-REJ-006", "UDR COMPILE EMBEDDED PAYLOAD PROFILE native FORMAT SQL_TEXT BYTES 'SELECT 1'", "PRS_0504"},
         {"NP025-REJ-007", "VALIDATE SQL TEMPLATE tpl_003 USING 'SELECT 9' PROFILE native", "PRS_0504"},
-        {"NP025-REJ-008", "CREATE SCHEDULE sch_bad RRULE 'FREQ=DAILY;FREQ=MONTHLY' DTSTART '2026-02-17T00:00:00' TZ 'UTC'", "PRS_0507"},
+        {"NP025-REJ-008", "CREATE JOB sch_bad SCHEDULE = CRON 'FREQ=DAILY;FREQ=MONTHLY' AS SQL 'SELECT 1'", "PRS_0507"},
         {"NP025-REJ-009", "CREATE DATABASE EMULATED unknown_profile localhost:db_main", "PRS_0503"},
         {"NP025-REJ-010", "FILTER DOC PATH 17 = 42", "PRS_0505"},
         {"NP025-REJ-011", "AGGREGATE TIME BUCKET 60000000000 BY 91 USING (7, 8, 9)", "PRS_0505"},
@@ -439,6 +462,7 @@ TEST_F(SqlToSblrTraceDeterminismTest, GoldenRejectVectorsRemainDeterministic) {
         {"NP040-REJ-013", "CREATE PUBLICATION pub_bad", "PRS_0504"},
         {"NP040-REJ-014", "CREATE SUBSCRIPTION sub_bad", "PRS_0504"},
         {"NP040-REJ-015", "CREATE ACCESS METHOD am_bad TYPE BAD HANDLER h", "PRS_0504"},
+        {"NP050-REJ-001", "CREATE REPLICATION CHANNEL repl_bad SOURCE db_a TARGET db_b", "PRS_0504"},
         {"NP043-REJ-001", "SEARCH JOIN FIELD MAPPING INDEX 17 FIELD rel_join PARENT parent_doc CHILD child_doc ROUTING BAD", "PRS_0504"},
         {"NP043-REJ-002", "MATCH GRAPH PATH rel_path HOPS 9..4 NO CYCLES", "PRS_0504"},
         {"NP043-REJ-003", "REDIS STREAM GROUP READ STREAM orders GROUP grp_a CONSUMER c1 BLOCK_MS 5000", "PRS_0504"},

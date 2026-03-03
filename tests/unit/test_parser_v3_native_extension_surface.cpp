@@ -103,6 +103,54 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsLegacySearchAndVectorIndexComman
     }
 }
 
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsRemovedLegacyFunctionAndViewRoots) {
+    {
+        Parser parser("SELECT fn_getmonth(order_date) FROM orders");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+
+    {
+        Parser parser("SELECT fn_getuuidversion(user_uuid) FROM users");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+
+    {
+        Parser parser("CREATE MATERIALIZED VIEW mv_orders AS SELECT id FROM orders");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalExtractForms) {
+    {
+        Parser parser("SELECT EXTRACT(MONTH FROM order_date) FROM orders");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << "expected parse success";
+        ASSERT_EQ(result.statement()->kind(), ASTKind::SelectStmt);
+    }
+
+    {
+        Parser parser("SELECT EXTRACT(VERSION FROM user_uuid) FROM users");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << "expected parse success";
+        ASSERT_EQ(result.statement()->kind(), ASTKind::SelectStmt);
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesViewMaterializationAsOption) {
+    Parser parser(
+        "CREATE VIEW v_mat WITH (MATERIALIZED = TRUE) "
+        "AS SELECT id FROM orders");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "expected parse success";
+    ASSERT_EQ(result.statement()->kind(), ASTKind::CreateViewStmt);
+}
+
 TEST(ParserV3NativeExtensionSurfaceTest, ParsesUnifiedAlterDropIndexFormsForFulltextAndVector) {
     {
         Parser parser("ALTER INDEX idx_search REBUILD ONLINE");
@@ -139,21 +187,43 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesUnifiedAlterDropIndexFormsForFull
     }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesMeasurementSurface) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesJobMeasurementSurfaceAndRejectsLegacyMeasurementRoots) {
+    {
+        Parser parser(
+            "CREATE JOB cpu_job MEASUREMENT (retention='30d') "
+            "SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' "
+            "AS SQL 'SELECT 1'");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << "expected parse success";
+        ASSERT_EQ(result.statement()->kind(), ASTKind::CreateJobStmt);
+    }
+
+    {
+        Parser parser("ALTER JOB cpu_job SET MEASUREMENT (retention='14d')");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << "expected parse success";
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterJobStmt);
+    }
+
+    {
+        Parser parser("ALTER JOB cpu_job DROP MEASUREMENT");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << "expected parse success";
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterJobStmt);
+    }
+
     {
         Parser parser("CREATE MEASUREMENT cpu (host STRING, usage_user DOUBLE)");
         auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success()) << "expected parse success";
-        ASSERT_EQ(result.statement()->kind(), ASTKind::CreateTableStmt);
-        auto* stmt = static_cast<CreateTableStmt*>(result.statement());
-        EXPECT_EQ(stmt->columns.size(), 2u);
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
     }
 
     {
         Parser parser("ALTER MEASUREMENT cpu RETENTION '30d'");
         auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success()) << "expected parse success";
-        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
     }
 }
 
@@ -274,11 +344,12 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesSetTermSurfaces) {
     }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesScheduleRruleAndRruleSet) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalJobScheduleFormsAndRejectsLegacyScheduleRoots) {
     {
         Parser parser(
-            "CREATE SCHEDULE sch_daily RRULE 'FREQ=DAILY;INTERVAL=1' "
-            "DTSTART '2026-02-17T00:00:00' TZ 'UTC'");
+            "CREATE JOB sch_daily "
+            "SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' "
+            "AS SQL 'SELECT 1'");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::CreateJobStmt);
@@ -288,9 +359,9 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesScheduleRruleAndRruleSet) {
 
     {
         Parser parser(
-            "ALTER SCHEDULE sch_union SET RRULE_SET "
-            "('FREQ=DAILY;BYDAY=MO', 'FREQ=DAILY;BYDAY=TU') "
-            "DTSTART '2026-02-17T00:00:00' TZ 'UTC'");
+            "ALTER JOB sch_daily "
+            "SCHEDULE = EVERY 5 MINUTES "
+            "STARTS '2026-02-17T00:00:00' ENDS '2026-03-17T00:00:00'");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterJobStmt);
@@ -298,35 +369,45 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesScheduleRruleAndRruleSet) {
 
     {
         Parser parser(
-            "ALTER SCHEDULE sch_union SET RRULE_SET "
-            "('FREQ=DAILY;BYDAY=MO', 'FREQ=DAILY;BYDAY=TU') "
-            "DTSTART '2026-02-17T00:00:00' TZ 'UTC' "
-            "RDATE ('2026-02-18T00:00:00') EXDATE ('2026-02-19T00:00:00')");
+            "DROP JOB sch_daily");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
-        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterJobStmt);
+        ASSERT_EQ(result.statement()->kind(), ASTKind::DropJobStmt);
+    }
+
+    {
+        Parser parser(
+            "CREATE SCHEDULE sch_daily RRULE 'FREQ=DAILY;INTERVAL=1' "
+            "DTSTART '2026-02-17T00:00:00' TZ 'UTC'");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+
+    {
+        Parser parser(
+            "ALTER SCHEDULE sch_union SET RRULE_SET "
+            "('FREQ=DAILY;BYDAY=MO', 'FREQ=DAILY;BYDAY=TU') "
+            "DTSTART '2026-02-17T00:00:00' TZ 'UTC'");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
     }
 
     {
         Parser parser("DROP SCHEDULE sch_daily");
         auto result = parser.parseStatement();
-        ASSERT_TRUE(result.success()) << "expected parse success";
-        ASSERT_EQ(result.statement()->kind(), ASTKind::DropJobStmt);
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
     }
 }
 
 TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidScheduleRruleDeterministically) {
     {
         Parser parser(
-            "CREATE SCHEDULE sch_bad RRULE 'FREQ=DAILY;FREQ=MONTHLY' "
-            "DTSTART '2026-02-17T00:00:00' TZ 'UTC'");
-        auto result = parser.parseStatement();
-        EXPECT_FALSE(result.success());
-        EXPECT_TRUE(hasErrorCode(result, "PRS_0507"));
-    }
-
-    {
-        Parser parser("CREATE SCHEDULE sch_bad RRULE 'FREQ=DAILY' TZ 'UTC'");
+            "CREATE JOB sch_bad "
+            "SCHEDULE = CRON 'FREQ=DAILY;FREQ=MONTHLY' "
+            "AS SQL 'SELECT 1'");
         auto result = parser.parseStatement();
         EXPECT_FALSE(result.success());
         EXPECT_TRUE(hasErrorCode(result, "PRS_0507"));
@@ -334,8 +415,18 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidScheduleRruleDeterministi
 
     {
         Parser parser(
-            "ALTER SCHEDULE sch_bad SET RRULE_SET ('FREQ=DAILY', 'FREQ=DAILY') "
-            "DTSTART '2026-02-17T00:00:00' TZ 'UTC'");
+            "CREATE JOB sch_bad "
+            "SCHEDULE = CRON 'FREQ=DAILY' "
+            "AS SQL 'SELECT 1'");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0507"));
+    }
+
+    {
+        Parser parser(
+            "ALTER JOB sch_bad "
+            "SCHEDULE = CRON 'FREQ=DAILY;FREQ=DAILY'");
         auto result = parser.parseStatement();
         EXPECT_FALSE(result.success());
         EXPECT_TRUE(hasErrorCode(result, "PRS_0507"));
@@ -2071,8 +2162,9 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsDisabledFeatureStatementsDetermi
         "PRS_0503"));
     EXPECT_TRUE(hasErrorCode(
         parseWithDisabledFeatures(
-            "CREATE SCHEDULE sch_daily RRULE 'FREQ=DAILY;INTERVAL=1' "
-            "DTSTART '2026-02-17T00:00:00' TZ 'UTC'",
+            "CREATE JOB sch_daily "
+            "SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' "
+            "AS SQL 'SELECT 1'",
             {"F_RRULE_SCHEDULE_SURFACE"}),
         "PRS_0503"));
     EXPECT_TRUE(hasErrorCode(

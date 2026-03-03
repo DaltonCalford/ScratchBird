@@ -699,23 +699,28 @@ bool renderNativeSqlInstruction(const v3::Instruction& instruction,
     }
 
     if (contract_id == "NRSQL-017-CREATE-SCHEDULE" && payload != nullptr) {
-        out.sql = "CREATE SCHEDULE " +
-                  fieldStringResolved("name", NativeSqlObjectTypeHint::JOB) + " " +
-                  fieldString("schedule");
+        std::ostringstream sql;
+        sql << "CREATE JOB "
+            << fieldStringResolved("name", NativeSqlObjectTypeHint::JOB);
+        const std::string schedule = fieldString("schedule");
+        if (!schedule.empty()) {
+            sql << " SCHEDULE = " << schedule;
+        }
+        out.sql = sql.str();
         return true;
     }
 
     if (contract_id == "NRSQL-018-ALTER-SCHEDULE" && payload != nullptr) {
         std::ostringstream sql;
-        sql << "ALTER SCHEDULE " << fieldStringResolved("job_name", NativeSqlObjectTypeHint::JOB);
+        sql << "ALTER JOB " << fieldStringResolved("job_name", NativeSqlObjectTypeHint::JOB);
         const std::string cron_expr = fieldString("cron_expression");
         const std::string at_timestamp = fieldString("at_timestamp");
         if (!cron_expr.empty()) {
-            sql << " SET RRULE " << sqlQuote(cron_expr);
+            sql << " SET SCHEDULE = CRON " << sqlQuote(cron_expr);
         } else if (!at_timestamp.empty()) {
-            sql << " SET AT " << sqlQuote(at_timestamp);
+            sql << " SET SCHEDULE = AT " << sqlQuote(at_timestamp);
         } else if (objectField(*payload, "interval_seconds") != nullptr) {
-            sql << " SET EVERY " << fieldU64("interval_seconds") << "s";
+            sql << " SET SCHEDULE = EVERY " << fieldU64("interval_seconds") << "s";
         }
         out.sql = sql.str();
         return true;
@@ -726,7 +731,7 @@ bool renderNativeSqlInstruction(const v3::Instruction& instruction,
         if (const auto* path = objectField(*payload, "path")) {
             name = renderSchemaPath(*path, resolver, NativeSqlObjectTypeHint::JOB);
         }
-        out.sql = "DROP SCHEDULE " + name;
+        out.sql = "DROP JOB " + name;
         return true;
     }
 

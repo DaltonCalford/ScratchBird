@@ -153,6 +153,50 @@ TEST_F(QueryCompilerV3Test, ValidateCompactAndSpacedArithmeticBytecode) {
     EXPECT_EQ(spaced_status, Status::OK) << spaced_ctx.message;
 }
 
+TEST_F(QueryCompilerV3Test, RouteParityClosedFamiliesDoNotUseBridgeFallbackPaths) {
+    const std::vector<std::string> statements = {
+        "CREATE DOMAIN dom_route AS INT",
+        "ALTER DOMAIN dom_route SET DEFAULT 1",
+        "DROP DOMAIN dom_route",
+        "CREATE PUBLICATION pub_route FOR ALL TABLES",
+        "CREATE SUBSCRIPTION sub_route CONNECTION 'host=127.0.0.1 dbname=main' PUBLICATION pub_route",
+        "CREATE REPLICATION CHANNEL repl_route DIRECTION ONE_WAY SOURCE db_a TARGET db_b",
+        "ALTER REPLICATION CHANNEL repl_route SET DIRECTION BIDIRECTIONAL",
+        "RESYNC REPLICATION CHANNEL repl_route FORCE",
+        "DROP REPLICATION CHANNEL IF EXISTS repl_route CASCADE",
+        "CREATE EXCEPTION ex_route 'boom'",
+        "DROP EXCEPTION ex_route",
+        "DROP PACKAGE pkg_route",
+        "ALTER INDEX idx_route RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)"
+    };
+
+    for (const auto& sql : statements) {
+        auto compile_result = compiler_->compile(sql);
+        ASSERT_TRUE(compile_result.success()) << "Compilation failed for SQL: " << sql;
+
+        auto exec_result = executor_->execute(compile_result.bytecode());
+        if (!exec_result.success()) {
+            EXPECT_EQ(exec_result.error().find("BRG_0406"), std::string::npos)
+                << "Unexpected bridge fallback for SQL: " << sql << "\nerror=" << exec_result.error();
+            EXPECT_EQ(exec_result.error().find("V3 opcode not implemented in executor"), std::string::npos)
+                << "Unexpected unimplemented opcode fallback for SQL: " << sql << "\nerror=" << exec_result.error();
+            EXPECT_EQ(exec_result.error().find("Unsupported DDL mutation opcode"), std::string::npos)
+                << "Unexpected unsupported DDL mutation opcode for SQL: " << sql << "\nerror=" << exec_result.error();
+        }
+    }
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCanonicalExtractMonthFromCurrentDate) {
+    auto result = compileAndExecute("SELECT EXTRACT(MONTH FROM CURRENT_DATE)");
+    ASSERT_TRUE(result.success()) << "EXTRACT(MONTH FROM CURRENT_DATE) failed: " << result.error();
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCreateViewWithMaterializedOption) {
+    auto result = compileAndExecute(
+        "CREATE VIEW v_mat WITH (MATERIALIZED = TRUE) AS SELECT 1 AS id WITH DATA");
+    ASSERT_TRUE(result.success()) << "CREATE VIEW ... WITH (MATERIALIZED = TRUE) failed: " << result.error();
+}
+
 TEST_F(QueryCompilerV3Test, CompileSelectWithStringLiteral) {
     auto result = compiler_->compile("SELECT 'hello world'");
     ASSERT_TRUE(result.success()) << "Compilation failed";
