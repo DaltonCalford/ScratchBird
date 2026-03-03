@@ -616,6 +616,17 @@ Statement* Parser::parseStatementInternal() {
     if (matchKeyword(TokenType::KW_MERGE)) {
         return parseMergeStatement();
     }
+    if (check(TokenType::IDENTIFIER)) {
+        const std::string_view keyword = currentText();
+        if (keyword.size() == 4 &&
+            (keyword[0] == 'C' || keyword[0] == 'c') &&
+            (keyword[1] == 'A' || keyword[1] == 'a') &&
+            (keyword[2] == 'L' || keyword[2] == 'l') &&
+            (keyword[3] == 'L' || keyword[3] == 'l')) {
+            advance();
+            return parseExecuteProcedure();
+        }
+    }
 
     // EXECUTE
     if (matchKeyword(TokenType::KW_EXECUTE)) {
@@ -666,16 +677,208 @@ Statement* Parser::parseStatementInternal() {
         return parseShowStatement();
     }
 
-    // PSQL blocks
+    // PSQL blocks are not accepted as top-level server statements.
     if (matchKeyword(TokenType::KW_DECLARE)) {
-        return parseDeclareVariable();
+        return parseDeclareStatement();
     }
     if (matchKeyword(TokenType::KW_BEGIN)) {
-        return parseBeginEndBlock();
+        error("Top-level BEGIN...END block is not supported in Firebird server SQL surface");
+        synchronize();
+        return nullptr;
     }
 
     error("Expected statement");
     return nullptr;
+}
+
+Statement* Parser::parseDeclareStatement() {
+    if (matchKeyword(TokenType::KW_FILTER)) {
+        return parseDeclareFilter();
+    }
+
+    if (matchKeyword(TokenType::KW_EXTERNAL)) {
+        consume(TokenType::KW_FUNCTION, "Expected FUNCTION after DECLARE EXTERNAL");
+        return parseDeclareExternalFunction();
+    }
+
+    if (matchKeyword(TokenType::KW_VARIABLE)) {
+        error("Top-level DECLARE VARIABLE is not supported in Firebird server SQL surface");
+    } else {
+        error("Unsupported DECLARE statement for Firebird server SQL surface");
+    }
+    synchronize();
+    return nullptr;
+}
+
+bool Parser::parseOptionalIfNotExists() {
+    if (!matchKeyword(TokenType::KW_IF)) {
+        return false;
+    }
+    consume(TokenType::KW_NOT, "Expected NOT after IF");
+    consume(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+    return true;
+}
+
+Expression* Parser::parseBlobFilterSubtypeLiteral() {
+    bool saw_sign = false;
+    int64_t sign = 1;
+    if (match(TokenType::MINUS)) {
+        saw_sign = true;
+        sign = -1;
+    } else if (match(TokenType::PLUS)) {
+        saw_sign = true;
+    }
+
+    if (check(TokenType::INTEGER_LITERAL)) {
+        auto* literal = allocate<ast::LiteralExpr>();
+        literal->span = toParserSpan(current_token_.span);
+        literal->literal_type = ast::LiteralType::INTEGER;
+        literal->int_value = current_token_.value.int_value * sign;
+        advance();
+        return literal;
+    }
+
+    if (saw_sign) {
+        error("Expected integer literal after sign in BLOB filter subtype");
+        return nullptr;
+    }
+
+    if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+        auto* literal = allocate<ast::LiteralExpr>();
+        literal->literal_type = ast::LiteralType::STRING;
+        literal->string_value = parseIdentifier();
+        return literal;
+    }
+
+    error("Expected BLOB filter subtype name or integer");
+    return nullptr;
+}
+
+Statement* Parser::parseDeclareFilter() {
+    const bool if_not_exists = parseOptionalIfNotExists();
+    const auto filter_name = parseIdentifier();
+
+    consume(TokenType::KW_INPUT_TYPE, "Expected INPUT_TYPE in DECLARE FILTER");
+    Expression* input_subtype = parseBlobFilterSubtypeLiteral();
+
+    consume(TokenType::KW_OUTPUT_TYPE, "Expected OUTPUT_TYPE in DECLARE FILTER");
+    Expression* output_subtype = parseBlobFilterSubtypeLiteral();
+
+    consume(TokenType::KW_ENTRY_POINT, "Expected ENTRY_POINT in DECLARE FILTER");
+    ast::StringPool::StringId entry_point = ast::StringPool::INVALID_ID;
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        entry_point = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        error("Expected string literal for ENTRY_POINT in DECLARE FILTER");
+    }
+
+    consume(TokenType::KW_MODULE_NAME, "Expected MODULE_NAME in DECLARE FILTER");
+    ast::StringPool::StringId module_name = ast::StringPool::INVALID_ID;
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        module_name = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        error("Expected string literal for MODULE_NAME in DECLARE FILTER");
+    }
+
+    auto make_string_literal = [&](ast::StringPool::StringId value) -> ast::Expression* {
+        auto* literal = allocate<ast::LiteralExpr>();
+        literal->literal_type = ast::LiteralType::STRING;
+        literal->string_value = value;
+        return literal;
+    };
+
+    auto* bool_literal = allocate<ast::LiteralExpr>();
+    bool_literal->literal_type = ast::LiteralType::BOOLEAN;
+    bool_literal->bool_value = if_not_exists;
+
+    auto* stmt = allocate<ast::ExecuteProcedureStmt>();
+    stmt->procedure_path.components.push_back(string_pool_.intern("fb_declare_filter"));
+    stmt->arguments.push_back(make_string_literal(filter_name));
+    if (input_subtype) {
+        stmt->arguments.push_back(input_subtype);
+    }
+    if (output_subtype) {
+        stmt->arguments.push_back(output_subtype);
+    }
+    stmt->arguments.push_back(make_string_literal(entry_point));
+    stmt->arguments.push_back(make_string_literal(module_name));
+    stmt->arguments.push_back(bool_literal);
+    return stmt;
+}
+
+Statement* Parser::parseDeclareExternalFunction() {
+    const bool if_not_exists = parseOptionalIfNotExists();
+
+    auto* stmt = allocate<ast::CreateUdrStmt>();
+    stmt->udr_type = ast::UdrObjectType::FUNCTION;
+    stmt->udr_path = parseSchemaPath();
+
+    if (match(TokenType::LEFT_PAREN)) {
+        int depth = 1;
+        while (!atEnd() && depth > 0) {
+            if (match(TokenType::LEFT_PAREN)) {
+                ++depth;
+            } else if (match(TokenType::RIGHT_PAREN)) {
+                --depth;
+            } else {
+                advance();
+            }
+        }
+    } else {
+        while (!atEnd() &&
+               !checkKeyword(TokenType::KW_RETURNS) &&
+               !checkKeyword(TokenType::KW_ENTRY_POINT) &&
+               !check(TokenType::SEMICOLON)) {
+            advance();
+        }
+    }
+
+    if (matchKeyword(TokenType::KW_RETURNS)) {
+        if (matchKeyword(TokenType::KW_PARAMETER)) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                advance();
+            } else {
+                error("Expected integer parameter index after RETURNS PARAMETER");
+            }
+        } else {
+            (void) parseTypeName();
+            if (matchKeyword(TokenType::KW_BY)) {
+                matchKeyword(TokenType::KW_VALUE);
+                if (!matchKeyword(TokenType::KW_DESCRIPTOR)) {
+                    matchKeyword(TokenType::KW_SCALAR_ARRAY);
+                }
+            }
+            matchKeyword(TokenType::KW_FREE_IT);
+        }
+    }
+
+    consume(TokenType::KW_ENTRY_POINT, "Expected ENTRY_POINT in DECLARE EXTERNAL FUNCTION");
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        auto id = internFromLexer(current_token_.value.string_id);
+        stmt->entry_point = std::string(string_pool_.get(id));
+        advance();
+    } else {
+        error("Expected string literal for ENTRY_POINT");
+        return stmt;
+    }
+
+    consume(TokenType::KW_MODULE_NAME, "Expected MODULE_NAME in DECLARE EXTERNAL FUNCTION");
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
+        auto id = internFromLexer(current_token_.value.string_id);
+        stmt->library_path = std::string(string_pool_.get(id));
+        advance();
+    } else {
+        error("Expected string literal for MODULE_NAME");
+        return stmt;
+    }
+
+    stmt->signature = if_not_exists
+        ? "DECLARE EXTERNAL FUNCTION IF NOT EXISTS"
+        : "DECLARE EXTERNAL FUNCTION";
+    stmt->has_signature = true;
+    return stmt;
 }
 
 // =============================================================================
@@ -1898,6 +2101,21 @@ Statement* Parser::parseCreateStatement() {
     if (matchKeyword(TokenType::KW_PACKAGE)) {
         return parseCreatePackage(or_replace);
     }
+    if (matchKeyword(TokenType::KW_COLLATION)) {
+        return parseCreateCollationStatement();
+    }
+    if (matchKeyword(TokenType::KW_SHADOW)) {
+        return parseCreateShadowStatement();
+    }
+    if (matchKeyword(TokenType::KW_MAPPING)) {
+        return parseCreateMappingStatement();
+    }
+    if (matchKeyword(TokenType::KW_USER)) {
+        return parseCreateUserStatement();
+    }
+    if (matchKeyword(TokenType::KW_SCHEMA)) {
+        return parseCreateSchemaStatement();
+    }
 
     error("Unknown CREATE object type");
     return nullptr;
@@ -2018,6 +2236,92 @@ Statement* Parser::parseCreateDatabase() {
     return stmt;
 }
 
+ast::ExecuteProcedureStmt* Parser::makeExecuteProcedureCall(std::string_view procedure_name) {
+    auto* stmt = allocate<ast::ExecuteProcedureStmt>();
+    stmt->procedure_path.components.push_back(string_pool_.intern(procedure_name));
+    return stmt;
+}
+
+ast::LiteralExpr* Parser::makeStringLiteralExpr(ast::StringPool::StringId value) {
+    auto* literal = allocate<ast::LiteralExpr>();
+    literal->literal_type = ast::LiteralType::STRING;
+    literal->string_value = value;
+    return literal;
+}
+
+ast::LiteralExpr* Parser::makeBooleanLiteralExpr(bool value) {
+    auto* literal = allocate<ast::LiteralExpr>();
+    literal->literal_type = ast::LiteralType::BOOLEAN;
+    literal->bool_value = value;
+    return literal;
+}
+
+void Parser::skipRemainingStatementTokens() {
+    while (!atEnd() && !check(TokenType::SEMICOLON)) {
+        advance();
+    }
+}
+
+Statement* Parser::parseCreateCollationStatement() {
+    const bool if_not_exists = parseOptionalIfNotExists();
+
+    auto* stmt = makeExecuteProcedureCall("fb_create_collation");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_not_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseCreateShadowStatement() {
+    const bool if_not_exists = parseOptionalIfNotExists();
+
+    auto* stmt = makeExecuteProcedureCall("fb_create_shadow");
+    if (check(TokenType::INTEGER_LITERAL)) {
+        auto* literal = allocate<ast::LiteralExpr>();
+        literal->literal_type = ast::LiteralType::INTEGER;
+        literal->int_value = current_token_.value.int_value;
+        advance();
+        stmt->arguments.push_back(literal);
+    } else if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+        stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    } else {
+        error("Expected shadow id after CREATE SHADOW");
+    }
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_not_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseCreateMappingStatement() {
+    const bool if_not_exists = parseOptionalIfNotExists();
+
+    auto* stmt = makeExecuteProcedureCall("fb_create_mapping");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_not_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseCreateUserStatement() {
+    const bool if_not_exists = parseOptionalIfNotExists();
+
+    auto* stmt = makeExecuteProcedureCall("fb_create_user");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_not_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseCreateSchemaStatement() {
+    const bool if_not_exists = parseOptionalIfNotExists();
+
+    auto* stmt = makeExecuteProcedureCall("fb_create_schema");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_not_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
 Statement* Parser::parseAlterStatement() {
     if (matchKeyword(TokenType::KW_TABLE)) {
         return parseAlterTableImpl();
@@ -2061,12 +2365,17 @@ Statement* Parser::parseAlterStatement() {
         return parseCreateViewImpl(true);
     }
     if (matchKeyword(TokenType::KW_ROLE)) {
-        parseIdentifier();
-        error("ALTER ROLE is not supported in Firebird parser yet");
-        return nullptr;
+        return parseAlterRoleStatement();
     }
     if (matchKeyword(TokenType::KW_PROCEDURE)) {
         return parseCreateProcedure(true);
+    }
+    if (matchKeyword(TokenType::KW_EXTERNAL)) {
+        if (matchKeyword(TokenType::KW_FUNCTION)) {
+            return parseAlterExternalFunctionStatement();
+        }
+        error("Expected FUNCTION after ALTER EXTERNAL");
+        return nullptr;
     }
     if (matchKeyword(TokenType::KW_FUNCTION)) {
         return parseCreateFunction(true);
@@ -2081,8 +2390,10 @@ Statement* Parser::parseAlterStatement() {
         return parseCreateException(true);
     }
     if (matchKeyword(TokenType::KW_USER)) {
-        error("ALTER USER is not supported in Firebird parser yet");
-        return nullptr;
+        return parseAlterUserStatement();
+    }
+    if (matchKeyword(TokenType::KW_SCHEMA)) {
+        return parseAlterSchemaStatement();
     }
     if (matchKeyword(TokenType::KW_MAPPING)) {
         error("ALTER MAPPING is not supported in Firebird parser yet");
@@ -2094,6 +2405,43 @@ Statement* Parser::parseAlterStatement() {
     }
     error("ALTER statement for this object type not yet implemented");
     return nullptr;
+}
+
+Statement* Parser::parseAlterRoleStatement() {
+    auto* stmt = makeExecuteProcedureCall("fb_alter_role");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseAlterExternalFunctionStatement() {
+    if (checkKeyword(TokenType::KW_IF)) {
+        error("ALTER EXTERNAL FUNCTION does not support IF NOT EXISTS");
+        synchronize();
+        return nullptr;
+    }
+
+    Statement* base = parseDeclareExternalFunction();
+    if (base && base->kind() == ast::ASTKind::CreateUdrStmt) {
+        auto* stmt = static_cast<ast::CreateUdrStmt*>(base);
+        stmt->signature = "ALTER EXTERNAL FUNCTION";
+        stmt->has_signature = true;
+    }
+    return base;
+}
+
+Statement* Parser::parseAlterUserStatement() {
+    auto* stmt = makeExecuteProcedureCall("fb_alter_user");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseAlterSchemaStatement() {
+    auto* stmt = makeExecuteProcedureCall("fb_alter_schema");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    skipRemainingStatementTokens();
+    return stmt;
 }
 
 Statement* Parser::parseDropStatement() {
@@ -2177,21 +2525,94 @@ Statement* Parser::parseDropStatement() {
         }
         return parseDropExceptionImpl(if_exists);
     }
+    if (matchKeyword(TokenType::KW_COLLATION)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropCollationStatement(if_exists);
+    }
+    if (matchKeyword(TokenType::KW_SCHEMA)) {
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropSchemaStatement(if_exists);
+    }
     if (matchKeyword(TokenType::KW_USER)) {
-        error("DROP USER is not supported in Firebird parser yet");
-        return nullptr;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropUserStatement(if_exists);
     }
     if (matchKeyword(TokenType::KW_MAPPING)) {
-        error("DROP MAPPING is not supported in Firebird parser yet");
-        return nullptr;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropMappingStatement(if_exists);
     }
     if (matchKeyword(TokenType::KW_SHADOW)) {
-        error("DROP SHADOW is not supported in Firebird parser yet");
-        return nullptr;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+            if_exists = true;
+        }
+        return parseDropShadowStatement(if_exists);
     }
 
     error("DROP statement for this object type not yet implemented");
     return nullptr;
+}
+
+Statement* Parser::parseDropCollationStatement(bool if_exists) {
+    auto* stmt = makeExecuteProcedureCall("fb_drop_collation");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseDropShadowStatement(bool if_exists) {
+    auto* stmt = makeExecuteProcedureCall("fb_drop_shadow");
+    if (check(TokenType::INTEGER_LITERAL)) {
+        auto* literal = allocate<ast::LiteralExpr>();
+        literal->literal_type = ast::LiteralType::INTEGER;
+        literal->int_value = current_token_.value.int_value;
+        advance();
+        stmt->arguments.push_back(literal);
+    } else if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
+        stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    } else {
+        error("Expected shadow id after DROP SHADOW");
+    }
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseDropMappingStatement(bool if_exists) {
+    auto* stmt = makeExecuteProcedureCall("fb_drop_mapping");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseDropUserStatement(bool if_exists) {
+    auto* stmt = makeExecuteProcedureCall("fb_drop_user");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_exists));
+    skipRemainingStatementTokens();
+    return stmt;
+}
+
+Statement* Parser::parseDropSchemaStatement(bool if_exists) {
+    auto* stmt = makeExecuteProcedureCall("fb_drop_schema");
+    stmt->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+    stmt->arguments.push_back(makeBooleanLiteralExpr(if_exists));
+    skipRemainingStatementTokens();
+    return stmt;
 }
 
 Statement* Parser::parseDropDatabase() {
@@ -4120,6 +4541,118 @@ Statement* Parser::parseSetStatement() {
         return stmt;
     }
 
+    if (matchIdentifierText("AUTODDL")) {
+        stmt->set_type = ast::SetStmt::SetType::VARIABLE;
+        stmt->name = string_pool_.intern("AUTODDL");
+        ast::AutocommitMode mode = parseAutocommitMode();
+        if (mode == ast::AutocommitMode::UNCHANGED) {
+            return nullptr;
+        }
+        stmt->value = makeBooleanLiteralExpr(mode == ast::AutocommitMode::ON);
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_DEBUG)) {
+        consume(TokenType::KW_OPTION, "Expected OPTION after SET DEBUG");
+        auto* call = makeExecuteProcedureCall("fb_set_debug_option");
+        call->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+        consume(TokenType::EQUAL, "Expected '=' in SET DEBUG OPTION");
+        call->arguments.push_back(parseExpression());
+        return call;
+    }
+
+    if (matchKeyword(TokenType::KW_DECFLOAT)) {
+        if (matchKeyword(TokenType::KW_ROUND)) {
+            auto* call = makeExecuteProcedureCall("fb_set_decfloat_round");
+            call->arguments.push_back(parseExpression());
+            return call;
+        }
+        if (matchKeyword(TokenType::KW_TRAPS)) {
+            consume(TokenType::KW_TO, "Expected TO after SET DECFLOAT TRAPS");
+            auto* call = makeExecuteProcedureCall("fb_set_decfloat_traps");
+            if (!check(TokenType::SEMICOLON) && !atEnd()) {
+                do {
+                    call->arguments.push_back(parseExpression());
+                } while (match(TokenType::COMMA));
+            }
+            return call;
+        }
+        error("Expected ROUND or TRAPS after SET DECFLOAT");
+        return nullptr;
+    }
+
+    if (matchKeyword(TokenType::KW_BIND)) {
+        consume(TokenType::KW_OF, "Expected OF after SET BIND");
+
+        std::string from_type;
+        while (!atEnd() && !check(TokenType::SEMICOLON) && !checkKeyword(TokenType::KW_TO)) {
+            if (!from_type.empty()) {
+                from_type.push_back(' ');
+            }
+            from_type.append(currentText());
+            advance();
+        }
+
+        consume(TokenType::KW_TO, "Expected TO in SET BIND OF ... TO ...");
+
+        std::string to_type;
+        while (!atEnd() && !check(TokenType::SEMICOLON)) {
+            if (!to_type.empty()) {
+                to_type.push_back(' ');
+            }
+            to_type.append(currentText());
+            advance();
+        }
+
+        if (from_type.empty()) {
+            error("Expected source type after SET BIND OF");
+            return nullptr;
+        }
+        if (to_type.empty()) {
+            error("Expected target type after SET BIND ... TO");
+            return nullptr;
+        }
+
+        auto* call = makeExecuteProcedureCall("fb_set_bind");
+        call->arguments.push_back(makeStringLiteralExpr(string_pool_.intern(from_type)));
+        call->arguments.push_back(makeStringLiteralExpr(string_pool_.intern(to_type)));
+        return call;
+    }
+
+    if (matchIdentifierText("SEARCH_PATH")) {
+        consume(TokenType::KW_TO, "Expected TO after SET SEARCH_PATH");
+        auto* call = makeExecuteProcedureCall("fb_set_search_path");
+        do {
+            call->arguments.push_back(makeStringLiteralExpr(parseIdentifier()));
+        } while (match(TokenType::COMMA));
+        return call;
+    }
+
+    if (matchIdentifierText("OPTIMIZE")) {
+        auto* call = makeExecuteProcedureCall("fb_set_optimize");
+        if (matchKeyword(TokenType::KW_TO)) {
+            if (matchKeyword(TokenType::KW_DEFAULT)) {
+                call->arguments.push_back(makeStringLiteralExpr(string_pool_.intern("DEFAULT")));
+                return call;
+            }
+            error("Expected DEFAULT after SET OPTIMIZE TO");
+            return nullptr;
+        }
+        call->arguments.push_back(parseExpression());
+        return call;
+    }
+
+    if (matchKeyword(TokenType::KW_TIME)) {
+        consume(TokenType::KW_ZONE, "Expected ZONE after SET TIME");
+        auto* call = makeExecuteProcedureCall("fb_set_time_zone");
+        if (matchKeyword(TokenType::KW_LOCAL)) {
+            call->arguments.push_back(makeStringLiteralExpr(string_pool_.intern("LOCAL")));
+        } else {
+            call->arguments.push_back(parseExpression());
+        }
+        return call;
+    }
+
     if (matchKeyword(TokenType::KW_ROLE)) {
         stmt->set_type = ast::SetStmt::SetType::ROLE;
         if (matchIdentifierText("NONE")) {
@@ -4140,17 +4673,41 @@ Statement* Parser::parseSetStatement() {
             }
             return stmt;
         }
+        if (matchKeyword(TokenType::KW_IDLE)) {
+            consume(TokenType::KW_TIMEOUT, "Expected TIMEOUT after SET SESSION IDLE");
+            auto* call = makeExecuteProcedureCall("fb_set_session_idle_timeout");
+            call->arguments.push_back(parseExpression());
+            if (checkKeyword(TokenType::KW_HOUR) ||
+                checkKeyword(TokenType::KW_MINUTE) ||
+                checkKeyword(TokenType::KW_SECOND)) {
+                auto unit = string_pool_.intern(currentText());
+                advance();
+                call->arguments.push_back(makeStringLiteralExpr(unit));
+            }
+            return call;
+        }
     }
 
-    // Firebird-specific: SET TERM (statement terminator)
-    if (matchIdentifierText("TERM")) {
-        stmt->set_type = ast::SetStmt::SetType::TERM;
-        if (check(TokenType::STRING_LITERAL) || check(TokenType::SEMICOLON)) {
-            stmt->value = parseExpression();
-        } else {
-            error("Expected terminator string after SET TERM");
+    if (matchKeyword(TokenType::KW_STATEMENT)) {
+        consume(TokenType::KW_TIMEOUT, "Expected TIMEOUT after SET STATEMENT");
+        auto* call = makeExecuteProcedureCall("fb_set_statement_timeout");
+        call->arguments.push_back(parseExpression());
+        if (checkKeyword(TokenType::KW_HOUR) ||
+            checkKeyword(TokenType::KW_MINUTE) ||
+            checkKeyword(TokenType::KW_SECOND) ||
+            checkKeyword(TokenType::KW_MILLISECOND)) {
+            auto unit = string_pool_.intern(currentText());
+            advance();
+            call->arguments.push_back(makeStringLiteralExpr(unit));
         }
-        return stmt;
+        return call;
+    }
+
+    // Firebird isql client command: SET TERM (statement terminator)
+    if (matchIdentifierText("TERM")) {
+        error("SET TERM is a client-side isql command and is not supported by server SQL");
+        synchronize();
+        return nullptr;
     }
 
     // Firebird-specific: SET STATISTICS INDEX
@@ -4173,16 +4730,9 @@ Statement* Parser::parseSetStatement() {
         return stmt;
     }
 
-    stmt->name = parseIdentifier();
-    if (match(TokenType::EQUAL) || matchKeyword(TokenType::KW_TO)) {
-        if (matchKeyword(TokenType::KW_DEFAULT)) {
-            stmt->is_default = true;
-        } else {
-            stmt->value = parseExpression();
-        }
-    }
-
-    return stmt;
+    error("Unsupported SET option in Firebird server SQL surface");
+    synchronize();
+    return nullptr;
 }
 
 Statement* Parser::parseShowStatement() {
@@ -4195,8 +4745,7 @@ Statement* Parser::parseShowStatement() {
     // Parse and discard the rest to continue error recovery
     synchronize();
     
-    // Return a dummy statement (parsing failed)
-    return allocate<ast::ShowStmt>();
+    return nullptr;
 }
 
 // DCL statements

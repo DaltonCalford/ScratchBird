@@ -644,6 +644,65 @@ parser::v3::Statement* Parser::parsePrepareStmtV3() {
     return stmt;
 }
 
+parser::v3::Statement* Parser::parseExecutePreparedStmtV3() {
+    if (!matchKeyword(TokenType::KW_EXECUTE)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_execute_prepared");
+
+    auto* prepared_name = arena()->create<parser::v3::LiteralExpr>();
+    prepared_name->literal_type = parser::v3::LiteralType::STRING;
+    if (check(TokenType::STRING_LITERAL)) {
+        prepared_name->string_value = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        prepared_name->string_value = parseIdentifierId();
+    }
+    stmt->arguments.push_back(prepared_name);
+
+    if (match(TokenType::LEFT_PAREN)) {
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                stmt->arguments.push_back(parseExpression());
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ) after EXECUTE parameters");
+    } else if (matchKeyword(TokenType::KW_USING)) {
+        do {
+            stmt->arguments.push_back(parseExpression());
+        } while (match(TokenType::COMMA));
+    }
+
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseDeallocateStmtV3() {
+    if (!matchKeyword(TokenType::KW_DEALLOCATE)) {
+        return nullptr;
+    }
+
+    matchKeyword(TokenType::KW_PREPARE);
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_deallocate_prepared");
+
+    auto* name_arg = arena()->create<parser::v3::LiteralExpr>();
+    name_arg->literal_type = parser::v3::LiteralType::STRING;
+    if (matchKeyword(TokenType::KW_ALL)) {
+        name_arg->string_value = string_pool_.intern("ALL");
+    } else if (check(TokenType::STRING_LITERAL)) {
+        name_arg->string_value = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        name_arg->string_value = parseIdentifierId();
+    }
+    stmt->arguments.push_back(name_arg);
+
+    return stmt;
+}
+
 parser::v3::Statement* Parser::parseCommitStmtV3() {
     if (!matchKeyword(TokenType::KW_COMMIT)) {
         return nullptr;
@@ -719,6 +778,104 @@ parser::v3::Statement* Parser::parseReleaseStmtV3() {
     auto* stmt = arena()->create<parser::v3::ReleaseSavepointStmt>();
     matchKeyword(TokenType::KW_SAVEPOINT);
     stmt->name = parseIdentifierId();
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseCloseCursorStmtV3() {
+    if (!matchKeyword(TokenType::KW_CLOSE)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_cursor_close");
+
+    auto* name_arg = arena()->create<parser::v3::LiteralExpr>();
+    name_arg->literal_type = parser::v3::LiteralType::STRING;
+    if (matchKeyword(TokenType::KW_ALL)) {
+        name_arg->string_value = string_pool_.intern("ALL");
+    } else {
+        matchKeyword(TokenType::KW_CURSOR);
+        name_arg->string_value = parseIdentifierId();
+    }
+    stmt->arguments.push_back(name_arg);
+
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseFetchCursorStmtV3(bool move_only) {
+    if (move_only) {
+        if (!matchKeyword(TokenType::KW_MOVE)) {
+            return nullptr;
+        }
+    } else {
+        if (!(matchKeyword(TokenType::KW_FETCH) || matchKeyword(TokenType::KW_FETCH_KW))) {
+            return nullptr;
+        }
+    }
+
+    std::string direction = "NEXT";
+    parser::v3::Expression* count_expr = nullptr;
+
+    if (matchKeyword(TokenType::KW_NEXT)) {
+        direction = "NEXT";
+    } else if (matchKeyword(TokenType::KW_PRIOR)) {
+        direction = "PRIOR";
+    } else if (matchKeyword(TokenType::KW_FIRST)) {
+        direction = "FIRST";
+    } else if (matchKeyword(TokenType::KW_LAST)) {
+        direction = "LAST";
+    } else if (matchKeyword(TokenType::KW_ABSOLUTE)) {
+        direction = "ABSOLUTE";
+        if (!check(TokenType::KW_FROM) && !check(TokenType::KW_IN)) {
+            count_expr = parseExpression();
+        }
+    } else if (matchKeyword(TokenType::KW_RELATIVE)) {
+        direction = "RELATIVE";
+        if (!check(TokenType::KW_FROM) && !check(TokenType::KW_IN)) {
+            count_expr = parseExpression();
+        }
+    } else if (matchKeyword(TokenType::KW_ALL)) {
+        direction = "ALL";
+    } else if (matchIdentifierKeyword("FORWARD")) {
+        direction = "FORWARD";
+        if (matchKeyword(TokenType::KW_ALL)) {
+            direction = "ALL";
+        } else if (!check(TokenType::KW_FROM) && !check(TokenType::KW_IN)) {
+            count_expr = parseExpression();
+        }
+    } else if (matchIdentifierKeyword("BACKWARD")) {
+        direction = "BACKWARD";
+        if (matchKeyword(TokenType::KW_ALL)) {
+            direction = "ALL";
+        } else if (!check(TokenType::KW_FROM) && !check(TokenType::KW_IN)) {
+            count_expr = parseExpression();
+        }
+    } else if (check(TokenType::INTEGER_LITERAL)) {
+        direction = "FORWARD";
+        count_expr = parseExpression();
+    }
+
+    matchKeyword(TokenType::KW_FROM) || matchKeyword(TokenType::KW_IN);
+    matchKeyword(TokenType::KW_CURSOR);
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(
+        string_pool_, move_only ? "pg_cursor_move" : "pg_cursor_fetch");
+
+    auto* cursor_arg = arena()->create<parser::v3::LiteralExpr>();
+    cursor_arg->literal_type = parser::v3::LiteralType::STRING;
+    cursor_arg->string_value = parseIdentifierId();
+    stmt->arguments.push_back(cursor_arg);
+
+    auto* direction_arg = arena()->create<parser::v3::LiteralExpr>();
+    direction_arg->literal_type = parser::v3::LiteralType::STRING;
+    direction_arg->string_value = string_pool_.intern(direction);
+    stmt->arguments.push_back(direction_arg);
+
+    if (count_expr) {
+        stmt->arguments.push_back(count_expr);
+    }
+
     return stmt;
 }
 
@@ -1807,6 +1964,50 @@ parser::v3::Statement* Parser::parseRevokeStmtV3() {
     return stmt;
 }
 
+parser::v3::Statement* Parser::parseCallStmtV3() {
+    if (!matchKeyword(TokenType::KW_CALL)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+
+    if (match(TokenType::LEFT_PAREN)) {
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                stmt->arguments.push_back(parseExpression());
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ) after CALL arguments");
+    }
+
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseDoStmtV3() {
+    if (!matchKeyword(TokenType::KW_DO)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecuteStatementStmt>();
+    if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING)) {
+        auto* literal = arena()->create<parser::v3::LiteralExpr>();
+        literal->literal_type = parser::v3::LiteralType::STRING;
+        literal->string_value = internFromLexer(current_token_.value.string_id);
+        advance();
+        stmt->sql = literal;
+    } else {
+        stmt->sql = parseExpression();
+    }
+
+    if (matchKeyword(TokenType::KW_LANGUAGE)) {
+        // LANGUAGE clause parsed for compatibility.
+        parseIdentifierId();
+    }
+
+    return stmt;
+}
+
 parser::v3::Statement* Parser::parseAnalyzeStmtV3() {
     if (!matchKeyword(TokenType::KW_ANALYZE)) {
         return nullptr;
@@ -1834,6 +2035,115 @@ parser::v3::Statement* Parser::parseAnalyzeStmtV3() {
     }
 
     return stmt;
+}
+
+parser::v3::Statement* Parser::parseReindexStmtV3() {
+    if (!matchKeyword(TokenType::KW_REINDEX)) {
+        return nullptr;
+    }
+
+    enum class ReindexScope {
+        INDEX,
+        TABLE,
+        SCHEMA,
+        DATABASE,
+        SYSTEM
+    };
+    ReindexScope scope = ReindexScope::INDEX;
+
+    if (match(TokenType::LEFT_PAREN)) {
+        int depth = 1;
+        while (depth > 0 && !check(TokenType::END_OF_FILE)) {
+            if (match(TokenType::LEFT_PAREN)) {
+                ++depth;
+            } else if (match(TokenType::RIGHT_PAREN)) {
+                --depth;
+            } else {
+                advance();
+            }
+        }
+    }
+
+    if (matchKeyword(TokenType::KW_CONCURRENTLY)) {
+        // Parsed for compatibility.
+    }
+
+    if (matchKeyword(TokenType::KW_INDEX)) {
+        scope = ReindexScope::INDEX;
+    } else if (matchKeyword(TokenType::KW_TABLE)) {
+        scope = ReindexScope::TABLE;
+    } else if (matchKeyword(TokenType::KW_SCHEMA)) {
+        scope = ReindexScope::SCHEMA;
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        scope = ReindexScope::DATABASE;
+    } else if (matchIdentifierKeyword("SYSTEM")) {
+        scope = ReindexScope::SYSTEM;
+    }
+
+    if (!(check(TokenType::IDENTIFIER) ||
+          check(TokenType::QUOTED_IDENTIFIER) ||
+          isNonReservedKeyword(current_token_.type))) {
+        error("Expected object name after REINDEX");
+        return nullptr;
+    }
+
+    std::string object_name = parseQualifiedName();
+
+    if (scope == ReindexScope::INDEX) {
+        auto* stmt = arena()->create<parser::v3::AlterIndexStmt>();
+        stmt->action = parser::v3::AlterIndexAction::REBUILD;
+        stmt->index_path = buildPathFromQualified(string_pool_, object_name);
+        return stmt;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    switch (scope) {
+        case ReindexScope::TABLE:
+            stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_reindex_table");
+            break;
+        case ReindexScope::SCHEMA:
+            stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_reindex_schema");
+            break;
+        case ReindexScope::DATABASE:
+            stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_reindex_database");
+            break;
+        case ReindexScope::SYSTEM:
+            stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_reindex_system");
+            break;
+        case ReindexScope::INDEX:
+            break;
+    }
+
+    auto* name_arg = arena()->create<parser::v3::LiteralExpr>();
+    name_arg->literal_type = parser::v3::LiteralType::STRING;
+    name_arg->string_value = string_pool_.intern(object_name);
+    stmt->arguments.push_back(name_arg);
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseVacuumStmtV3() {
+    if (!matchKeyword(TokenType::KW_VACUUM)) {
+        return nullptr;
+    }
+
+    // PostgreSQL VACUUM is mapped to canonical SWEEP DATABASE semantics.
+    // Parse and discard optional VACUUM options/targets for compatibility.
+    int paren_depth = 0;
+    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+        if (match(TokenType::LEFT_PAREN)) {
+            ++paren_depth;
+            continue;
+        }
+        if (match(TokenType::RIGHT_PAREN)) {
+            if (paren_depth > 0) {
+                --paren_depth;
+            }
+            continue;
+        }
+        advance();
+    }
+
+    return arena()->create<parser::v3::SweepDatabaseStmt>();
 }
 
 parser::v3::Statement* Parser::parseExplainStmtV3() {
@@ -2130,6 +2440,148 @@ parser::v3::Statement* Parser::parseCopyStmtV3() {
     emitString(quote);
     emitString(escape);
     emitString(encoding);
+
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseListenStmtV3() {
+    if (!matchKeyword(TokenType::KW_LISTEN)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_listen");
+
+    auto* channel = arena()->create<parser::v3::LiteralExpr>();
+    channel->literal_type = parser::v3::LiteralType::STRING;
+    if (check(TokenType::STRING_LITERAL)) {
+        channel->string_value = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        channel->string_value = parseIdentifierId();
+    }
+    stmt->arguments.push_back(channel);
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseNotifyStmtV3() {
+    if (!matchKeyword(TokenType::KW_NOTIFY)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_notify");
+
+    auto* channel = arena()->create<parser::v3::LiteralExpr>();
+    channel->literal_type = parser::v3::LiteralType::STRING;
+    if (check(TokenType::STRING_LITERAL)) {
+        channel->string_value = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        channel->string_value = parseIdentifierId();
+    }
+    stmt->arguments.push_back(channel);
+
+    if (match(TokenType::COMMA)) {
+        stmt->arguments.push_back(parseExpression());
+    }
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseUnlistenStmtV3() {
+    if (!matchKeyword(TokenType::KW_UNLISTEN)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_unlisten");
+
+    auto* channel = arena()->create<parser::v3::LiteralExpr>();
+    channel->literal_type = parser::v3::LiteralType::STRING;
+    if (matchKeyword(TokenType::KW_ALL)) {
+        channel->string_value = string_pool_.intern("ALL");
+    } else if (match(TokenType::STAR)) {
+        channel->string_value = string_pool_.intern("*");
+    } else if (check(TokenType::STRING_LITERAL)) {
+        channel->string_value = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        channel->string_value = parseIdentifierId();
+    }
+    stmt->arguments.push_back(channel);
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseLockTableStmtV3() {
+    if (!matchKeyword(TokenType::KW_LOCK)) {
+        return nullptr;
+    }
+
+    matchKeyword(TokenType::KW_TABLE);
+
+    auto parse_lock_name = [&]() -> std::string {
+        if (matchKeyword(TokenType::KW_ONLY) || matchIdentifierKeyword("ONLY")) {
+            // Parse and discard ONLY marker for compatibility.
+        }
+        return parseQualifiedName();
+    };
+
+    std::string table_list = parse_lock_name();
+    while (match(TokenType::COMMA)) {
+        table_list += ",";
+        table_list += parse_lock_name();
+    }
+
+    std::string mode = "ACCESS EXCLUSIVE";
+    if (matchKeyword(TokenType::KW_IN)) {
+        std::string parsed_mode;
+        while (!check(TokenType::KW_MODE) &&
+               !check(TokenType::KW_NOWAIT) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            if (!parsed_mode.empty()) {
+                parsed_mode.push_back(' ');
+            }
+            if (matchKeyword(TokenType::KW_ACCESS)) {
+                parsed_mode += "ACCESS";
+            } else if (matchKeyword(TokenType::KW_SHARE)) {
+                parsed_mode += "SHARE";
+            } else if (matchKeyword(TokenType::KW_ROW)) {
+                parsed_mode += "ROW";
+            } else if (matchKeyword(TokenType::KW_UPDATE)) {
+                parsed_mode += "UPDATE";
+            } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+                       isNonReservedKeyword(current_token_.type)) {
+                parsed_mode += parseIdentifier();
+            } else {
+                break;
+            }
+        }
+        matchKeyword(TokenType::KW_MODE);
+        if (!parsed_mode.empty()) {
+            mode = parsed_mode;
+        }
+    }
+
+    bool nowait = matchKeyword(TokenType::KW_NOWAIT);
+
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_lock_table");
+
+    auto* table_arg = arena()->create<parser::v3::LiteralExpr>();
+    table_arg->literal_type = parser::v3::LiteralType::STRING;
+    table_arg->string_value = string_pool_.intern(table_list);
+    stmt->arguments.push_back(table_arg);
+
+    auto* mode_arg = arena()->create<parser::v3::LiteralExpr>();
+    mode_arg->literal_type = parser::v3::LiteralType::STRING;
+    mode_arg->string_value = string_pool_.intern(mode);
+    stmt->arguments.push_back(mode_arg);
+
+    auto* nowait_arg = arena()->create<parser::v3::LiteralExpr>();
+    nowait_arg->literal_type = parser::v3::LiteralType::STRING;
+    nowait_arg->string_value = string_pool_.intern(nowait ? "true" : "false");
+    stmt->arguments.push_back(nowait_arg);
 
     return stmt;
 }

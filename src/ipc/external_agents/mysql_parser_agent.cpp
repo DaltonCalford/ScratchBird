@@ -969,7 +969,11 @@ void MySQLParserAgent::sendErrorPacket(MySQLClientState& state,
     packet.push_back('#');
     
     // SQL state
-    packet.insert(packet.end(), sqlstate.begin(), sqlstate.end());
+    std::string mapped_sqlstate = mapSQLStateToProtocol(sqlstate.c_str());
+    if (mapped_sqlstate.size() != 5) {
+        mapped_sqlstate = "HY000";
+    }
+    packet.insert(packet.end(), mapped_sqlstate.begin(), mapped_sqlstate.end());
     
     // Error message
     packet.insert(packet.end(), message.begin(), message.end());
@@ -996,6 +1000,99 @@ void MySQLParserAgent::sendEOFPacket(MySQLClientState& state,
     sendPacket(state, packet, nullptr);
 }
 
+void MySQLParserAgent::sendColumnDefinition(MySQLClientState& state,
+                                           const IPCFieldDesc& field) {
+    std::vector<uint8_t> col_def;
+
+    size_t name_len = 0;
+    while (name_len < sizeof(field.name) && field.name[name_len] != '\0') {
+        ++name_len;
+    }
+    std::string field_name(field.name, name_len);
+
+    const uint8_t mysql_type =
+        mapDataTypeToMySQL(static_cast<core::DataType>(field.type_oid));
+
+    uint32_t column_length = 255;
+    if (field.type_modifier > 0) {
+        column_length = static_cast<uint32_t>(field.type_modifier);
+    } else {
+        switch (mysql_type) {
+            case mysql::MYSQL_TYPE_TINY:
+                column_length = 4;
+                break;
+            case mysql::MYSQL_TYPE_SHORT:
+                column_length = 6;
+                break;
+            case mysql::MYSQL_TYPE_LONG:
+                column_length = 11;
+                break;
+            case mysql::MYSQL_TYPE_LONGLONG:
+                column_length = 20;
+                break;
+            case mysql::MYSQL_TYPE_FLOAT:
+                column_length = 12;
+                break;
+            case mysql::MYSQL_TYPE_DOUBLE:
+                column_length = 22;
+                break;
+            case mysql::MYSQL_TYPE_DATE:
+                column_length = 10;
+                break;
+            case mysql::MYSQL_TYPE_TIME:
+                column_length = 16;
+                break;
+            case mysql::MYSQL_TYPE_DATETIME:
+            case mysql::MYSQL_TYPE_TIMESTAMP:
+                column_length = 26;
+                break;
+            default:
+                column_length = 255;
+                break;
+        }
+    }
+
+    // Catalog (always "def")
+    writeLengthEncodedString(col_def, "def");
+
+    // Schema/table metadata currently unavailable from IPC row descriptor.
+    writeLengthEncodedString(col_def, "");  // schema
+    writeLengthEncodedString(col_def, "");  // table
+    writeLengthEncodedString(col_def, "");  // original table
+
+    // Name/original name
+    writeLengthEncodedString(col_def, field_name);
+    writeLengthEncodedString(col_def, field_name);
+
+    // Fixed-length fields descriptor size
+    col_def.push_back(0x0C);
+
+    // Character set
+    uint8_t charset[2];
+    writeUint16LE(charset, mysql::CHARSET_UTF8MB4);
+    col_def.insert(col_def.end(), charset, charset + 2);
+
+    // Column length
+    uint8_t col_len[4];
+    writeUint32LE(col_len, column_length);
+    col_def.insert(col_def.end(), col_len, col_len + 4);
+
+    // Type
+    col_def.push_back(mysql_type);
+
+    // Flags
+    uint8_t flags[2];
+    writeUint16LE(flags, 0);
+    col_def.insert(col_def.end(), flags, flags + 2);
+
+    // Decimals + reserved
+    col_def.push_back(0);
+    col_def.push_back(0);
+    col_def.push_back(0);
+
+    sendPacket(state, col_def, nullptr);
+}
+
 void MySQLParserAgent::sendResultSet(MySQLClientState& state,
                                     const std::vector<IPCFieldDesc>& fields,
                                     const std::vector<std::vector<std::optional<std::string>>>& rows) {
@@ -1006,51 +1103,7 @@ void MySQLParserAgent::sendResultSet(MySQLClientState& state,
     
     // Column definitions
     for (const auto& field : fields) {
-        std::vector<uint8_t> col_def;
-        
-        // Catalog (always "def")
-        writeLengthEncodedString(col_def, "def");
-        
-        // Schema
-        writeLengthEncodedString(col_def, "");
-        
-        // Table
-        writeLengthEncodedString(col_def, "");
-        
-        // Original table
-        writeLengthEncodedString(col_def, "");
-        
-        // Name
-        writeLengthEncodedString(col_def, field.name);
-        
-        // Original name
-        writeLengthEncodedString(col_def, field.name);
-        
-        // Next length (always 0x0C)
-        col_def.push_back(0x0C);
-        
-        // Character set (UTF8MB4)
-        uint8_t charset[2];
-        writeUint16LE(charset, mysql::CHARSET_UTF8MB4);
-        col_def.insert(col_def.end(), charset, charset + 2);
-        
-        // Column length
-        uint8_t col_len[4];
-        writeUint32LE(col_len, field.type_modifier >= 0 ? field.type_modifier : 255);
-        col_def.insert(col_def.end(), col_len, col_len + 4);
-        
-        // Type
-        col_def.push_back(mapDataTypeToMySQL(static_cast<core::DataType>(field.type_oid)));
-        
-        // Flags
-        uint8_t flags[2];
-        writeUint16LE(flags, 0);
-        col_def.insert(col_def.end(), flags, flags + 2);
-        
-        // Decimals
-        col_def.push_back(0);
-        
-        sendPacket(state, col_def, nullptr);
+        sendColumnDefinition(state, field);
     }
     
     // EOF or OK packet (depending on CLIENT_DEPRECATE_EOF)
@@ -1161,6 +1214,71 @@ core::Status MySQLParserAgent::sendPacket(MySQLClientState& state,
     }
     
     return core::Status::OK;
+}
+
+core::Status MySQLParserAgent::readFullMessage(int fd,
+                                               std::vector<uint8_t>& message,
+                                               core::ErrorContext* ctx) {
+    message.clear();
+
+    uint8_t header[4];
+    ssize_t n = sb_socket_recv(fd, header, 4, MSG_WAITALL);
+    if (n == 0) {
+        return core::Status::CONNECTION_CLOSED;
+    }
+    if (n != 4) {
+        if (ctx) {
+            ctx->set(core::Status::IO_ERROR, "Failed to read packet header",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::IO_ERROR;
+    }
+
+    const uint32_t payload_len = readUint24LE(header);
+    message.insert(message.end(), header, header + 4);
+
+    if (payload_len > 0) {
+        std::vector<uint8_t> payload(payload_len);
+        n = sb_socket_recv(fd, payload.data(), payload_len, MSG_WAITALL);
+        if (n != static_cast<ssize_t>(payload_len)) {
+            if (ctx) {
+                ctx->set(core::Status::IO_ERROR, "Failed to read packet payload",
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::IO_ERROR;
+        }
+        message.insert(message.end(), payload.begin(), payload.end());
+    }
+
+    return core::Status::OK;
+}
+
+core::Status MySQLParserAgent::writeMessage(int fd,
+                                            const std::vector<uint8_t>& message,
+                                            core::ErrorContext* ctx) {
+    size_t offset = 0;
+    while (offset < message.size()) {
+        const ssize_t n = sb_socket_send(fd,
+                                         message.data() + offset,
+                                         message.size() - offset,
+                                         0);
+        if (n <= 0) {
+            if (ctx) {
+                ctx->set(core::Status::IO_ERROR, "Failed to write packet",
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::IO_ERROR;
+        }
+        offset += static_cast<size_t>(n);
+    }
+    return core::Status::OK;
+}
+
+size_t MySQLParserAgent::readMessageLength(const uint8_t* header, size_t len) {
+    if (!header || len < 3) {
+        return 0;
+    }
+    return static_cast<size_t>(readUint24LE(header));
 }
 
 // ============================================================================
@@ -1320,13 +1438,96 @@ uint8_t MySQLParserAgent::mapIPCToClient(IPCMessageType msg_type) {
 }
 
 std::string MySQLParserAgent::mapSQLStateToProtocol(const char* sqlstate) {
-    return std::string(sqlstate);
+    auto is_sqlstate = [](const std::string& state) {
+        if (state.size() != 5) {
+            return false;
+        }
+        for (char ch : state) {
+            const bool digit = (ch >= '0' && ch <= '9');
+            const bool upper = (ch >= 'A' && ch <= 'Z');
+            if (!digit && !upper) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!sqlstate || sqlstate[0] == '\0') {
+        return "HY000";
+    }
+
+    std::string state(sqlstate);
+
+    // Cross-engine normalization to MySQL family SQLSTATEs.
+    if (state == "42P01") return "42S02";
+    if (state == "42703") return "42S22";
+    if (state == "42601") return "42000";
+    if (state == "28P01") return "28000";
+    if (state == "08006" || state == "08003") return "08S01";
+    if (state == "23505" || state == "23503" || state == "23514" || state == "23502") return "23000";
+    if (state == "XX000") return "HY000";
+
+    if (is_sqlstate(state)) {
+        return state;
+    }
+    return "HY000";
 }
 
 void MySQLParserAgent::mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
                                                  char* sqlstate_out) {
-    (void)error;
-    std::strcpy(sqlstate_out, "HY000");
+    if (!sqlstate_out) {
+        return;
+    }
+
+    auto write_state = [&](const char* state) {
+        std::memcpy(sqlstate_out, state, 5);
+        sqlstate_out[5] = '\0';
+    };
+
+    // MySQL ERR packet: 0xFF + errno(2) + '#' + sqlstate(5) + message
+    if (error.size() >= 9 && error[0] == 0xFF && error[3] == '#') {
+        bool valid_sqlstate = true;
+        for (size_t i = 4; i < 9; ++i) {
+            const char ch = static_cast<char>(error[i]);
+            const bool digit = (ch >= '0' && ch <= '9');
+            const bool upper = (ch >= 'A' && ch <= 'Z');
+            if (!digit && !upper) {
+                valid_sqlstate = false;
+                break;
+            }
+        }
+        if (valid_sqlstate) {
+            std::memcpy(sqlstate_out, error.data() + 4, 5);
+            sqlstate_out[5] = '\0';
+            return;
+        }
+    }
+
+    uint16_t code = 0;
+    if (error.size() >= 3 && error[0] == 0xFF) {
+        code = readUint16LE(error.data() + 1);
+    }
+
+    switch (code) {
+        case 1045:  // ER_ACCESS_DENIED_ERROR
+            write_state("28000");
+            return;
+        case 1064:  // ER_PARSE_ERROR
+            write_state("42000");
+            return;
+        case 1062:  // ER_DUP_ENTRY
+            write_state("23000");
+            return;
+        case 1146:  // ER_NO_SUCH_TABLE
+            write_state("42S02");
+            return;
+        case 1054:  // ER_BAD_FIELD_ERROR
+            write_state("42S22");
+            return;
+        default:
+            write_state("HY000");
+            return;
+    }
 }
 
 } // namespace ipc

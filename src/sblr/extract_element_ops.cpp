@@ -45,6 +45,125 @@ namespace scratchbird::sblr
         constexpr int64_t kSecondsPerDay = 86400LL;
         constexpr int64_t kMicrosPerDay = kSecondsPerDay * kMicrosPerSecond;
 
+        std::string extractDataTypeName(core::DataType type)
+        {
+            switch (type)
+            {
+                case core::DataType::DATE: return "DATE";
+                case core::DataType::TIME: return "TIME";
+                case core::DataType::TIME_WITH_ZONE: return "TIME_WITH_ZONE";
+                case core::DataType::TIMESTAMP: return "TIMESTAMP";
+                case core::DataType::TIMESTAMP_WITH_ZONE: return "TIMESTAMP_WITH_ZONE";
+                case core::DataType::DATETIME: return "DATETIME";
+                case core::DataType::INTERVAL: return "INTERVAL";
+                case core::DataType::UUID: return "UUID";
+                case core::DataType::JSON: return "JSON";
+                case core::DataType::JSONB: return "JSONB";
+                case core::DataType::XML: return "XML";
+                case core::DataType::BYTEA: return "BYTEA";
+                case core::DataType::BINARY: return "BINARY";
+                case core::DataType::VARBINARY: return "VARBINARY";
+                case core::DataType::BLOB: return "BLOB";
+                case core::DataType::VECTOR: return "VECTOR";
+                case core::DataType::ARRAY: return "ARRAY";
+                case core::DataType::COMPOSITE: return "COMPOSITE";
+                case core::DataType::VARIANT: return "VARIANT";
+                case core::DataType::CHAR: return "CHAR";
+                case core::DataType::VARCHAR: return "VARCHAR";
+                case core::DataType::TEXT: return "TEXT";
+                case core::DataType::TSVECTOR: return "TSVECTOR";
+                case core::DataType::TSQUERY: return "TSQUERY";
+                case core::DataType::INET: return "INET";
+                case core::DataType::CIDR: return "CIDR";
+                case core::DataType::MACADDR: return "MACADDR";
+                case core::DataType::MACADDR8: return "MACADDR8";
+                case core::DataType::UNKNOWN: return "UNKNOWN";
+                case core::DataType::NULL_TYPE: return "NULL";
+                default:
+                    break;
+            }
+            return "TYPE_" + std::to_string(static_cast<uint16_t>(type));
+        }
+
+        const char* validExtractFieldsHint(core::DataType type)
+        {
+            switch (type)
+            {
+                case core::DataType::DATE:
+                    return "YEAR,MONTH,DAY,DOW,DOY,QUARTER,WEEK,ISO_WEEK,ISO_YEAR,ISO_DOW,CENTURY,DECADE,MILLENNIUM,EPOCH,TIMEZONE,TIMEZONE_HOUR,TIMEZONE_MINUTE,TZ_OFFSET,TOTAL_MONTHS,TOTAL_DAYS,VALUE";
+                case core::DataType::TIME:
+                case core::DataType::TIME_WITH_ZONE:
+                    return "HOUR,HOUR12,MINUTE,SECOND,MILLISECOND,MICROSECOND,EPOCH,TIMEZONE,TIMEZONE_HOUR,TIMEZONE_MINUTE,TZ_OFFSET,TOTAL_SECONDS,VALUE";
+                case core::DataType::TIMESTAMP:
+                case core::DataType::TIMESTAMP_WITH_ZONE:
+                case core::DataType::DATETIME:
+                    return "YEAR,MONTH,DAY,HOUR,HOUR12,MINUTE,SECOND,MILLISECOND,MICROSECOND,DOW,DOY,QUARTER,WEEK,ISO_WEEK,ISO_YEAR,ISO_DOW,CENTURY,DECADE,MILLENNIUM,EPOCH,TIMEZONE,TIMEZONE_HOUR,TIMEZONE_MINUTE,TZ_OFFSET,TOTAL_MONTHS,TOTAL_DAYS,TOTAL_SECONDS,VALUE";
+                case core::DataType::INTERVAL:
+                    return "YEAR,MONTH,DAY,HOUR,MINUTE,SECOND,MILLISECOND,MICROSECOND,EPOCH,TOTAL_MONTHS,TOTAL_DAYS,TOTAL_SECONDS,VALUE";
+                case core::DataType::UUID:
+                    return "VERSION,VARIANT,TIMESTAMP,NODE,CLOCK_SEQ,TIME_LOW,TIME_MID,TIME_HIGH,RAND_A,RAND_B,VALUE";
+                case core::DataType::JSON:
+                case core::DataType::JSONB:
+                    return "TYPE,KEYS,PATH,VALUE";
+                case core::DataType::XML:
+                    return "TYPE,PATH,ATTRIBUTES,VALUE";
+                case core::DataType::BYTEA:
+                case core::DataType::BINARY:
+                case core::DataType::VARBINARY:
+                case core::DataType::BLOB:
+                    return "BYTES,BITS,BYTE,BIT,SLICE,DIGEST,LENGTH,VALUE";
+                case core::DataType::VECTOR:
+                    return "DIMENSION,NORM_L2,DOT,ELEMENT,LENGTH,VALUE";
+                case core::DataType::ARRAY:
+                    return "CARDINALITY,NDIMS,DIMS,LOWER,UPPER,ELEMENT,LENGTH,VALUE";
+                case core::DataType::COMPOSITE:
+                    return "FIELD,FIELD_NAMES,DATATYPE,VALUE";
+                case core::DataType::VARIANT:
+                    return "TYPE,DATATYPE,VALUE,FIELD,FIELD_NAMES,ELEMENT";
+                case core::DataType::CHAR:
+                case core::DataType::VARCHAR:
+                case core::DataType::TEXT:
+                    return "CHAR_LENGTH,OCTET_LENGTH,CODEPOINT_LENGTH,TRIMMED_LENGTH,LENGTH,VALUE";
+                case core::DataType::TSVECTOR:
+                    return "LEXEMES,POSITIONS,WEIGHTS,SIZE,HAS_LEXEME,VALUE";
+                case core::DataType::TSQUERY:
+                    return "ROOT_OP,TERMS,OPERATORS,PHRASE_DISTANCE,NODES,SIZE,VALUE";
+                case core::DataType::INET:
+                case core::DataType::CIDR:
+                    return "FAMILY,NETMASK,ADDRESS,NETWORK,BROADCAST,HOSTMASK,NETMASK_ADDR,IS_IPV4,IS_IPV6,TRUNC,VALUE";
+                case core::DataType::MACADDR:
+                case core::DataType::MACADDR8:
+                    return "OUI,VENDOR,NIC,IS_MULTICAST,IS_LOCAL,VALUE";
+                case core::DataType::UNKNOWN:
+                case core::DataType::NULL_TYPE:
+                    return "VALUE";
+                default:
+                    return "VALUE";
+            }
+        }
+
+        std::string formatExtractFieldNotValidForType(ExtractField field,
+                                                      core::DataType type,
+                                                      const std::string& valid_fields)
+        {
+            std::ostringstream oss;
+            oss << "EXTRACT_FIELD_NOT_VALID_FOR_TYPE(" << extractFieldToString(field)
+                << ", " << extractDataTypeName(type)
+                << ", " << valid_fields << ")";
+            return oss.str();
+        }
+
+        std::string formatExtractFieldValueConstraintViolation(ExtractField field,
+                                                               core::DataType type,
+                                                               const std::string& reason)
+        {
+            std::ostringstream oss;
+            oss << "EXTRACT_FIELD_VALUE_CONSTRAINT_VIOLATION(" << extractFieldToString(field)
+                << ", " << extractDataTypeName(type)
+                << ", " << reason << ")";
+            return oss.str();
+        }
+
         int64_t floorDiv(int64_t value, int64_t divisor)
         {
             int64_t quotient = value / divisor;
@@ -855,20 +974,29 @@ namespace scratchbird::sblr
             return true;
         }
 
+        core::DataType source_type = source.type();
+
         ElementArgSpec arg_spec = extractFieldArgSpec(field);
         if (args.size() < arg_spec.min_args || args.size() > arg_spec.max_args)
         {
             if (error)
             {
                 std::ostringstream oss;
-                oss << "Invalid argument count for EXTRACT(" << extractFieldToString(field)
-                    << ")";
-                *error = oss.str();
+                oss << "expected ";
+                if (arg_spec.min_args == arg_spec.max_args)
+                {
+                    oss << static_cast<uint32_t>(arg_spec.min_args);
+                }
+                else
+                {
+                    oss << static_cast<uint32_t>(arg_spec.min_args) << ".."
+                        << static_cast<uint32_t>(arg_spec.max_args);
+                }
+                oss << " argument(s), got " << args.size();
+                *error = formatExtractFieldValueConstraintViolation(field, source_type, oss.str());
             }
             return false;
         }
-
-        core::DataType source_type = source.type();
 
         if (source_type == core::DataType::UNKNOWN || source_type == core::DataType::NULL_TYPE)
         {
@@ -877,7 +1005,10 @@ namespace scratchbird::sblr
                 *out = source;
                 return true;
             }
-            if (error) *error = "EXTRACT not supported for UNKNOWN type";
+            if (error)
+            {
+                *error = formatExtractFieldNotValidForType(field, source_type, "VALUE");
+            }
             return false;
         }
 
@@ -958,7 +1089,7 @@ namespace scratchbird::sblr
             }
         }
 
-        if (source_type == core::DataType::TIME)
+        if (source_type == core::DataType::TIME || source_type == core::DataType::TIME_WITH_ZONE)
         {
             int32_t offset_seconds = normalizedDisplayOffsetSeconds(source);
             int64_t local_micros = normalizeTimeOfDay(source.getTime() +
@@ -1024,7 +1155,9 @@ namespace scratchbird::sblr
             }
         }
 
-        if (source_type == core::DataType::TIMESTAMP)
+        if (source_type == core::DataType::TIMESTAMP ||
+            source_type == core::DataType::TIMESTAMP_WITH_ZONE ||
+            source_type == core::DataType::DATETIME)
         {
             int32_t offset_seconds = normalizedDisplayOffsetSeconds(source);
             int64_t local_micros = source.getTimestamp() +
@@ -1654,7 +1787,11 @@ namespace scratchbird::sblr
                 {
                     if (source_type != core::DataType::CHAR)
                     {
-                        if (error) *error = "TRIMMED_LENGTH only valid for CHAR";
+                        if (error)
+                        {
+                            *error = formatExtractFieldNotValidForType(
+                                field, source_type, "CHAR_LENGTH,OCTET_LENGTH,CODEPOINT_LENGTH,TRIMMED_LENGTH,LENGTH,VALUE");
+                        }
                         return false;
                     }
                     std::string trimmed = str;
@@ -3135,10 +3272,8 @@ namespace scratchbird::sblr
 
         if (error)
         {
-            std::ostringstream oss;
-            oss << "EXTRACT not supported for " << static_cast<int>(source_type)
-                << " field " << extractFieldToString(field);
-            *error = oss.str();
+            *error = formatExtractFieldNotValidForType(
+                field, source_type, validExtractFieldsHint(source_type));
         }
         return false;
     }

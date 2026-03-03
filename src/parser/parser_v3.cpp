@@ -15258,26 +15258,26 @@ ShowStmt* Parser::parseShow() {
         setUnifiedType("INDEX");
         if (matchContextual("HEALTH")) {
             stmt->show_type = ShowStmt::ShowType::INDEX_HEALTH;
-            stmt->name = expectIdentifier("Expected index name after SHOW INDEX HEALTH");
+            stmt->name = parsePathString("Expected index path after SHOW INDEX HEALTH");
         } else if (matchContextual("USAGE")) {
             stmt->show_type = ShowStmt::ShowType::INDEX_USAGE;
-            stmt->name = expectIdentifier("Expected index name after SHOW INDEX USAGE");
+            stmt->name = parsePathString("Expected index path after SHOW INDEX USAGE");
         } else if (matchContextual("STORAGE")) {
             stmt->show_type = ShowStmt::ShowType::INDEX_STORAGE;
-            stmt->name = expectIdentifier("Expected index name after SHOW INDEX STORAGE");
+            stmt->name = parsePathString("Expected index path after SHOW INDEX STORAGE");
         } else if (matchContextual("CONTENTION")) {
             stmt->show_type = ShowStmt::ShowType::INDEX_CONTENTION;
-            stmt->name = expectIdentifier("Expected index name after SHOW INDEX CONTENTION");
+            stmt->name = parsePathString("Expected index path after SHOW INDEX CONTENTION");
         } else if (matchContextual("OPTIONS")) {
             stmt->show_type = ShowStmt::ShowType::INDEX_OPTIONS;
-            stmt->name = expectIdentifier("Expected index name after SHOW INDEX OPTIONS");
+            stmt->name = parsePathString("Expected index path after SHOW INDEX OPTIONS");
         } else if (check(TokenType::KW_FROM) || check(TokenType::KW_IN)) {
             stmt->show_type = ShowStmt::ShowType::INDEXES;
             parseScopeClause();
         } else if (check(TokenType::IDENTIFIER) || check(TokenType::STRING_LITERAL)) {
             // SHOW INDEX name - Firebird style
             stmt->show_type = ShowStmt::ShowType::INDEX;
-            stmt->name = expectIdentifier("Expected index name");
+            stmt->name = parsePathString("Expected index path");
         } else {
             // SHOW INDEX (list all)
             stmt->show_type = ShowStmt::ShowType::INDEXES;

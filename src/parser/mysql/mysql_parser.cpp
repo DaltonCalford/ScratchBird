@@ -863,7 +863,9 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
         return parseSetStmtV3();
     }
     if (check(TokenType::KW_SHOW)) {
-        return parseShowStmtV3();
+        // Keep SHOW routing on legacy MySQL parser path where explicit SHOW
+        // families are handled and unsupported variants are rejected.
+        return nullptr;
     }
     if (check(TokenType::KW_USE)) {
         advance();  // consume USE
@@ -1801,12 +1803,8 @@ parser::v3::InsertStmt* Parser::parseInsertStmtV3() {
     }
 
     if (matchKeyword(TokenType::KW_RETURNING)) {
-        do {
-            auto* item = parseSelectItemV3();
-            if (item) {
-                stmt->returning.push_back(item);
-            }
-        } while (match(TokenType::COMMA));
+        error("MySQL emulation does not support RETURNING on INSERT/REPLACE");
+        return nullptr;
     }
 
     (void)is_replace;
@@ -1867,12 +1865,8 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmtV3() {
     }
 
     if (matchKeyword(TokenType::KW_RETURNING)) {
-        do {
-            auto* item = parseSelectItemV3();
-            if (item) {
-                stmt->returning.push_back(item);
-            }
-        } while (match(TokenType::COMMA));
+        error("MySQL emulation does not support RETURNING on UPDATE");
+        return nullptr;
     }
 
     return stmt;
@@ -1987,12 +1981,8 @@ parser::v3::DeleteStmt* Parser::parseDeleteStmtV3() {
     }
 
     if (matchKeyword(TokenType::KW_RETURNING)) {
-        do {
-            auto* item = parseSelectItemV3();
-            if (item) {
-                stmt->returning.push_back(item);
-            }
-        } while (match(TokenType::COMMA));
+        error("MySQL emulation does not support RETURNING on DELETE");
+        return nullptr;
     }
 
     return stmt;
@@ -2476,14 +2466,12 @@ parser::v3::Statement* Parser::parseShowStmtV3() {
     }
 
     if (matchKeyword(TokenType::KW_ALL)) {
-        stmt->show_type = parser::v3::ShowStmt::ShowType::ALL;
-        return stmt;
+        error("SHOW ALL is not supported in MySQL emulation");
+        return nullptr;
     }
 
-    // Fallback: SHOW name (treated as variable)
-    stmt->show_type = parser::v3::ShowStmt::ShowType::VARIABLE;
-    stmt->name = parseIdentifierId();
-    return stmt;
+    error("Unsupported SHOW variant in MySQL emulation");
+    return nullptr;
 }
 
 parser::v3::Statement* Parser::parseSetStmtV3() {

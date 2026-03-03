@@ -171,6 +171,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"handler", FieldType::STMT_LIST, ""},
     }}},
     {"SCHEMA_FUNC_CALL", SchemaDef{"SCHEMA_FUNC_CALL", {
+        FieldDef{"name", FieldType::OPT, "ident"},
         FieldDef{"args", FieldType::EXPR_LIST, ""},
     }}},
     {"SCHEMA_AGG_CALL", SchemaDef{"SCHEMA_AGG_CALL", {

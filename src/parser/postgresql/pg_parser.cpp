@@ -417,6 +417,10 @@ parser::v3::Statement* Parser::parseStatementInternal() {
             }
         case TokenType::KW_MERGE:
             return parseMergeStmt();
+        case TokenType::KW_CALL:
+            return parseCallStmtV3();
+        case TokenType::KW_DO:
+            return parseDoStmtV3();
         case TokenType::KW_CREATE: {
             consume(TokenType::KW_CREATE, "Expected CREATE");
             parser::v3::Statement* stmt = parseCreateStmtV3();
@@ -495,6 +499,10 @@ parser::v3::Statement* Parser::parseStatementInternal() {
                 error("Unsupported PREPARE statement for V3 PostgreSQL parser");
                 return nullptr;
             }
+        case TokenType::KW_EXECUTE:
+            return parseExecutePreparedStmtV3();
+        case TokenType::KW_DEALLOCATE:
+            return parseDeallocateStmtV3();
         case TokenType::KW_COMMIT:
             {
                 parser::v3::Statement* stmt = parseCommitStmtV3();
@@ -523,16 +531,35 @@ parser::v3::Statement* Parser::parseStatementInternal() {
                 error("Unsupported RELEASE statement for V3 PostgreSQL parser");
                 return nullptr;
             }
+        case TokenType::KW_CLOSE:
+            return parseCloseCursorStmtV3();
+        case TokenType::KW_FETCH:
+        case TokenType::KW_FETCH_KW:
+            return parseFetchCursorStmtV3(false);
+        case TokenType::KW_MOVE:
+            return parseFetchCursorStmtV3(true);
         case TokenType::KW_GRANT:
             return parseGrantStmtV3();
         case TokenType::KW_REVOKE:
             return parseRevokeStmtV3();
         case TokenType::KW_ANALYZE:
             return parseAnalyzeStmtV3();
+        case TokenType::KW_REINDEX:
+            return parseReindexStmtV3();
+        case TokenType::KW_VACUUM:
+            return parseVacuumStmtV3();
         case TokenType::KW_EXPLAIN:
             return parseExplainStmtV3();
         case TokenType::KW_COPY:
             return parseCopyStmtV3();
+        case TokenType::KW_LISTEN:
+            return parseListenStmtV3();
+        case TokenType::KW_NOTIFY:
+            return parseNotifyStmtV3();
+        case TokenType::KW_UNLISTEN:
+            return parseUnlistenStmtV3();
+        case TokenType::KW_LOCK:
+            return parseLockTableStmtV3();
         default:
             error("Expected statement");
             synchronize();

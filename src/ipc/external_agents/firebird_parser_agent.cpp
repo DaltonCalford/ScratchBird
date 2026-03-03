@@ -108,6 +108,20 @@ namespace fb {
     
     // Generic codes
     constexpr uint32_t GENERIC_ERROR = 1;
+    constexpr uint32_t op_fetch_response = 72;
+    constexpr uint32_t op_sql_response = 78;
+
+    // Status vector arguments
+    constexpr uint32_t isc_arg_end = 0;
+    constexpr uint32_t isc_arg_gds = 1;
+    constexpr uint32_t isc_arg_string = 2;
+    constexpr uint32_t isc_arg_sql_state = 19;
+
+    // Common GDS codes
+    constexpr uint32_t isc_unavailable = 335544375;
+    constexpr uint32_t isc_dsql_error = 335544569;
+    constexpr uint32_t isc_sqlerr = 335544436;
+    constexpr uint32_t isc_login = 335544472;
 }
 
 // XDR helpers
@@ -129,6 +143,36 @@ static uint16_t xdrReadUint16(const uint8_t* data) {
 static void xdrWriteUint16(uint8_t* data, uint16_t value) {
     data[0] = (value >> 8) & 0xFF;
     data[1] = value & 0xFF;
+}
+
+static void xdrAppendUint32(std::vector<uint8_t>& out, uint32_t value) {
+    uint8_t buf[4];
+    xdrWriteUint32(buf, value);
+    out.insert(out.end(), buf, buf + 4);
+}
+
+static void xdrAppendInt32(std::vector<uint8_t>& out, int32_t value) {
+    xdrAppendUint32(out, static_cast<uint32_t>(value));
+}
+
+static void xdrAppendInt64(std::vector<uint8_t>& out, int64_t value) {
+    for (int shift = 56; shift >= 0; shift -= 8) {
+        out.push_back(static_cast<uint8_t>((static_cast<uint64_t>(value) >> shift) & 0xFF));
+    }
+}
+
+static void xdrAppendBuffer(std::vector<uint8_t>& out, const uint8_t* data, size_t len) {
+    xdrAppendUint32(out, static_cast<uint32_t>(len));
+    if (len > 0 && data) {
+        out.insert(out.end(), data, data + len);
+    }
+    while (out.size() % 4 != 0) {
+        out.push_back(0);
+    }
+}
+
+static void xdrAppendString(std::vector<uint8_t>& out, const std::string& value) {
+    xdrAppendBuffer(out, reinterpret_cast<const uint8_t*>(value.data()), value.size());
 }
 
 // ============================================================================
@@ -505,9 +549,8 @@ core::Status FirebirdParserAgent::handleCommit(FBClientState& state,
 core::Status FirebirdParserAgent::handleRollback(FBClientState& state,
                                                 bool retaining,
                                                 core::ErrorContext* ctx) {
-    (void)state;
     (void)retaining;
-    (void)ctx;
+    sendResponse(state, 0, 0, nullptr, 0, ctx);
     return core::Status::OK;
 }
 
@@ -560,9 +603,9 @@ core::Status FirebirdParserAgent::handleInfo(FBClientState& state,
                                             core::ErrorContext* ctx) {
     (void)packet;
     (void)op;
-    // Return requested info
-    uint8_t buffer[1024];
-    sendResponse(state, 0, 0, buffer, sizeof(buffer), ctx);
+    // Deterministic minimal info response; avoid uninitialized payload bytes.
+    const uint8_t info_end = 1;  // isc_info_end
+    sendResponse(state, 0, 0, &info_end, 1, ctx);
     return core::Status::OK;
 }
 
@@ -626,84 +669,50 @@ void FirebirdParserAgent::sendResponse(FBClientState& state,
                                       size_t data_len,
                                       core::ErrorContext* ctx) {
     std::vector<uint8_t> packet;
-    
+
     // op_response
-    xdrWriteUint32(packet.data() + packet.size(), fb::op_response);
-    packet.resize(packet.size() + 4);
-    
+    xdrAppendUint32(packet, fb::op_response);
+
     // Handle
-    xdrWriteUint32(packet.data() + packet.size(), handle);
-    packet.resize(packet.size() + 4);
-    
-    // Object ID (unused)
-    xdrWriteUint32(packet.data() + packet.size(), 0);
-    packet.resize(packet.size() + 4);
-    
+    xdrAppendUint32(packet, handle);
+
+    // Object ID (int64, unused)
+    xdrAppendInt64(packet, 0);
+
+    // Data buffer
+    xdrAppendBuffer(packet, data, data_len);
+
     // Status vector
     if (status_code == 0) {
-        // Success
-        xdrWriteUint32(packet.data() + packet.size(), 0);
-        packet.resize(packet.size() + 4);
+        xdrAppendUint32(packet, fb::isc_arg_end);
     } else {
-        // Error
-        xdrWriteUint32(packet.data() + packet.size(), 1);
-        packet.resize(packet.size() + 4);
-        xdrWriteUint32(packet.data() + packet.size(), status_code);
-        packet.resize(packet.size() + 4);
+        xdrAppendUint32(packet, fb::isc_arg_gds);
+        xdrAppendUint32(packet, status_code);
+        xdrAppendUint32(packet, fb::isc_arg_end);
     }
-    
-    // Data
-    xdrWriteUint32(packet.data() + packet.size(), data_len);
-    packet.resize(packet.size() + 4);
-    if (data_len > 0 && data) {
-        packet.insert(packet.end(), data, data + data_len);
-        // Pad to 4-byte boundary
-        while (packet.size() % 4 != 0) {
-            packet.push_back(0);
-        }
-    }
-    
+
     sendPacket(state, packet, ctx);
 }
 
 core::Status FirebirdParserAgent::sendErrorResponse(FBClientState& state,
                                                    const std::string& message) {
     std::vector<uint8_t> packet;
-    
-    // op_response
-    xdrWriteUint32(packet.data() + packet.size(), fb::op_response);
-    packet.resize(packet.size() + 4);
-    
-    // Handle
-    xdrWriteUint32(packet.data() + packet.size(), 0);
-    packet.resize(packet.size() + 4);
-    
-    // Object ID
-    xdrWriteUint32(packet.data() + packet.size(), 0);
-    packet.resize(packet.size() + 4);
-    
-    // Status vector with error
-    xdrWriteUint32(packet.data() + packet.size(), 1);  // 1 error
-    packet.resize(packet.size() + 4);
-    xdrWriteUint32(packet.data() + packet.size(), fb::GENERIC_ERROR);
-    packet.resize(packet.size() + 4);
-    
-    // Error message
-    xdrWriteUint32(packet.data() + packet.size(), message.size());
-    packet.resize(packet.size() + 4);
-    packet.insert(packet.end(), message.begin(), message.end());
-    while (packet.size() % 4 != 0) {
-        packet.push_back(0);
+
+    xdrAppendUint32(packet, fb::op_response);
+    xdrAppendUint32(packet, 0);    // handle
+    xdrAppendInt64(packet, 0);     // object id
+    xdrAppendBuffer(packet, nullptr, 0); // no data
+
+    xdrAppendInt32(packet, fb::isc_arg_gds);
+    xdrAppendInt32(packet, fb::isc_dsql_error);
+    if (!message.empty()) {
+        xdrAppendInt32(packet, fb::isc_arg_string);
+        xdrAppendString(packet, message);
     }
-    
-    // More errors? No
-    xdrWriteUint32(packet.data() + packet.size(), 0);
-    packet.resize(packet.size() + 4);
-    
-    // Empty data
-    xdrWriteUint32(packet.data() + packet.size(), 0);
-    packet.resize(packet.size() + 4);
-    
+    xdrAppendInt32(packet, fb::isc_arg_sql_state);
+    xdrAppendString(packet, "HY000");
+    xdrAppendInt32(packet, fb::isc_arg_end);
+
     return sendPacket(state, packet, nullptr);
 }
 
@@ -854,9 +863,118 @@ core::Status FirebirdParserAgent::translateStartupToIPC(const std::vector<uint8_
 core::Status FirebirdParserAgent::translateIPCToResponse(const IPCMessage& ipc_msg,
                                                         std::vector<uint8_t>& response,
                                                         core::ErrorContext* ctx) {
-    (void)ipc_msg;
-    (void)response;
     (void)ctx;
+    response.clear();
+
+    auto appendSuccessResponse = [&](const uint8_t* data, size_t data_len) {
+        xdrAppendUint32(response, fb::op_response);
+        xdrAppendUint32(response, 0);   // handle
+        xdrAppendInt64(response, 0);    // object id
+        xdrAppendBuffer(response, data, data_len);
+        xdrAppendUint32(response, fb::isc_arg_end);
+    };
+
+    switch (ipc_msg.getType()) {
+        case IPCMessageType::ROW_DESCRIPTION: {
+            auto* payload = ipc_msg.getPayload<IPCRowDescriptionPayload>();
+            if (!payload) {
+                return core::Status::INVALID_ARGUMENT;
+            }
+            xdrAppendUint32(response, fb::op_sql_response);
+            xdrAppendUint32(response, payload->num_fields);
+            return core::Status::OK;
+        }
+
+        case IPCMessageType::DATA_ROW: {
+            auto* payload = ipc_msg.getPayload<IPCDataRowPayload>();
+            if (!payload) {
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            std::vector<uint8_t> row_data;
+            size_t offset = sizeof(IPCDataRowPayload);
+            const uint8_t* data = ipc_msg.payload.data();
+            const size_t payload_size = ipc_msg.payload.size();
+            for (uint16_t i = 0; i < payload->num_fields && offset + sizeof(int32_t) <= payload_size; i++) {
+                int32_t len = 0;
+                std::memcpy(&len, data + offset, sizeof(int32_t));
+                offset += sizeof(int32_t);
+
+                if (len < 0) {
+                    xdrAppendUint32(row_data, 0xFFFFFFFFu);
+                    continue;
+                }
+
+                if (offset + static_cast<size_t>(len) > payload_size) {
+                    break;
+                }
+                xdrAppendBuffer(row_data, data + offset, static_cast<size_t>(len));
+                offset += static_cast<size_t>(len);
+            }
+
+            xdrAppendUint32(response, fb::op_fetch_response);
+            xdrAppendUint32(response, 0);  // status
+            xdrAppendUint32(response, 1);  // one row
+            xdrAppendBuffer(response, row_data.data(), row_data.size());
+            return core::Status::OK;
+        }
+
+        case IPCMessageType::COMMAND_COMPLETE: {
+            auto* payload = ipc_msg.getPayload<IPCCommandCompletePayload>();
+            uint32_t affected = 0;
+            if (payload) {
+                const uint64_t max_u32 = 0xFFFFFFFFull;
+                affected = static_cast<uint32_t>(payload->rows_affected > max_u32
+                                                     ? max_u32
+                                                     : payload->rows_affected);
+            }
+
+            std::vector<uint8_t> command_data;
+            xdrAppendUint32(command_data, affected);
+            appendSuccessResponse(command_data.data(), command_data.size());
+            return core::Status::OK;
+        }
+
+        case IPCMessageType::ERROR_RESPONSE: {
+            auto* payload = ipc_msg.getPayload<IPCErrorPayload>();
+            const std::string message = payload ? std::string(payload->message) : "Unknown error";
+            std::string sqlstate = payload ? std::string(payload->sqlstate) : "HY000";
+            if (sqlstate.size() != 5) {
+                sqlstate = "HY000";
+            }
+            const std::string mapped_code = mapSQLStateToProtocol(sqlstate.c_str());
+            uint32_t gds_code = fb::isc_dsql_error;
+            if (mapped_code == "335544472") {
+                gds_code = fb::isc_login;
+            } else if (mapped_code == "335544375") {
+                gds_code = fb::isc_unavailable;
+            } else if (mapped_code == "335544436") {
+                gds_code = fb::isc_sqlerr;
+            } else {
+                gds_code = fb::isc_dsql_error;
+            }
+
+            xdrAppendUint32(response, fb::op_response);
+            xdrAppendUint32(response, 0);    // handle
+            xdrAppendInt64(response, 0);     // object id
+            xdrAppendBuffer(response, nullptr, 0);
+            xdrAppendInt32(response, fb::isc_arg_gds);
+            xdrAppendInt32(response, static_cast<int32_t>(gds_code));
+            xdrAppendInt32(response, fb::isc_arg_string);
+            xdrAppendString(response, message);
+            xdrAppendInt32(response, fb::isc_arg_sql_state);
+            xdrAppendString(response, sqlstate);
+            xdrAppendInt32(response, fb::isc_arg_end);
+            return core::Status::OK;
+        }
+
+        case IPCMessageType::READY:
+        case IPCMessageType::READY_FOR_QUERY:
+        default:
+            appendSuccessResponse(nullptr, 0);
+            return core::Status::OK;
+    }
+
     return core::Status::OK;
 }
 
@@ -866,18 +984,138 @@ IPCMessageType FirebirdParserAgent::mapClientToIPC(uint8_t msg_type) {
 }
 
 uint8_t FirebirdParserAgent::mapIPCToClient(IPCMessageType msg_type) {
-    (void)msg_type;
-    return 0;
+    switch (msg_type) {
+        case IPCMessageType::ROW_DESCRIPTION:
+            return static_cast<uint8_t>(fb::op_sql_response);
+        case IPCMessageType::DATA_ROW:
+            return static_cast<uint8_t>(fb::op_fetch_response);
+        case IPCMessageType::COMMAND_COMPLETE:
+        case IPCMessageType::ERROR_RESPONSE:
+        case IPCMessageType::READY:
+        case IPCMessageType::READY_FOR_QUERY:
+        default:
+            return static_cast<uint8_t>(fb::op_response);
+    }
 }
 
 std::string FirebirdParserAgent::mapSQLStateToProtocol(const char* sqlstate) {
-    return std::string(sqlstate);
+    if (!sqlstate || sqlstate[0] == '\0') {
+        return "335544569";  // isc_dsql_error
+    }
+
+    std::string state(sqlstate);
+    if (state.size() != 5) {
+        return "335544569";  // isc_dsql_error
+    }
+
+    const std::string cls = state.substr(0, 2);
+    if (cls == "28") {
+        return "335544472";  // isc_login
+    }
+    if (cls == "08") {
+        return "335544375";  // isc_unavailable
+    }
+    if (cls == "42" || cls == "23" || cls == "22" || cls == "40") {
+        return "335544569";  // isc_dsql_error
+    }
+    if (state == "HY000" || state == "XX000") {
+        return "335544436";  // isc_sqlerr
+    }
+    return "335544436";      // isc_sqlerr
 }
 
 void FirebirdParserAgent::mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
                                                     char* sqlstate_out) {
-    (void)error;
-    std::strcpy(sqlstate_out, "HY000");
+    if (!sqlstate_out) {
+        return;
+    }
+
+    auto write_state = [&](const char* state) {
+        std::memcpy(sqlstate_out, state, 5);
+        sqlstate_out[5] = '\0';
+    };
+
+    write_state("HY000");
+    if (error.size() < 4) {
+        return;
+    }
+
+    std::string fallback = "HY000";
+    size_t offset = 0;
+
+    const uint32_t op = xdrReadUint32(error.data());
+    if (op == fb::op_response) {
+        if (error.size() < 20) {  // op + handle + objectid
+            return;
+        }
+        offset = 4 + 4 + 8;
+
+        if (offset + 4 > error.size()) {
+            return;
+        }
+        const uint32_t data_len = xdrReadUint32(error.data() + offset);
+        offset += 4;
+
+        const size_t padded_len = (static_cast<size_t>(data_len) + 3u) & ~size_t(3u);
+        if (offset + padded_len > error.size()) {
+            return;
+        }
+        offset += padded_len;
+    }
+
+    while (offset + 4 <= error.size()) {
+        const uint32_t arg = xdrReadUint32(error.data() + offset);
+        offset += 4;
+
+        if (arg == fb::isc_arg_end) {
+            break;
+        }
+
+        if (arg == fb::isc_arg_gds) {
+            if (offset + 4 > error.size()) {
+                break;
+            }
+            const uint32_t gds = xdrReadUint32(error.data() + offset);
+            offset += 4;
+
+            if (gds == fb::isc_login) {
+                fallback = "28000";
+            } else if (gds == fb::isc_unavailable) {
+                fallback = "08006";
+            } else if (gds == fb::isc_dsql_error || gds == fb::isc_sqlerr) {
+                fallback = "42000";
+            } else {
+                fallback = "HY000";
+            }
+            continue;
+        }
+
+        if (arg == fb::isc_arg_sql_state || arg == fb::isc_arg_string) {
+            if (offset + 4 > error.size()) {
+                break;
+            }
+            const uint32_t len = xdrReadUint32(error.data() + offset);
+            offset += 4;
+
+            const size_t padded_len = (static_cast<size_t>(len) + 3u) & ~size_t(3u);
+            if (offset + padded_len > error.size()) {
+                break;
+            }
+
+            if (arg == fb::isc_arg_sql_state && len == 5) {
+                std::memcpy(sqlstate_out, error.data() + offset, 5);
+                sqlstate_out[5] = '\0';
+                return;
+            }
+            offset += padded_len;
+            continue;
+        }
+
+        // Unknown argument class with unknown payload width.
+        break;
+    }
+
+    write_state(fallback.c_str());
 }
 
 size_t FirebirdParserAgent::readMessageLength(const uint8_t* header, size_t len) {

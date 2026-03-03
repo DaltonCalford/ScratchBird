@@ -77,6 +77,7 @@ tests/compatibility/
 ├── scripts/                     # Global test scripts
 │   ├── convert_all_tests_parallel.sh    # Convert all tests
 │   ├── generate_test_manifests.py       # Generate test catalogs
+│   ├── run_required_upstream_harnesses.sh # Upstream harness launcher (plan/execute)
 │   └── update_test_repos.sh             # Refresh vendored test repositories
 │
 ├── results/                     # Test execution results
@@ -175,6 +176,16 @@ To regenerate the standardized gate and wire-capture evidence from in-tree suite
 ```
 
 This writes reports under `tests/compatibility/results/emulation/`.
+
+To generate or execute the required upstream harness command set for EPFC-025/026/027:
+
+```bash
+# command templates only (default)
+./scripts/run_required_upstream_harnesses.sh plan
+
+# execute MySQL upstream MTR + PostgreSQL upstream pg_regress + Firebird upstream gate commands
+./scripts/run_required_upstream_harnesses.sh execute
+```
 
 ## Test Conversion
 

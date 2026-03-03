@@ -181,6 +181,9 @@ private:
     Statement* parseAlterStatement();
     Statement* parseDropStatement();
     Statement* parseRecreateStatement();
+    Statement* parseDeclareStatement();
+    Statement* parseDeclareFilter();
+    Statement* parseDeclareExternalFunction();
 
     // DDL - CREATE variants
     Statement* parseCreateDatabase();
@@ -196,12 +199,26 @@ private:
     Statement* parseCreateException(bool or_replace);
     Statement* parseCreateRole(bool or_replace);
     Statement* parseCreatePackage(bool or_replace);
+    Statement* parseCreateCollationStatement();
+    Statement* parseCreateShadowStatement();
+    Statement* parseCreateMappingStatement();
+    Statement* parseCreateUserStatement();
+    Statement* parseCreateSchemaStatement();
 
     // DDL - DROP variants
     Statement* parseDropDatabase();
+    Statement* parseDropCollationStatement(bool if_exists);
+    Statement* parseDropShadowStatement(bool if_exists);
+    Statement* parseDropMappingStatement(bool if_exists);
+    Statement* parseDropUserStatement(bool if_exists);
+    Statement* parseDropSchemaStatement(bool if_exists);
 
     // DDL - ALTER variants
     Statement* parseAlterDatabase();
+    Statement* parseAlterExternalFunctionStatement();
+    Statement* parseAlterRoleStatement();
+    Statement* parseAlterUserStatement();
+    Statement* parseAlterSchemaStatement();
 
     // DML Statements
     Statement* parseSelectStatement();
@@ -301,6 +318,12 @@ private:
     TableConstraint* parseTableConstraint();
     SchemaPath parseTableReference();
     SchemaPath parseSchemaPath();
+    Expression* parseBlobFilterSubtypeLiteral();
+    bool parseOptionalIfNotExists();
+    ExecuteProcedureStmt* makeExecuteProcedureCall(std::string_view procedure_name);
+    LiteralExpr* makeStringLiteralExpr(v3::StringPool::StringId value);
+    LiteralExpr* makeBooleanLiteralExpr(bool value);
+    void skipRemainingStatementTokens();
 
     // Extract raw expression text from parsed expression span
     std::string extractExpressionText(Expression* expr);

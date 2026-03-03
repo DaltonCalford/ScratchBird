@@ -484,7 +484,7 @@ TEST_F(SchemaPathResolutionTest, ExecutorDropIndexUsesCurrentSchema)
     conn_->setCurrentSchemaId(user_schema);
     conn_->set_search_path({"public"});
 
-    auto result = executeSql("DROP INDEX idx_drop");
+    auto result = executeSql("DROP INDEX idx_drop_table.idx_drop");
     ASSERT_TRUE(result.success()) << result.error();
 
     CatalogManager::IndexInfo index_info;

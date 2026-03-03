@@ -85,6 +85,7 @@
 #include "scratchbird/core/expression_serializer.h"
 #include "scratchbird/core/quality_pipeline.h"
 #include "scratchbird/sblr/extract_element_ops.h"  // Spec: docs/specifications/EXTRACT_AND_ALTER_ELEMENT.md
+#include "scratchbird/sblr/extract_element_catalog.h"
 #include "scratchbird/sblr/expression_evaluator.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
@@ -44368,12 +44369,39 @@ namespace scratchbird
                     case Opcode::SBLR3_EXPR_FUNCTION_CALL:
                     case Opcode::SBLR3_ARRAY_SUBSCRIPT:
                     case Opcode::SBLR3_ARRAY_SLICE:
+                    case Opcode::SBLR3_FUNC_AGE:
                     case Opcode::SBLR3_FUNC_ARRAY_POSITION:
                     case Opcode::SBLR3_FUNC_ABS:
+                    case Opcode::SBLR3_FUNC_ACOS:
+                    case Opcode::SBLR3_FUNC_ACOSH:
+                    case Opcode::SBLR3_FUNC_ASIN:
+                    case Opcode::SBLR3_FUNC_ASINH:
+                    case Opcode::SBLR3_FUNC_ATAN:
+                    case Opcode::SBLR3_FUNC_ATAN2:
+                    case Opcode::SBLR3_FUNC_ATANH:
+                    case Opcode::SBLR3_FUNC_CBRT:
+                    case Opcode::SBLR3_FUNC_CEIL:
                     case Opcode::SBLR3_FUNC_SIN:
                     case Opcode::SBLR3_FUNC_COS:
+                    case Opcode::SBLR3_FUNC_COSH:
+                    case Opcode::SBLR3_FUNC_COT:
+                    case Opcode::SBLR3_FUNC_DEGREES:
+                    case Opcode::SBLR3_FUNC_EXP:
+                    case Opcode::SBLR3_FUNC_FLOOR:
+                    case Opcode::SBLR3_FUNC_LN:
+                    case Opcode::SBLR3_FUNC_LOG:
+                    case Opcode::SBLR3_FUNC_LOG10:
+                    case Opcode::SBLR3_FUNC_LOG2:
+                    case Opcode::SBLR3_FUNC_MOD:
+                    case Opcode::SBLR3_FUNC_PI:
                     case Opcode::SBLR3_FUNC_TAN:
                     case Opcode::SBLR3_FUNC_POWER:
+                    case Opcode::SBLR3_FUNC_RADIANS:
+                    case Opcode::SBLR3_FUNC_ROUND:
+                    case Opcode::SBLR3_FUNC_SIGN:
+                    case Opcode::SBLR3_FUNC_SINH:
+                    case Opcode::SBLR3_FUNC_SQRT:
+                    case Opcode::SBLR3_FUNC_TANH:
                     case Opcode::SBLR3_FUNC_CONCAT:
                     case Opcode::SBLR3_FUNC_CONCAT_WS:
                     case Opcode::SBLR3_FUNC_REPLACE:
@@ -44390,6 +44418,25 @@ namespace scratchbird
                     case Opcode::SBLR3_FUNC_TO_CHAR:
                     case Opcode::SBLR3_FUNC_TO_DATE:
                     case Opcode::SBLR3_FUNC_TO_TIMESTAMP:
+                    case Opcode::SBLR3_FUNC_CHAR_LENGTH:
+                    case Opcode::SBLR3_FUNC_COLLATE:
+                    case Opcode::SBLR3_FUNC_CONVERT:
+                    case Opcode::SBLR3_FUNC_DATE_ADD:
+                    case Opcode::SBLR3_FUNC_DATE_DIFF:
+                    case Opcode::SBLR3_FUNC_DATE_SUB:
+                    case Opcode::SBLR3_FUNC_COL_DESCRIPTION:
+                    case Opcode::SBLR3_FUNC_FORMAT_TYPE:
+                    case Opcode::SBLR3_FUNC_LENGTH:
+                    case Opcode::SBLR3_FUNC_LOWER:
+                    case Opcode::SBLR3_FUNC_LTRIM:
+                    case Opcode::SBLR3_FUNC_OBJ_DESCRIPTION:
+                    case Opcode::SBLR3_FUNC_OCTET_LENGTH:
+                    case Opcode::SBLR3_FUNC_RTRIM:
+                    case Opcode::SBLR3_FUNC_SHOBJ_DESCRIPTION:
+                    case Opcode::SBLR3_FUNC_SUBSTRING:
+                    case Opcode::SBLR3_FUNC_TRIM:
+                    case Opcode::SBLR3_FUNC_TRUNC:
+                    case Opcode::SBLR3_FUNC_UPPER:
                     case Opcode::SBLR3_FUNC_LEAST:
                     case Opcode::SBLR3_FUNC_GREATEST:
                     case Opcode::SBLR3_JSON_OBJECT:
@@ -44435,6 +44482,55 @@ namespace scratchbird
                             }
                         }
 
+                        if (op == Opcode::SBLR3_EXPR_FUNCTION_CALL)
+                        {
+                            std::string function_name;
+                            auto it_name = obj->find("name");
+                            if (it_name != obj->end())
+                            {
+                                if (const auto* name =
+                                        std::get_if<std::string>(&it_name->second.data))
+                                {
+                                    function_name = *name;
+                                }
+                            }
+
+                            const std::string function_upper =
+                                scratchbird::core::IdentifierUtils::toUpper(function_name);
+
+                            if (function_upper == "CURRENT_DATABASE")
+                            {
+                                if (!args.empty())
+                                {
+                                    return Value::makeNull();
+                                }
+
+                                std::string database_name = "default";
+                                if (db_)
+                                {
+                                    database_name = db_->path();
+                                    size_t last_sep = database_name.find_last_of("/\\");
+                                    if (last_sep != std::string::npos)
+                                    {
+                                        database_name = database_name.substr(last_sep + 1);
+                                    }
+                                    size_t dot = database_name.find_last_of('.');
+                                    if (dot != std::string::npos && dot > 0)
+                                    {
+                                        database_name = database_name.substr(0, dot);
+                                    }
+                                    if (database_name.empty())
+                                    {
+                                        database_name = "default";
+                                    }
+                                }
+
+                                return Value::makeText(database_name);
+                            }
+
+                            return Value::makeNull();
+                        }
+
                         if (op == Opcode::SBLR3_FUNC_ABS)
                         {
                             if (args.size() != 1 || args[0].isNull())
@@ -44452,6 +44548,283 @@ namespace scratchbird
                                 return Value::makeInt64(value < 0 ? -value : value);
                             }
                             return Value::makeFloat64(std::abs(coerceToDouble(args[0])));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_PI)
+                        {
+                            if (!args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeFloat64(std::acos(-1.0));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_ATAN2)
+                        {
+                            if (args.size() != 2 || args[0].isNull() || args[1].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeFloat64(
+                                std::atan2(coerceToDouble(args[0]), coerceToDouble(args[1])));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_POWER)
+                        {
+                            if (args.size() != 2 || args[0].isNull() || args[1].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const double base = coerceToDouble(args[0]);
+                            const double exponent = coerceToDouble(args[1]);
+                            return Value::makeFloat64(std::pow(base, exponent));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_MOD)
+                        {
+                            if (args.size() != 2 || args[0].isNull() || args[1].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const double lhs = coerceToDouble(args[0]);
+                            const double rhs = coerceToDouble(args[1]);
+                            if (rhs == 0.0)
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeFloat64(std::fmod(lhs, rhs));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_ROUND)
+                        {
+                            if (args.empty() || args.size() > 2 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            double value = coerceToDouble(args[0]);
+                            if (args.size() == 1 || args[1].isNull())
+                            {
+                                return Value::makeFloat64(std::round(value));
+                            }
+                            const int64_t scale = args[1].toInt64();
+                            const double factor = std::pow(10.0, static_cast<double>(scale));
+                            if (!std::isfinite(factor) || factor == 0.0)
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeFloat64(std::round(value * factor) / factor);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_SIGN)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const double value = coerceToDouble(args[0]);
+                            if (value > 0.0)
+                            {
+                                return Value::makeInt32(1);
+                            }
+                            if (value < 0.0)
+                            {
+                                return Value::makeInt32(-1);
+                            }
+                            return Value::makeInt32(0);
+                        }
+
+                        auto finite_or_null = [](double result) -> Value {
+                            if (!std::isfinite(result))
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeFloat64(result);
+                        };
+
+                        if (op == Opcode::SBLR3_FUNC_SIN ||
+                            op == Opcode::SBLR3_FUNC_COS ||
+                            op == Opcode::SBLR3_FUNC_TAN ||
+                            op == Opcode::SBLR3_FUNC_ACOS ||
+                            op == Opcode::SBLR3_FUNC_ACOSH ||
+                            op == Opcode::SBLR3_FUNC_ASIN ||
+                            op == Opcode::SBLR3_FUNC_ASINH ||
+                            op == Opcode::SBLR3_FUNC_ATAN ||
+                            op == Opcode::SBLR3_FUNC_ATANH ||
+                            op == Opcode::SBLR3_FUNC_CBRT ||
+                            op == Opcode::SBLR3_FUNC_CEIL ||
+                            op == Opcode::SBLR3_FUNC_COSH ||
+                            op == Opcode::SBLR3_FUNC_COT ||
+                            op == Opcode::SBLR3_FUNC_DEGREES ||
+                            op == Opcode::SBLR3_FUNC_EXP ||
+                            op == Opcode::SBLR3_FUNC_FLOOR ||
+                            op == Opcode::SBLR3_FUNC_LN ||
+                            op == Opcode::SBLR3_FUNC_LOG10 ||
+                            op == Opcode::SBLR3_FUNC_LOG2 ||
+                            op == Opcode::SBLR3_FUNC_RADIANS ||
+                            op == Opcode::SBLR3_FUNC_SINH ||
+                            op == Opcode::SBLR3_FUNC_SQRT ||
+                            op == Opcode::SBLR3_FUNC_TANH)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const double value = coerceToDouble(args[0]);
+                            if (!std::isfinite(value))
+                            {
+                                return Value::makeNull();
+                            }
+                            if (op == Opcode::SBLR3_FUNC_SIN)
+                            {
+                                return finite_or_null(std::sin(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_COS)
+                            {
+                                return finite_or_null(std::cos(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_TAN)
+                            {
+                                return finite_or_null(std::tan(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_ACOS)
+                            {
+                                if (value < -1.0 || value > 1.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::acos(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_ACOSH)
+                            {
+                                if (value < 1.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::acosh(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_ASIN)
+                            {
+                                if (value < -1.0 || value > 1.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::asin(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_ASINH)
+                            {
+                                return finite_or_null(std::asinh(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_ATAN)
+                            {
+                                return finite_or_null(std::atan(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_ATANH)
+                            {
+                                if (value <= -1.0 || value >= 1.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::atanh(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_CBRT)
+                            {
+                                return finite_or_null(std::cbrt(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_CEIL)
+                            {
+                                return finite_or_null(std::ceil(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_COSH)
+                            {
+                                return finite_or_null(std::cosh(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_COT)
+                            {
+                                const double tangent = std::tan(value);
+                                if (tangent == 0.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(1.0 / tangent);
+                            }
+                            if (op == Opcode::SBLR3_FUNC_DEGREES)
+                            {
+                                return finite_or_null(value * (180.0 / std::acos(-1.0)));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_EXP)
+                            {
+                                return finite_or_null(std::exp(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_FLOOR)
+                            {
+                                return finite_or_null(std::floor(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_LN)
+                            {
+                                if (value <= 0.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::log(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_LOG10)
+                            {
+                                if (value <= 0.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::log10(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_LOG2)
+                            {
+                                if (value <= 0.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::log2(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_RADIANS)
+                            {
+                                return finite_or_null(value * (std::acos(-1.0) / 180.0));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_SINH)
+                            {
+                                return finite_or_null(std::sinh(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_SQRT)
+                            {
+                                if (value < 0.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::sqrt(value));
+                            }
+                            return finite_or_null(std::tanh(value));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_LOG)
+                        {
+                            if (args.empty() || args.size() > 2 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            if (args.size() == 1 || args[1].isNull())
+                            {
+                                const double value = coerceToDouble(args[0]);
+                                if (!std::isfinite(value) || value <= 0.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return finite_or_null(std::log(value));
+                            }
+                            const double base = coerceToDouble(args[0]);
+                            const double value = coerceToDouble(args[1]);
+                            if (!std::isfinite(base) || !std::isfinite(value) ||
+                                base <= 0.0 || base == 1.0 || value <= 0.0)
+                            {
+                                return Value::makeNull();
+                            }
+                            return finite_or_null(std::log(value) / std::log(base));
                         }
 
                         if (op == Opcode::SBLR3_FUNC_SIN ||
@@ -44472,17 +44845,6 @@ namespace scratchbird
                                 return Value::makeFloat64(std::cos(value));
                             }
                             return Value::makeFloat64(std::tan(value));
-                        }
-
-                        if (op == Opcode::SBLR3_FUNC_POWER)
-                        {
-                            if (args.size() != 2 || args[0].isNull() || args[1].isNull())
-                            {
-                                return Value::makeNull();
-                            }
-                            const double base = coerceToDouble(args[0]);
-                            const double exponent = coerceToDouble(args[1]);
-                            return Value::makeFloat64(std::pow(base, exponent));
                         }
 
                         if (op == Opcode::SBLR3_FUNC_CONCAT)
@@ -45254,6 +45616,594 @@ namespace scratchbird
 
                             return Value::makeVarchar(formatDateTimeWithFormat(
                                 year, month, day, hour, minute, second, format));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_LENGTH || op == Opcode::SBLR3_FUNC_CHAR_LENGTH)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string str = args[0].toString();
+                            uint32_t char_len = charset_manager_.getCharLength(
+                                reinterpret_cast<const uint8_t *>(str.data()), str.length(),
+                                core::CharacterSet::UTF8);
+                            return Value::makeInt32(static_cast<int32_t>(char_len));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_OCTET_LENGTH)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string str = args[0].toString();
+                            return Value::makeInt32(static_cast<int32_t>(str.length()));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_UPPER)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeVarchar(core::utf8::to_upper(args[0].toString()));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_LOWER)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeVarchar(core::utf8::to_lower(args[0].toString()));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_TRIM)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string str = args[0].toString();
+                            size_t start = 0;
+                            while (start < str.length() &&
+                                   std::isspace(static_cast<unsigned char>(str[start])))
+                            {
+                                start++;
+                            }
+                            size_t end = str.length();
+                            while (end > start &&
+                                   std::isspace(static_cast<unsigned char>(str[end - 1])))
+                            {
+                                end--;
+                            }
+                            return Value::makeVarchar(str.substr(start, end - start));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_LTRIM)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string str = args[0].toString();
+                            size_t start = 0;
+                            while (start < str.length() &&
+                                   std::isspace(static_cast<unsigned char>(str[start])))
+                            {
+                                start++;
+                            }
+                            return Value::makeVarchar(str.substr(start));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_RTRIM)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string str = args[0].toString();
+                            size_t end = str.length();
+                            while (end > 0 &&
+                                   std::isspace(static_cast<unsigned char>(str[end - 1])))
+                            {
+                                end--;
+                            }
+                            return Value::makeVarchar(str.substr(0, end));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_SUBSTRING)
+                        {
+                            if (args.size() != 3 || args[0].isNull() || args[1].isNull() || args[2].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+
+                            std::string str = args[0].toString();
+                            int32_t char_start = static_cast<int32_t>(args[1].toInt64());
+                            int32_t char_length = static_cast<int32_t>(args[2].toInt64());
+
+                            if (char_start < 1)
+                            {
+                                char_start = 1;
+                            }
+                            char_start--;
+
+                            const uint8_t *str_bytes = reinterpret_cast<const uint8_t *>(str.data());
+                            uint32_t total_chars = charset_manager_.getCharLength(
+                                str_bytes, str.length(), core::CharacterSet::UTF8);
+
+                            if (char_start >= static_cast<int32_t>(total_chars) || char_length <= 0)
+                            {
+                                return Value::makeVarchar("");
+                            }
+
+                            uint32_t byte_start = core::utf8::byte_length(str_bytes, char_start);
+                            uint32_t remaining_chars = std::min(static_cast<uint32_t>(char_length),
+                                                                total_chars - char_start);
+                            uint32_t byte_length =
+                                core::utf8::byte_length(str_bytes + byte_start, remaining_chars);
+                            return Value::makeVarchar(str.substr(byte_start, byte_length));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_COLLATE)
+                        {
+                            if (args.size() != 2 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            return args[0];
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CONVERT)
+                        {
+                            if (args.empty() || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            if (args.size() == 1)
+                            {
+                                return Value::makeVarchar(args[0].toString());
+                            }
+                            if (args.size() >= 3)
+                            {
+                                std::string str = args[0].toString();
+                                auto from_cs = static_cast<core::CharacterSet>(args[1].toInt64());
+                                auto to_cs = static_cast<core::CharacterSet>(args[2].toInt64());
+                                std::vector<uint8_t> output;
+                                auto status =
+                                    charset_manager_.convert(reinterpret_cast<const uint8_t *>(str.data()),
+                                                             str.length(), from_cs, output, to_cs, nullptr);
+                                if (status != core::Status::OK)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return Value::makeVarchar(std::string(output.begin(), output.end()));
+                            }
+                            return Value::makeVarchar(args[0].toString());
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_DATE_ADD || op == Opcode::SBLR3_FUNC_DATE_SUB)
+                        {
+                            if (args.size() != 2 || args[0].isNull() || args[1].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const Value& date_val = args[0];
+                            int64_t days = static_cast<int64_t>(coerceToDouble(args[1]));
+                            if (op == Opcode::SBLR3_FUNC_DATE_SUB)
+                            {
+                                days = -days;
+                            }
+
+                            const int64_t micros_per_day =
+                                static_cast<int64_t>(core::FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+
+                            if (date_val.type() == core::DataType::DATE)
+                            {
+                                int64_t result_days = date_val.getDate() + days;
+                                return Value::makeDate(result_days, date_val.getTimezoneOffsetSeconds());
+                            }
+                            if (date_val.type() == core::DataType::TIMESTAMP ||
+                                date_val.type() == core::DataType::TIMESTAMP_WITH_ZONE ||
+                                date_val.type() == core::DataType::DATETIME)
+                            {
+                                int64_t result_micros = date_val.getTimestamp() + days * micros_per_day;
+                                return Value::makeTimestamp(result_micros,
+                                                            date_val.getTimezoneOffsetSeconds());
+                            }
+                            if (date_val.type() == core::DataType::TIME ||
+                                date_val.type() == core::DataType::TIME_WITH_ZONE)
+                            {
+                                int64_t result_micros = date_val.getTime() + days * micros_per_day;
+                                result_micros %= micros_per_day;
+                                if (result_micros < 0)
+                                {
+                                    result_micros += micros_per_day;
+                                }
+                                return Value::makeTime(result_micros, date_val.getTimezoneOffsetSeconds());
+                            }
+                            return Value::makeNull();
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_DATE_DIFF)
+                        {
+                            if (args.size() != 2 || args[0].isNull() || args[1].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+
+                            auto to_days = [&](const Value& input) -> std::optional<int64_t> {
+                                if (input.type() == core::DataType::DATE)
+                                {
+                                    return input.getDate();
+                                }
+                                if (input.type() == core::DataType::TIMESTAMP ||
+                                    input.type() == core::DataType::TIMESTAMP_WITH_ZONE ||
+                                    input.type() == core::DataType::DATETIME)
+                                {
+                                    core::TypeInfo target(core::DataType::DATE);
+                                    Value date_value;
+                                    core::ErrorContext ctx;
+                                    if (input.convertTo(target, date_value,
+                                                        core::CastFormat::DEFAULT, &ctx) != core::Status::OK)
+                                    {
+                                        return std::nullopt;
+                                    }
+                                    return date_value.getDate();
+                                }
+                                return std::nullopt;
+                            };
+
+                            std::optional<int64_t> days1 = to_days(args[0]);
+                            std::optional<int64_t> days2 = to_days(args[1]);
+                            if (!days1.has_value() || !days2.has_value())
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeInt64(days1.value() - days2.value());
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_TRUNC)
+                        {
+                            if (args.empty() || args.size() > 2 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const double value = coerceToDouble(args[0]);
+                            if (args.size() == 1 || args[1].isNull())
+                            {
+                                return Value::makeFloat64(std::trunc(value));
+                            }
+
+                            const int64_t scale = args[1].toInt64();
+                            if (scale >= 0)
+                            {
+                                const double factor = std::pow(10.0, static_cast<double>(scale));
+                                if (!std::isfinite(factor) || factor == 0.0)
+                                {
+                                    return Value::makeNull();
+                                }
+                                return Value::makeFloat64(std::trunc(value * factor) / factor);
+                            }
+
+                            const double factor = std::pow(10.0, static_cast<double>(-scale));
+                            if (!std::isfinite(factor) || factor == 0.0)
+                            {
+                                return Value::makeNull();
+                            }
+                            return Value::makeFloat64(std::trunc(value / factor) * factor);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_AGE)
+                        {
+                            if (args.size() != 1 && args.size() != 2)
+                            {
+                                return Value::makeNull();
+                            }
+
+                            int64_t ts1_micros = 0;
+                            int64_t ts2_micros = 0;
+                            if (args.size() == 1)
+                            {
+                                if (args[0].isNull())
+                                {
+                                    return Value::makeNull();
+                                }
+                                auto now = std::chrono::system_clock::now();
+                                ts1_micros = std::chrono::duration_cast<std::chrono::microseconds>(
+                                    now.time_since_epoch()).count();
+                                ts2_micros = args[0].getTimestamp();
+                            }
+                            else
+                            {
+                                if (args[0].isNull() || args[1].isNull())
+                                {
+                                    return Value::makeNull();
+                                }
+                                ts1_micros = args[0].getTimestamp();
+                                ts2_micros = args[1].getTimestamp();
+                            }
+
+                            int64_t diff_micros = ts1_micros - ts2_micros;
+                            core::Interval interval;
+                            interval.months = 0;
+                            interval.days = static_cast<int32_t>(diff_micros / (1000000LL * 86400LL));
+                            interval.microseconds = diff_micros % (1000000LL * 86400LL);
+                            return core::TypedValue::makeInterval(interval);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_FORMAT_TYPE)
+                        {
+                            if (args.empty() || args.size() > 2 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+
+                            int64_t type_oid = args[0].toInt64();
+                            int64_t typmod = (args.size() == 2 && !args[1].isNull()) ? args[1].toInt64() : -1;
+
+                            auto oidFromUuid = [](const core::ID& id) -> int64_t {
+                                uint64_t hash = 1469598103934665603ULL;
+                                for (uint8_t b : id.bytes)
+                                {
+                                    hash ^= b;
+                                    hash *= 1099511628211ULL;
+                                }
+                                hash &= 0x3fffffffffffffffULL;
+                                hash |= 0x4000000000000000ULL;
+                                return static_cast<int64_t>(hash);
+                            };
+
+                            auto baseTypeName = [](int64_t oid) -> std::string {
+                                switch (oid)
+                                {
+                                    case 16: return "boolean";
+                                    case 20: return "bigint";
+                                    case 21: return "smallint";
+                                    case 23: return "integer";
+                                    case 700: return "real";
+                                    case 701: return "double precision";
+                                    case 1700: return "numeric";
+                                    case 1042: return "character";
+                                    case 1043: return "character varying";
+                                    case 25: return "text";
+                                    case 17: return "bytea";
+                                    case 1082: return "date";
+                                    case 1083: return "time without time zone";
+                                    case 1114: return "timestamp without time zone";
+                                    case 1184: return "timestamp with time zone";
+                                    case 2950: return "uuid";
+                                    default: return "";
+                                }
+                            };
+
+                            std::string type_name = baseTypeName(type_oid);
+                            if (type_name.empty() && db_ && db_->domain_manager())
+                            {
+                                std::vector<core::DomainInfo> domains;
+                                core::ErrorContext ctx;
+                                if (db_->domain_manager()->listDomains(core::ID{}, domains, &ctx) == core::Status::OK)
+                                {
+                                    for (const auto& domain : domains)
+                                    {
+                                        if (oidFromUuid(domain.domain_id) == type_oid)
+                                        {
+                                            type_name = domain.domain_name;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (type_name.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            if (typmod >= 0 &&
+                                (type_name == "character varying" ||
+                                 type_name == "character" ||
+                                 type_name == "numeric"))
+                            {
+                                type_name += "(" + std::to_string(typmod) + ")";
+                            }
+                            return Value::makeText(type_name);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_OBJ_DESCRIPTION ||
+                            op == Opcode::SBLR3_FUNC_SHOBJ_DESCRIPTION)
+                        {
+                            if (args.empty() || args.size() > 2 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string catalog_name = args.size() == 2 ? args[1].toString() : "pg_class";
+                            for (auto& c : catalog_name)
+                            {
+                                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                            }
+
+                            std::vector<core::CatalogManager::ObjectType> allowed_types;
+                            if (catalog_name == "pg_class")
+                            {
+                                allowed_types = {
+                                    core::CatalogManager::ObjectType::TABLE,
+                                    core::CatalogManager::ObjectType::VIEW,
+                                    core::CatalogManager::ObjectType::INDEX,
+                                    core::CatalogManager::ObjectType::SEQUENCE
+                                };
+                            }
+                            else if (catalog_name == "pg_namespace")
+                            {
+                                allowed_types = { core::CatalogManager::ObjectType::SCHEMA };
+                            }
+                            else if (catalog_name == "pg_proc")
+                            {
+                                allowed_types = {
+                                    core::CatalogManager::ObjectType::FUNCTION,
+                                    core::CatalogManager::ObjectType::PROCEDURE,
+                                    core::CatalogManager::ObjectType::UDR
+                                };
+                            }
+                            else if (catalog_name == "pg_trigger")
+                            {
+                                allowed_types = { core::CatalogManager::ObjectType::TRIGGER };
+                            }
+                            else if (catalog_name == "pg_constraint")
+                            {
+                                allowed_types = { core::CatalogManager::ObjectType::CONSTRAINT };
+                            }
+                            else if (catalog_name == "pg_type")
+                            {
+                                allowed_types = {
+                                    core::CatalogManager::ObjectType::DOMAIN,
+                                    core::CatalogManager::ObjectType::COMPOSITE_TYPE
+                                };
+                            }
+                            else if (catalog_name == "pg_extension")
+                            {
+                                allowed_types = { core::CatalogManager::ObjectType::EXTENSION };
+                            }
+                            else if (catalog_name == "pg_collation")
+                            {
+                                allowed_types = { core::CatalogManager::ObjectType::COLLATION };
+                            }
+                            else if (catalog_name == "pg_database")
+                            {
+                                allowed_types = { core::CatalogManager::ObjectType::DATABASE };
+                            }
+                            else if (catalog_name == "pg_authid")
+                            {
+                                allowed_types = {
+                                    core::CatalogManager::ObjectType::ROLE,
+                                    core::CatalogManager::ObjectType::USER,
+                                    core::CatalogManager::ObjectType::GROUP
+                                };
+                            }
+                            else if (catalog_name == "pg_tablespace")
+                            {
+                                allowed_types = { core::CatalogManager::ObjectType::TABLESPACE };
+                            }
+
+                            if (allowed_types.empty() || !db_ || !db_->catalog_manager())
+                            {
+                                return Value::makeNull();
+                            }
+
+                            auto oidFromUuid = [](const core::ID& id) -> int64_t {
+                                uint64_t hash = 1469598103934665603ULL;
+                                for (uint8_t b : id.bytes)
+                                {
+                                    hash ^= b;
+                                    hash *= 1099511628211ULL;
+                                }
+                                hash &= 0x3fffffffffffffffULL;
+                                hash |= 0x4000000000000000ULL;
+                                return static_cast<int64_t>(hash);
+                            };
+
+                            int64_t oid = args[0].toInt64();
+                            std::vector<core::CatalogManager::CommentInfo> comments;
+                            core::ErrorContext ctx;
+                            if (db_->catalog_manager()->listComments(comments, &ctx) != core::Status::OK)
+                            {
+                                return Value::makeNull();
+                            }
+                            for (const auto& comment : comments)
+                            {
+                                if (std::find(allowed_types.begin(), allowed_types.end(),
+                                              comment.object_type) == allowed_types.end())
+                                {
+                                    continue;
+                                }
+                                if (oidFromUuid(comment.object_id) == oid)
+                                {
+                                    return Value::makeText(comment.comment_text);
+                                }
+                            }
+                            return Value::makeNull();
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_COL_DESCRIPTION)
+                        {
+                            if (args.size() != 2 || args[0].isNull() || args[1].isNull() ||
+                                !db_ || !db_->catalog_manager())
+                            {
+                                return Value::makeNull();
+                            }
+                            int64_t rel_oid = args[0].toInt64();
+                            int64_t attnum = args[1].toInt64();
+                            if (attnum <= 0)
+                            {
+                                return Value::makeNull();
+                            }
+
+                            auto oidFromUuid = [](const core::ID& id) -> int64_t {
+                                uint64_t hash = 1469598103934665603ULL;
+                                for (uint8_t b : id.bytes)
+                                {
+                                    hash ^= b;
+                                    hash *= 1099511628211ULL;
+                                }
+                                hash &= 0x3fffffffffffffffULL;
+                                hash |= 0x4000000000000000ULL;
+                                return static_cast<int64_t>(hash);
+                            };
+
+                            core::ID table_id;
+                            bool found_table = false;
+                            std::vector<core::CatalogManager::SchemaInfo> schemas;
+                            core::ErrorContext ctx;
+                            if (db_->catalog_manager()->listSchemas(schemas, &ctx) != core::Status::OK)
+                            {
+                                return Value::makeNull();
+                            }
+                            for (const auto& schema : schemas)
+                            {
+                                std::vector<core::CatalogManager::TableInfo> tables;
+                                if (db_->catalog_manager()->listTables(schema.schema_id, tables, &ctx) != core::Status::OK)
+                                {
+                                    continue;
+                                }
+                                for (const auto& table : tables)
+                                {
+                                    if (oidFromUuid(table.table_id) == rel_oid)
+                                    {
+                                        table_id = table.table_id;
+                                        found_table = true;
+                                        break;
+                                    }
+                                }
+                                if (found_table)
+                                {
+                                    break;
+                                }
+                            }
+                            if (!found_table)
+                            {
+                                return Value::makeNull();
+                            }
+
+                            std::vector<core::CatalogManager::ColumnInfo> columns;
+                            if (db_->catalog_manager()->getColumns(table_id, columns, &ctx) != core::Status::OK)
+                            {
+                                return Value::makeNull();
+                            }
+                            for (const auto& column : columns)
+                            {
+                                if (column.ordinal == static_cast<uint16_t>(attnum))
+                                {
+                                    std::string comment;
+                                    if (db_->catalog_manager()->getComment(column.column_id, comment, &ctx) ==
+                                        core::Status::OK)
+                                    {
+                                        return Value::makeText(comment);
+                                    }
+                                    return Value::makeNull();
+                                }
+                            }
+                            return Value::makeNull();
                         }
 
                         if (op == Opcode::SBLR3_FUNC_TO_DATE || op == Opcode::SBLR3_FUNC_TO_TIMESTAMP)
@@ -65367,14 +66317,29 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_SESSION_STATE:
                                 return executeRemoteControlOpcode(opcode, payload);
                             case scratchbird::sblr::v3::Opcode::SBLR3_OP_SEARCH_DSL_EVAL: {
-                                uint64_t target_index = 0;
-                                if ((!getU64(payload, "target_index", target_index) &&
-                                     !getU64(payload, "dsl_blob_ref", target_index)) ||
-                                    target_index == 0)
+                                bool has_payload = false;
+
+                                std::string dsl_payload_json;
+                                has_payload = getString(payload, "dsl_payload_json", dsl_payload_json) &&
+                                              !dsl_payload_json.empty();
+                                if (!has_payload)
+                                {
+                                    std::string payload_json;
+                                    has_payload = getString(payload, "payload", payload_json) &&
+                                                  !payload_json.empty();
+                                }
+                                if (!has_payload)
+                                {
+                                    uint64_t dsl_blob_ref = 0;
+                                    has_payload = getU64(payload, "dsl_blob_ref", dsl_blob_ref);
+                                }
+
+                                if (!has_payload)
                                 {
                                     return ExecutionResult(
-                                        "V3 SEARCH DSL missing target_index");
+                                        "V3 SEARCH DSL runtime closure requires payload");
                                 }
+
                                 core::VNextMetricsEventModel::recordExecutorEvent(
                                     "vnext_opcode_dispatch", "ok", symbol);
                                 return ExecutionResult();
@@ -90660,6 +91625,51 @@ namespace scratchbird
             uint8_t arg_count = readByte();
             ExtractField field = static_cast<ExtractField>(field_id);
 
+            auto is_deterministic_extract_error = [](const std::string& message) {
+                return message.rfind("EXTRACT_FIELD_UNKNOWN(", 0) == 0 ||
+                       message.rfind("EXTRACT_FIELD_NOT_VALID_FOR_TYPE(", 0) == 0 ||
+                       message.rfind("EXTRACT_FIELD_VALUE_CONSTRAINT_VIOLATION(", 0) == 0;
+            };
+
+            auto extract_data_type_name = [](core::DataType type) -> std::string {
+                switch (type)
+                {
+                    case core::DataType::DATE: return "DATE";
+                    case core::DataType::TIME: return "TIME";
+                    case core::DataType::TIME_WITH_ZONE: return "TIME_WITH_ZONE";
+                    case core::DataType::TIMESTAMP: return "TIMESTAMP";
+                    case core::DataType::TIMESTAMP_WITH_ZONE: return "TIMESTAMP_WITH_ZONE";
+                    case core::DataType::DATETIME: return "DATETIME";
+                    case core::DataType::INTERVAL: return "INTERVAL";
+                    case core::DataType::UUID: return "UUID";
+                    case core::DataType::JSON: return "JSON";
+                    case core::DataType::JSONB: return "JSONB";
+                    case core::DataType::XML: return "XML";
+                    case core::DataType::BYTEA: return "BYTEA";
+                    case core::DataType::BINARY: return "BINARY";
+                    case core::DataType::VARBINARY: return "VARBINARY";
+                    case core::DataType::BLOB: return "BLOB";
+                    case core::DataType::VECTOR: return "VECTOR";
+                    case core::DataType::ARRAY: return "ARRAY";
+                    case core::DataType::COMPOSITE: return "COMPOSITE";
+                    case core::DataType::VARIANT: return "VARIANT";
+                    case core::DataType::CHAR: return "CHAR";
+                    case core::DataType::VARCHAR: return "VARCHAR";
+                    case core::DataType::TEXT: return "TEXT";
+                    case core::DataType::TSVECTOR: return "TSVECTOR";
+                    case core::DataType::TSQUERY: return "TSQUERY";
+                    case core::DataType::INET: return "INET";
+                    case core::DataType::CIDR: return "CIDR";
+                    case core::DataType::MACADDR: return "MACADDR";
+                    case core::DataType::MACADDR8: return "MACADDR8";
+                    case core::DataType::UNKNOWN: return "UNKNOWN";
+                    case core::DataType::NULL_TYPE: return "NULL";
+                    default:
+                        break;
+                }
+                return "TYPE_" + std::to_string(static_cast<uint16_t>(type));
+            };
+
             Value source = pop();
 
             std::vector<Value> args(arg_count);
@@ -90672,7 +91682,17 @@ namespace scratchbird
             std::string err;
             if (!extractElement(source, field, args, &result, &err))
             {
-                error(err.empty() ? "EXTRACT failed" : err);
+                std::string failure = err.empty() ? "EXTRACT failed" : err;
+                if (!is_deterministic_extract_error(failure))
+                {
+                    std::ostringstream oss;
+                    oss << "EXTRACT_FIELD_VALUE_CONSTRAINT_VIOLATION("
+                        << extractFieldToString(field)
+                        << ", " << extract_data_type_name(source.type())
+                        << ", " << failure << ")";
+                    failure = oss.str();
+                }
+                error(failure);
                 return;
             }
             push(result);

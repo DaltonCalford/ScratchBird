@@ -266,7 +266,7 @@ TEST_F(IndexEmitterPayloadContractsTest, CreateIndexCarriesTypedOptionPayload) {
 
 TEST_F(IndexEmitterPayloadContractsTest, AlterIndexRelocateCarriesModeAndTargetFilespace) {
     auto bytecode = compileSql(
-        "ALTER INDEX idx_users_id RELOCATE TO FILESPACE fs_hot ONLINE "
+        "ALTER INDEX users.idx_users_id RELOCATE TO FILESPACE fs_hot ONLINE "
         "WITH (max_bytes_per_txn = 1024, throttle_ms = 10)");
     ASSERT_FALSE(bytecode.empty());
 
@@ -301,7 +301,7 @@ TEST_F(IndexEmitterPayloadContractsTest, AlterIndexRelocateCarriesModeAndTargetF
 }
 
 TEST_F(IndexEmitterPayloadContractsTest, AnalyzeIndexUsesDedicatedAnalyzeSchemaPayload) {
-    auto bytecode = compileSql("ANALYZE INDEX idx_users_id WITH (sample_rate = 0.25)");
+    auto bytecode = compileSql("ANALYZE INDEX users.idx_users_id WITH (sample_rate = 0.25)");
     ASSERT_FALSE(bytecode.empty());
 
     Instruction inst;
@@ -326,7 +326,7 @@ TEST_F(IndexEmitterPayloadContractsTest, AnalyzeIndexUsesDedicatedAnalyzeSchemaP
 }
 
 TEST_F(IndexEmitterPayloadContractsTest, ShowIndexHealthEncodesProfileInValueField) {
-    auto bytecode = compileSql("SHOW INDEX HEALTH idx_users_id");
+    auto bytecode = compileSql("SHOW INDEX HEALTH users.idx_users_id");
     ASSERT_FALSE(bytecode.empty());
 
     Instruction inst;
@@ -338,7 +338,7 @@ TEST_F(IndexEmitterPayloadContractsTest, ShowIndexHealthEncodesProfileInValueFie
 
     std::string key;
     ASSERT_TRUE(getString(*payload, "key", key));
-    EXPECT_EQ(key, "idx_users_id");
+    EXPECT_EQ(key, "users.idx_users_id");
 
     const Instruction* profile_instr = requireInstrField(*payload, "value");
     ASSERT_NE(profile_instr, nullptr);

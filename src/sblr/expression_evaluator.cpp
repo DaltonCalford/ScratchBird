@@ -28,10 +28,88 @@
 #include <chrono>
 #include <limits>
 #include <regex>
+#include <sstream>
 
 namespace scratchbird::sblr
 {
     using json = nlohmann::json;
+
+    namespace
+    {
+        std::string toUpperAsciiCopy(const std::string& input)
+        {
+            std::string upper;
+            upper.reserve(input.size());
+            for (char ch : input)
+            {
+                upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+            }
+            return upper;
+        }
+
+        bool isDeterministicExtractError(const std::string& message)
+        {
+            return message.rfind("EXTRACT_FIELD_UNKNOWN(", 0) == 0 ||
+                   message.rfind("EXTRACT_FIELD_NOT_VALID_FOR_TYPE(", 0) == 0 ||
+                   message.rfind("EXTRACT_FIELD_VALUE_CONSTRAINT_VIOLATION(", 0) == 0;
+        }
+
+        std::string extractDataTypeName(core::DataType type)
+        {
+            switch (type)
+            {
+                case core::DataType::DATE: return "DATE";
+                case core::DataType::TIME: return "TIME";
+                case core::DataType::TIME_WITH_ZONE: return "TIME_WITH_ZONE";
+                case core::DataType::TIMESTAMP: return "TIMESTAMP";
+                case core::DataType::TIMESTAMP_WITH_ZONE: return "TIMESTAMP_WITH_ZONE";
+                case core::DataType::DATETIME: return "DATETIME";
+                case core::DataType::INTERVAL: return "INTERVAL";
+                case core::DataType::UUID: return "UUID";
+                case core::DataType::JSON: return "JSON";
+                case core::DataType::JSONB: return "JSONB";
+                case core::DataType::XML: return "XML";
+                case core::DataType::BYTEA: return "BYTEA";
+                case core::DataType::BINARY: return "BINARY";
+                case core::DataType::VARBINARY: return "VARBINARY";
+                case core::DataType::BLOB: return "BLOB";
+                case core::DataType::VECTOR: return "VECTOR";
+                case core::DataType::ARRAY: return "ARRAY";
+                case core::DataType::COMPOSITE: return "COMPOSITE";
+                case core::DataType::VARIANT: return "VARIANT";
+                case core::DataType::CHAR: return "CHAR";
+                case core::DataType::VARCHAR: return "VARCHAR";
+                case core::DataType::TEXT: return "TEXT";
+                case core::DataType::TSVECTOR: return "TSVECTOR";
+                case core::DataType::TSQUERY: return "TSQUERY";
+                case core::DataType::INET: return "INET";
+                case core::DataType::CIDR: return "CIDR";
+                case core::DataType::MACADDR: return "MACADDR";
+                case core::DataType::MACADDR8: return "MACADDR8";
+                case core::DataType::UNKNOWN: return "UNKNOWN";
+                case core::DataType::NULL_TYPE: return "NULL";
+                default:
+                    break;
+            }
+            return "TYPE_" + std::to_string(static_cast<uint16_t>(type));
+        }
+
+        std::string formatExtractFieldUnknown(const std::string& field_name)
+        {
+            return "EXTRACT_FIELD_UNKNOWN(" + toUpperAsciiCopy(field_name) + ")";
+        }
+
+        std::string formatExtractFieldValueConstraintViolation(ExtractField field,
+                                                               core::DataType type,
+                                                               const std::string& reason)
+        {
+            std::ostringstream oss;
+            oss << "EXTRACT_FIELD_VALUE_CONSTRAINT_VIOLATION(" << extractFieldToString(field)
+                << ", " << extractDataTypeName(type)
+                << ", " << reason << ")";
+            return oss.str();
+        }
+    } // namespace
 
     // Task 17 MGA Phase 1.4: Updated constructor to include transaction context
     ExpressionEvaluator::ExpressionEvaluator(const std::vector<core::CatalogManager::ColumnInfo> &columns,
@@ -1839,7 +1917,7 @@ namespace scratchbird::sblr
             auto resolved = resolveExtractFieldName(expr->fieldName());
             if (!resolved.has_value())
             {
-                throw std::runtime_error("Unknown EXTRACT element: " + expr->fieldName());
+                throw std::runtime_error(formatExtractFieldUnknown(expr->fieldName()));
             }
             field = resolved.value();
         }
@@ -1856,7 +1934,12 @@ namespace scratchbird::sblr
         std::string err;
         if (!extractElement(source, field, args, &out, &err))
         {
-            throw std::runtime_error(err.empty() ? "EXTRACT failed" : err);
+            std::string failure = err.empty() ? "EXTRACT failed" : err;
+            if (!isDeterministicExtractError(failure))
+            {
+                failure = formatExtractFieldValueConstraintViolation(field, source.type(), failure);
+            }
+            throw std::runtime_error(failure);
         }
         return out;
     }

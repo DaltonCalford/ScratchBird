@@ -12,6 +12,7 @@
 #include <unordered_map>
 
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/sblr/extract_element_catalog.h"
 #include "scratchbird/sblr/v3_codec.h"
 #include "scratchbird/sblr/v3_opcode_registry.h"
 
@@ -4905,6 +4906,21 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitExpression(parser::v3::Express
             return emitCast(static_cast<parser::v3::CastExpr*>(expr));
         case parser::v3::ASTKind::ExtractExpr: {
             auto* e = static_cast<parser::v3::ExtractExpr*>(expr);
+            if (e->selector.kind == parser::v3::ElementSelector::Kind::IDENTIFIER &&
+                e->selector.identifier != parser::v3::StringPool::INVALID_ID) {
+                std::string field_name = toUpper(pool_.get(e->selector.identifier));
+                if (!scratchbird::sblr::resolveExtractFieldName(field_name).has_value()) {
+                    fail("EXTRACT_FIELD_UNKNOWN(" + field_name + ")");
+                    return {};
+                }
+            } else if (e->selector.kind == parser::v3::ElementSelector::Kind::STRING_LITERAL &&
+                       e->selector.string_literal != parser::v3::StringPool::INVALID_ID) {
+                std::string field_name = toUpper(pool_.get(e->selector.string_literal));
+                if (!scratchbird::sblr::resolveExtractFieldName(field_name).has_value()) {
+                    fail("EXTRACT_FIELD_UNKNOWN(" + field_name + ")");
+                    return {};
+                }
+            }
             Instruction inst;
             inst.opcode = op(Opcode::SBLR3_EXTRACT);
             inst.flags = 0;
@@ -5416,6 +5432,9 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
         }
     }
     payload["args"] = toExprList(expr->arguments);
+    if (inst.opcode == op(Opcode::SBLR3_EXPR_FUNCTION_CALL)) {
+        payload["name"] = Value(name);
+    }
     if (expr->is_window && expr->window) {
         payload["window"] = toWindowSpec(expr->window);
     }

@@ -236,7 +236,7 @@ TEST_F(IndexExecutorDispatchContractsTest, AnalyzeTableExecutesThroughV3Dispatch
 
 TEST_F(IndexExecutorDispatchContractsTest, AnalyzeIndexExecutesThroughV3DispatchAndUpdatesStatsCatalog)
 {
-    ExecutionResult result = executeSql("ANALYZE INDEX public.idx_users_id WITH (sample_rate = 0.25)");
+    ExecutionResult result = executeSql("ANALYZE INDEX users.idx_users_id WITH (sample_rate = 0.25)");
     ASSERT_TRUE(result.success()) << result.error();
 
     core::ErrorContext ctx;
@@ -263,7 +263,7 @@ TEST_F(IndexExecutorDispatchContractsTest, AnalyzeIndexExecutesThroughV3Dispatch
 TEST_F(IndexExecutorDispatchContractsTest, AlterIndexRebuildTransitionsMaintenanceStateToComplete)
 {
     ExecutionResult result = executeSql(
-        "ALTER INDEX idx_users_id REBUILD ONLINE "
+        "ALTER INDEX users.idx_users_id REBUILD ONLINE "
         "WITH (target_fillfactor = 90, throttle_ms = 5)");
     ASSERT_TRUE(result.success()) << result.error();
 
@@ -354,14 +354,14 @@ TEST_F(IndexExecutorDispatchContractsTest, OnlineMaintenanceCapturesInsertDelta)
 TEST_F(IndexExecutorDispatchContractsTest, AlterIndexRebalanceRoutesThroughMaintenanceStateMachine)
 {
     ExecutionResult result = executeSql(
-        "ALTER INDEX idx_users_id REBALANCE OFFLINE WITH (target_fillfactor = 85)");
+        "ALTER INDEX users.idx_users_id REBALANCE OFFLINE WITH (target_fillfactor = 85)");
     ASSERT_TRUE(result.success())
         << result.error();
 }
 
 TEST_F(IndexExecutorDispatchContractsTest, AlterIndexLightScanPopulatesHealthCatalog)
 {
-    ExecutionResult result = executeSql("ALTER INDEX idx_users_id LIGHT SCAN");
+    ExecutionResult result = executeSql("ALTER INDEX users.idx_users_id LIGHT SCAN");
     ASSERT_TRUE(result.success()) << result.error();
 
     core::ErrorContext ctx;
@@ -413,7 +413,7 @@ TEST_F(IndexExecutorDispatchContractsTest, AlterIndexDiagnosticScanDetectsChecks
     ASSERT_EQ(db_->buffer_pool()->unpinPageGlobal(index_info.root_gpid, true, &ctx), Status::OK)
         << ctx.message;
 
-    ExecutionResult result = executeSql("ALTER INDEX idx_users_id DIAGNOSTIC SCAN");
+    ExecutionResult result = executeSql("ALTER INDEX users.idx_users_id DIAGNOSTIC SCAN");
     ASSERT_TRUE(result.success()) << result.error();
 
     core::CatalogManager::IndexHealthCatalogInfo health_info;
@@ -441,7 +441,7 @@ TEST_F(IndexExecutorDispatchContractsTest, AlterIndexLightScanUpdatesUsageMetric
     ASSERT_EQ(db_->catalog_manager()->getIndex(table_info.table_id, "idx_users_id", index_info, &ctx), Status::OK)
         << ctx.message;
 
-    ExecutionResult result = executeSql("ALTER INDEX idx_users_id LIGHT SCAN");
+    ExecutionResult result = executeSql("ALTER INDEX users.idx_users_id LIGHT SCAN");
     ASSERT_TRUE(result.success()) << result.error();
 
     core::CatalogManager::IndexUsageCatalogInfo usage_info;
@@ -469,7 +469,7 @@ TEST_F(IndexExecutorDispatchContractsTest, AlterIndexMaintenanceUpdatesStorageMe
     ASSERT_EQ(db_->catalog_manager()->getIndex(table_info.table_id, "idx_users_id", index_info, &ctx), Status::OK)
         << ctx.message;
 
-    ExecutionResult result = executeSql("ALTER INDEX idx_users_id REBUILD OFFLINE");
+    ExecutionResult result = executeSql("ALTER INDEX users.idx_users_id REBUILD OFFLINE");
     ASSERT_TRUE(result.success()) << result.error();
 
     core::CatalogManager::IndexStorageCatalogInfo storage_info;
@@ -485,9 +485,9 @@ TEST_F(IndexExecutorDispatchContractsTest, AlterIndexMaintenanceUpdatesStorageMe
 
 TEST_F(IndexExecutorDispatchContractsTest, ShowIndexReportingProfilesReturnDeterministicShapes)
 {
-    ASSERT_TRUE(executeSql("ALTER INDEX idx_users_id LIGHT SCAN").success());
-    ASSERT_TRUE(executeSql("ALTER INDEX idx_users_id REBUILD OFFLINE").success());
-    ASSERT_TRUE(executeSql("ANALYZE INDEX idx_users_id WITH (sample_rate = 0.5)").success());
+    ASSERT_TRUE(executeSql("ALTER INDEX users.idx_users_id LIGHT SCAN").success());
+    ASSERT_TRUE(executeSql("ALTER INDEX users.idx_users_id REBUILD OFFLINE").success());
+    ASSERT_TRUE(executeSql("ANALYZE INDEX users.idx_users_id WITH (sample_rate = 0.5)").success());
 
     struct ShowContract {
         const char* sql;
@@ -496,7 +496,7 @@ TEST_F(IndexExecutorDispatchContractsTest, ShowIndexReportingProfilesReturnDeter
     };
 
     const std::vector<ShowContract> contracts = {
-        {"SHOW INDEX HEALTH idx_users_id",
+        {"SHOW INDEX HEALTH users.idx_users_id",
          {"Index_Name",
           "Index_ID",
           "Light_Status",
@@ -515,7 +515,7 @@ TEST_F(IndexExecutorDispatchContractsTest, ShowIndexReportingProfilesReturnDeter
           "In_Memory_Errors",
           "Pages_Scanned",
           "Bytes_Scanned"}},
-        {"SHOW INDEX USAGE idx_users_id",
+        {"SHOW INDEX USAGE users.idx_users_id",
          {"Index_Name",
           "Index_ID",
           "Scan_Count",
@@ -526,7 +526,7 @@ TEST_F(IndexExecutorDispatchContractsTest, ShowIndexReportingProfilesReturnDeter
           "Blocks_Hit",
           "Total_Time_Ns",
           "Last_Used_Time"}},
-        {"SHOW INDEX STORAGE idx_users_id",
+        {"SHOW INDEX STORAGE users.idx_users_id",
          {"Index_Name",
           "Index_ID",
           "Page_Count",
@@ -534,7 +534,7 @@ TEST_F(IndexExecutorDispatchContractsTest, ShowIndexReportingProfilesReturnDeter
           "Bytes_Allocated",
           "Fragmentation_Ratio",
           "Filespace_ID"}},
-        {"SHOW INDEX CONTENTION idx_users_id",
+        {"SHOW INDEX CONTENTION users.idx_users_id",
          {"Index_Name",
           "Index_ID",
           "Lock_Wait_Count",
@@ -544,7 +544,7 @@ TEST_F(IndexExecutorDispatchContractsTest, ShowIndexReportingProfilesReturnDeter
           "Latch_Wait_Time_Ns",
           "Unique_Key_Conflict_Count",
           "Hot_Key_Count"}},
-        {"SHOW INDEX OPTIONS idx_users_id",
+        {"SHOW INDEX OPTIONS users.idx_users_id",
          {"Index_Name",
           "Index_ID",
           "Option_Key",

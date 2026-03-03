@@ -1266,8 +1266,9 @@ core::Status PostgreSQLParserAgent::sendErrorResponse(PGClientState& state,
     msg.insert(msg.end(), severity, severity + std::strlen(severity) + 1);
     
     // SQLSTATE
+    const std::string mapped_sqlstate = mapSQLStateToProtocol(sqlstate.c_str());
     msg.push_back(pg::ERR_CODE);
-    msg.insert(msg.end(), sqlstate.begin(), sqlstate.end());
+    msg.insert(msg.end(), mapped_sqlstate.begin(), mapped_sqlstate.end());
     msg.push_back('\0');
     
     // Message
@@ -1289,17 +1290,166 @@ core::Status PostgreSQLParserAgent::sendErrorResponse(PGClientState& state,
     return core::Status::OK;
 }
 
+void PostgreSQLParserAgent::sendRowDescription(PGClientState& state,
+                                              const std::vector<IPCFieldDesc>& fields) {
+    std::vector<uint8_t> msg;
+    msg.push_back(pg::BE_ROW_DESCRIPTION);
+    msg.resize(msg.size() + 4);  // length placeholder
+
+    uint8_t count_buf[2];
+    writeUint16(count_buf, static_cast<uint16_t>(fields.size()));
+    msg.insert(msg.end(), count_buf, count_buf + 2);
+
+    for (const auto& field : fields) {
+        size_t name_len = 0;
+        while (name_len < sizeof(field.name) && field.name[name_len] != '\0') {
+            ++name_len;
+        }
+        msg.insert(msg.end(), field.name, field.name + name_len);
+        msg.push_back('\0');
+
+        uint8_t u32[4];
+        uint8_t u16[2];
+
+        writeUint32(u32, static_cast<uint32_t>(field.table_oid));
+        msg.insert(msg.end(), u32, u32 + 4);
+
+        writeUint16(u16, static_cast<uint16_t>(field.column_num));
+        msg.insert(msg.end(), u16, u16 + 2);
+
+        writeUint32(u32, static_cast<uint32_t>(field.type_oid));
+        msg.insert(msg.end(), u32, u32 + 4);
+
+        writeUint16(u16, static_cast<uint16_t>(field.type_size));
+        msg.insert(msg.end(), u16, u16 + 2);
+
+        writeUint32(u32, static_cast<uint32_t>(field.type_modifier));
+        msg.insert(msg.end(), u32, u32 + 4);
+
+        writeUint16(u16, static_cast<uint16_t>(field.format));
+        msg.insert(msg.end(), u16, u16 + 2);
+    }
+
+    writeUint32(msg.data() + 1, static_cast<uint32_t>(msg.size() - 1));
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
+}
+
+void PostgreSQLParserAgent::sendDataRow(PGClientState& state,
+                                       const std::vector<std::optional<std::string>>& values) {
+    std::vector<uint8_t> msg;
+    msg.push_back(pg::BE_DATA_ROW);
+    msg.resize(msg.size() + 4);  // length placeholder
+
+    uint8_t count_buf[2];
+    writeUint16(count_buf, static_cast<uint16_t>(values.size()));
+    msg.insert(msg.end(), count_buf, count_buf + 2);
+
+    for (const auto& value : values) {
+        uint8_t len_buf[4];
+        if (!value.has_value()) {
+            writeUint32(len_buf, 0xFFFFFFFFu);
+            msg.insert(msg.end(), len_buf, len_buf + 4);
+            continue;
+        }
+
+        size_t raw_len = value->size();
+        if (raw_len > 0x7FFFFFFFu) {
+            raw_len = 0x7FFFFFFFu;
+        }
+        const uint32_t wire_len = static_cast<uint32_t>(raw_len);
+        writeUint32(len_buf, wire_len);
+        msg.insert(msg.end(), len_buf, len_buf + 4);
+        msg.insert(msg.end(), value->data(), value->data() + wire_len);
+    }
+
+    writeUint32(msg.data() + 1, static_cast<uint32_t>(msg.size() - 1));
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
+}
+
 void PostgreSQLParserAgent::sendCommandComplete(PGClientState& state, const std::string& tag) {
     std::vector<uint8_t> msg;
     msg.push_back(pg::BE_COMMAND_COMPLETE);
     
     uint32_t len = 4 + tag.size() + 1;
-    writeUint32(msg.data() + msg.size(), len);
     msg.resize(msg.size() + 4);
+    writeUint32(msg.data() + 1, len);
     
     msg.insert(msg.end(), tag.begin(), tag.end());
     msg.push_back('\0');
     
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
+}
+
+void PostgreSQLParserAgent::sendParseComplete(PGClientState& state) {
+    std::vector<uint8_t> msg;
+    msg.push_back(pg::BE_PARSE_COMPLETE);
+    uint8_t len_buf[4];
+    writeUint32(len_buf, 4);
+    msg.insert(msg.end(), len_buf, len_buf + 4);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
+}
+
+void PostgreSQLParserAgent::sendBindComplete(PGClientState& state) {
+    std::vector<uint8_t> msg;
+    msg.push_back(pg::BE_BIND_COMPLETE);
+    uint8_t len_buf[4];
+    writeUint32(len_buf, 4);
+    msg.insert(msg.end(), len_buf, len_buf + 4);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
+}
+
+void PostgreSQLParserAgent::sendCloseComplete(PGClientState& state) {
+    std::vector<uint8_t> msg;
+    msg.push_back(pg::BE_CLOSE_COMPLETE);
+    uint8_t len_buf[4];
+    writeUint32(len_buf, 4);
+    msg.insert(msg.end(), len_buf, len_buf + 4);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
+}
+
+void PostgreSQLParserAgent::sendCopyInResponse(PGClientState& state,
+                                               uint8_t format,
+                                               const std::vector<uint16_t>& column_formats) {
+    std::vector<uint8_t> msg;
+    msg.push_back(pg::BE_COPY_IN_RESPONSE);
+    msg.resize(msg.size() + 4);  // length placeholder
+
+    msg.push_back(format);
+
+    uint8_t count_buf[2];
+    writeUint16(count_buf, static_cast<uint16_t>(column_formats.size()));
+    msg.insert(msg.end(), count_buf, count_buf + 2);
+
+    for (uint16_t column_format : column_formats) {
+        uint8_t fmt_buf[2];
+        writeUint16(fmt_buf, column_format);
+        msg.insert(msg.end(), fmt_buf, fmt_buf + 2);
+    }
+
+    writeUint32(msg.data() + 1, static_cast<uint32_t>(msg.size() - 1));
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
+}
+
+void PostgreSQLParserAgent::sendCopyOutResponse(PGClientState& state,
+                                                uint8_t format,
+                                                const std::vector<uint16_t>& column_formats) {
+    std::vector<uint8_t> msg;
+    msg.push_back(pg::BE_COPY_OUT_RESPONSE);
+    msg.resize(msg.size() + 4);  // length placeholder
+
+    msg.push_back(format);
+
+    uint8_t count_buf[2];
+    writeUint16(count_buf, static_cast<uint16_t>(column_formats.size()));
+    msg.insert(msg.end(), count_buf, count_buf + 2);
+
+    for (uint16_t column_format : column_formats) {
+        uint8_t fmt_buf[2];
+        writeUint16(fmt_buf, column_format);
+        msg.insert(msg.end(), fmt_buf, fmt_buf + 2);
+    }
+
+    writeUint32(msg.data() + 1, static_cast<uint32_t>(msg.size() - 1));
     sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
 
@@ -1426,6 +1576,81 @@ core::Status PostgreSQLParserAgent::writeMessage(int fd,
     return core::Status::OK;
 }
 
+size_t PostgreSQLParserAgent::readMessageLength(const uint8_t* header, size_t len) {
+    if (!header) {
+        return 0;
+    }
+    if (len >= 5) {
+        return static_cast<size_t>(readUint32(header + 1));
+    }
+    if (len >= 4) {
+        return static_cast<size_t>(readUint32(header));
+    }
+    return 0;
+}
+
+IPCMessageType PostgreSQLParserAgent::mapClientToIPC(uint8_t msg_type) {
+    switch (msg_type) {
+        case pg::FE_QUERY:
+            return IPCMessageType::SIMPLE_QUERY;
+        case pg::FE_PARSE:
+            return IPCMessageType::PARSE;
+        case pg::FE_BIND:
+            return IPCMessageType::BIND;
+        case pg::FE_EXECUTE:
+            return IPCMessageType::EXECUTE;
+        case pg::FE_CLOSE:
+            return IPCMessageType::CLOSE;
+        case pg::FE_DESCRIBE:
+            return IPCMessageType::DESCRIBE;
+        case pg::FE_SYNC:
+            return IPCMessageType::SYNC;
+        case pg::FE_COPY_DATA:
+            return IPCMessageType::COPY_DATA;
+        case pg::FE_COPY_DONE:
+            return IPCMessageType::COPY_DONE;
+        case pg::FE_COPY_FAIL:
+            return IPCMessageType::COPY_FAIL;
+        case pg::FE_TERMINATE:
+            return IPCMessageType::TERMINATE;
+        default:
+            return IPCMessageType::ERROR_RESPONSE;
+    }
+}
+
+uint8_t PostgreSQLParserAgent::mapIPCToClient(IPCMessageType msg_type) {
+    switch (msg_type) {
+        case IPCMessageType::ROW_DESCRIPTION:
+            return pg::BE_ROW_DESCRIPTION;
+        case IPCMessageType::DATA_ROW:
+            return pg::BE_DATA_ROW;
+        case IPCMessageType::COMMAND_COMPLETE:
+            return pg::BE_COMMAND_COMPLETE;
+        case IPCMessageType::READY:
+        case IPCMessageType::READY_FOR_QUERY:
+            return pg::BE_READY_FOR_QUERY;
+        case IPCMessageType::PARSE_COMPLETE:
+            return pg::BE_PARSE_COMPLETE;
+        case IPCMessageType::BIND_COMPLETE:
+            return pg::BE_BIND_COMPLETE;
+        case IPCMessageType::CLOSE_COMPLETE:
+            return pg::BE_CLOSE_COMPLETE;
+        case IPCMessageType::COPY_IN_REQUEST:
+            return pg::BE_COPY_IN_RESPONSE;
+        case IPCMessageType::COPY_OUT_RESPONSE:
+            return pg::BE_COPY_OUT_RESPONSE;
+        case IPCMessageType::COPY_DATA:
+            return pg::BE_COPY_DATA;
+        case IPCMessageType::COPY_COMPLETE:
+            return pg::BE_COPY_DONE;
+        case IPCMessageType::NOTICE:
+            return pg::BE_NOTICE_RESPONSE;
+        case IPCMessageType::ERROR_RESPONSE:
+        default:
+            return pg::BE_ERROR_RESPONSE;
+    }
+}
+
 // ============================================================================
 // Translation Methods
 // ============================================================================
@@ -1517,12 +1742,44 @@ core::Status PostgreSQLParserAgent::translateAndSendResponse(PGClientState& stat
         
         case IPCMessageType::COMMAND_COMPLETE: {
             auto* payload = ipc_response.getPayload<IPCCommandCompletePayload>();
-            if (payload) {
-                std::string tag = payload->tag;
-                sendCommandComplete(state, tag);
-            } else {
+            if (!payload) {
                 sendCommandComplete(state, "SELECT 0");
+                return core::Status::OK;
             }
+
+            size_t tag_len = 0;
+            while (tag_len < sizeof(payload->tag) && payload->tag[tag_len] != '\0') {
+                ++tag_len;
+            }
+            std::string tag(payload->tag, tag_len);
+            if (tag.empty()) {
+                sendCommandComplete(state, "SELECT 0");
+                return core::Status::OK;
+            }
+
+            bool has_numeric_token = false;
+            for (char ch : tag) {
+                if (ch >= '0' && ch <= '9') {
+                    has_numeric_token = true;
+                    break;
+                }
+            }
+
+            if (!has_numeric_token) {
+                if (tag == "INSERT") {
+                    tag += " 0 " + std::to_string(payload->rows_affected);
+                } else if (tag == "SELECT" || tag == "UPDATE" || tag == "DELETE" ||
+                           tag == "MERGE" || tag == "MOVE" || tag == "FETCH" ||
+                           tag == "COPY") {
+                    tag += " " + std::to_string(payload->rows_affected);
+                }
+            }
+
+            if (tag == "SELECT") {
+                tag = "SELECT 0";
+            }
+
+            sendCommandComplete(state, tag);
             return core::Status::OK;
         }
         
@@ -1633,6 +1890,85 @@ core::Status PostgreSQLParserAgent::translateAndSendResponse(PGClientState& stat
             return core::Status::OK;
         }
     }
+}
+
+std::string PostgreSQLParserAgent::mapSQLStateToProtocol(const char* sqlstate) {
+    auto is_sqlstate = [](const std::string& state) {
+        if (state.size() != 5) {
+            return false;
+        }
+        for (char ch : state) {
+            const bool digit = (ch >= '0' && ch <= '9');
+            const bool upper = (ch >= 'A' && ch <= 'Z');
+            if (!digit && !upper) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!sqlstate || sqlstate[0] == '\0') {
+        return "XX000";
+    }
+
+    std::string state(sqlstate);
+
+    // Cross-engine normalization to PostgreSQL SQLSTATE families.
+    if (state == "42S02") return "42P01";
+    if (state == "42S22") return "42703";
+    if (state == "42000") return "42601";
+    if (state == "23000") return "23505";
+    if (state == "08S01") return "08006";
+    if (state == "HY000") return "XX000";
+
+    if (is_sqlstate(state)) {
+        return state;
+    }
+    return "XX000";
+}
+
+void PostgreSQLParserAgent::mapProtocolErrorToSQLState(const std::vector<uint8_t>& error,
+                                                      char* sqlstate_out) {
+    if (!sqlstate_out) {
+        return;
+    }
+
+    auto write_state = [&](const char* state) {
+        std::memcpy(sqlstate_out, state, 5);
+        sqlstate_out[5] = '\0';
+    };
+
+    // PostgreSQL ErrorResponse: 'E' + len + field tuples, SQLSTATE is field code 'C'.
+    if (error.size() < 6 || error[0] != pg::BE_ERROR_RESPONSE) {
+        write_state("XX000");
+        return;
+    }
+
+    size_t offset = 5;  // message type + length
+    while (offset < error.size()) {
+        uint8_t field_code = error[offset++];
+        if (field_code == pg::ERR_NULL) {
+            break;
+        }
+
+        const size_t start = offset;
+        while (offset < error.size() && error[offset] != '\0') {
+            ++offset;
+        }
+        if (offset >= error.size()) {
+            break;
+        }
+
+        if (field_code == pg::ERR_CODE && (offset - start) == 5) {
+            std::memcpy(sqlstate_out, error.data() + start, 5);
+            sqlstate_out[5] = '\0';
+            return;
+        }
+
+        ++offset;  // skip null terminator
+    }
+
+    write_state("XX000");
 }
 
 } // namespace ipc

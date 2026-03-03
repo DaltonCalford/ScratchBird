@@ -451,6 +451,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"tablesample", TokenType::KW_TABLESAMPLE},
         {"within", TokenType::KW_WITHIN},
         {"variadic", TokenType::KW_VARIADIC},
+        {"vacuum", TokenType::KW_VACUUM},
 
         // Copy keywords
         {"copy", TokenType::KW_COPY},

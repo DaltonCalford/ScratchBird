@@ -20,6 +20,7 @@
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/bytecode_validator.h"
+#include "scratchbird/sblr/extract_element_ops.h"
 #include "scratchbird/sblr/v3_codec.h"
 #include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/core/database.h"
@@ -292,6 +293,61 @@ TEST_F(QueryCompilerV3Test, RouteParityClosedFamiliesDoNotUseBridgeFallbackPaths
 TEST_F(QueryCompilerV3Test, ExecuteCanonicalExtractMonthFromCurrentDate) {
     auto result = compiler_->compile("SELECT EXTRACT(MONTH FROM CAST('2026-03-03' AS DATE))");
     ASSERT_TRUE(result.success()) << "EXTRACT(MONTH FROM CAST('2026-03-03' AS DATE)) compile failed";
+}
+
+TEST_F(QueryCompilerV3Test, CompileExtractUnknownFieldUsesDeterministicErrorCode) {
+    auto result = compiler_->compile("SELECT EXTRACT('not_a_field' FROM CAST('2026-03-03' AS DATE))");
+    ASSERT_FALSE(result.success()) << "Compilation unexpectedly succeeded";
+
+    bool found = false;
+    for (const auto& err : result.errors()) {
+        if (err.find("EXTRACT_FIELD_UNKNOWN(NOT_A_FIELD)") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+
+    EXPECT_TRUE(found);
+}
+
+TEST_F(QueryCompilerV3Test, ExtractElementFieldNotValidForTypeUsesDeterministicErrorCode) {
+    TypedValue source = TypedValue::makeDate(0);
+    TypedValue out;
+    std::string err;
+    bool ok = scratchbird::sblr::extractElement(source,
+                                                scratchbird::sblr::ExtractField::VERSION,
+                                                {},
+                                                &out,
+                                                &err);
+    ASSERT_FALSE(ok) << "extractElement unexpectedly succeeded";
+    EXPECT_NE(err.find("EXTRACT_FIELD_NOT_VALID_FOR_TYPE(VERSION, DATE"), std::string::npos) << err;
+}
+
+TEST_F(QueryCompilerV3Test, ExtractElementConstraintViolationUsesDeterministicErrorCode) {
+    TypedValue source = TypedValue::makeArray({TypedValue::makeInt32(1)});
+    TypedValue out;
+    std::string err;
+    bool ok = scratchbird::sblr::extractElement(source,
+                                                scratchbird::sblr::ExtractField::ELEMENT,
+                                                {},
+                                                &out,
+                                                &err);
+    ASSERT_FALSE(ok) << "extractElement unexpectedly succeeded";
+    EXPECT_NE(err.find("EXTRACT_FIELD_VALUE_CONSTRAINT_VIOLATION(ELEMENT, ARRAY"),
+              std::string::npos)
+        << err;
+}
+
+TEST_F(QueryCompilerV3Test, ExtractElementSupportsTimeWithTimeZoneType) {
+    auto result = compiler_->compile(
+        "SELECT EXTRACT(HOUR FROM CAST('10:00:00+01:00' AS TIME WITH TIME ZONE))");
+    ASSERT_TRUE(result.success()) << "TIME WITH TIME ZONE extract compile failed";
+}
+
+TEST_F(QueryCompilerV3Test, ExtractElementSupportsTimestampWithTimeZoneType) {
+    auto result = compiler_->compile(
+        "SELECT EXTRACT(YEAR FROM CAST('1970-01-01 01:00:00+01:00' AS TIMESTAMP WITH TIME ZONE))");
+    ASSERT_TRUE(result.success()) << "TIMESTAMP WITH TIME ZONE extract compile failed";
 }
 
 TEST_F(QueryCompilerV3Test, ExecuteCreateViewWithMaterializedOption) {
@@ -981,6 +1037,13 @@ TEST_F(QueryCompilerV3Test, CanonicalFunctionDispatchUsesDedicatedOpcodes) {
     }
 }
 
+TEST_F(QueryCompilerV3Test, CompileCurrentDatabaseUsesGenericFunctionCallOpcode) {
+    auto result = compiler_->compile("SELECT CURRENT_DATABASE()");
+    ASSERT_TRUE(result.success()) << "Compilation failed";
+    EXPECT_TRUE(containsOpcodeDeep(
+        result.bytecode(), scratchbird::sblr::v3::Opcode::SBLR3_EXPR_FUNCTION_CALL));
+}
+
 TEST_F(QueryCompilerV3Test, ExecuteV3ConcatOperatorEvaluates) {
     auto result = compileAndExecute("SELECT 'a' || 'b'");
     ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
@@ -991,6 +1054,135 @@ TEST_F(QueryCompilerV3Test, ExecuteV3ConcatOperatorEvaluates) {
     ASSERT_EQ(rs->rowCount(), 1);
     ASSERT_EQ(rs->columnCount(), 1);
     EXPECT_EQ(rs->getValue(0, 0).toString(), "ab");
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCanonicalMathFunctionsEvaluate) {
+    auto result = compileAndExecute(
+        "SELECT "
+        "ACOS(1), ACOSH(2), ASIN(1), ASINH(1), ATAN(1), ATAN2(1, 1), ATANH(0.5), "
+        "CBRT(8), CEILING(1.2), COSH(0), COT(1), DEGREES(3.1415926535), EXP(1), FLOOR(1.9), "
+        "LN(1), LOG(10), LOG10(10), LOG2(8), MOD(7, 3), PI(), RADIANS(180), ROUND(3.14159, 2), "
+        "SIGN(-5), SINH(0), SQRT(9), TANH(0), TRUNC(3.14159, 2)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    for (size_t i = 0; i < rs->columnCount(); ++i) {
+        EXPECT_FALSE(rs->getValue(0, i).isNull()) << "Column " << i << " is NULL";
+    }
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCanonicalMathFunctionsInvalidDomainReturnsNull) {
+    auto result = compileAndExecute(
+        "SELECT "
+        "ACOS(2), ASIN(2), ACOSH(0), ATANH(1), "
+        "LN(0), LOG10(0), LOG2(0), LOG(1, 10), LOG(10, -1), "
+        "SQRT(-1), EXP(1000000)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 11u);
+    for (size_t i = 0; i < rs->columnCount(); ++i) {
+        EXPECT_TRUE(rs->getValue(0, i).isNull()) << "Expected NULL for invalid-domain column " << i;
+    }
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCanonicalStringAndDateFunctionsEvaluate) {
+    auto result = compileAndExecute(
+        "SELECT "
+        "LENGTH('abc'), CHAR_LENGTH('abc'), OCTET_LENGTH('abc'), "
+        "UPPER('abc'), LOWER('ABC'), TRIM('  abc  '), LTRIM('  abc'), RTRIM('abc  '), "
+        "SUBSTRING('abcdef', 2, 3), "
+        "DATE_ADD(CAST('2026-03-03' AS DATE), 1), "
+        "DATE_SUB(CAST('2026-03-03' AS DATE), 1), "
+        "DATE_DIFF(CAST('2026-03-03' AS DATE), CAST('2026-03-01' AS DATE))");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    for (size_t i = 0; i < rs->columnCount(); ++i) {
+        EXPECT_FALSE(rs->getValue(0, i).isNull()) << "Column " << i << " is NULL";
+    }
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCanonicalCatalogHelperFunctionsEvaluate) {
+    auto result = compileAndExecute(
+        "SELECT "
+        "AGE(CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+        "FORMAT_TYPE(23, NULL), "
+        "OBJ_DESCRIPTION(1, 'pg_class'), "
+        "SHOBJ_DESCRIPTION(1, 'pg_class'), "
+        "COL_DESCRIPTION(1, 1)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 5u);
+    EXPECT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_FALSE(rs->getValue(0, 1).isNull());
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCanonicalCurrentDatabaseFunctionEvaluate) {
+    auto result = compileAndExecute("SELECT CURRENT_DATABASE()");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 1u);
+    EXPECT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_FALSE(rs->getValue(0, 0).toString().empty());
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCanonicalFunctionResultShapeParity) {
+    auto result = compileAndExecute(
+        "SELECT "
+        "LENGTH('abc'), "
+        "CHAR_LENGTH('abc'), "
+        "OCTET_LENGTH('abc'), "
+        "SIGN(-5), "
+        "ROUND(3.14159, 2), "
+        "TRUNC(3.14159, 2), "
+        "DATE_DIFF(CAST('2026-03-03' AS DATE), CAST('2026-03-01' AS DATE)), "
+        "FORMAT_TYPE(23, NULL)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 8u);
+
+    const auto v0 = rs->getValue(0, 0);
+    const auto v1 = rs->getValue(0, 1);
+    const auto v2 = rs->getValue(0, 2);
+    const auto v3 = rs->getValue(0, 3);
+    const auto v4 = rs->getValue(0, 4);
+    const auto v5 = rs->getValue(0, 5);
+    const auto v6 = rs->getValue(0, 6);
+    const auto v7 = rs->getValue(0, 7);
+
+    EXPECT_EQ(v0.type(), DataType::INT32);
+    EXPECT_EQ(v1.type(), DataType::INT32);
+    EXPECT_EQ(v2.type(), DataType::INT32);
+    EXPECT_EQ(v3.type(), DataType::INT32);
+    EXPECT_EQ(v4.type(), DataType::FLOAT64);
+    EXPECT_EQ(v5.type(), DataType::FLOAT64);
+    EXPECT_EQ(v6.type(), DataType::INT64);
+    EXPECT_TRUE(v7.type() == DataType::TEXT || v7.type() == DataType::VARCHAR);
+
+    EXPECT_EQ(v0.toInt64(), 3);
+    EXPECT_EQ(v1.toInt64(), 3);
+    EXPECT_EQ(v2.toInt64(), 3);
+    EXPECT_EQ(v3.toInt64(), -1);
+    EXPECT_NEAR(v4.toDouble(), 3.14, 1e-9);
+    EXPECT_NEAR(v5.toDouble(), 3.14, 1e-9);
+    EXPECT_EQ(v6.toInt64(), 2);
+    EXPECT_FALSE(v7.isNull());
 }
 
 TEST_F(QueryCompilerV3Test, ExecuteOperatorStrictModeBlocksImplicitNumericCast) {
