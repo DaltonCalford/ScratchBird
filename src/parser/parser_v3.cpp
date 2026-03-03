@@ -646,6 +646,17 @@ std::vector<ParseResult> Parser::parseStatements() {
 Statement* Parser::parseStatementInternal() {
     ParseModeGuard guard(state_, ParseMode::STATEMENT);
 
+    if (check(TokenType::LEFT_BRACE)) {
+        errorCode("PRS_0505",
+                  "JDBC escape blocks ({fn ...}, {d ...}, {ts ...}) are not supported in v3; use canonical SQL forms");
+        return nullptr;
+    }
+    if (checkContextual("REPLACE")) {
+        errorCode("PRS_0505",
+                  "REPLACE INTO is not supported in v3; use INSERT ... ON CONFLICT");
+        return nullptr;
+    }
+
     // Gatekeeper dispatch
     if (check(TokenType::KW_WITH))      return parseWithStatement();
     if (matchContextual("RECREATE"))    return parseRecreate();
@@ -9818,6 +9829,42 @@ SelectStmt* Parser::parseSelect() {
         stmt->all = true;
     }
 
+    if (checkContextual("TOP")) {
+        Token lookahead = state_.lexer().peekToken();
+        bool looks_like_top_clause =
+            lookahead.type == TokenType::LEFT_PAREN ||
+            lookahead.type == TokenType::INTEGER_LITERAL ||
+            lookahead.type == TokenType::FLOAT_LITERAL ||
+            lookahead.type == TokenType::PARAMETER ||
+            lookahead.type == TokenType::PLUS ||
+            lookahead.type == TokenType::MINUS;
+        if (looks_like_top_clause) {
+            matchContextual("TOP");
+            errorCode("PRS_0505",
+                      "TOP(...) [PERCENT] [WITH TIES] is not supported in v3; use LIMIT/OFFSET or FETCH FIRST");
+
+            if (match(TokenType::LEFT_PAREN)) {
+                int depth = 1;
+                while (!isAtEnd() && depth > 0) {
+                    if (match(TokenType::LEFT_PAREN)) {
+                        ++depth;
+                    } else if (match(TokenType::RIGHT_PAREN)) {
+                        --depth;
+                    } else {
+                        advance();
+                    }
+                }
+            } else if (!isAtEnd()) {
+                advance();
+            }
+
+            matchContextual("PERCENT");
+            if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
+                matchContextual("TIES");
+            }
+        }
+    }
+
     auto parseFirebirdRowCountExpr = [&]() -> Expression* {
         if (match(TokenType::LEFT_PAREN)) {
             Expression* expr = parseExpression();
@@ -9860,6 +9907,47 @@ SelectStmt* Parser::parseSelect() {
     // WHERE clause
     if (match(TokenType::KW_WHERE)) {
         parseWhereClause(stmt);
+    }
+
+    auto reject_connect_by_surface = [&]() {
+        errorCode("PRS_0505",
+                  "START WITH ... CONNECT BY is not supported in v3; use WITH RECURSIVE");
+        while (!isAtEnd() &&
+               !check(TokenType::KW_GROUP) &&
+               !check(TokenType::KW_HAVING) &&
+               !check(TokenType::KW_ORDER) &&
+               !check(TokenType::KW_LIMIT) &&
+               !check(TokenType::KW_OFFSET) &&
+               !check(TokenType::KW_UNION) &&
+               !check(TokenType::KW_INTERSECT) &&
+               !check(TokenType::KW_EXCEPT) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE) &&
+               !checkContextual("FETCH") &&
+               !checkContextual("FOR")) {
+            advance();
+        }
+    };
+
+    if (check(TokenType::KW_START)) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::KW_WITH ||
+            (lookahead.type == TokenType::IDENTIFIER &&
+             caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "WITH"))) {
+            match(TokenType::KW_START);
+            match(TokenType::KW_WITH) || matchContextual("WITH");
+            reject_connect_by_surface();
+        }
+    }
+
+    if (checkContextual("CONNECT")) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER &&
+            caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "BY")) {
+            matchContextual("CONNECT");
+            matchContextual("BY");
+            reject_connect_by_surface();
+        }
     }
 
     // GROUP BY clause
@@ -10186,7 +10274,10 @@ SelectItem* Parser::parseSelectItem() {
     if (match(TokenType::KW_AS)) {
         item->alias = expectIdentifier("Expected alias after AS");
         item->has_alias = true;
-    } else if (isIdentifier() && !check(TokenType::KW_FROM) && !check(TokenType::COMMA)) {
+    } else if (isIdentifier() &&
+               !check(TokenType::KW_FROM) &&
+               !check(TokenType::COMMA) &&
+               !checkContextual("MINUS")) {
         // Alias without AS keyword
         item->alias = currentIdentifier();
         item->has_alias = true;
@@ -10312,6 +10403,16 @@ TableRefNode* Parser::parseTableRef() {
         }
     }
 
+    auto is_dual_reference = [&](const SchemaPath& path) -> bool {
+        return path.type == PathType::UNQUALIFIED &&
+               path.components.size() == 1 &&
+               caseInsensitiveEquals(stringPool().get(path.components.front()), "DUAL");
+    };
+    if (node->ref_type == TableRefNode::Type::TABLE && is_dual_reference(node->table_path)) {
+        errorCode("PRS_0505",
+                  "FROM DUAL is not supported in v3; use SELECT without FROM or FROM (VALUES (1))");
+    }
+
     // PostgreSQL TABLESAMPLE support.
     if (matchContextual("TABLESAMPLE")) {
         if (node->ref_type != TableRefNode::Type::TABLE) {
@@ -10363,6 +10464,7 @@ TableRefNode* Parser::parseTableRef() {
                !check(TokenType::KW_UNION) &&
                !check(TokenType::KW_INTERSECT) &&
                !check(TokenType::KW_EXCEPT) &&
+               !checkContextual("MINUS") &&
                !check(TokenType::COMMA) &&
                !checkContextual("LEFT") &&
                !checkContextual("RIGHT") &&
@@ -10374,6 +10476,9 @@ TableRefNode* Parser::parseTableRef() {
                !checkContextual("PLAN") &&
                !checkContextual("OPTIMIZE") &&
                !checkContextual("ROWS") &&
+               !checkContextual("PIVOT") &&
+               !checkContextual("UNPIVOT") &&
+               !checkContextual("APPLY") &&
                !checkContextual("FOR") &&
                !checkContextual("OFFSET") &&
                !checkContextual("FETCH") &&
@@ -10390,6 +10495,15 @@ TableRefNode* Parser::parseTableRef() {
             node->column_aliases.push_back(expectIdentifier("Expected column alias"));
         } while (match(TokenType::COMMA));
         expect(TokenType::RIGHT_PAREN, "Expected ')' after column aliases");
+    }
+
+    if (matchContextual("PIVOT") || matchContextual("UNPIVOT")) {
+        errorCode("PRS_0505",
+                  "PIVOT/UNPIVOT is not supported in v3; use canonical CASE/aggregate or UNION ALL rewrites");
+    }
+    if (matchContextual("APPLY")) {
+        errorCode("PRS_0505",
+                  "CROSS APPLY/OUTER APPLY is not supported in v3; use JOIN LATERAL or LEFT JOIN LATERAL");
     }
 
     node->span = makeSpan(start);
@@ -10429,7 +10543,31 @@ JoinNode* Parser::parseJoin(TableRefNode* left) {
     SourceLocation start = currentLocation();
 
     join->left = left;
+
+    if (checkContextual("OUTER")) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER &&
+            caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "APPLY")) {
+            matchContextual("OUTER");
+            matchContextual("APPLY");
+            errorCode("PRS_0505",
+                      "OUTER APPLY is not supported in v3; use LEFT JOIN LATERAL ... ON TRUE");
+            join->join_type = JoinType::LEFT;
+            join->right = parseTableRef();
+            join->span = makeSpan(start);
+            return join;
+        }
+    }
+
     join->join_type = parseJoinType();
+
+    if (matchContextual("APPLY")) {
+        errorCode("PRS_0505",
+                  "CROSS APPLY/OUTER APPLY is not supported in v3; use JOIN LATERAL or LEFT JOIN LATERAL");
+        join->right = parseTableRef();
+        join->span = makeSpan(start);
+        return join;
+    }
 
     // JOIN keyword
     expect(TokenType::KW_JOIN, "Expected JOIN");
@@ -10699,6 +10837,9 @@ void Parser::parseSetOperation(SelectStmt* stmt) {
         op = SetOpType::INTERSECT;
     } else if (match(TokenType::KW_EXCEPT)) {
         op = SetOpType::EXCEPT;
+    } else if (match(TokenType::MINUS) || matchContextual("MINUS")) {
+        errorCode("PRS_0505", "MINUS is not supported in v3; use EXCEPT");
+        op = SetOpType::EXCEPT;
     } else {
         return;
     }
@@ -10740,6 +10881,11 @@ InsertStmt* Parser::parseInsert() {
     ParseModeGuard guard(state_, ParseMode::DML_INSERT);
 
     auto* stmt = arena_.create<InsertStmt>();
+
+    if (matchContextual("IGNORE")) {
+        errorCode("PRS_0505",
+                  "INSERT IGNORE is not supported in v3; use INSERT ... ON CONFLICT DO NOTHING");
+    }
 
     if (matchContextual("OVERRIDING")) {
         if (matchContextual("SYSTEM")) {
@@ -10790,6 +10936,20 @@ InsertStmt* Parser::parseInsert() {
     if (match(TokenType::KW_ON)) {
         if (matchContextual("CONFLICT")) {
             parseOnConflict(stmt);
+        } else if (matchContextual("DUPLICATE")) {
+            errorCode("PRS_0505",
+                      "ON DUPLICATE KEY UPDATE is not supported in v3; use ON CONFLICT DO UPDATE");
+            if (matchContextual("KEY")) {
+                match(TokenType::KW_UPDATE) || matchContextual("UPDATE");
+            }
+            while (!isAtEnd() &&
+                   !checkContextual("RETURNING") &&
+                   !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+        } else {
+            errorCode("PRS_0505", "Only ON CONFLICT is supported after INSERT in v3");
         }
     }
 
@@ -10801,6 +10961,16 @@ InsertStmt* Parser::parseInsert() {
                                 stmt->conditional_if_exists,
                                 stmt->conditional_if_not_exists,
                                 stmt->conditional_if);
+
+    if (matchContextual("OUTPUT")) {
+        errorCode("PRS_0505", "OUTPUT clause is not supported in v3; use RETURNING");
+        while (!isAtEnd() &&
+               !checkContextual("RETURNING") &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+    }
 
     // RETURNING clause (RETURNING is contextual)
     if (matchContextual("RETURNING")) {
@@ -11095,12 +11265,45 @@ UpdateStmt* Parser::parseUpdate() {
         stmt->where = parseExpression();
     }
 
+    if (match(TokenType::KW_ORDER)) {
+        matchContextual("BY");
+        errorCode("PRS_0505",
+                  "UPDATE ... ORDER BY ... LIMIT is not supported in v3; use canonical key-subquery rewrite");
+        while (!isAtEnd() &&
+               !check(TokenType::KW_LIMIT) &&
+               !checkContextual("RETURNING") &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+    }
+    if (match(TokenType::KW_LIMIT)) {
+        errorCode("PRS_0505",
+                  "UPDATE ... ORDER BY ... LIMIT is not supported in v3; use canonical key-subquery rewrite");
+        if (!isAtEnd() &&
+            !checkContextual("RETURNING") &&
+            !check(TokenType::SEMICOLON) &&
+            !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+    }
+
     parseConsistencyClause(stmt->consistency_level, stmt->serial_consistency_level);
     bool ignored_if_not_exists = false;
     parseConditionalWriteClause(false,
                                 stmt->conditional_if_exists,
                                 ignored_if_not_exists,
                                 stmt->conditional_if);
+
+    if (matchContextual("OUTPUT")) {
+        errorCode("PRS_0505", "OUTPUT clause is not supported in v3; use RETURNING");
+        while (!isAtEnd() &&
+               !checkContextual("RETURNING") &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+    }
 
     // RETURNING clause (RETURNING is contextual)
     if (matchContextual("RETURNING")) {
@@ -11156,6 +11359,7 @@ DeleteStmt* Parser::parseDelete() {
     } else if (isIdentifier() &&
                !check(TokenType::KW_WHERE) &&
                !check(TokenType::KW_USING) &&
+               !checkContextual("OUTPUT") &&
                !checkContextual("RETURNING")) {
         stmt->alias = currentIdentifier();
         stmt->has_alias = true;
@@ -11188,12 +11392,45 @@ DeleteStmt* Parser::parseDelete() {
         stmt->where = parseExpression();
     }
 
+    if (match(TokenType::KW_ORDER)) {
+        matchContextual("BY");
+        errorCode("PRS_0505",
+                  "DELETE ... ORDER BY ... LIMIT is not supported in v3; use canonical key-subquery rewrite");
+        while (!isAtEnd() &&
+               !check(TokenType::KW_LIMIT) &&
+               !checkContextual("RETURNING") &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+    }
+    if (match(TokenType::KW_LIMIT)) {
+        errorCode("PRS_0505",
+                  "DELETE ... ORDER BY ... LIMIT is not supported in v3; use canonical key-subquery rewrite");
+        if (!isAtEnd() &&
+            !checkContextual("RETURNING") &&
+            !check(TokenType::SEMICOLON) &&
+            !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+    }
+
     parseConsistencyClause(stmt->consistency_level, stmt->serial_consistency_level);
     bool ignored_if_not_exists = false;
     parseConditionalWriteClause(false,
                                 stmt->conditional_if_exists,
                                 ignored_if_not_exists,
                                 stmt->conditional_if);
+
+    if (matchContextual("OUTPUT")) {
+        errorCode("PRS_0505", "OUTPUT clause is not supported in v3; use RETURNING");
+        while (!isAtEnd() &&
+               !checkContextual("RETURNING") &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+    }
 
     // RETURNING clause (RETURNING is contextual)
     if (matchContextual("RETURNING")) {
@@ -12487,6 +12724,22 @@ Expression* Parser::parseUnaryExpr() {
 
 Expression* Parser::parsePrimaryExpr() {
     Expression* expr = nullptr;
+
+    if (check(TokenType::LEFT_BRACE)) {
+        errorCode("PRS_0505",
+                  "JDBC escape blocks ({fn ...}, {d ...}, {ts ...}) are not supported in v3; use canonical SQL forms");
+        advance();
+        while (!isAtEnd() &&
+               !check(TokenType::RIGHT_BRACE) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::COMMA) &&
+               !check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+        match(TokenType::RIGHT_BRACE);
+        return nullptr;
+    }
 
     // Literals
     if (check(TokenType::INTEGER_LITERAL) || check(TokenType::FLOAT_LITERAL) ||
