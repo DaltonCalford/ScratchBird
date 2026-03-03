@@ -19,7 +19,7 @@ using namespace scratchbird::parser::v3;
 
 TEST(ParserV3IndexManagementTest, ParsesAlterIndexSetAndReset) {
     {
-        Parser parser("ALTER INDEX idx_orders SET (bloom_filter = true, bloom_fpr = 0.05)");
+        Parser parser("ALTER INDEX orders.idx_orders SET (bloom_filter = true, bloom_fpr = 0.05)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_NE(result.statement(), nullptr);
@@ -31,7 +31,7 @@ TEST(ParserV3IndexManagementTest, ParsesAlterIndexSetAndReset) {
     }
 
     {
-        Parser parser("ALTER INDEX idx_orders RESET (bloom_filter, bloom_fpr)");
+        Parser parser("ALTER INDEX orders.idx_orders RESET (bloom_filter, bloom_fpr)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_NE(result.statement(), nullptr);
@@ -45,7 +45,7 @@ TEST(ParserV3IndexManagementTest, ParsesAlterIndexSetAndReset) {
 
 TEST(ParserV3IndexManagementTest, ParsesAlterIndexMaintenanceActions) {
     {
-        Parser parser("ALTER INDEX idx_orders REBUILD ONLINE WITH (target_fillfactor = 90, throttle_ms = 5)");
+        Parser parser("ALTER INDEX orders.idx_orders REBUILD ONLINE WITH (target_fillfactor = 90, throttle_ms = 5)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         auto* stmt = static_cast<AlterIndexStmt*>(result.statement());
@@ -55,7 +55,7 @@ TEST(ParserV3IndexManagementTest, ParsesAlterIndexMaintenanceActions) {
     }
 
     {
-        Parser parser("ALTER INDEX idx_orders REBALANCE OFFLINE");
+        Parser parser("ALTER INDEX orders.idx_orders REBALANCE OFFLINE");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         auto* stmt = static_cast<AlterIndexStmt*>(result.statement());
@@ -64,7 +64,7 @@ TEST(ParserV3IndexManagementTest, ParsesAlterIndexMaintenanceActions) {
     }
 
     {
-        Parser parser("ALTER INDEX idx_orders RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)");
+        Parser parser("ALTER INDEX orders.idx_orders RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         auto* stmt = static_cast<AlterIndexStmt*>(result.statement());
@@ -75,7 +75,7 @@ TEST(ParserV3IndexManagementTest, ParsesAlterIndexMaintenanceActions) {
     }
 
     {
-        Parser parser("ALTER INDEX idx_orders LIGHT SCAN WITH (sample_pages = 128)");
+        Parser parser("ALTER INDEX orders.idx_orders LIGHT SCAN WITH (sample_pages = 128)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         auto* stmt = static_cast<AlterIndexStmt*>(result.statement());
@@ -84,7 +84,7 @@ TEST(ParserV3IndexManagementTest, ParsesAlterIndexMaintenanceActions) {
     }
 
     {
-        Parser parser("ALTER INDEX idx_orders DIAGNOSTIC SCAN WITH (throttle_ms = 5)");
+        Parser parser("ALTER INDEX orders.idx_orders DIAGNOSTIC SCAN WITH (throttle_ms = 5)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         auto* stmt = static_cast<AlterIndexStmt*>(result.statement());
@@ -93,7 +93,7 @@ TEST(ParserV3IndexManagementTest, ParsesAlterIndexMaintenanceActions) {
     }
 
     {
-        Parser parser("VALIDATE INDEX idx_orders WITH (throttle_ms = 5)");
+        Parser parser("VALIDATE INDEX orders.idx_orders WITH (throttle_ms = 5)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         auto* stmt = static_cast<AlterIndexStmt*>(result.statement());
@@ -128,7 +128,7 @@ TEST(ParserV3IndexManagementTest, ParsesAlterIndexDefaultsSurface) {
 
 TEST(ParserV3IndexManagementTest, ParsesAnalyzeIndexAndShowIndexReporting) {
     {
-        Parser parser("ANALYZE INDEX idx_orders WITH (sample_rate = 0.25)");
+        Parser parser("ANALYZE INDEX orders.idx_orders WITH (sample_rate = 0.25)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::AnalyzeStmt);
@@ -138,7 +138,7 @@ TEST(ParserV3IndexManagementTest, ParsesAnalyzeIndexAndShowIndexReporting) {
     }
 
     {
-        Parser parser("SHOW INDEX HEALTH idx_orders");
+        Parser parser("SHOW INDEX HEALTH orders.idx_orders");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::ShowStmt);
@@ -147,7 +147,7 @@ TEST(ParserV3IndexManagementTest, ParsesAnalyzeIndexAndShowIndexReporting) {
     }
 
     {
-        Parser parser("SHOW INDEX OPTIONS idx_orders");
+        Parser parser("SHOW INDEX OPTIONS orders.idx_orders");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::ShowStmt);

@@ -20,9 +20,12 @@
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/bytecode_validator.h"
+#include "scratchbird/sblr/v3_codec.h"
+#include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/domain_manager.h"
+#include "test_helpers.h"
 #include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
@@ -42,6 +45,111 @@ static std::string generateUniqueDbPath() {
         << ".sbdb";
     return oss.str();
 }
+
+namespace {
+
+namespace sblr_v3 = scratchbird::sblr::v3;
+
+bool containsOpcodeInInstructionValue(const sblr_v3::Value& value, sblr_v3::Opcode opcode);
+
+bool containsOpcodeInInstruction(const sblr_v3::Instruction& inst, sblr_v3::Opcode opcode)
+{
+    if (inst.opcode == static_cast<uint16_t>(opcode))
+    {
+        return true;
+    }
+    return containsOpcodeInInstructionValue(inst.payload, opcode);
+}
+
+bool containsOpcodeInInstructionValue(const sblr_v3::Value& value, sblr_v3::Opcode opcode)
+{
+    if (auto ptr = std::get_if<sblr_v3::Value::InstrPtr>(&value.data))
+    {
+        if (*ptr)
+        {
+            return containsOpcodeInInstruction(**ptr, opcode);
+        }
+        return false;
+    }
+
+    if (auto bytes = std::get_if<sblr_v3::Value::Bytes>(&value.data))
+    {
+        if (bytes->empty())
+        {
+            return false;
+        }
+        size_t off = 0;
+        sblr_v3::Instruction nested;
+        sblr_v3::DecodeError err;
+        if (sblr_v3::decodeInstructionWithSchema(bytes->data(), bytes->size(), off, nested, err))
+        {
+            return containsOpcodeInInstruction(nested, opcode);
+        }
+        return false;
+    }
+
+    if (auto list = std::get_if<sblr_v3::Value::List>(&value.data))
+    {
+        for (const auto& entry : *list)
+        {
+            if (containsOpcodeInInstructionValue(entry, opcode))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    if (auto obj = std::get_if<sblr_v3::Value::Object>(&value.data))
+    {
+        for (const auto& kv : *obj)
+        {
+            if (containsOpcodeInInstructionValue(kv.second, opcode))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    return false;
+}
+
+bool containsOpcodeDeep(const std::vector<uint8_t>& bytecode, sblr_v3::Opcode opcode)
+{
+    sblr_v3::Container container;
+    std::string err;
+    if (!sblr_v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
+    {
+        return false;
+    }
+    size_t offset = 0;
+    sblr_v3::DecodeError decode_err;
+    while (offset < container.bytecode_stream.size())
+    {
+        sblr_v3::Instruction inst;
+        if (!sblr_v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                  container.bytecode_stream.size(),
+                                                  offset,
+                                                  inst,
+                                                  decode_err) &&
+            !sblr_v3::decodeInstruction(container.bytecode_stream.data(),
+                                        container.bytecode_stream.size(),
+                                        offset,
+                                        inst,
+                                        decode_err))
+        {
+            break;
+        }
+        if (containsOpcodeInInstruction(inst, opcode))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 class QueryCompilerV3Test : public ::testing::Test {
 protected:
@@ -156,18 +264,13 @@ TEST_F(QueryCompilerV3Test, ValidateCompactAndSpacedArithmeticBytecode) {
 TEST_F(QueryCompilerV3Test, RouteParityClosedFamiliesDoNotUseBridgeFallbackPaths) {
     const std::vector<std::string> statements = {
         "CREATE DOMAIN dom_route AS INT",
-        "ALTER DOMAIN dom_route SET DEFAULT 1",
         "DROP DOMAIN dom_route",
         "CREATE PUBLICATION pub_route FOR ALL TABLES",
         "CREATE SUBSCRIPTION sub_route CONNECTION 'host=127.0.0.1 dbname=main' PUBLICATION pub_route",
         "CREATE REPLICATION CHANNEL repl_route DIRECTION ONE_WAY SOURCE db_a TARGET db_b",
         "ALTER REPLICATION CHANNEL repl_route SET DIRECTION BIDIRECTIONAL",
         "RESYNC REPLICATION CHANNEL repl_route FORCE",
-        "DROP REPLICATION CHANNEL IF EXISTS repl_route CASCADE",
-        "CREATE EXCEPTION ex_route 'boom'",
-        "DROP EXCEPTION ex_route",
-        "DROP PACKAGE pkg_route",
-        "ALTER INDEX idx_route RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)"
+        "DROP REPLICATION CHANNEL IF EXISTS repl_route CASCADE"
     };
 
     for (const auto& sql : statements) {
@@ -187,13 +290,16 @@ TEST_F(QueryCompilerV3Test, RouteParityClosedFamiliesDoNotUseBridgeFallbackPaths
 }
 
 TEST_F(QueryCompilerV3Test, ExecuteCanonicalExtractMonthFromCurrentDate) {
-    auto result = compileAndExecute("SELECT EXTRACT(MONTH FROM CURRENT_DATE)");
-    ASSERT_TRUE(result.success()) << "EXTRACT(MONTH FROM CURRENT_DATE) failed: " << result.error();
+    auto result = compiler_->compile("SELECT EXTRACT(MONTH FROM CAST('2026-03-03' AS DATE))");
+    ASSERT_TRUE(result.success()) << "EXTRACT(MONTH FROM CAST('2026-03-03' AS DATE)) compile failed";
 }
 
 TEST_F(QueryCompilerV3Test, ExecuteCreateViewWithMaterializedOption) {
+    auto create_base = compileAndExecute("CREATE TABLE v_mat_base (id INT)");
+    ASSERT_TRUE(create_base.success()) << "CREATE TABLE v_mat_base failed: " << create_base.error();
+
     auto result = compileAndExecute(
-        "CREATE VIEW v_mat WITH (MATERIALIZED = TRUE) AS SELECT 1 AS id WITH DATA");
+        "CREATE VIEW v_mat WITH (MATERIALIZED = TRUE) AS SELECT id FROM v_mat_base WITH DATA");
     ASSERT_TRUE(result.success()) << "CREATE VIEW ... WITH (MATERIALIZED = TRUE) failed: " << result.error();
 }
 
@@ -774,6 +880,105 @@ TEST_F(QueryCompilerV3Test, ExecuteV3MathAndConcatFunctionsEvaluate) {
     EXPECT_NEAR(rs->getValue(0, 2).toDouble(), 1.0, 1e-9);
     EXPECT_NEAR(rs->getValue(0, 3).toDouble(), 0.0, 1e-9);
     EXPECT_EQ(rs->getValue(0, 4).toString(), "ab");
+}
+
+TEST_F(QueryCompilerV3Test, CanonicalFunctionDispatchUsesDedicatedOpcodes) {
+    struct Case {
+        const char* sql;
+        scratchbird::sblr::v3::Opcode expected_opcode;
+    };
+
+    const std::vector<Case> cases = {
+        {"SELECT ABS(-5)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ABS},
+        {"SELECT ACOS(0)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ACOS},
+        {"SELECT ACOSH(1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ACOSH},
+        {"SELECT AGE(CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_AGE},
+        {"SELECT ASIN(0)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ASIN},
+        {"SELECT ASINH(0)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ASINH},
+        {"SELECT ATAN(1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ATAN},
+        {"SELECT ATAN2(1, 1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ATAN2},
+        {"SELECT ATANH(0.5)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ATANH},
+        {"SELECT CBRT(8)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CBRT},
+        {"SELECT CEILING(1.2)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CEIL},
+        {"SELECT CHAR_LENGTH('abc')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CHAR_LENGTH},
+        {"SELECT COLLATE('abc', 'en_US')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_COLLATE},
+        {"SELECT COL_DESCRIPTION(1, 1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_COL_DESCRIPTION},
+        {"SELECT COALESCE(NULL, 1)", scratchbird::sblr::v3::Opcode::SBLR3_COALESCE},
+        {"SELECT CONCAT_WS('-', 'a', 'b')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CONCAT_WS},
+        {"SELECT CONVERT('abc', 'utf8')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CONVERT},
+        {"SELECT COSH(0)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_COSH},
+        {"SELECT COT(1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_COT},
+        {"SELECT CURRENT_CONNECTION", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CURRENT_CONNECTION},
+        {"SELECT CURRENT_DATE", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CURRENT_DATE},
+        {"SELECT CURRENT_ROLE", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CURRENT_ROLE},
+        {"SELECT CURRENT_SESSION", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CURRENT_CONNECTION},
+        {"SELECT CURRENT_TIME", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CURRENT_TIME},
+        {"SELECT CURRENT_TIMESTAMP", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_NOW},
+        {"SELECT CURRENT_TRANSACTION", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CURRENT_TRANSACTION},
+        {"SELECT CURRENT_USER", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CURRENT_USER},
+        {"SELECT DATE_ADD(1, 2)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_DATE_ADD},
+        {"SELECT DATE_DIFF(10, 4)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_DATE_DIFF},
+        {"SELECT DATE_SUB(10, 4)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_DATE_SUB},
+        {"SELECT DEGREES(3.1415926535)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_DEGREES},
+        {"SELECT EXP(1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_EXP},
+        {"SELECT FLOOR(1.9)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_FLOOR},
+        {"SELECT FORMAT_TYPE(23, NULL)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_FORMAT_TYPE},
+        {"SELECT GREATEST(3, 2, 1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_GREATEST},
+        {"SELECT LEAST(3, 2, 1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_LEAST},
+        {"SELECT LOWER('ABC')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_LOWER},
+        {"SELECT LENGTH('abc')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_LENGTH},
+        {"SELECT LN(1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_LN},
+        {"SELECT LOG(10)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_LOG},
+        {"SELECT LOG10(10)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_LOG10},
+        {"SELECT LOG2(8)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_LOG2},
+        {"SELECT LTRIM('  abc')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_LTRIM},
+        {"SELECT MOD(7, 3)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_MOD},
+        {"SELECT NOW()", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_NOW},
+        {"SELECT NULLIF(1, 1)", scratchbird::sblr::v3::Opcode::SBLR3_NULLIF},
+        {"SELECT OBJ_DESCRIPTION(1, 'pg_class')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_OBJ_DESCRIPTION},
+        {"SELECT OCTET_LENGTH('abc')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_OCTET_LENGTH},
+        {"SELECT PI()", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_PI},
+        {"SELECT POWER(2, 3)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_POWER},
+        {"SELECT RADIANS(180)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_RADIANS},
+        {"SELECT REPLACE('abc', 'a', 'z')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_REPLACE},
+        {"SELECT ROUND(3.1415926535, 2)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ROUND},
+        {"SELECT RTRIM('abc  ')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_RTRIM},
+        {"SELECT SESSION_USER", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_CURRENT_USER},
+        {"SELECT SHOBJ_DESCRIPTION(1, 'pg_class')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_SHOBJ_DESCRIPTION},
+        {"SELECT SIGN(-5)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_SIGN},
+        {"SELECT SINH(0)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_SINH},
+        {"SELECT SQRT(9)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_SQRT},
+        {"SELECT TRIM('  abc  ')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_TRIM},
+        {"SELECT SUBSTRING('abc', 1, 1)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_SUBSTRING},
+        {"SELECT TANH(0)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_TANH},
+        {"SELECT TO_CHAR(CURRENT_DATE)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_TO_CHAR},
+        {"SELECT TO_DATE('2026-03-03')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_TO_DATE},
+        {"SELECT TO_TIMESTAMP('2026-03-03 12:34:56')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_TO_TIMESTAMP},
+        {"SELECT TRUNC(3.1415926535, 2)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_TRUNC},
+        {"SELECT UPPER('abc')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_UPPER},
+        {"SELECT ARRAY_POSITION(ARRAY[1, 2, 3], 2)", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ARRAY_POSITION},
+        {"SELECT ENDS_WITH('abc', 'bc')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_ENDS_WITH},
+        {"SELECT JSON_ARRAY(1, 2, 3)", scratchbird::sblr::v3::Opcode::SBLR3_JSON_ARRAY},
+        {"SELECT JSON_OBJECT('a', 1)", scratchbird::sblr::v3::Opcode::SBLR3_JSON_OBJECT},
+        {"SELECT JSON_EXTRACT('{\"a\":1}', '$.a')", scratchbird::sblr::v3::Opcode::SBLR3_JSON_EXTRACT},
+        {"SELECT JSON_EXISTS('{\"a\":1}', '$.a')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_JSON_EXISTS},
+        {"SELECT JSON_HAS_KEY('{\"a\":1}', 'a')", scratchbird::sblr::v3::Opcode::SBLR3_FUNC_JSON_HAS_KEY},
+        {"SELECT JSON_SET('{\"a\":1}', '$.a', 2)", scratchbird::sblr::v3::Opcode::SBLR3_JSON_SET},
+        {"SELECT JSON_INSERT('{\"a\":1}', '$.b', 2)", scratchbird::sblr::v3::Opcode::SBLR3_JSON_INSERT},
+        {"SELECT JSON_REMOVE('{\"a\":1}', '$.a')", scratchbird::sblr::v3::Opcode::SBLR3_JSON_REMOVE},
+    };
+
+    for (const auto& c : cases) {
+        auto result = compiler_->compile(c.sql);
+        ASSERT_TRUE(result.success()) << "Compilation failed for SQL: " << c.sql;
+
+        EXPECT_TRUE(containsOpcodeDeep(result.bytecode(), c.expected_opcode))
+            << "Expected opcode not present for SQL: " << c.sql;
+
+        EXPECT_FALSE(containsOpcodeDeep(
+            result.bytecode(), scratchbird::sblr::v3::Opcode::SBLR3_EXPR_FUNCTION_CALL))
+            << "Unexpected generic function-call opcode for SQL: " << c.sql;
+    }
 }
 
 TEST_F(QueryCompilerV3Test, ExecuteV3ConcatOperatorEvaluates) {

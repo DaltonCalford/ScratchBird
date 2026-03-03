@@ -13140,64 +13140,64 @@ namespace scratchbird
                 error("Catalog manager not available");
             }
 
-            auto map_object_type = [](parser::CommentObjectType type) -> core::CatalogManager::ObjectType {
+            auto map_object_type = [](parser::v3::CommentObjectType type) -> core::CatalogManager::ObjectType {
                 switch (type)
                 {
-                    case parser::CommentObjectType::TABLE:
+                    case parser::v3::CommentObjectType::TABLE:
                         return core::CatalogManager::ObjectType::TABLE;
-                    case parser::CommentObjectType::COLUMN:
+                    case parser::v3::CommentObjectType::COLUMN:
                         return core::CatalogManager::ObjectType::COLUMN;
-                    case parser::CommentObjectType::INDEX:
+                    case parser::v3::CommentObjectType::INDEX:
                         return core::CatalogManager::ObjectType::INDEX;
-                    case parser::CommentObjectType::VIEW:
+                    case parser::v3::CommentObjectType::VIEW:
                         return core::CatalogManager::ObjectType::VIEW;
-                    case parser::CommentObjectType::SEQUENCE:
+                    case parser::v3::CommentObjectType::SEQUENCE:
                         return core::CatalogManager::ObjectType::SEQUENCE;
-                    case parser::CommentObjectType::FUNCTION:
+                    case parser::v3::CommentObjectType::FUNCTION:
                         return core::CatalogManager::ObjectType::FUNCTION;
-                    case parser::CommentObjectType::PROCEDURE:
+                    case parser::v3::CommentObjectType::PROCEDURE:
                         return core::CatalogManager::ObjectType::PROCEDURE;
-                    case parser::CommentObjectType::TRIGGER:
+                    case parser::v3::CommentObjectType::TRIGGER:
                         return core::CatalogManager::ObjectType::TRIGGER;
-                    case parser::CommentObjectType::SCHEMA:
+                    case parser::v3::CommentObjectType::SCHEMA:
                         return core::CatalogManager::ObjectType::SCHEMA;
-                    case parser::CommentObjectType::DATABASE:
+                    case parser::v3::CommentObjectType::DATABASE:
                         return core::CatalogManager::ObjectType::DATABASE;
-                    case parser::CommentObjectType::ROLE:
+                    case parser::v3::CommentObjectType::ROLE:
                         return core::CatalogManager::ObjectType::ROLE;
-                    case parser::CommentObjectType::CONSTRAINT:
+                    case parser::v3::CommentObjectType::CONSTRAINT:
                         return core::CatalogManager::ObjectType::CONSTRAINT;
-                    case parser::CommentObjectType::DOMAIN:
+                    case parser::v3::CommentObjectType::DOMAIN:
                         return core::CatalogManager::ObjectType::DOMAIN;
-                    case parser::CommentObjectType::TYPE:
+                    case parser::v3::CommentObjectType::TYPE:
                         return core::CatalogManager::ObjectType::COMPOSITE_TYPE;
-                    case parser::CommentObjectType::PACKAGE:
+                    case parser::v3::CommentObjectType::PACKAGE:
                         return core::CatalogManager::ObjectType::PACKAGE;
-                    case parser::CommentObjectType::EXCEPTION:
+                    case parser::v3::CommentObjectType::EXCEPTION:
                         return core::CatalogManager::ObjectType::EXCEPTION;
-                    case parser::CommentObjectType::UDR:
+                    case parser::v3::CommentObjectType::UDR:
                         return core::CatalogManager::ObjectType::UDR;
-                    case parser::CommentObjectType::USER:
+                    case parser::v3::CommentObjectType::USER:
                         return core::CatalogManager::ObjectType::USER;
-                    case parser::CommentObjectType::GROUP:
+                    case parser::v3::CommentObjectType::GROUP:
                         return core::CatalogManager::ObjectType::GROUP;
-                    case parser::CommentObjectType::POLICY:
+                    case parser::v3::CommentObjectType::POLICY:
                         return core::CatalogManager::ObjectType::POLICY;
-                    case parser::CommentObjectType::SERVER:
+                    case parser::v3::CommentObjectType::SERVER:
                         return core::CatalogManager::ObjectType::FOREIGN_SERVER;
-                    case parser::CommentObjectType::FOREIGN_TABLE:
+                    case parser::v3::CommentObjectType::FOREIGN_TABLE:
                         return core::CatalogManager::ObjectType::FOREIGN_TABLE;
-                    case parser::CommentObjectType::USER_MAPPING:
+                    case parser::v3::CommentObjectType::USER_MAPPING:
                         return core::CatalogManager::ObjectType::USER_MAPPING;
-                    case parser::CommentObjectType::SYNONYM:
-                    case parser::CommentObjectType::PUBLIC_SYNONYM:
+                    case parser::v3::CommentObjectType::SYNONYM:
+                    case parser::v3::CommentObjectType::PUBLIC_SYNONYM:
                         return core::CatalogManager::ObjectType::SYNONYM;
-                    case parser::CommentObjectType::JOB:
+                    case parser::v3::CommentObjectType::JOB:
                         return core::CatalogManager::ObjectType::JOB;
-                    case parser::CommentObjectType::TABLESPACE:
-                    case parser::CommentObjectType::FILESPACE:
+                    case parser::v3::CommentObjectType::TABLESPACE:
+                    case parser::v3::CommentObjectType::FILESPACE:
                         return core::CatalogManager::ObjectType::TABLESPACE;
-                    case parser::CommentObjectType::CLUSTER:
+                    case parser::v3::CommentObjectType::CLUSTER:
                         return core::CatalogManager::ObjectType::CLUSTER;
                     default:
                         return core::CatalogManager::ObjectType::UNKNOWN;
@@ -13237,7 +13237,7 @@ namespace scratchbird
                 }
             };
 
-            auto comment_object_type = static_cast<parser::CommentObjectType>(object_type_raw);
+            auto comment_object_type = static_cast<parser::v3::CommentObjectType>(object_type_raw);
             core::CatalogManager::ObjectType object_type = map_object_type(comment_object_type);
             if (object_type == core::CatalogManager::ObjectType::UNKNOWN)
             {
@@ -66271,64 +66271,64 @@ namespace scratchbird
 	                        }
 
 	                        auto map_object_type =
-	                            [&](parser::CommentObjectType type) -> core::CatalogManager::ObjectType {
+	                            [&](parser::v3::CommentObjectType type) -> core::CatalogManager::ObjectType {
 	                            switch (type)
 	                            {
-	                                case parser::CommentObjectType::TABLE:
+	                                case parser::v3::CommentObjectType::TABLE:
 	                                    return core::CatalogManager::ObjectType::TABLE;
-	                                case parser::CommentObjectType::COLUMN:
+	                                case parser::v3::CommentObjectType::COLUMN:
 	                                    return core::CatalogManager::ObjectType::COLUMN;
-	                                case parser::CommentObjectType::INDEX:
+	                                case parser::v3::CommentObjectType::INDEX:
 	                                    return core::CatalogManager::ObjectType::INDEX;
-	                                case parser::CommentObjectType::VIEW:
+	                                case parser::v3::CommentObjectType::VIEW:
 	                                    return core::CatalogManager::ObjectType::VIEW;
-	                                case parser::CommentObjectType::SEQUENCE:
+	                                case parser::v3::CommentObjectType::SEQUENCE:
 	                                    return core::CatalogManager::ObjectType::SEQUENCE;
-	                                case parser::CommentObjectType::FUNCTION:
+	                                case parser::v3::CommentObjectType::FUNCTION:
 	                                    return core::CatalogManager::ObjectType::FUNCTION;
-	                                case parser::CommentObjectType::PROCEDURE:
+	                                case parser::v3::CommentObjectType::PROCEDURE:
 	                                    return core::CatalogManager::ObjectType::PROCEDURE;
-	                                case parser::CommentObjectType::TRIGGER:
+	                                case parser::v3::CommentObjectType::TRIGGER:
 	                                    return core::CatalogManager::ObjectType::TRIGGER;
-	                                case parser::CommentObjectType::SCHEMA:
+	                                case parser::v3::CommentObjectType::SCHEMA:
 	                                    return core::CatalogManager::ObjectType::SCHEMA;
-	                                case parser::CommentObjectType::DATABASE:
+	                                case parser::v3::CommentObjectType::DATABASE:
 	                                    return core::CatalogManager::ObjectType::DATABASE;
-	                                case parser::CommentObjectType::ROLE:
+	                                case parser::v3::CommentObjectType::ROLE:
 	                                    return core::CatalogManager::ObjectType::ROLE;
-	                                case parser::CommentObjectType::CONSTRAINT:
+	                                case parser::v3::CommentObjectType::CONSTRAINT:
 	                                    return core::CatalogManager::ObjectType::CONSTRAINT;
-	                                case parser::CommentObjectType::DOMAIN:
+	                                case parser::v3::CommentObjectType::DOMAIN:
 	                                    return core::CatalogManager::ObjectType::DOMAIN;
-	                                case parser::CommentObjectType::TYPE:
+	                                case parser::v3::CommentObjectType::TYPE:
 	                                    return core::CatalogManager::ObjectType::COMPOSITE_TYPE;
-	                                case parser::CommentObjectType::PACKAGE:
+	                                case parser::v3::CommentObjectType::PACKAGE:
 	                                    return core::CatalogManager::ObjectType::PACKAGE;
-	                                case parser::CommentObjectType::EXCEPTION:
+	                                case parser::v3::CommentObjectType::EXCEPTION:
 	                                    return core::CatalogManager::ObjectType::EXCEPTION;
-	                                case parser::CommentObjectType::UDR:
+	                                case parser::v3::CommentObjectType::UDR:
 	                                    return core::CatalogManager::ObjectType::UDR;
-	                                case parser::CommentObjectType::USER:
+	                                case parser::v3::CommentObjectType::USER:
 	                                    return core::CatalogManager::ObjectType::USER;
-	                                case parser::CommentObjectType::GROUP:
+	                                case parser::v3::CommentObjectType::GROUP:
 	                                    return core::CatalogManager::ObjectType::GROUP;
-	                                case parser::CommentObjectType::POLICY:
+	                                case parser::v3::CommentObjectType::POLICY:
 	                                    return core::CatalogManager::ObjectType::POLICY;
-	                                case parser::CommentObjectType::SERVER:
+	                                case parser::v3::CommentObjectType::SERVER:
 	                                    return core::CatalogManager::ObjectType::FOREIGN_SERVER;
-	                                case parser::CommentObjectType::FOREIGN_TABLE:
+	                                case parser::v3::CommentObjectType::FOREIGN_TABLE:
 	                                    return core::CatalogManager::ObjectType::FOREIGN_TABLE;
-	                                case parser::CommentObjectType::USER_MAPPING:
+	                                case parser::v3::CommentObjectType::USER_MAPPING:
 	                                    return core::CatalogManager::ObjectType::USER_MAPPING;
-	                                case parser::CommentObjectType::SYNONYM:
-	                                case parser::CommentObjectType::PUBLIC_SYNONYM:
+	                                case parser::v3::CommentObjectType::SYNONYM:
+	                                case parser::v3::CommentObjectType::PUBLIC_SYNONYM:
 	                                    return core::CatalogManager::ObjectType::SYNONYM;
-	                                case parser::CommentObjectType::JOB:
+	                                case parser::v3::CommentObjectType::JOB:
 	                                    return core::CatalogManager::ObjectType::JOB;
-	                                case parser::CommentObjectType::TABLESPACE:
-	                                case parser::CommentObjectType::FILESPACE:
+	                                case parser::v3::CommentObjectType::TABLESPACE:
+	                                case parser::v3::CommentObjectType::FILESPACE:
 	                                    return core::CatalogManager::ObjectType::TABLESPACE;
-	                                case parser::CommentObjectType::CLUSTER:
+	                                case parser::v3::CommentObjectType::CLUSTER:
 	                                    return core::CatalogManager::ObjectType::CLUSTER;
 	                                default:
 	                                    return core::CatalogManager::ObjectType::UNKNOWN;
@@ -66369,8 +66369,8 @@ namespace scratchbird
 	                            }
 	                        };
 
-	                        parser::CommentObjectType parser_object_type =
-	                            static_cast<parser::CommentObjectType>(
+	                        parser::v3::CommentObjectType parser_object_type =
+	                            static_cast<parser::v3::CommentObjectType>(
 	                                static_cast<uint8_t>(object_type_u64));
 	                        core::CatalogManager::ObjectType object_type =
 	                            map_object_type(parser_object_type);

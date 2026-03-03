@@ -211,7 +211,7 @@ TEST_F(SqlToSblrTraceDeterminismTest, NativeExtensionCorpusCompilesToDeterminist
     const std::vector<std::string> corpus = {
         "CREATE INDEX idx_search ON docs USING FULLTEXT (title, body)",
         "CREATE INDEX idx_vec ON docs USING HNSW (embedding) WITH (metric='COSINE', topk_default=25)",
-        "ALTER INDEX idx_search REBUILD ONLINE",
+        "ALTER INDEX docs.idx_search REBUILD ONLINE",
         "CREATE JOB cpu_job MEASUREMENT (retention='30d') SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' AS SQL 'SELECT 1'",
         "ALTER JOB cpu_job SET MEASUREMENT (retention='30d')",
         "CREATE JOB sch_daily SCHEDULE = CRON 'FREQ=DAILY;INTERVAL=1' AS SQL 'SELECT 1'",
@@ -249,7 +249,7 @@ TEST_F(SqlToSblrTraceDeterminismTest, NativeExtensionCorpusCompilesToDeterminist
         "CREATE DOMAIN positive_int AS INT NOT NULL",
         "ALTER DOMAIN positive_int SET DEFAULT 1",
         "DROP DOMAIN positive_int",
-        "ALTER INDEX idx_orders RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)",
+        "ALTER INDEX orders.idx_orders RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)",
         "CREATE CONNECTION RULE ch_src ORDER 5 MATCH (TRANSPORT=TLS, SOURCE='10.0.0.0/8', PRINCIPAL='ch_%') "
         "REQUIRE (TLS=TLS, PROVIDER=INTERNAL) ACTION ALLOW EXPECT VERSION 1",
         "CREATE TOKEN ifx_reader WITH SCOPE (ALLOW BUCKET 'cpu_metrics' ACTION READ)",
@@ -356,7 +356,7 @@ TEST_F(SqlToSblrTraceDeterminismTest, GoldenConformanceVectorsReplayDeterministi
         {"NP050-GOLD-001", "CREATE DOMAIN positive_int AS INT NOT NULL"},
         {"NP050-GOLD-002", "ALTER DOMAIN positive_int SET DEFAULT 1"},
         {"NP050-GOLD-003", "DROP DOMAIN positive_int"},
-        {"NP050-GOLD-004", "ALTER INDEX idx_orders RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)"},
+        {"NP050-GOLD-004", "ALTER INDEX orders.idx_orders RELOCATE TO FILESPACE fs_hot ONLINE WITH (max_bytes_per_txn = 8192)"},
         {"NP050-GOLD-005", "CREATE REPLICATION CHANNEL repl_one DIRECTION ONE_WAY SOURCE db_a TARGET db_b"},
         {"NP050-GOLD-006", "ALTER REPLICATION CHANNEL repl_one SET DIRECTION BIDIRECTIONAL"},
         {"NP050-GOLD-007", "RESYNC REPLICATION CHANNEL repl_one FORCE"},

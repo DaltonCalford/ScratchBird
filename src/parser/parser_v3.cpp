@@ -654,6 +654,33 @@ Statement* Parser::parseStatementInternal() {
     if (match(TokenType::KW_DROP))      return parseDrop();
     if (match(TokenType::KW_TRUNCATE))  return parseTruncate();
     if (match(TokenType::KW_DECLARE))   return parseDeclareTopLevel();
+    if (checkContextual("FILTER")) {
+        errorCode("PRS_0505",
+                  "FILTER DOC PATH alias is not supported in v3; use DOC PATH FILTER");
+        return nullptr;
+    }
+    if (checkContextual("AGGREGATE")) {
+        errorCode("PRS_0505",
+                  "AGGREGATE TIME BUCKET alias is not supported in v3; use TS BUCKET AGG");
+        return nullptr;
+    }
+    if (checkContextual("ANN")) {
+        errorCode("PRS_0505",
+                  "ANN alias is not supported in v3; use VECTOR ANN QUERY");
+        return nullptr;
+    }
+    if (checkContextual("CQL") || checkContextual("MONGO") ||
+        checkContextual("CYPHER") || checkContextual("MILVUS")) {
+        errorCode("PRS_0505",
+                  "Engine-prefixed NoSQL aliases are not supported in v3");
+        return nullptr;
+    }
+    if (checkContextual("EVAL") || checkContextual("XGROUP") ||
+        checkContextual("XREADGROUP") || checkContextual("XCLAIM")) {
+        errorCode("PRS_0505",
+                  "Removed Redis alias surface is not supported in v3; use REDIS ... canonical commands");
+        return nullptr;
+    }
     if (checkContextual("DOC")) {
         if (!requireFeature(kFeatureDocPathFilter)) return nullptr;
         return parseDocPathFilterSurface();
@@ -1074,6 +1101,24 @@ Statement* Parser::parseCreate() {
                   "Top-level CREATE MEASUREMENT/SCHEDULE is not supported in v3; use CREATE JOB ...");
         return nullptr;
     }
+    if (matchContextual("SEARCH")) {
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "CREATE SEARCH INDEX is not supported in v3; use CREATE INDEX ... USING FULLTEXT");
+        } else {
+            errorCode("PRS_0505", "Unsupported SEARCH create surface");
+        }
+        return nullptr;
+    }
+    if (matchContextual("VECTOR")) {
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "CREATE VECTOR INDEX is not supported in v3; use CREATE INDEX ... USING <vector_method>");
+        } else {
+            errorCode("PRS_0505", "Unsupported VECTOR create surface");
+        }
+        return nullptr;
+    }
 
     if (matchContextual("CONNECTION")) {
         if (!matchContextual("RULE")) {
@@ -1488,19 +1533,120 @@ CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
         return id;
     };
 
-    auto parse_schedule = [&]() {
+    auto canonicalize_rrule = [&](StringPool::StringId raw_id,
+                                  StringPool::StringId& canonical_id) -> bool {
+        if (raw_id == StringPool::INVALID_ID) {
+            return false;
+        }
+
+        auto trim = [](std::string_view s) -> std::string_view {
+            size_t b = 0;
+            while (b < s.size() && std::isspace(static_cast<unsigned char>(s[b]))) {
+                ++b;
+            }
+            size_t e = s.size();
+            while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) {
+                --e;
+            }
+            return s.substr(b, e - b);
+        };
+
+        std::set<std::string> seen_keys;
+        std::vector<std::pair<std::string, std::string>> kv_pairs;
+        std::string raw = std::string(stringPool().get(raw_id));
+        size_t pos = 0;
+        while (pos < raw.size()) {
+            size_t next = raw.find(';', pos);
+            std::string token = std::string(trim(std::string_view(raw).substr(
+                pos, next == std::string::npos ? std::string::npos : next - pos)));
+            if (token.empty()) {
+                errorCode("PRS_0507", "Invalid RRULE token");
+                return false;
+            }
+            size_t eq = token.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 >= token.size()) {
+                errorCode("PRS_0507", "Invalid RRULE key/value contract");
+                return false;
+            }
+
+            std::string key = std::string(trim(token.substr(0, eq)));
+            std::string value = std::string(trim(token.substr(eq + 1)));
+            for (char& c : key) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+
+            static const char* kAllowed[] = {
+                "FREQ", "INTERVAL", "COUNT", "UNTIL", "BYSECOND", "BYMINUTE", "BYHOUR",
+                "BYDAY", "BYMONTHDAY", "BYYEARDAY", "BYWEEKNO", "BYMONTH", "BYSETPOS", "WKST"
+            };
+            bool allowed = false;
+            for (const char* candidate : kAllowed) {
+                if (key == candidate) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed) {
+                errorCode("PRS_0507", "Invalid RRULE key");
+                return false;
+            }
+            if (!seen_keys.insert(key).second) {
+                errorCode("PRS_0507", "Duplicate RRULE key");
+                return false;
+            }
+
+            kv_pairs.push_back({std::move(key), std::move(value)});
+            if (next == std::string::npos) {
+                break;
+            }
+            pos = next + 1;
+        }
+
+        if (seen_keys.find("FREQ") == seen_keys.end()) {
+            errorCode("PRS_0507", "RRULE requires FREQ");
+            return false;
+        }
+        if (seen_keys.size() < 2) {
+            errorCode("PRS_0507",
+                      "RRULE requires at least one scheduling constraint beyond FREQ");
+            return false;
+        }
+
+        std::sort(kv_pairs.begin(), kv_pairs.end(),
+                  [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+
+        std::string canonical;
+        for (size_t i = 0; i < kv_pairs.size(); ++i) {
+            if (i != 0) {
+                canonical.push_back(';');
+            }
+            canonical.append(kv_pairs[i].first);
+            canonical.push_back('=');
+            canonical.append(kv_pairs[i].second);
+        }
+        canonical_id = stringPool().intern(canonical);
+        return true;
+    };
+
+    auto parse_schedule = [&]() -> bool {
         expectContextual("SCHEDULE", "Expected SCHEDULE");
         expect(TokenType::EQUAL, "Expected '=' after SCHEDULE");
 
         if (matchContextual("CRON")) {
+            if (!requireFeature(kFeatureScheduleRruleSurface)) {
+                return false;
+            }
             stmt->schedule_kind = JobScheduleKind::CRON;
-            stmt->cron_expression = parse_timestamp_literal("CRON");
-            return;
+            auto raw = parse_timestamp_literal("CRON");
+            auto canonical = raw;
+            canonicalize_rrule(raw, canonical);
+            stmt->cron_expression = canonical;
+            return true;
         }
         if (matchContextual("AT")) {
             stmt->schedule_kind = JobScheduleKind::AT;
             stmt->at_timestamp = parse_timestamp_literal("AT");
-            return;
+            return true;
         }
         if (matchContextual("EVERY")) {
             stmt->schedule_kind = JobScheduleKind::EVERY;
@@ -1511,10 +1657,11 @@ CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
             if (matchContextual("ENDS")) {
                 stmt->ends_at = parse_timestamp_literal("ENDS");
             }
-            return;
+            return true;
         }
 
         error("Expected CRON, AT, or EVERY after SCHEDULE");
+        return false;
     };
 
     auto parse_partition_list = [&](const char* context) -> StringPool::StringId {
@@ -1712,8 +1859,7 @@ CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
         }
 
         if (checkContextual("SCHEDULE")) {
-            parse_schedule();
-            has_schedule = true;
+            has_schedule = parse_schedule() || has_schedule;
         } else if (matchContextual("MEASUREMENT")) {
             parse_measurement_clause();
         } else if (matchContextual("DEPENDS")) {
@@ -1821,6 +1967,9 @@ CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
     }
 
     if (match(TokenType::KW_AS) || matchContextual("AS")) {
+        if (matchContextual("SQL")) {
+            // Optional SQL keyword in canonical CREATE JOB body form.
+        }
         if (!check(TokenType::STRING_LITERAL)) {
             error("Expected SQL string after AS");
         } else {
@@ -3930,6 +4079,60 @@ CreateViewStmt* Parser::parseCreateView(bool or_replace) {
             stmt->column_names.push_back(expectIdentifier("Expected column name"));
         } while (match(TokenType::COMMA));
         expect(TokenType::RIGHT_PAREN, "Expected ')' after column list");
+    }
+
+    // Optional WITH (...) options before AS
+    if (match(TokenType::KW_WITH) && check(TokenType::LEFT_PAREN)) {
+        expect(TokenType::LEFT_PAREN, "Expected '(' after WITH");
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            StringPool::StringId opt_name = expectIdentifier("Expected view option name");
+            expect(TokenType::EQUAL, "Expected '=' after view option name");
+
+            bool bool_value = false;
+            bool parsed_bool = false;
+            if (match(TokenType::KW_TRUE)) {
+                bool_value = true;
+                parsed_bool = true;
+            } else if (match(TokenType::KW_FALSE)) {
+                bool_value = false;
+                parsed_bool = true;
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                bool_value = current().value.int_value != 0;
+                parsed_bool = true;
+                advance();
+            } else if (isIdentifier()) {
+                std::string value = std::string(stringPool().get(current().value.string_id));
+                std::string upper;
+                upper.reserve(value.size());
+                for (char c : value) {
+                    upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+                }
+                if (upper == "TRUE" || upper == "ON" || upper == "YES") {
+                    bool_value = true;
+                    parsed_bool = true;
+                } else if (upper == "FALSE" || upper == "OFF" || upper == "NO") {
+                    bool_value = false;
+                    parsed_bool = true;
+                }
+                advance();
+            }
+
+            if (!parsed_bool) {
+                error("Expected boolean view option value");
+            } else {
+                std::string_view opt_name_view = stringPool().get(opt_name);
+                if (caseInsensitiveEquals(opt_name_view, "MATERIALIZED")) {
+                    stmt->materialized = bool_value;
+                }
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after view options");
     }
 
     // AS SELECT ...
@@ -6664,6 +6867,24 @@ Statement* Parser::parseAlter() {
                   "Top-level ALTER MEASUREMENT/SCHEDULE is not supported in v3; use ALTER JOB ...");
         return nullptr;
     }
+    if (matchContextual("SEARCH")) {
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "ALTER SEARCH INDEX is not supported in v3; use ALTER INDEX ...");
+        } else {
+            errorCode("PRS_0505", "Unsupported SEARCH alter surface");
+        }
+        return nullptr;
+    }
+    if (matchContextual("VECTOR")) {
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "ALTER VECTOR INDEX is not supported in v3; use ALTER INDEX ...");
+        } else {
+            errorCode("PRS_0505", "Unsupported VECTOR alter surface");
+        }
+        return nullptr;
+    }
     if (matchContextual("CONNECTION")) {
         if (!matchContextual("RULE")) {
             errorCode("PRS_0505", "Expected RULE after ALTER CONNECTION");
@@ -7582,14 +7803,115 @@ AlterJobStmt* Parser::parseAlterJob() {
         return id;
     };
 
+    auto canonicalize_rrule = [&](StringPool::StringId raw_id,
+                                  StringPool::StringId& canonical_id) -> bool {
+        if (raw_id == StringPool::INVALID_ID) {
+            return false;
+        }
+
+        auto trim = [](std::string_view s) -> std::string_view {
+            size_t b = 0;
+            while (b < s.size() && std::isspace(static_cast<unsigned char>(s[b]))) {
+                ++b;
+            }
+            size_t e = s.size();
+            while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) {
+                --e;
+            }
+            return s.substr(b, e - b);
+        };
+
+        std::set<std::string> seen_keys;
+        std::vector<std::pair<std::string, std::string>> kv_pairs;
+        std::string raw = std::string(stringPool().get(raw_id));
+        size_t pos = 0;
+        while (pos < raw.size()) {
+            size_t next = raw.find(';', pos);
+            std::string token = std::string(trim(std::string_view(raw).substr(
+                pos, next == std::string::npos ? std::string::npos : next - pos)));
+            if (token.empty()) {
+                errorCode("PRS_0507", "Invalid RRULE token");
+                return false;
+            }
+            size_t eq = token.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 >= token.size()) {
+                errorCode("PRS_0507", "Invalid RRULE key/value contract");
+                return false;
+            }
+
+            std::string key = std::string(trim(token.substr(0, eq)));
+            std::string value = std::string(trim(token.substr(eq + 1)));
+            for (char& c : key) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+
+            static const char* kAllowed[] = {
+                "FREQ", "INTERVAL", "COUNT", "UNTIL", "BYSECOND", "BYMINUTE", "BYHOUR",
+                "BYDAY", "BYMONTHDAY", "BYYEARDAY", "BYWEEKNO", "BYMONTH", "BYSETPOS", "WKST"
+            };
+            bool allowed = false;
+            for (const char* candidate : kAllowed) {
+                if (key == candidate) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed) {
+                errorCode("PRS_0507", "Invalid RRULE key");
+                return false;
+            }
+            if (!seen_keys.insert(key).second) {
+                errorCode("PRS_0507", "Duplicate RRULE key");
+                return false;
+            }
+
+            kv_pairs.push_back({std::move(key), std::move(value)});
+            if (next == std::string::npos) {
+                break;
+            }
+            pos = next + 1;
+        }
+
+        if (seen_keys.find("FREQ") == seen_keys.end()) {
+            errorCode("PRS_0507", "RRULE requires FREQ");
+            return false;
+        }
+        if (seen_keys.size() < 2) {
+            errorCode("PRS_0507",
+                      "RRULE requires at least one scheduling constraint beyond FREQ");
+            return false;
+        }
+
+        std::sort(kv_pairs.begin(), kv_pairs.end(),
+                  [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+
+        std::string canonical;
+        for (size_t i = 0; i < kv_pairs.size(); ++i) {
+            if (i != 0) {
+                canonical.push_back(';');
+            }
+            canonical.append(kv_pairs[i].first);
+            canonical.push_back('=');
+            canonical.append(kv_pairs[i].second);
+        }
+        canonical_id = stringPool().intern(canonical);
+        return true;
+    };
+
     auto parse_schedule = [&]() {
         if (matchContextual("SCHEDULE")) {
             expect(TokenType::EQUAL, "Expected '=' after SCHEDULE");
         }
 
         if (matchContextual("CRON")) {
+            if (!requireFeature(kFeatureScheduleRruleSurface)) {
+                return false;
+            }
             stmt->schedule_kind = JobScheduleKind::CRON;
-            stmt->cron_expression = parse_timestamp_literal("CRON");
+            auto raw = parse_timestamp_literal("CRON");
+            auto canonical = raw;
+            canonicalize_rrule(raw, canonical);
+            stmt->cron_expression = canonical;
             stmt->has_schedule = true;
             return true;
         }
@@ -7832,6 +8154,9 @@ AlterJobStmt* Parser::parseAlterJob() {
         if (match(TokenType::KW_AS) || matchContextual("AS")) {
             stmt->has_job_body = true;
             stmt->job_type = JobType::SQL;
+            if (matchContextual("SQL")) {
+                // Optional SQL keyword in canonical ALTER JOB body form.
+            }
             if (!check(TokenType::STRING_LITERAL)) {
                 error("Expected SQL string after AS");
             } else {
@@ -8305,6 +8630,24 @@ Statement* Parser::parseDrop() {
     if (matchContextual("SCHEDULE")) {
         errorCode("PRS_0505",
                   "Top-level DROP SCHEDULE is not supported in v3; use ALTER/DROP JOB ...");
+        return nullptr;
+    }
+    if (matchContextual("SEARCH")) {
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "DROP SEARCH INDEX is not supported in v3; use DROP INDEX ...");
+        } else {
+            errorCode("PRS_0505", "Unsupported SEARCH drop surface");
+        }
+        return nullptr;
+    }
+    if (matchContextual("VECTOR")) {
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "DROP VECTOR INDEX is not supported in v3; use DROP INDEX ...");
+        } else {
+            errorCode("PRS_0505", "Unsupported VECTOR drop surface");
+        }
         return nullptr;
     }
     if (matchContextual("CONNECTION")) {
@@ -12808,6 +13151,23 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
     }
 
     if (!parsed_count_star) {
+        if (upper_name == "EXTRACT")
+        {
+            if (check(TokenType::RIGHT_PAREN))
+            {
+                error("EXTRACT requires arguments");
+                return expr;
+            }
+
+            Expression* field_expr = parseAddExpr();
+            expect(TokenType::KW_FROM, "Expected FROM in EXTRACT expression");
+            Expression* value_expr = parseExpression();
+            expr->arguments.push_back(field_expr);
+            expr->arguments.push_back(value_expr);
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after EXTRACT expression");
+            return expr;
+        }
+
         if (upper_name == "POSITION")
         {
             if (check(TokenType::RIGHT_PAREN))
@@ -13070,7 +13430,7 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
         };
 
         if (starts_with("FN_GET")) {
-            errorCode("PRS_0506",
+            errorCode("PRS_0505",
                       "Legacy FN_GET* function names are not supported in v3; use EXTRACT(<selector> FROM <expr>)");
         } else if (starts_with("DOC_PATH_") ||
             starts_with("TS_") ||
@@ -15213,6 +15573,10 @@ AlterIndexStmt* Parser::parseValidateIndex() {
         stmt->span = makeSpan(start);
         return stmt;
     }
+    if (stmt->index_path.components.size() < 2) {
+        errorCode("PRS_0505",
+                  "VALIDATE INDEX requires explicit parent-qualified index reference");
+    }
 
     if (match(TokenType::KW_WITH)) {
         expect(TokenType::LEFT_PAREN, "Expected '(' after WITH");
@@ -16194,10 +16558,19 @@ Statement* Parser::parseAlterCubeControl() {
         return finalize_stmt("stop", captureStatementBody());
     }
     if (matchContextual("REBUILD")) {
+        std::string payload = "REBUILD";
         if (match(TokenType::KW_WITH) || check(TokenType::LEFT_PAREN)) {
-            return finalize_stmt("rebuild", captureStatementBody());
+            std::string detail = captureStatementBody();
+            if (!detail.empty()) {
+                payload.push_back(' ');
+                payload.append(detail);
+            }
+        } else if (isIdentifier()) {
+            payload.push_back(' ');
+            payload.append(std::string(stringPool().get(current().value.string_id)));
+            advance();
         }
-        return finalize_stmt("rebuild", "");
+        return finalize_stmt("alter", payload);
     }
     if (matchContextual("REFRESH")) {
         if (match(TokenType::KW_WITH) || check(TokenType::LEFT_PAREN)) {

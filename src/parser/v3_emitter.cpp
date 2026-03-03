@@ -1991,7 +1991,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.opcode = op(Opcode::SBLR3_CREATE_EXCEPTION_STMT);
             inst.flags = 0;
             Value::Object payload;
-            payload["name"] = toSchemaPath(s->exception_path);
+            payload["name"] = Value(schemaPathToString(pool_, s->exception_path));
             if (s->message != parser::v3::StringPool::INVALID_ID) {
                 payload["message"] = Value(std::string(pool_.get(s->message)));
             } else {
@@ -2931,9 +2931,6 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
             }
             if (key_text == "service.channel.progress") {
                 return emit_multi_model(Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS, 50);
-            }
-            if (key_text.rfind("cube.ddl.", 0) == 0) {
-                return emit_multi_model(Opcode::SBLR3_CUBE_DDL, 51);
             }
             if (key_text.rfind("cube.ddl.create.", 0) == 0) {
                 return emit_multi_model(Opcode::SBLR3_CUBE_DDL, 51);
@@ -5247,10 +5244,33 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
         {"NULLIF", Opcode::SBLR3_NULLIF},
         {"POWER", Opcode::SBLR3_FUNC_POWER},
         {"ABS", Opcode::SBLR3_FUNC_ABS},
+        {"ACOS", Opcode::SBLR3_FUNC_ACOS},
+        {"ACOSH", Opcode::SBLR3_FUNC_ACOSH},
+        {"AGE", Opcode::SBLR3_FUNC_AGE},
+        {"ASIN", Opcode::SBLR3_FUNC_ASIN},
+        {"ASINH", Opcode::SBLR3_FUNC_ASINH},
+        {"ATAN", Opcode::SBLR3_FUNC_ATAN},
+        {"ATAN2", Opcode::SBLR3_FUNC_ATAN2},
+        {"ATANH", Opcode::SBLR3_FUNC_ATANH},
+        {"CBRT", Opcode::SBLR3_FUNC_CBRT},
+        {"CEIL", Opcode::SBLR3_FUNC_CEIL},
+        {"CEILING", Opcode::SBLR3_FUNC_CEIL},
+        {"CHAR_LENGTH", Opcode::SBLR3_FUNC_CHAR_LENGTH},
+        {"COLLATE", Opcode::SBLR3_FUNC_COLLATE},
+        {"COL_DESCRIPTION", Opcode::SBLR3_FUNC_COL_DESCRIPTION},
         {"SIN", Opcode::SBLR3_FUNC_SIN},
         {"COS", Opcode::SBLR3_FUNC_COS},
+        {"COSH", Opcode::SBLR3_FUNC_COSH},
+        {"COT", Opcode::SBLR3_FUNC_COT},
         {"TAN", Opcode::SBLR3_FUNC_TAN},
+        {"TANH", Opcode::SBLR3_FUNC_TANH},
         {"CONCAT", Opcode::SBLR3_FUNC_CONCAT},
+        {"CONCAT_WS", Opcode::SBLR3_FUNC_CONCAT_WS},
+        {"CONVERT", Opcode::SBLR3_FUNC_CONVERT},
+        {"DATE_ADD", Opcode::SBLR3_FUNC_DATE_ADD},
+        {"DATE_DIFF", Opcode::SBLR3_FUNC_DATE_DIFF},
+        {"DATE_SUB", Opcode::SBLR3_FUNC_DATE_SUB},
+        {"DEGREES", Opcode::SBLR3_FUNC_DEGREES},
         {"NOW", Opcode::SBLR3_FUNC_NOW},
         {"CURRENT_TIMESTAMP", Opcode::SBLR3_FUNC_NOW},
         {"CURRENT_DATE", Opcode::SBLR3_FUNC_CURRENT_DATE},
@@ -5261,11 +5281,36 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
         {"CURRENT_CONNECTION", Opcode::SBLR3_FUNC_CURRENT_CONNECTION},
         {"CURRENT_SESSION", Opcode::SBLR3_FUNC_CURRENT_CONNECTION},
         {"CURRENT_TRANSACTION", Opcode::SBLR3_FUNC_CURRENT_TRANSACTION},
+        {"EXP", Opcode::SBLR3_FUNC_EXP},
+        {"FLOOR", Opcode::SBLR3_FUNC_FLOOR},
+        {"FORMAT_TYPE", Opcode::SBLR3_FUNC_FORMAT_TYPE},
         {"ARRAY_POSITION", Opcode::SBLR3_FUNC_ARRAY_POSITION},
         {"ARRAY_SLICE", Opcode::SBLR3_ARRAY_SLICE},
         {"ARRAY_SUBSCRIPT", Opcode::SBLR3_ARRAY_SUBSCRIPT},
+        {"LENGTH", Opcode::SBLR3_FUNC_LENGTH},
+        {"LOWER", Opcode::SBLR3_FUNC_LOWER},
+        {"LN", Opcode::SBLR3_FUNC_LN},
+        {"LOG", Opcode::SBLR3_FUNC_LOG},
+        {"LOG10", Opcode::SBLR3_FUNC_LOG10},
+        {"LOG2", Opcode::SBLR3_FUNC_LOG2},
+        {"LTRIM", Opcode::SBLR3_FUNC_LTRIM},
+        {"MOD", Opcode::SBLR3_FUNC_MOD},
+        {"OBJ_DESCRIPTION", Opcode::SBLR3_FUNC_OBJ_DESCRIPTION},
+        {"OCTET_LENGTH", Opcode::SBLR3_FUNC_OCTET_LENGTH},
+        {"PI", Opcode::SBLR3_FUNC_PI},
+        {"RADIANS", Opcode::SBLR3_FUNC_RADIANS},
         {"REPLACE", Opcode::SBLR3_FUNC_REPLACE},
+        {"ROUND", Opcode::SBLR3_FUNC_ROUND},
+        {"RTRIM", Opcode::SBLR3_FUNC_RTRIM},
+        {"SHOBJ_DESCRIPTION", Opcode::SBLR3_FUNC_SHOBJ_DESCRIPTION},
+        {"SIGN", Opcode::SBLR3_FUNC_SIGN},
+        {"SINH", Opcode::SBLR3_FUNC_SINH},
+        {"SQRT", Opcode::SBLR3_FUNC_SQRT},
+        {"SUBSTRING", Opcode::SBLR3_FUNC_SUBSTRING},
         {"ENDS_WITH", Opcode::SBLR3_FUNC_ENDS_WITH},
+        {"TRIM", Opcode::SBLR3_FUNC_TRIM},
+        {"TRUNC", Opcode::SBLR3_FUNC_TRUNC},
+        {"UPPER", Opcode::SBLR3_FUNC_UPPER},
         {"JSON_EXTRACT", Opcode::SBLR3_JSON_EXTRACT},
         {"JSON_EXISTS", Opcode::SBLR3_FUNC_JSON_EXISTS},
         {"JSON_HAS_KEY", Opcode::SBLR3_FUNC_JSON_HAS_KEY},

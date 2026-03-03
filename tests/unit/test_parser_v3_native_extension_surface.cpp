@@ -153,7 +153,7 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesViewMaterializationAsOption) {
 
 TEST(ParserV3NativeExtensionSurfaceTest, ParsesUnifiedAlterDropIndexFormsForFulltextAndVector) {
     {
-        Parser parser("ALTER INDEX idx_search REBUILD ONLINE");
+        Parser parser("ALTER INDEX docs.idx_search REBUILD ONLINE");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterIndexStmt);
@@ -163,7 +163,7 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesUnifiedAlterDropIndexFormsForFull
     }
 
     {
-        Parser parser("ALTER INDEX idx_vec REBUILD OFFLINE");
+        Parser parser("ALTER INDEX docs.idx_vec REBUILD OFFLINE");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterIndexStmt);
@@ -173,14 +173,14 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesUnifiedAlterDropIndexFormsForFull
     }
 
     {
-        Parser parser("DROP INDEX idx_search");
+        Parser parser("DROP INDEX docs.idx_search");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::DropIndexStmt);
     }
 
     {
-        Parser parser("DROP INDEX idx_vec");
+        Parser parser("DROP INDEX docs.idx_vec");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::DropIndexStmt);

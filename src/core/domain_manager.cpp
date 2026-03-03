@@ -27,8 +27,10 @@
 #include <cctype>
 #include <cstddef>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <openssl/sha.h>
 
@@ -647,10 +649,30 @@ namespace scratchbird::core
             return out.str();
         }
 
-        auto domainControlPlaneReplicaCatalog() -> DomainControlPlaneReplicaCatalog&
+        auto domainControlPlaneReplicaCatalog(Database* db) -> DomainControlPlaneReplicaCatalog&
         {
-            static DomainControlPlaneReplicaCatalog catalog;
-            return catalog;
+            static DomainControlPlaneReplicaCatalog fallback_catalog;
+            static std::mutex catalogs_mutex;
+            static std::unordered_map<ID,
+                                      std::unique_ptr<DomainControlPlaneReplicaCatalog>,
+                                      IDHash> catalogs_by_database;
+
+            if (!db || isZeroUuidLocal(db->uuid()))
+            {
+                return fallback_catalog;
+            }
+
+            std::lock_guard<std::mutex> lock(catalogs_mutex);
+            auto it = catalogs_by_database.find(db->uuid());
+            if (it != catalogs_by_database.end())
+            {
+                return *(it->second);
+            }
+
+            auto inserted = catalogs_by_database.emplace(
+                db->uuid(),
+                std::make_unique<DomainControlPlaneReplicaCatalog>());
+            return *(inserted.first->second);
         }
 
         auto appendDomainControlPlaneEvent(Database* db,
@@ -672,7 +694,7 @@ namespace scratchbird::core
                 event.definition_hash =
                     DomainControlPlaneReplicaCatalog::computeDefinitionHash(canonical_definition);
             }
-            return domainControlPlaneReplicaCatalog().appendEvent(event, ctx);
+            return domainControlPlaneReplicaCatalog(db).appendEvent(event, ctx);
         }
 
         auto isSystemDomainName(const std::string& domain_name) -> bool
