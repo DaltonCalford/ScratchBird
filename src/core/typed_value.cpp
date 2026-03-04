@@ -9185,6 +9185,123 @@ namespace scratchbird::core
                 result_out = makeInterval(*parsed);
                 return Status::OK;
             }
+            case DataType::POINT:
+            {
+                if (type_ == DataType::POINT)
+                {
+                    result_out = *this;
+                    return Status::OK;
+                }
+                if (!isStringLike(type_))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "POINT cast expects string input");
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
+                }
+
+                std::string text = trimAscii(stringValueForParse());
+                if (text.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Invalid POINT text representation");
+                    return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
+                }
+
+                auto to_upper_ascii = [](const std::string& value) {
+                    std::string out;
+                    out.reserve(value.size());
+                    for (char ch : value)
+                    {
+                        out.push_back(
+                            static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+                    }
+                    return out;
+                };
+
+                std::string upper = to_upper_ascii(text);
+                if (upper.rfind("POINT", 0) == 0)
+                {
+                    text = trimAscii(text.substr(5));
+                }
+                if (!text.empty() && text.front() == '(' && text.back() == ')')
+                {
+                    text = trimAscii(text.substr(1, text.size() - 2));
+                }
+                for (char& ch : text)
+                {
+                    if (ch == ',')
+                    {
+                        ch = ' ';
+                    }
+                }
+
+                auto parse_double_token = [&](const std::string& token,
+                                              double& out) -> bool
+                {
+                    std::string trimmed = trimAscii(token);
+                    if (trimmed.empty())
+                    {
+                        return false;
+                    }
+                    std::string token_upper = to_upper_ascii(trimmed);
+                    if (token_upper == "INF" || token_upper == "+INF" ||
+                        token_upper == "INFINITY" || token_upper == "+INFINITY")
+                    {
+                        out = std::numeric_limits<double>::infinity();
+                        return true;
+                    }
+                    if (token_upper == "-INF" || token_upper == "-INFINITY")
+                    {
+                        out = -std::numeric_limits<double>::infinity();
+                        return true;
+                    }
+                    if (token_upper == "NAN" || token_upper == "+NAN" ||
+                        token_upper == "-NAN")
+                    {
+                        out = std::numeric_limits<double>::quiet_NaN();
+                        return true;
+                    }
+
+                    char* end_ptr = nullptr;
+                    errno = 0;
+                    double parsed = std::strtod(trimmed.c_str(), &end_ptr);
+                    if (end_ptr == trimmed.c_str() || *end_ptr != '\0' || errno == ERANGE)
+                    {
+                        return false;
+                    }
+                    out = parsed;
+                    return true;
+                };
+
+                std::istringstream point_stream(text);
+                std::string x_token;
+                std::string y_token;
+                std::string extra_token;
+                if (!(point_stream >> x_token >> y_token))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Invalid POINT text representation");
+                    return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
+                }
+                if (point_stream >> extra_token)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Invalid POINT text representation");
+                    return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
+                }
+
+                double x = 0.0;
+                double y = 0.0;
+                if (!parse_double_token(x_token, x) || !parse_double_token(y_token, y))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                      "Invalid POINT text representation");
+                    return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
+                }
+
+                result_out = makePoint(Point(x, y));
+                return Status::OK;
+            }
             case DataType::DATE:
             case DataType::TIME:
             case DataType::TIMESTAMP:

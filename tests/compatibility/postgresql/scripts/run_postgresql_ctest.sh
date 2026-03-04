@@ -74,6 +74,13 @@ USE_UPSTREAM_PG_REGRESS="${SCRATCHBIRD_PG_USE_UPSTREAM:-0}"
 UPSTREAM_INPUT_DIR="${SCRATCHBIRD_PG_REGRESS_INPUT_DIR:-${PG_DIR}/repos/postgres/src/test/regress}"
 UPSTREAM_SCHEDULE="${SCRATCHBIRD_PG_REGRESS_SCHEDULE:-parallel_schedule}"
 UPSTREAM_TESTS="${SCRATCHBIRD_PG_REGRESS_TESTS:-}"
+UPSTREAM_SKIP_FILE="${SCRATCHBIRD_PG_REGRESS_SKIP_FILE:-${PG_DIR}/config/upstream_skip_tests.txt}"
+UPSTREAM_SKIP_TESTS="${SCRATCHBIRD_PG_REGRESS_SKIP_TESTS:-}"
+UPSTREAM_TIMEOUT_SEC="${SCRATCHBIRD_PG_REGRESS_TIMEOUT_SEC:-3600}"
+UPSTREAM_HEALTHCHECK_SEC="${SCRATCHBIRD_PG_REGRESS_HEALTHCHECK_SEC:-5}"
+UPSTREAM_HEALTHCHECK_FAILS="${SCRATCHBIRD_PG_REGRESS_HEALTHCHECK_FAILS:-3}"
+UPSTREAM_HEALTHCHECK_TIMEOUT_SEC="${SCRATCHBIRD_PG_REGRESS_HEALTHCHECK_TIMEOUT_SEC:-8}"
+UPSTREAM_WATCH_PID_FILE="${SCRATCHBIRD_PG_COMPAT_WATCH_PID_FILE:-}"
 RESOLVED_ADMIN_SECRET=""
 RESOLVED_ADMIN_SECRET_SOURCE="none"
 
@@ -220,6 +227,121 @@ run_precheck() {
   fi
 
   return 1
+}
+
+run_pg_isql_probe() {
+  local probe_out="$1"
+  local timeout_sec="$2"
+  local -a probe_cmd=(
+    "$ISQL_BIN"
+    -h "$HOST"
+    -p "$PORT"
+    -U "$PG_USER"
+    -d "$DBNAME"
+    -f "$PRECHECK_FILE"
+    -o "$probe_out"
+    -q
+  )
+
+  if command -v timeout >/dev/null 2>&1; then
+    if PGPASSWORD="$PASSWORD" timeout "${timeout_sec}s" "${probe_cmd[@]}" 2>> "$probe_out"; then
+      return 0
+    fi
+  else
+    if PGPASSWORD="$PASSWORD" "${probe_cmd[@]}" 2>> "$probe_out"; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+start_pg_regress_watchdog() {
+  local regress_pid="$1"
+  local watchdog_log="$2"
+  local probe_out="$3"
+
+  (
+    local consecutive_failures=0
+    local server_pid=""
+
+    while kill -0 "$regress_pid" 2>/dev/null; do
+      sleep "$UPSTREAM_HEALTHCHECK_SEC"
+      if ! kill -0 "$regress_pid" 2>/dev/null; then
+        break
+      fi
+
+      if [[ -n "$UPSTREAM_WATCH_PID_FILE" ]]; then
+        server_pid=""
+        if [[ -r "$UPSTREAM_WATCH_PID_FILE" ]]; then
+          server_pid="$(tr -d ' \n\r' < "$UPSTREAM_WATCH_PID_FILE" 2>/dev/null || true)"
+        fi
+        if [[ -z "$server_pid" || ! "$server_pid" =~ ^[0-9]+$ || ! $(kill -0 "$server_pid" 2>/dev/null; echo $?) -eq 0 ]]; then
+          {
+            echo "[watchdog] $(date -u +%Y-%m-%dT%H:%M:%SZ) upstream abort: server pid is unavailable"
+            echo "[watchdog] pid_file=${UPSTREAM_WATCH_PID_FILE} pid=${server_pid:-<none>}"
+          } >> "$watchdog_log"
+          kill "$regress_pid" 2>/dev/null || true
+          sleep 1
+          if kill -0 "$regress_pid" 2>/dev/null; then
+            kill -9 "$regress_pid" 2>/dev/null || true
+          fi
+          break
+        fi
+      fi
+
+      : > "$probe_out"
+      if run_pg_isql_probe "$probe_out" "$UPSTREAM_HEALTHCHECK_TIMEOUT_SEC"; then
+        consecutive_failures=0
+        continue
+      fi
+
+      consecutive_failures=$((consecutive_failures + 1))
+      {
+        echo "[watchdog] $(date -u +%Y-%m-%dT%H:%M:%SZ) probe failure ${consecutive_failures}/${UPSTREAM_HEALTHCHECK_FAILS}"
+        tail -n 30 "$probe_out" 2>/dev/null || true
+      } >> "$watchdog_log"
+
+      if (( consecutive_failures >= UPSTREAM_HEALTHCHECK_FAILS )); then
+        echo "[watchdog] $(date -u +%Y-%m-%dT%H:%M:%SZ) upstream abort: endpoint healthcheck threshold reached" >> "$watchdog_log"
+        kill "$regress_pid" 2>/dev/null || true
+        sleep 1
+        if kill -0 "$regress_pid" 2>/dev/null; then
+          kill -9 "$regress_pid" 2>/dev/null || true
+        fi
+        break
+      fi
+    done
+  ) &
+
+  echo "$!"
+}
+
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+collect_schedule_tests() {
+  local schedule_file="$1"
+  awk '
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    {
+      line=$0
+      if (sub(/^[[:space:]]*test:[[:space:]]*/, "", line) == 0) {
+        next
+      }
+      gsub(/[[:space:]]+/, " ", line)
+      n=split(line, fields, " ")
+      for (i = 1; i <= n; ++i) {
+        if (fields[i] != "") {
+          print fields[i]
+        }
+      }
+    }
+  ' "$schedule_file"
 }
 
 resolve_bootstrap_token_password() {
@@ -921,18 +1043,192 @@ if [[ "$USE_UPSTREAM_PG_REGRESS" == "1" ]]; then
     "--outputdir=${upstream_results_dir}"
     "--expecteddir=${UPSTREAM_INPUT_DIR}"
     "--bindir=${psql_bindir}"
-    "--schedule=${upstream_schedule_path}"
   )
+
+  declare -a upstream_tests_array=()
+  declare -a upstream_filtered_tests_array=()
+  declare -a upstream_skip_entries=()
+  declare -A upstream_skip_reasons=()
+  declare -A upstream_skip_seen=()
 
   if [[ -n "$UPSTREAM_TESTS" ]]; then
     # shellcheck disable=SC2206
     upstream_tests_array=($UPSTREAM_TESTS)
-    regress_cmd+=("${upstream_tests_array[@]}")
+  else
+    mapfile -t upstream_tests_array < <(collect_schedule_tests "$upstream_schedule_path")
   fi
 
-  if ! PGPASSWORD="$PASSWORD" "${regress_cmd[@]}" > "$upstream_out" 2>&1; then
+  if [[ -r "$UPSTREAM_SKIP_FILE" ]]; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      line="${line%%#*}"
+      line="$(trim_whitespace "$line")"
+      [[ -z "$line" ]] && continue
+      upstream_skip_entries+=("$line")
+    done < "$UPSTREAM_SKIP_FILE"
+  fi
+
+  if [[ -n "$UPSTREAM_SKIP_TESTS" ]]; then
+    upstream_skip_entries+=("$(echo "$UPSTREAM_SKIP_TESTS" | tr ',' ' ')")
+  fi
+
+  for entry in "${upstream_skip_entries[@]}"; do
+    local_parts=()
+    if [[ "$entry" == *"|"* ]]; then
+      local_test="${entry%%|*}"
+      local_reason="${entry#*|}"
+      local_test="$(trim_whitespace "$local_test")"
+      local_reason="$(trim_whitespace "$local_reason")"
+      if [[ -n "$local_test" ]]; then
+        upstream_skip_reasons["$local_test"]="${local_reason:-deferred}"
+      fi
+      continue
+    fi
+
+    # shellcheck disable=SC2206
+    local_parts=($entry)
+    for local_test in "${local_parts[@]}"; do
+      local_test="$(trim_whitespace "$local_test")"
+      [[ -z "$local_test" ]] && continue
+      upstream_skip_reasons["$local_test"]="deferred"
+    done
+  done
+
+  for test_name in "${upstream_tests_array[@]}"; do
+    [[ -z "$test_name" ]] && continue
+    if [[ -n "${upstream_skip_reasons[$test_name]:-}" ]]; then
+      if [[ -z "${upstream_skip_seen[$test_name]:-}" ]]; then
+        upstream_skip_seen["$test_name"]=1
+      fi
+      continue
+    fi
+    upstream_filtered_tests_array+=("$test_name")
+  done
+
+  if [[ "${#upstream_filtered_tests_array[@]}" -eq 0 ]]; then
+    echo "PostgreSQL upstream mode failure: all selected tests were filtered by skip configuration." >&2
+    write_run_manifest "failed" 1
+    exit 1
+  fi
+
+  upstream_skip_report="${upstream_results_dir}/upstream_skipped_tests.txt"
+  upstream_filtered_schedule="${upstream_results_dir}/$(basename "$UPSTREAM_SCHEDULE").filtered"
+  declare -A upstream_selected_set=()
+  for selected_test in "${upstream_filtered_tests_array[@]}"; do
+    upstream_selected_set["$selected_test"]=1
+  done
+
+  : > "$upstream_filtered_schedule"
+  while IFS= read -r schedule_line || [[ -n "$schedule_line" ]]; do
+    trimmed_line="$(trim_whitespace "$schedule_line")"
+    if [[ -z "$trimmed_line" || "$trimmed_line" == \#* ]]; then
+      printf '%s\n' "$schedule_line" >> "$upstream_filtered_schedule"
+      continue
+    fi
+
+    if [[ "$trimmed_line" == test:* ]]; then
+      test_tail="${trimmed_line#test:}"
+      # shellcheck disable=SC2206
+      schedule_tests=($test_tail)
+      kept_tests=()
+      for schedule_test in "${schedule_tests[@]}"; do
+        if [[ -n "${upstream_selected_set[$schedule_test]:-}" ]]; then
+          kept_tests+=("$schedule_test")
+        fi
+      done
+      if [[ "${#kept_tests[@]}" -gt 0 ]]; then
+        printf 'test: %s\n' "${kept_tests[*]}" >> "$upstream_filtered_schedule"
+      fi
+      continue
+    fi
+
+    printf '%s\n' "$schedule_line" >> "$upstream_filtered_schedule"
+  done < "$upstream_schedule_path"
+
+  mapfile -t upstream_effective_tests_array < <(collect_schedule_tests "$upstream_filtered_schedule")
+  if [[ "${#upstream_effective_tests_array[@]}" -eq 0 ]]; then
+    echo "PostgreSQL upstream mode failure: filtered schedule is empty after applying selected/skip tests." >&2
+    write_run_manifest "failed" 1
+    exit 1
+  fi
+
+  {
+    echo "generated_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "schedule=${upstream_schedule_path}"
+    echo "filtered_schedule=${upstream_filtered_schedule}"
+    echo "selected_count=${#upstream_tests_array[@]}"
+    echo "executed_count=${#upstream_effective_tests_array[@]}"
+    if [[ "${#upstream_skip_seen[@]}" -eq 0 ]]; then
+      echo "skipped=none"
+    else
+      echo "skipped_count=${#upstream_skip_seen[@]}"
+      for skipped_test in "${!upstream_skip_seen[@]}"; do
+        echo "${skipped_test}|${upstream_skip_reasons[$skipped_test]}"
+      done | sort
+    fi
+  } > "$upstream_skip_report"
+  regress_cmd+=("--schedule=${upstream_filtered_schedule}")
+
+  if [[ "${#upstream_skip_seen[@]}" -gt 0 ]]; then
+    echo "PostgreSQL upstream mode: filtered ${#upstream_skip_seen[@]} deferred test(s). See: ${upstream_skip_report}" >&2
+  fi
+
+  pgpass_file="${upstream_results_dir}/pgpass"
+  pgpass_host="${HOST//\\/\\\\}"
+  pgpass_host="${pgpass_host//:/\\:}"
+  pgpass_port="${PORT//\\/\\\\}"
+  pgpass_port="${pgpass_port//:/\\:}"
+  pgpass_db="${DBNAME//\\/\\\\}"
+  pgpass_db="${pgpass_db//:/\\:}"
+  pgpass_user="${PG_USER//\\/\\\\}"
+  pgpass_user="${pgpass_user//:/\\:}"
+  pgpass_password="${PASSWORD//\\/\\\\}"
+  pgpass_password="${pgpass_password//:/\\:}"
+  printf '%s:%s:%s:%s:%s\n' \
+    "$pgpass_host" "$pgpass_port" "$pgpass_db" "$pgpass_user" "$pgpass_password" > "$pgpass_file"
+  chmod 0600 "$pgpass_file"
+
+  upstream_watchdog_log="${upstream_results_dir}/watchdog.log"
+  upstream_probe_log="${upstream_results_dir}/watchdog_probe.out"
+  : > "$upstream_watchdog_log"
+  : > "$upstream_probe_log"
+
+  if command -v timeout >/dev/null 2>&1; then
+    PGPASSFILE="$pgpass_file" timeout "${UPSTREAM_TIMEOUT_SEC}s" "${regress_cmd[@]}" > "$upstream_out" 2>&1 &
+  else
+    PGPASSFILE="$pgpass_file" "${regress_cmd[@]}" > "$upstream_out" 2>&1 &
+  fi
+  regress_pid=$!
+  watchdog_pid="$(start_pg_regress_watchdog "$regress_pid" "$upstream_watchdog_log" "$upstream_probe_log")"
+
+  regress_status=0
+  if wait "$regress_pid"; then
+    regress_status=0
+  else
+    regress_status=$?
+  fi
+
+  if [[ -n "$watchdog_pid" ]]; then
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+  fi
+
+  if grep -q "upstream abort" "$upstream_watchdog_log" 2>/dev/null; then
+    echo "PostgreSQL upstream pg_regress aborted by watchdog. See: ${upstream_out}" >&2
+    echo "Watchdog evidence: ${upstream_watchdog_log}" >&2
+    write_run_manifest "failed" 1
+    exit 1
+  fi
+
+  if (( regress_status == 124 )); then
+    echo "PostgreSQL upstream pg_regress timed out after ${UPSTREAM_TIMEOUT_SEC}s. See: ${upstream_out}" >&2
+    echo "Watchdog evidence: ${upstream_watchdog_log}" >&2
+    write_run_manifest "failed" 1
+    exit 1
+  fi
+
+  if (( regress_status != 0 )); then
     echo "PostgreSQL upstream pg_regress failures. See: ${upstream_out}" >&2
-    cat "$upstream_out" >&2
+    echo "Watchdog evidence: ${upstream_watchdog_log}" >&2
     write_run_manifest "failed" 1
     exit 1
   fi

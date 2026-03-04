@@ -1,6 +1,9 @@
 #include "scratchbird/sblr/v3_schema.h"
 
+#include <memory>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace scratchbird::sblr::v3 {
 
@@ -46,25 +49,35 @@ const SchemaDef* lookupSchema(std::string_view name) {
     }
 
     if (name.rfind("SCHEMA_LITERAL_", 0) == 0) {
-        static SchemaDef literal_schema;
-        static std::string last_name;
-        std::string suffix(name.substr(std::string("SCHEMA_LITERAL_").size()));
-        if (last_name != name) {
-            literal_schema.name = std::string(name);
-            literal_schema.fields.clear();
-            if (suffix == "NULL") {
-                // NULL literal has no payload fields.
-            } else if (suffix == "DATE" || suffix == "TIME" || suffix == "TIMESTAMP" || suffix == "TIME_TZ" || suffix == "TIMESTAMP_TZ") {
-                literal_schema.fields.push_back(FieldDef{"value", FieldType::I64, ""});
-                literal_schema.fields.push_back(FieldDef{"offset_seconds", FieldType::I32, ""});
-            } else if (suffix == "DATE32") {
-                literal_schema.fields.push_back(FieldDef{"value", FieldType::I32, ""});
-            } else {
-                literal_schema.fields.push_back(FieldDef{"value", literalFieldType(suffix), ""});
-            }
-            last_name = std::string(name);
+        static std::mutex literal_cache_mutex;
+        static std::unordered_map<std::string, std::shared_ptr<SchemaDef>> literal_cache;
+
+        std::string key(name);
+        std::lock_guard<std::mutex> lock(literal_cache_mutex);
+        auto cached = literal_cache.find(key);
+        if (cached != literal_cache.end()) {
+            return cached->second.get();
         }
-        return &literal_schema;
+
+        auto schema = std::make_shared<SchemaDef>();
+        schema->name = key;
+
+        std::string suffix(name.substr(std::string("SCHEMA_LITERAL_").size()));
+        if (suffix == "NULL") {
+            // NULL literal has no payload fields.
+        } else if (suffix == "DATE" || suffix == "TIME" || suffix == "TIMESTAMP" ||
+                   suffix == "TIME_TZ" || suffix == "TIMESTAMP_TZ") {
+            schema->fields.push_back(FieldDef{"value", FieldType::I64, ""});
+            schema->fields.push_back(FieldDef{"offset_seconds", FieldType::I32, ""});
+        } else if (suffix == "DATE32") {
+            schema->fields.push_back(FieldDef{"value", FieldType::I32, ""});
+        } else {
+            schema->fields.push_back(FieldDef{"value", literalFieldType(suffix), ""});
+        }
+
+        auto [it, inserted] = literal_cache.emplace(key, std::move(schema));
+        (void)inserted;
+        return it->second.get();
     }
     return lookupSchemaGenerated(name);
 }

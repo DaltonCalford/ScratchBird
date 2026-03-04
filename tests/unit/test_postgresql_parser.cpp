@@ -1085,6 +1085,19 @@ TEST_F(PostgreSQLParserTest, AnalyzeStatements) {
     expectSuccess("ANALYZE users (id, name)");
 }
 
+TEST_F(PostgreSQLParserTest, CheckpointClusterAndWaitStatements) {
+    expectSuccess("CHECKPOINT");
+    expectSuccess("CLUSTER");
+    expectSuccess("CLUSTER users");
+    expectSuccess("CLUSTER users USING idx_users_id");
+    expectSuccess("WAIT FOR LSN '0/16B6C50'");
+    expectSuccess("WAIT FOR LSN '0/16B6C50' WITH (TIMEOUT = '5s')");
+
+    expectError("WAIT");
+    expectError("WAIT FOR");
+    expectError("WAIT FOR LSN");
+}
+
 TEST_F(PostgreSQLParserTest, CopyStatements) {
     expectSuccess("COPY users FROM STDIN");
     expectSuccess("COPY users TO STDOUT");

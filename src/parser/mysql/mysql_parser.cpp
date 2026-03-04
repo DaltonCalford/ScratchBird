@@ -854,6 +854,63 @@ void Parser::parseStatementInternal() {
 // ============================================================================
 
 parser::v3::Statement* Parser::parseStatementInternalV3() {
+    auto match_on_identifier = [&](const char* keyword) -> bool {
+        if (!check(TokenType::IDENTIFIER)) {
+            return false;
+        }
+        std::string_view ident = lexer_.stringPool().get(current_token_.value.string_id);
+        if (ident.size() != std::strlen(keyword)) {
+            return false;
+        }
+        for (size_t i = 0; i < ident.size(); ++i) {
+            if (std::toupper(static_cast<unsigned char>(ident[i])) !=
+                std::toupper(static_cast<unsigned char>(keyword[i]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto make_replica_control_stmt = [&](const char* action) -> parser::v3::Statement* {
+        auto* stmt = arena()->create<parser::v3::SetStmt>();
+        stmt->set_type = parser::v3::SetStmt::SetType::VARIABLE;
+        stmt->name = v3_string_pool_.intern("mysql.replica_control");
+        auto* value = arena()->create<parser::v3::LiteralExpr>();
+        value->literal_type = parser::v3::LiteralType::STRING;
+        value->string_value = v3_string_pool_.intern(action);
+        stmt->value = value;
+        return stmt;
+    };
+
+    if (check(TokenType::KW_START)) {
+        Token next = lexer_.peek();
+        if (next.type == TokenType::IDENTIFIER) {
+            std::string_view ident = lexer_.stringPool().get(next.value.string_id);
+            std::string upper(ident.begin(), ident.end());
+            std::transform(upper.begin(), upper.end(), upper.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+            if (upper == "REPLICA" || upper == "SLAVE") {
+                advance();  // START
+                advance();  // REPLICA/SLAVE
+                matchIdentifierKeyword("SQL_THREAD");
+                matchIdentifierKeyword("IO_THREAD");
+                warning("START REPLICA is mapped to session variable mysql.replica_control=START");
+                return make_replica_control_stmt("START");
+            }
+        }
+    }
+
+    if (check(TokenType::IDENTIFIER) && matchIdentifierKeyword("STOP")) {
+        if (!matchIdentifierKeyword("REPLICA") && !matchIdentifierKeyword("SLAVE")) {
+            error("Expected REPLICA after STOP");
+            return nullptr;
+        }
+        matchIdentifierKeyword("SQL_THREAD");
+        matchIdentifierKeyword("IO_THREAD");
+        warning("STOP REPLICA is mapped to session variable mysql.replica_control=STOP");
+        return make_replica_control_stmt("STOP");
+    }
+
     if (check(TokenType::KW_BEGIN) || check(TokenType::KW_START) ||
         check(TokenType::KW_COMMIT) || check(TokenType::KW_ROLLBACK) ||
         check(TokenType::KW_SAVEPOINT) || check(TokenType::KW_RELEASE)) {
@@ -863,9 +920,85 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
         return parseSetStmtV3();
     }
     if (check(TokenType::KW_SHOW)) {
-        // Keep SHOW routing on legacy MySQL parser path where explicit SHOW
-        // families are handled and unsupported variants are rejected.
-        return nullptr;
+        return parseShowStmtV3();
+    }
+    if (check(TokenType::KW_CHECK) || match_on_identifier("CHECK")) {
+        advance();  // CHECK
+        if (!matchKeyword(TokenType::KW_TABLE) && !matchIdentifierKeyword("TABLE")) {
+            error("Expected TABLE after CHECK");
+            return nullptr;
+        }
+
+        auto* stmt = arena()->create<parser::v3::ShowStmt>();
+        stmt->show_type = parser::v3::ShowStmt::ShowType::CHECKS;
+
+        std::string schema;
+        std::string table = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = table;
+            table = parseIdentifier();
+        }
+        resolveTableName(schema, table);
+        const std::string full = schema.empty() ? table : schema + "." + table;
+        stmt->name = v3_string_pool_.intern(full);
+
+        if (match(TokenType::COMMA)) {
+            warning("CHECK TABLE with multiple targets is reduced to first table in MySQL emulation");
+            while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                if (!match(TokenType::COMMA)) {
+                    advance();
+                    continue;
+                }
+                if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+                    parseIdentifier();
+                    if (match(TokenType::DOT)) {
+                        parseIdentifier();
+                    }
+                }
+            }
+        } else {
+            while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+        }
+        return stmt;
+    }
+    if (check(TokenType::KW_OPTIMIZE) || match_on_identifier("OPTIMIZE")) {
+        advance();  // OPTIMIZE
+        if (!matchKeyword(TokenType::KW_TABLE) && !matchIdentifierKeyword("TABLE")) {
+            error("Expected TABLE after OPTIMIZE");
+            return nullptr;
+        }
+
+        auto* stmt = arena()->create<parser::v3::AnalyzeStmt>();
+        stmt->target = parser::v3::AnalyzeStmt::AnalyzeTarget::TABLE;
+
+        std::string schema;
+        std::string table = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = table;
+            table = parseIdentifier();
+        }
+        resolveTableName(schema, table);
+        const std::string full = schema.empty() ? table : schema + "." + table;
+        stmt->table_path = buildPathFromQualified(v3_string_pool_, full);
+
+        if (match(TokenType::COMMA)) {
+            warning("OPTIMIZE TABLE with multiple targets is reduced to first table in MySQL emulation");
+            while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                if (!match(TokenType::COMMA)) {
+                    advance();
+                    continue;
+                }
+                if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+                    parseIdentifier();
+                    if (match(TokenType::DOT)) {
+                        parseIdentifier();
+                    }
+                }
+            }
+        }
+        return stmt;
     }
     if (check(TokenType::KW_USE)) {
         advance();  // consume USE
@@ -917,6 +1050,577 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
     }
     if (check(TokenType::KW_DESCRIBE)) {
         return parseDescribeStmtV3();
+    }
+    if (check(TokenType::KW_LOAD)) {
+        advance();  // LOAD
+        if (!matchKeyword(TokenType::KW_DATA) && !matchIdentifierKeyword("DATA")) {
+            error("Expected DATA after LOAD");
+            return nullptr;
+        }
+
+        if (matchKeyword(TokenType::KW_LOW_PRIORITY) || matchIdentifierKeyword("CONCURRENT")) {
+        }
+
+        bool is_local = false;
+        if (matchKeyword(TokenType::KW_LOCAL) || matchIdentifierKeyword("LOCAL")) {
+            is_local = true;
+        }
+
+        if (!matchKeyword(TokenType::KW_INFILE) && !matchIdentifierKeyword("INFILE")) {
+            error("Expected INFILE in LOAD DATA");
+            return nullptr;
+        }
+
+        parser::v3::StringPool::StringId infile = parser::v3::StringPool::INVALID_ID;
+        if (check(TokenType::STRING_LITERAL)) {
+            std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+            advance();
+            infile = v3_string_pool_.intern(value);
+        } else if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                   isNonReservedKeyword(current_token_.type)) {
+            infile = parseIdentifierId();
+        } else {
+            error("Expected file path after INFILE in LOAD DATA");
+            return nullptr;
+        }
+
+        parser::v3::StringPool::StringId conflict_mode = parser::v3::StringPool::INVALID_ID;
+        if (matchKeyword(TokenType::KW_REPLACE) || matchIdentifierKeyword("REPLACE")) {
+            conflict_mode = v3_string_pool_.intern("REPLACE");
+        } else if (matchKeyword(TokenType::KW_IGNORE) || matchIdentifierKeyword("IGNORE")) {
+            conflict_mode = v3_string_pool_.intern("IGNORE");
+        }
+
+        if (!matchKeyword(TokenType::KW_INTO) && !matchIdentifierKeyword("INTO")) {
+            error("Expected INTO TABLE in LOAD DATA");
+            return nullptr;
+        }
+        if (!matchKeyword(TokenType::KW_TABLE) && !matchIdentifierKeyword("TABLE")) {
+            error("Expected TABLE after INTO in LOAD DATA");
+            return nullptr;
+        }
+
+        std::string schema;
+        std::string table = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = table;
+            table = parseIdentifier();
+        }
+        resolveTableName(schema, table);
+        std::string full = schema.empty() ? table : schema + "." + table;
+
+        while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+            if (matchKeyword(TokenType::KW_CHARACTER) || matchIdentifierKeyword("CHARACTER")) {
+                if (matchKeyword(TokenType::KW_SET) || matchIdentifierKeyword("SET")) {
+                    if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                        isNonReservedKeyword(current_token_.type)) {
+                        parseIdentifierId();
+                    }
+                }
+                continue;
+            }
+
+            if (matchKeyword(TokenType::KW_CHARSET) || matchIdentifierKeyword("CHARSET")) {
+                if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                    isNonReservedKeyword(current_token_.type)) {
+                    parseIdentifierId();
+                }
+                continue;
+            }
+
+            if (matchIdentifierKeyword("FIELDS") || matchKeyword(TokenType::KW_COLUMNS) ||
+                matchIdentifierKeyword("COLUMNS") || matchKeyword(TokenType::KW_LINES) ||
+                matchIdentifierKeyword("LINES")) {
+                while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE) &&
+                       !check(TokenType::LEFT_PAREN) && !check(TokenType::KW_SET) &&
+                       !check(TokenType::KW_IGNORE)) {
+                    if (check(TokenType::KW_CHARACTER) || check(TokenType::KW_CHARSET) ||
+                        check(TokenType::KW_LINES) || check(TokenType::KW_COLUMNS)) {
+                        break;
+                    }
+                    advance();
+                }
+                continue;
+            }
+
+            if (matchKeyword(TokenType::KW_IGNORE) || matchIdentifierKeyword("IGNORE")) {
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    advance();
+                }
+                matchKeyword(TokenType::KW_LINES);
+                matchIdentifierKeyword("LINES");
+                matchIdentifierKeyword("ROWS");
+                continue;
+            }
+
+            if (match(TokenType::LEFT_PAREN)) {
+                int depth = 1;
+                while (depth > 0 && !check(TokenType::END_OF_FILE)) {
+                    if (match(TokenType::LEFT_PAREN)) {
+                        ++depth;
+                        continue;
+                    }
+                    if (match(TokenType::RIGHT_PAREN)) {
+                        --depth;
+                        continue;
+                    }
+                    advance();
+                }
+                continue;
+            }
+
+            if (matchKeyword(TokenType::KW_SET)) {
+                while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                    if (check(TokenType::KW_IGNORE) || check(TokenType::LEFT_PAREN)) {
+                        break;
+                    }
+                    advance();
+                }
+                continue;
+            }
+
+            advance();
+        }
+
+        auto* stmt = arena()->create<parser::v3::SetStmt>();
+        stmt->set_type = parser::v3::SetStmt::SetType::VARIABLE;
+        stmt->name = v3_string_pool_.intern("mysql.load_data.request");
+        auto* file_expr = arena()->create<parser::v3::LiteralExpr>();
+        file_expr->literal_type = parser::v3::LiteralType::STRING;
+        file_expr->string_value = infile;
+        stmt->value = file_expr;
+
+        auto* table_expr = arena()->create<parser::v3::LiteralExpr>();
+        table_expr->literal_type = parser::v3::LiteralType::STRING;
+        table_expr->string_value = v3_string_pool_.intern(full);
+        stmt->values.push_back(table_expr);
+
+        auto* local_expr = arena()->create<parser::v3::LiteralExpr>();
+        local_expr->literal_type = parser::v3::LiteralType::STRING;
+        local_expr->string_value = is_local ? v3_string_pool_.intern("LOCAL")
+                                            : v3_string_pool_.intern("SERVER");
+        stmt->values.push_back(local_expr);
+
+        if (conflict_mode != parser::v3::StringPool::INVALID_ID) {
+            auto* mode_expr = arena()->create<parser::v3::LiteralExpr>();
+            mode_expr->literal_type = parser::v3::LiteralType::STRING;
+            mode_expr->string_value = conflict_mode;
+            stmt->values.push_back(mode_expr);
+        }
+
+        warning("LOAD DATA is mapped to simulation surface mysql.load_data.request");
+        return stmt;
+    }
+    if (check(TokenType::KW_HANDLER)) {
+        advance();  // HANDLER
+
+        auto make_string_literal = [&](parser::v3::StringPool::StringId value)
+            -> parser::v3::LiteralExpr* {
+            auto* lit = arena()->create<parser::v3::LiteralExpr>();
+            lit->literal_type = parser::v3::LiteralType::STRING;
+            lit->string_value = value;
+            return lit;
+        };
+        auto make_int_literal = [&](int64_t value) -> parser::v3::LiteralExpr* {
+            auto* lit = arena()->create<parser::v3::LiteralExpr>();
+            lit->literal_type = parser::v3::LiteralType::INTEGER;
+            lit->int_value = value;
+            return lit;
+        };
+        auto make_handler_marker_stmt = [&](const char* marker_name, const std::string& target)
+            -> parser::v3::SetStmt* {
+            auto* stmt = arena()->create<parser::v3::SetStmt>();
+            stmt->set_type = parser::v3::SetStmt::SetType::VARIABLE;
+            stmt->name = v3_string_pool_.intern(marker_name);
+            stmt->value = make_string_literal(v3_string_pool_.intern(target));
+            return stmt;
+        };
+
+        std::string target_first = parseIdentifier();
+        bool qualified_target = false;
+        std::string target_second;
+        if (match(TokenType::DOT)) {
+            qualified_target = true;
+            target_second = parseIdentifier();
+        }
+
+        if (matchKeyword(TokenType::KW_OPEN)) {
+            std::string schema;
+            std::string table = target_first;
+            if (qualified_target) {
+                schema = target_first;
+                table = target_second;
+            }
+            resolveTableName(schema, table);
+            std::string full = schema.empty() ? table : schema + "." + table;
+
+            auto* stmt = make_handler_marker_stmt("mysql.handler.open", full);
+            if (matchKeyword(TokenType::KW_AS)) {
+                stmt->values.push_back(make_string_literal(parseIdentifierId()));
+            } else if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                       isNonReservedKeyword(current_token_.type)) {
+                stmt->values.push_back(make_string_literal(parseIdentifierId()));
+            }
+            warning("HANDLER OPEN is mapped to session variable mysql.handler.open=<table>");
+            return stmt;
+        }
+
+        if (matchKeyword(TokenType::KW_CLOSE)) {
+            if (qualified_target) {
+                error("HANDLER CLOSE expects handler identifier without schema qualification");
+                return nullptr;
+            }
+            auto* stmt = make_handler_marker_stmt("mysql.handler.close", target_first);
+            warning("HANDLER CLOSE is mapped to session variable mysql.handler.close=<handler>");
+            return stmt;
+        }
+
+        if (!matchKeyword(TokenType::KW_READ)) {
+            error("Expected OPEN, READ, or CLOSE after HANDLER target");
+            return nullptr;
+        }
+
+        if (qualified_target) {
+            error("HANDLER READ expects handler identifier without schema qualification");
+            return nullptr;
+        }
+
+        auto* stmt = arena()->create<parser::v3::SelectStmt>();
+        auto* item = arena()->create<parser::v3::SelectItem>();
+        item->item_type = parser::v3::SelectItem::Type::STAR;
+        stmt->items.push_back(item);
+
+        std::string schema;
+        std::string table = target_first;
+        resolveTableName(schema, table);
+        std::string full = schema.empty() ? table : schema + "." + table;
+
+        auto* from = arena()->create<parser::v3::TableRefNode>();
+        from->ref_type = parser::v3::TableRefNode::Type::TABLE;
+        from->table_path = buildPathFromQualified(v3_string_pool_, full);
+        stmt->from = from;
+
+        bool cursor_mode_read = false;
+        bool range_mode_read = false;
+
+        auto match_cursor_mode = [&]() -> bool {
+            if (matchKeyword(TokenType::KW_FIRST) || matchIdentifierKeyword("FIRST")) {
+                return true;
+            }
+            if (matchIdentifierKeyword("NEXT")) {
+                return true;
+            }
+            if (matchIdentifierKeyword("PREV")) {
+                return true;
+            }
+            if (matchKeyword(TokenType::KW_LAST) || matchIdentifierKeyword("LAST")) {
+                return true;
+            }
+            return false;
+        };
+
+        if (match_cursor_mode()) {
+            cursor_mode_read = true;
+            warning("HANDLER READ cursor mode is mapped to SELECT compatibility surface");
+        } else {
+            parseIdentifierId();  // index name
+
+            if (match_cursor_mode()) {
+                cursor_mode_read = true;
+                warning(
+                    "HANDLER READ index cursor mode is mapped to SELECT compatibility surface");
+            } else {
+                bool has_range_mode = false;
+                if (match(TokenType::EQUAL) || matchIdentifierKeyword("EQ")) {
+                    has_range_mode = true;
+                } else if (match(TokenType::GREATER_EQUAL) || matchIdentifierKeyword("GE")) {
+                    has_range_mode = true;
+                } else if (match(TokenType::LESS_EQUAL) || matchIdentifierKeyword("LE")) {
+                    has_range_mode = true;
+                } else if (match(TokenType::GREATER_THAN) || matchIdentifierKeyword("GT")) {
+                    has_range_mode = true;
+                } else if (match(TokenType::LESS_THAN) || matchIdentifierKeyword("LT")) {
+                    has_range_mode = true;
+                }
+
+                if (!has_range_mode) {
+                    error("Expected HANDLER READ mode after index name");
+                    return nullptr;
+                }
+
+                consume(TokenType::LEFT_PAREN, "Expected ( after HANDLER READ range mode");
+                if (!check(TokenType::RIGHT_PAREN)) {
+                    do {
+                        parseExpressionV3();
+                    } while (match(TokenType::COMMA));
+                }
+                consume(TokenType::RIGHT_PAREN, "Expected ) after HANDLER READ range values");
+                range_mode_read = true;
+                warning("HANDLER READ range mode key values are parsed but not preserved in mapping");
+            }
+        }
+
+        if (matchKeyword(TokenType::KW_WHERE)) {
+            stmt->where = parseExpressionV3();
+        }
+
+        bool explicit_limit = false;
+        if (matchKeyword(TokenType::KW_LIMIT)) {
+            explicit_limit = true;
+            stmt->limit = parseExpressionV3();
+            if (match(TokenType::COMMA)) {
+                stmt->offset = stmt->limit;
+                stmt->limit = parseExpressionV3();
+            } else if (matchKeyword(TokenType::KW_OFFSET)) {
+                stmt->offset = parseExpressionV3();
+            }
+        }
+
+        if (cursor_mode_read && !explicit_limit) {
+            stmt->limit = make_int_literal(1);
+        }
+        if (range_mode_read) {
+            warning("HANDLER READ range semantics are reduced to bounded SELECT filtering semantics");
+        }
+        warning("HANDLER READ is mapped to SELECT * FROM handler target compatibility surface");
+        return stmt;
+    }
+    if (check(TokenType::IDENTIFIER) && matchIdentifierKeyword("XA")) {
+        auto parse_xid_id = [&]() -> parser::v3::StringPool::StringId {
+            if (check(TokenType::STRING_LITERAL)) {
+                std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+                return v3_string_pool_.intern(value);
+            }
+            if (check(TokenType::INTEGER_LITERAL)) {
+                std::string value = std::to_string(current_token_.value.int_value);
+                advance();
+                return v3_string_pool_.intern(value);
+            }
+            if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                isNonReservedKeyword(current_token_.type)) {
+                return parseIdentifierId();
+            }
+            error("XA statement requires xid");
+            return parser::v3::StringPool::INVALID_ID;
+        };
+
+        if (matchKeyword(TokenType::KW_START) || matchIdentifierKeyword("START") ||
+            matchKeyword(TokenType::KW_BEGIN)) {
+            parser::v3::StringPool::StringId xid = parse_xid_id();
+            if (xid == parser::v3::StringPool::INVALID_ID) {
+                return nullptr;
+            }
+            if (matchIdentifierKeyword("JOIN") || matchIdentifierKeyword("RESUME")) {
+                warning("XA START JOIN/RESUME options are ignored in current MySQL emulation mapping");
+            }
+            warning("XA START is mapped to START TRANSACTION compatibility surface");
+            return arena()->create<parser::v3::StartTransactionStmt>();
+        }
+
+        if (matchKeyword(TokenType::KW_END) || matchIdentifierKeyword("END")) {
+            parser::v3::StringPool::StringId xid = parse_xid_id();
+            if (xid == parser::v3::StringPool::INVALID_ID) {
+                return nullptr;
+            }
+            if (matchIdentifierKeyword("SUSPEND")) {
+                if (matchKeyword(TokenType::KW_FOR)) {
+                    matchIdentifierKeyword("MIGRATE");
+                }
+                warning("XA END SUSPEND FOR MIGRATE options are ignored in current MySQL emulation mapping");
+            }
+            auto* stmt = arena()->create<parser::v3::SetStmt>();
+            stmt->set_type = parser::v3::SetStmt::SetType::VARIABLE;
+            stmt->name = v3_string_pool_.intern("mysql.xa.end");
+            auto* value = arena()->create<parser::v3::LiteralExpr>();
+            value->literal_type = parser::v3::LiteralType::STRING;
+            value->string_value = xid;
+            stmt->value = value;
+            return stmt;
+        }
+
+        if (matchIdentifierKeyword("PREPARE")) {
+            parser::v3::StringPool::StringId xid = parse_xid_id();
+            if (xid == parser::v3::StringPool::INVALID_ID) {
+                return nullptr;
+            }
+            auto* stmt = arena()->create<parser::v3::PrepareTransactionStmt>();
+            stmt->gid = xid;
+            return stmt;
+        }
+
+        if (matchKeyword(TokenType::KW_COMMIT) || matchIdentifierKeyword("COMMIT")) {
+            parser::v3::StringPool::StringId xid = parse_xid_id();
+            if (xid == parser::v3::StringPool::INVALID_ID) {
+                return nullptr;
+            }
+            auto* stmt = arena()->create<parser::v3::CommitStmt>();
+            stmt->is_prepared = true;
+            stmt->prepared_gid = xid;
+            if (matchIdentifierKeyword("ONE")) {
+                if (!matchIdentifierKeyword("PHASE")) {
+                    error("Expected PHASE after ONE in XA COMMIT");
+                }
+                warning("XA COMMIT ONE PHASE is mapped to COMMIT PREPARED compatibility surface");
+            }
+            return stmt;
+        }
+
+        if (matchKeyword(TokenType::KW_ROLLBACK) || matchIdentifierKeyword("ROLLBACK")) {
+            parser::v3::StringPool::StringId xid = parse_xid_id();
+            if (xid == parser::v3::StringPool::INVALID_ID) {
+                return nullptr;
+            }
+            auto* stmt = arena()->create<parser::v3::RollbackStmt>();
+            stmt->is_prepared = true;
+            stmt->prepared_gid = xid;
+            return stmt;
+        }
+
+        if (matchIdentifierKeyword("RECOVER")) {
+            auto* stmt = arena()->create<parser::v3::ShowStmt>();
+            stmt->show_type = parser::v3::ShowStmt::ShowType::SYSTEM;
+            stmt->name = v3_string_pool_.intern("xa_recover");
+            if (matchKeyword(TokenType::KW_CONVERT) || matchIdentifierKeyword("CONVERT")) {
+                matchIdentifierKeyword("XID");
+            }
+            warning("XA RECOVER is mapped to SHOW SYSTEM compatibility surface");
+            return stmt;
+        }
+
+        error("Unsupported XA action");
+        return nullptr;
+    }
+    if (check(TokenType::IDENTIFIER) && matchIdentifierKeyword("CLONE")) {
+        auto parse_text_id = [&]() -> parser::v3::StringPool::StringId {
+            if (check(TokenType::STRING_LITERAL)) {
+                std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+                return v3_string_pool_.intern(value);
+            }
+            if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                isNonReservedKeyword(current_token_.type)) {
+                return parseIdentifierId();
+            }
+            return parser::v3::StringPool::INVALID_ID;
+        };
+        auto make_clone_request_stmt = [&](const char* mode) -> parser::v3::SetStmt* {
+            auto* stmt = arena()->create<parser::v3::SetStmt>();
+            stmt->set_type = parser::v3::SetStmt::SetType::VARIABLE;
+            stmt->name = v3_string_pool_.intern("mysql.clone.request");
+            auto* value = arena()->create<parser::v3::LiteralExpr>();
+            value->literal_type = parser::v3::LiteralType::STRING;
+            value->string_value = v3_string_pool_.intern(mode);
+            stmt->value = value;
+            return stmt;
+        };
+
+        if (matchKeyword(TokenType::KW_LOCAL) || matchIdentifierKeyword("LOCAL")) {
+            if (!matchKeyword(TokenType::KW_DATA) && !matchIdentifierKeyword("DATA")) {
+                error("Expected DATA after CLONE LOCAL");
+                return nullptr;
+            }
+            if (!matchIdentifierKeyword("DIRECTORY")) {
+                error("Expected DIRECTORY after CLONE LOCAL DATA");
+                return nullptr;
+            }
+            match(TokenType::EQUAL);
+            parser::v3::StringPool::StringId directory = parse_text_id();
+            if (directory == parser::v3::StringPool::INVALID_ID) {
+                error("Expected path after CLONE LOCAL DATA DIRECTORY");
+                return nullptr;
+            }
+
+            auto* stmt = make_clone_request_stmt("LOCAL_DATA_DIRECTORY");
+            auto* arg = arena()->create<parser::v3::LiteralExpr>();
+            arg->literal_type = parser::v3::LiteralType::STRING;
+            arg->string_value = directory;
+            stmt->values.push_back(arg);
+            warning("CLONE LOCAL DATA DIRECTORY is mapped to simulation surface mysql.clone.request");
+            return stmt;
+        }
+
+        if (matchIdentifierKeyword("INSTANCE")) {
+            if (!matchKeyword(TokenType::KW_FROM) && !matchIdentifierKeyword("FROM")) {
+                error("Expected FROM after CLONE INSTANCE");
+                return nullptr;
+            }
+
+            bool have_source = false;
+            while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::KW_IDENTIFIED)) {
+                have_source = true;
+                advance();
+            }
+            if (!have_source) {
+                error("Expected source endpoint after CLONE INSTANCE FROM");
+                return nullptr;
+            }
+
+            if (!matchKeyword(TokenType::KW_IDENTIFIED) && !matchIdentifierKeyword("IDENTIFIED")) {
+                error("Expected IDENTIFIED BY in CLONE INSTANCE");
+                return nullptr;
+            }
+            if (!matchKeyword(TokenType::KW_BY) && !matchIdentifierKeyword("BY")) {
+                error("Expected BY after IDENTIFIED in CLONE INSTANCE");
+                return nullptr;
+            }
+
+            parser::v3::StringPool::StringId secret = parse_text_id();
+            if (secret == parser::v3::StringPool::INVALID_ID) {
+                error("Expected password literal after IDENTIFIED BY in CLONE INSTANCE");
+                return nullptr;
+            }
+
+            auto* stmt = make_clone_request_stmt("INSTANCE_FROM");
+            auto* password = arena()->create<parser::v3::LiteralExpr>();
+            password->literal_type = parser::v3::LiteralType::STRING;
+            password->string_value = secret;
+            stmt->values.push_back(password);
+
+            if (matchKeyword(TokenType::KW_DATA) || matchIdentifierKeyword("DATA")) {
+                if (!matchIdentifierKeyword("DIRECTORY")) {
+                    error("Expected DIRECTORY after DATA in CLONE INSTANCE");
+                    return nullptr;
+                }
+                match(TokenType::EQUAL);
+                parser::v3::StringPool::StringId directory = parse_text_id();
+                if (directory == parser::v3::StringPool::INVALID_ID) {
+                    error("Expected path after CLONE INSTANCE DATA DIRECTORY");
+                    return nullptr;
+                }
+                auto* dir_arg = arena()->create<parser::v3::LiteralExpr>();
+                dir_arg->literal_type = parser::v3::LiteralType::STRING;
+                dir_arg->string_value = directory;
+                stmt->values.push_back(dir_arg);
+            }
+
+            if (matchIdentifierKeyword("REQUIRE")) {
+                parser::v3::StringPool::StringId ssl_mode = parser::v3::StringPool::INVALID_ID;
+                if (matchKeyword(TokenType::KW_NO) || matchIdentifierKeyword("NO")) {
+                    if (!matchIdentifierKeyword("SSL")) {
+                        error("Expected SSL after REQUIRE NO in CLONE INSTANCE");
+                        return nullptr;
+                    }
+                    ssl_mode = v3_string_pool_.intern("NO_SSL");
+                } else if (matchIdentifierKeyword("SSL")) {
+                    ssl_mode = v3_string_pool_.intern("SSL");
+                } else {
+                    error("Expected SSL or NO SSL after REQUIRE in CLONE INSTANCE");
+                    return nullptr;
+                }
+                auto* ssl_arg = arena()->create<parser::v3::LiteralExpr>();
+                ssl_arg->literal_type = parser::v3::LiteralType::STRING;
+                ssl_arg->string_value = ssl_mode;
+                stmt->values.push_back(ssl_arg);
+            }
+
+            warning("CLONE INSTANCE FROM is mapped to simulation surface mysql.clone.request");
+            return stmt;
+        }
+
+        error("Unsupported CLONE action");
+        return nullptr;
     }
 
     if (check(TokenType::KW_CREATE)) {
@@ -989,7 +1693,8 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
             next.type == TokenType::KW_ALGORITHM ||
             next.type == TokenType::KW_SQL ||
             next.type == TokenType::KW_PROCEDURE || next.type == TokenType::KW_FUNCTION ||
-            next.type == TokenType::KW_TRIGGER || next.type == TokenType::KW_DEFINER ||
+            next.type == TokenType::KW_TRIGGER || next.type == TokenType::KW_EVENT ||
+            next.type == TokenType::KW_DEFINER ||
             next.type == TokenType::KW_INDEX || next.type == TokenType::KW_KEY ||
             next.type == TokenType::KW_UNIQUE || next.type == TokenType::KW_FULLTEXT ||
             next.type == TokenType::KW_SPATIAL ||
@@ -1028,6 +1733,10 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
                 advance();  // consume DROP
                 if (matchIdentifierKeyword("TABLESPACE")) {
                     auto* stmt = arena()->create<parser::v3::DropTablespaceStmt>();
+                    if (matchKeyword(TokenType::KW_IF)) {
+                        consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+                        stmt->if_exists = true;
+                    }
                     stmt->tablespace_name = parseIdentifierId();
                     return stmt;
                 }
@@ -1035,7 +1744,8 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
         }
         if (next.type == TokenType::KW_TABLE || next.type == TokenType::KW_TEMPORARY ||
             next.type == TokenType::KW_VIEW || next.type == TokenType::KW_PROCEDURE ||
-            next.type == TokenType::KW_FUNCTION || next.type == TokenType::KW_TRIGGER) {
+            next.type == TokenType::KW_FUNCTION || next.type == TokenType::KW_TRIGGER ||
+            next.type == TokenType::KW_EVENT) {
             advance();  // consume DROP
             if (matchKeyword(TokenType::KW_TEMPORARY)) {
                 consumeKeyword(TokenType::KW_TABLE, "Expected TABLE after DROP TEMPORARY");
@@ -1124,6 +1834,23 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
                 }
                 std::string name = parseIdentifier();
                 stmt->triggers.push_back(buildPathFromQualified(v3_string_pool_, name));
+                return stmt;
+            }
+            if (matchKeyword(TokenType::KW_EVENT)) {
+                auto* stmt = arena()->create<parser::v3::DropJobStmt>();
+                if (matchKeyword(TokenType::KW_IF)) {
+                    consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS");
+                }
+                std::string schema;
+                std::string event_name = parseIdentifier();
+                if (match(TokenType::DOT)) {
+                    schema = event_name;
+                    event_name = parseIdentifier();
+                }
+                if (!schema.empty()) {
+                    event_name = schema + "." + event_name;
+                }
+                stmt->job_name = v3_string_pool_.intern(event_name);
                 return stmt;
             }
             if (matchKeyword(TokenType::KW_ROLE)) {
@@ -1235,6 +1962,22 @@ parser::v3::Statement* Parser::parseDropStmtV3() {
         return stmt;
     }
 
+    if (matchKeyword(TokenType::KW_EVENT) || matchIdentifierKeyword("EVENT")) {
+        parseIfExists();
+        auto* stmt = arena()->create<parser::v3::DropJobStmt>();
+        std::string schema;
+        std::string event_name = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = event_name;
+            event_name = parseIdentifier();
+        }
+        if (!schema.empty()) {
+            event_name = schema + "." + event_name;
+        }
+        stmt->job_name = v3_string_pool_.intern(event_name);
+        return stmt;
+    }
+
     if (matchKeyword(TokenType::KW_INDEX)) {
         parseIfExists();
         auto* stmt = arena()->create<parser::v3::DropIndexStmt>();
@@ -1273,6 +2016,191 @@ parser::v3::Statement* Parser::parseAlterStmtV3() {
         return nullptr;
     }
 
+    auto capture_body = [&]() -> std::string {
+        if (check(TokenType::SEMICOLON) || check(TokenType::END_OF_FILE)) {
+            return "";
+        }
+        size_t start = current_token_.span.start.offset;
+        Token last = current_token_;
+        while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+            last = current_token_;
+            advance();
+        }
+        size_t end = last.span.start.offset + last.span.length;
+        auto input = lexer_.input();
+        if (end > input.size()) {
+            end = input.size();
+        }
+        if (end <= start) {
+            return "";
+        }
+        return std::string(input.substr(start, end - start));
+    };
+
+    if (matchKeyword(TokenType::KW_EVENT) || matchIdentifierKeyword("EVENT")) {
+        auto* stmt = arena()->create<parser::v3::AlterJobStmt>();
+
+        std::string schema;
+        std::string event_name = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = event_name;
+            event_name = parseIdentifier();
+        }
+        if (!schema.empty()) {
+            event_name = schema + "." + event_name;
+        }
+        stmt->job_name = v3_string_pool_.intern(event_name);
+
+        auto capture_schedule_token = [&]() -> parser::v3::StringPool::StringId {
+            if (check(TokenType::STRING_LITERAL)) {
+                std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+                return v3_string_pool_.intern(value);
+            }
+            if (check(TokenType::INTEGER_LITERAL)) {
+                std::string value = std::to_string(current_token_.value.int_value);
+                advance();
+                return v3_string_pool_.intern(value);
+            }
+            if (check(TokenType::FLOAT_LITERAL)) {
+                std::ostringstream oss;
+                oss << current_token_.value.float_value;
+                advance();
+                return v3_string_pool_.intern(oss.str());
+            }
+            if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                isNonReservedKeyword(current_token_.type)) {
+                return v3_string_pool_.intern(parseIdentifier());
+            }
+            return parser::v3::StringPool::INVALID_ID;
+        };
+        auto match_on_identifier = [&](const char* keyword) -> bool {
+            if (!check(TokenType::KW_ON)) {
+                return false;
+            }
+            Token next = lexer_.peek();
+            if (next.type != TokenType::IDENTIFIER) {
+                return false;
+            }
+            std::string_view ident = lexer_.stringPool().get(next.value.string_id);
+            if (ident.size() != std::strlen(keyword)) {
+                return false;
+            }
+            for (size_t i = 0; i < ident.size(); ++i) {
+                if (std::toupper(static_cast<unsigned char>(ident[i])) !=
+                    std::toupper(static_cast<unsigned char>(keyword[i]))) {
+                    return false;
+                }
+            }
+            advance();  // ON
+            advance();  // contextual identifier
+            return true;
+        };
+
+        bool handled = false;
+        while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+            if (match_on_identifier("SCHEDULE")) {
+                handled = true;
+                stmt->has_schedule = true;
+                if (matchIdentifierKeyword("AT")) {
+                    stmt->schedule_kind = parser::v3::JobScheduleKind::AT;
+                    stmt->at_timestamp = capture_schedule_token();
+                } else if (matchIdentifierKeyword("EVERY")) {
+                    stmt->schedule_kind = parser::v3::JobScheduleKind::EVERY;
+                    int64_t interval_value = 1;
+                    if (check(TokenType::INTEGER_LITERAL)) {
+                        interval_value = current_token_.value.int_value;
+                        advance();
+                    }
+                    std::string unit = "SECOND";
+                    if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                        isNonReservedKeyword(current_token_.type)) {
+                        unit = parseIdentifier();
+                        std::transform(unit.begin(), unit.end(), unit.begin(),
+                                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+                    }
+                    int64_t multiplier = 1;
+                    if (unit == "MINUTE" || unit == "MINUTES") multiplier = 60;
+                    else if (unit == "HOUR" || unit == "HOURS") multiplier = 3600;
+                    else if (unit == "DAY" || unit == "DAYS") multiplier = 86400;
+                    else if (unit == "WEEK" || unit == "WEEKS") multiplier = 604800;
+                    else if (unit == "MONTH" || unit == "MONTHS") multiplier = 2592000;
+                    else if (unit == "YEAR" || unit == "YEARS") multiplier = 31536000;
+                    if (interval_value < 1) {
+                        interval_value = 1;
+                    }
+                    stmt->interval_seconds = interval_value * multiplier;
+                } else {
+                    warning("ALTER EVENT ON SCHEDULE without AT/EVERY is mapped to EVERY 1 DAY");
+                    stmt->schedule_kind = parser::v3::JobScheduleKind::EVERY;
+                    stmt->interval_seconds = 86400;
+                }
+                continue;
+            }
+            if (match_on_identifier("COMPLETION")) {
+                handled = true;
+                stmt->has_on_completion = true;
+                bool not_preserve = false;
+                if (matchKeyword(TokenType::KW_NOT) || matchIdentifierKeyword("NOT")) {
+                    not_preserve = true;
+                }
+                if (matchIdentifierKeyword("PRESERVE")) {
+                    stmt->on_completion = not_preserve
+                        ? parser::v3::JobOnCompletion::DROP
+                        : parser::v3::JobOnCompletion::PRESERVE;
+                }
+                continue;
+            }
+            if (matchIdentifierKeyword("ENABLE")) {
+                handled = true;
+                stmt->has_state = true;
+                stmt->state = parser::v3::JobState::ENABLED;
+                continue;
+            }
+            if (matchIdentifierKeyword("DISABLE")) {
+                handled = true;
+                stmt->has_state = true;
+                stmt->state = parser::v3::JobState::DISABLED;
+                if (matchKeyword(TokenType::KW_ON)) {
+                    matchIdentifierKeyword("SLAVE");
+                    matchIdentifierKeyword("REPLICA");
+                }
+                continue;
+            }
+            if (matchKeyword(TokenType::KW_COMMENT) || matchIdentifierKeyword("COMMENT")) {
+                handled = true;
+                stmt->has_description = true;
+                parser::v3::StringPool::StringId text = capture_schedule_token();
+                if (text != parser::v3::StringPool::INVALID_ID) {
+                    stmt->description = text;
+                }
+                continue;
+            }
+            if (matchIdentifierKeyword("DO")) {
+                handled = true;
+                stmt->has_job_body = true;
+                stmt->job_type = parser::v3::JobType::SQL;
+                std::string body = capture_body();
+                if (!body.empty()) {
+                    stmt->job_sql = v3_string_pool_.intern(body);
+                }
+                break;
+            }
+            if (matchKeyword(TokenType::KW_RENAME)) {
+                error("ALTER EVENT RENAME is not yet supported in MySQL emulation");
+                return stmt;
+            }
+            if (!match(TokenType::COMMA)) {
+                advance();
+            }
+        }
+
+        if (!handled) {
+            error("Unsupported ALTER EVENT action");
+        }
+        return stmt;
+    }
+
     if (matchKeyword(TokenType::KW_TABLE)) {
         auto* stmt = arena()->create<parser::v3::AlterTableStmt>();
         if (matchKeyword(TokenType::KW_IF)) {
@@ -1281,6 +2209,22 @@ parser::v3::Statement* Parser::parseAlterStmtV3() {
         }
         std::string table = parseQualifiedName();
         stmt->table_path = buildPathFromQualified(v3_string_pool_, table);
+
+        if (matchIdentifierKeyword("IMPORT")) {
+            if (!matchIdentifierKeyword("TABLESPACE")) {
+                error("Expected TABLESPACE after IMPORT in ALTER TABLE");
+                return stmt;
+            }
+            auto* mapped = arena()->create<parser::v3::SetStmt>();
+            mapped->set_type = parser::v3::SetStmt::SetType::VARIABLE;
+            mapped->name = v3_string_pool_.intern("mysql.tablespace.import");
+            auto* value = arena()->create<parser::v3::LiteralExpr>();
+            value->literal_type = parser::v3::LiteralType::STRING;
+            value->string_value = v3_string_pool_.intern(table);
+            mapped->value = value;
+            warning("ALTER TABLE ... IMPORT TABLESPACE is mapped to simulation variable mysql.tablespace.import");
+            return mapped;
+        }
 
         if (matchKeyword(TokenType::KW_ADD)) {
             matchKeyword(TokenType::KW_COLUMN);
@@ -2424,6 +3368,46 @@ parser::v3::Statement* Parser::parseShowStmtV3() {
                 stmt->like_pattern = parseIdentifierId();
             }
         }
+        return stmt;
+    }
+
+    if (matchIdentifierKeyword("EVENTS")) {
+        stmt->show_type = parser::v3::ShowStmt::ShowType::JOBS;
+        if (matchKeyword(TokenType::KW_FROM) || matchKeyword(TokenType::KW_IN)) {
+            stmt->from_name = parseIdentifierId();
+        }
+        if (matchKeyword(TokenType::KW_LIKE)) {
+            if (check(TokenType::STRING_LITERAL)) {
+                std::string_view value = lexer_.stringPool().get(current_token_.value.string_id);
+                stmt->like_pattern = v3_string_pool_.intern(value);
+                advance();
+            } else {
+                stmt->like_pattern = parseIdentifierId();
+            }
+        }
+        warning("SHOW EVENTS is mapped to SHOW JOBS compatibility surface");
+        return stmt;
+    }
+
+    if (matchIdentifierKeyword("REPLICA") || matchIdentifierKeyword("SLAVE")) {
+        if (!(matchKeyword(TokenType::KW_STATUS) || matchIdentifierKeyword("STATUS"))) {
+            error("Expected STATUS after SHOW REPLICA");
+            return nullptr;
+        }
+        stmt->show_type = parser::v3::ShowStmt::ShowType::SYSTEM;
+        stmt->name = v3_string_pool_.intern("replica_status");
+
+        if (matchKeyword(TokenType::KW_FOR) || matchIdentifierKeyword("FOR")) {
+            if (matchIdentifierKeyword("CHANNEL")) {
+                if (check(TokenType::STRING_LITERAL)) {
+                    advance();
+                } else if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+                    parseIdentifier();
+                }
+            }
+        }
+
+        warning("SHOW REPLICA STATUS is mapped to SHOW SYSTEM compatibility surface");
         return stmt;
     }
 
@@ -4413,6 +5397,179 @@ parser::v3::Statement* Parser::parseCreateStmtV3() {
         std::string body = capture_body();
         if (!body.empty()) {
             stmt->body = v3_string_pool_.intern(body);
+        }
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_EVENT) || matchIdentifierKeyword("EVENT")) {
+        auto* stmt = arena()->create<parser::v3::CreateJobStmt>();
+
+        bool if_not_exists = false;
+        if (matchKeyword(TokenType::KW_IF)) {
+            consumeKeyword(TokenType::KW_NOT, "Expected NOT after IF");
+            consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+            if_not_exists = true;
+        }
+
+        std::string schema;
+        std::string event_name = parseIdentifier();
+        if (match(TokenType::DOT)) {
+            schema = event_name;
+            event_name = parseIdentifier();
+        }
+        if (!schema.empty()) {
+            event_name = schema + "." + event_name;
+        }
+        stmt->job_name = v3_string_pool_.intern(event_name);
+
+        auto capture_schedule_token = [&]() -> parser::v3::StringPool::StringId {
+            if (check(TokenType::STRING_LITERAL)) {
+                std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+                return v3_string_pool_.intern(value);
+            }
+            if (check(TokenType::INTEGER_LITERAL)) {
+                std::string value = std::to_string(current_token_.value.int_value);
+                advance();
+                return v3_string_pool_.intern(value);
+            }
+            if (check(TokenType::FLOAT_LITERAL)) {
+                std::ostringstream oss;
+                oss << current_token_.value.float_value;
+                advance();
+                return v3_string_pool_.intern(oss.str());
+            }
+            if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                isNonReservedKeyword(current_token_.type)) {
+                return v3_string_pool_.intern(parseIdentifier());
+            }
+            return parser::v3::StringPool::INVALID_ID;
+        };
+        auto match_on_identifier = [&](const char* keyword) -> bool {
+            if (!check(TokenType::KW_ON)) {
+                return false;
+            }
+            Token next = lexer_.peek();
+            if (next.type != TokenType::IDENTIFIER) {
+                return false;
+            }
+            std::string_view ident = lexer_.stringPool().get(next.value.string_id);
+            if (ident.size() != std::strlen(keyword)) {
+                return false;
+            }
+            for (size_t i = 0; i < ident.size(); ++i) {
+                if (std::toupper(static_cast<unsigned char>(ident[i])) !=
+                    std::toupper(static_cast<unsigned char>(keyword[i]))) {
+                    return false;
+                }
+            }
+            advance();  // ON
+            advance();  // contextual identifier
+            return true;
+        };
+
+        bool has_schedule = false;
+        bool saw_do = false;
+
+        while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+            if (match_on_identifier("SCHEDULE")) {
+                has_schedule = true;
+                if (matchIdentifierKeyword("AT")) {
+                    stmt->schedule_kind = parser::v3::JobScheduleKind::AT;
+                    stmt->at_timestamp = capture_schedule_token();
+                } else if (matchIdentifierKeyword("EVERY")) {
+                    stmt->schedule_kind = parser::v3::JobScheduleKind::EVERY;
+                    int64_t interval_value = 1;
+                    if (check(TokenType::INTEGER_LITERAL)) {
+                        interval_value = current_token_.value.int_value;
+                        advance();
+                    }
+                    std::string unit = "SECOND";
+                    if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER) ||
+                        isNonReservedKeyword(current_token_.type)) {
+                        unit = parseIdentifier();
+                        std::transform(unit.begin(), unit.end(), unit.begin(),
+                                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+                    }
+                    int64_t multiplier = 1;
+                    if (unit == "MINUTE" || unit == "MINUTES") multiplier = 60;
+                    else if (unit == "HOUR" || unit == "HOURS") multiplier = 3600;
+                    else if (unit == "DAY" || unit == "DAYS") multiplier = 86400;
+                    else if (unit == "WEEK" || unit == "WEEKS") multiplier = 604800;
+                    else if (unit == "MONTH" || unit == "MONTHS") multiplier = 2592000;
+                    else if (unit == "YEAR" || unit == "YEARS") multiplier = 31536000;
+                    if (interval_value < 1) {
+                        interval_value = 1;
+                    }
+                    stmt->interval_seconds = interval_value * multiplier;
+                } else {
+                    warning("CREATE EVENT ON SCHEDULE without AT/EVERY is mapped to EVERY 1 DAY");
+                    stmt->schedule_kind = parser::v3::JobScheduleKind::EVERY;
+                    stmt->interval_seconds = 86400;
+                }
+                continue;
+            }
+
+            if (match_on_identifier("COMPLETION")) {
+                stmt->has_on_completion = true;
+                bool not_preserve = false;
+                if (matchKeyword(TokenType::KW_NOT) || matchIdentifierKeyword("NOT")) {
+                    not_preserve = true;
+                }
+                if (matchIdentifierKeyword("PRESERVE")) {
+                    stmt->on_completion = not_preserve
+                        ? parser::v3::JobOnCompletion::DROP
+                        : parser::v3::JobOnCompletion::PRESERVE;
+                }
+                continue;
+            }
+
+            if (matchIdentifierKeyword("ENABLE")) {
+                stmt->has_state = true;
+                stmt->state = parser::v3::JobState::ENABLED;
+                continue;
+            }
+            if (matchIdentifierKeyword("DISABLE")) {
+                stmt->has_state = true;
+                stmt->state = parser::v3::JobState::DISABLED;
+                if (matchKeyword(TokenType::KW_ON)) {
+                    matchIdentifierKeyword("SLAVE");
+                    matchIdentifierKeyword("REPLICA");
+                }
+                continue;
+            }
+            if (matchKeyword(TokenType::KW_COMMENT) || matchIdentifierKeyword("COMMENT")) {
+                stmt->has_description = true;
+                parser::v3::StringPool::StringId text = capture_schedule_token();
+                if (text != parser::v3::StringPool::INVALID_ID) {
+                    stmt->description = text;
+                }
+                continue;
+            }
+            if (matchIdentifierKeyword("DO")) {
+                saw_do = true;
+                stmt->job_type = parser::v3::JobType::SQL;
+                std::string body = capture_body();
+                if (!body.empty()) {
+                    stmt->job_sql = v3_string_pool_.intern(body);
+                }
+                break;
+            }
+
+            advance();
+        }
+
+        if (!has_schedule) {
+            warning("CREATE EVENT without explicit schedule is mapped to EVERY 1 DAY");
+            stmt->schedule_kind = parser::v3::JobScheduleKind::EVERY;
+            stmt->interval_seconds = 86400;
+        }
+        if (!saw_do) {
+            error("CREATE EVENT requires a DO clause");
+            return stmt;
+        }
+        if (if_not_exists) {
+            warning("CREATE EVENT IF NOT EXISTS is not enforced by executor");
         }
         return stmt;
     }

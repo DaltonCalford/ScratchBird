@@ -580,6 +580,87 @@ TEST_F(MySQLParserTest, ShowStatements) {
     expectSuccess("SHOW COLUMNS FROM users");
     expectSuccess("SHOW INDEX FROM users");
     expectSuccess("SHOW CREATE TABLE users");
+    expectSuccess("SHOW EVENTS");
+    expectSuccess("SHOW REPLICA STATUS");
+}
+
+TEST_F(MySQLParserTest, EventStatements) {
+    expectSuccess("CREATE EVENT ev_test ON SCHEDULE EVERY 1 DAY DO SELECT 1");
+    expectSuccess("ALTER EVENT ev_test DISABLE");
+    expectSuccess("ALTER EVENT ev_test ON SCHEDULE EVERY 2 HOUR");
+    expectSuccess("ALTER EVENT ev_test DO SELECT 2");
+    expectSuccess("DROP EVENT ev_test");
+}
+
+TEST_F(MySQLParserTest, MaintenanceAndReplicationStatements) {
+    expectSuccess("CHECK TABLE users");
+    expectSuccess("OPTIMIZE TABLE users");
+    expectSuccess("START REPLICA");
+    expectSuccess("STOP REPLICA");
+}
+
+TEST_F(MySQLParserTest, HandlerStatements) {
+    expectSuccess("HANDLER users OPEN");
+    expectSuccess("HANDLER db1.users OPEN");
+    expectSuccess("HANDLER db1.users OPEN AS u");
+    expectSuccess("HANDLER users READ FIRST");
+    expectSuccess("HANDLER users READ NEXT");
+    expectSuccess("HANDLER users READ idx FIRST");
+    expectSuccess("HANDLER users READ idx LAST");
+    expectSuccess("HANDLER users READ idx = (1)");
+    expectSuccess("HANDLER users READ idx >= (1, 2) WHERE id > 0 LIMIT 10");
+    expectSuccess("HANDLER users CLOSE");
+
+    expectError("HANDLER users");
+    expectError("HANDLER db1.users READ FIRST");
+    expectError("HANDLER db1.users CLOSE");
+    expectError("HANDLER users READ idx");
+    expectError("HANDLER users READ idx = 1");
+}
+
+TEST_F(MySQLParserTest, ImportTablespaceStatements) {
+    expectSuccess("ALTER TABLE t IMPORT TABLESPACE");
+    expectError("ALTER TABLE t IMPORT");
+}
+
+TEST_F(MySQLParserTest, CloneStatements) {
+    expectSuccess("CLONE LOCAL DATA DIRECTORY = '/tmp/sb_clone'");
+    expectSuccess("CLONE INSTANCE FROM donor:3306 IDENTIFIED BY 'pwd'");
+    expectSuccess("CLONE INSTANCE FROM donor:3306 IDENTIFIED BY 'pwd' DATA DIRECTORY = '/tmp/sb_clone'");
+    expectSuccess("CLONE INSTANCE FROM donor:3306 IDENTIFIED BY 'pwd' REQUIRE SSL");
+    expectSuccess("CLONE INSTANCE FROM donor:3306 IDENTIFIED BY 'pwd' REQUIRE NO SSL");
+
+    expectError("CLONE");
+    expectError("CLONE LOCAL");
+    expectError("CLONE LOCAL DATA DIRECTORY");
+    expectError("CLONE INSTANCE FROM donor:3306");
+}
+
+TEST_F(MySQLParserTest, LoadDataStatements) {
+    expectSuccess("LOAD DATA INFILE 'x.csv' INTO TABLE t");
+    expectSuccess("LOAD DATA LOCAL INFILE 'x.csv' INTO TABLE t");
+    expectSuccess("LOAD DATA LOW_PRIORITY LOCAL INFILE 'x.csv' REPLACE INTO TABLE t");
+    expectSuccess("LOAD DATA INFILE 'x.csv' INTO TABLE t FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n' IGNORE 1 LINES");
+    expectSuccess("LOAD DATA INFILE 'x.csv' INTO TABLE t (a, b, c) SET c = 1");
+
+    expectError("LOAD DATA");
+    expectError("LOAD DATA INFILE INTO TABLE t");
+    expectError("LOAD DATA INFILE 'x.csv' TABLE t");
+    expectError("LOAD DATA INFILE 'x.csv' INTO t");
+}
+
+TEST_F(MySQLParserTest, XaStatements) {
+    expectSuccess("XA START 'xid'");
+    expectSuccess("XA BEGIN 'xid2'");
+    expectSuccess("XA END xid");
+    expectSuccess("XA END xid SUSPEND FOR MIGRATE");
+    expectSuccess("XA PREPARE xid");
+    expectSuccess("XA COMMIT xid");
+    expectSuccess("XA COMMIT xid ONE PHASE");
+    expectSuccess("XA ROLLBACK xid");
+    expectSuccess("XA RECOVER");
+    expectSuccess("XA RECOVER CONVERT XID");
+    expectError("XA FORGET xid");
 }
 
 TEST_F(MySQLParserTest, UseStatement) {

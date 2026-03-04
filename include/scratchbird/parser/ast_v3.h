@@ -1588,6 +1588,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 
     StringPool::StringId tablespace_name = StringPool::INVALID_ID;
+    bool if_exists = false;
     bool force = false;
 };
 

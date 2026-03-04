@@ -5047,6 +5047,10 @@ DropTablespaceStmt* Parser::parseDropTablespace() {
     SourceLocation start = currentLocation();
 
     auto* stmt = arena_.create<DropTablespaceStmt>();
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
     stmt->tablespace_name = expectIdentifier("Expected tablespace name");
     if (matchContextual("FORCE")) {
         stmt->force = true;

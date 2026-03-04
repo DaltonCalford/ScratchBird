@@ -3031,15 +3031,37 @@ bool MySqlAdapter::validateAuthResponse(const std::string& expected_plugin,
                                         const uint8_t* scramble,
                                         const std::string& password) {
 #ifdef HAVE_OPENSSL
+    // Emulation security policy boundary:
+    // MySQL lane accepts only explicitly approved MySQL auth plugins.
+    const std::string expected_plugin_upper = toUpperAscii(expected_plugin);
+    if (expected_plugin_upper != "MYSQL_NATIVE_PASSWORD" &&
+        expected_plugin_upper != "CACHING_SHA2_PASSWORD" &&
+        expected_plugin_upper != "SHA256_PASSWORD" &&
+        expected_plugin_upper != "AUTH_SOCKET") {
+        return false;
+    }
+
+    // `auth_socket` is host-identity based; no password-response proof should
+    // be accepted in this verifier path.
+    if (expected_plugin_upper == "AUTH_SOCKET") {
+        return password.empty() && auth_response.empty();
+    }
+
+    // `sha256_password` requires dedicated cleartext-over-TLS / RSA exchange
+    // flow not implemented in this verifier path yet. Keep deterministic deny.
+    if (expected_plugin_upper == "SHA256_PASSWORD") {
+        return false;
+    }
+
     std::vector<uint8_t> expected;
     
-    if (expected_plugin == "mysql_native_password") {
+    if (expected_plugin_upper == "MYSQL_NATIVE_PASSWORD") {
         expected = computeNativePasswordAuth(password, scramble);
         // mysql_native_password produces 20-byte response
         if (auth_response.length() != 20 && !auth_response.empty()) {
             return false;
         }
-    } else if (expected_plugin == "caching_sha2_password") {
+    } else if (expected_plugin_upper == "CACHING_SHA2_PASSWORD") {
         expected = computeCachingSha2PasswordAuth(password, scramble);
         // caching_sha2_password produces 32-byte response
         if (auth_response.length() != 32 && !auth_response.empty()) {

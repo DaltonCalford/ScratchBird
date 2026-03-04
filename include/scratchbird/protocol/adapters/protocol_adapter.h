@@ -162,6 +162,7 @@ struct ResultContext {
     // Completion info
     std::string command_tag;        // e.g., "SELECT 100"
     int64_t rows_affected = 0;      // Rows affected/returned
+    std::vector<std::string> notices;  // Non-fatal notices to emit before completion
 
     // Error info
     bool has_error = false;

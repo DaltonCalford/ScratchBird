@@ -2117,7 +2117,11 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.opcode = op(Opcode::SBLR3_CREATE_TYPE);
             inst.flags = 0;
             Value::Object payload;
+            payload["flags"] = Value(uint64_t(s->if_not_exists ? 0x0001 : 0));
+            payload["path"] = toSchemaPath(s->type_path);
             payload["name"] = toIdent(s->type_path.objectName());
+            payload["type_kind"] =
+                Value(uint64_t(static_cast<uint8_t>(s->type_kind)));
             payload["type"] = Value(TypeSpec{});
             payload["options"] = Value(Value::Object{
                 {"count", Value(uint64_t(0))},
@@ -3215,7 +3219,10 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
             auto* s = static_cast<parser::v3::DropTablespaceStmt*>(stmt);
             parser::v3::SchemaPath path(parser::v3::PathType::UNQUALIFIED,
                                         {s->tablespace_name});
-            return makeDrop(Opcode::SBLR3_DROP_TABLESPACE, path, 16);
+            uint64_t flags = 0;
+            if (s->if_exists) flags |= 0x01;
+            if (s->force) flags |= 0x02;
+            return makeDrop(Opcode::SBLR3_DROP_TABLESPACE, path, 16, flags);
         }
         case parser::v3::ASTKind::DropDomainStmt: {
             auto* s = static_cast<parser::v3::DropDomainStmt*>(stmt);

@@ -290,6 +290,22 @@ parser::v3::Expression* Parser::parseLikeExpr() {
         }
         return like;
     }
+    if (match(TokenType::TILDE)) {
+        if (is_not) error("Unexpected NOT before regex operator");
+        return makeBinary(parser::v3::BinaryOp::REGEX_MATCH, expr, parseBitwiseOrExpr());
+    }
+    if (match(TokenType::TILDE_STAR)) {
+        if (is_not) error("Unexpected NOT before regex operator");
+        return makeBinary(parser::v3::BinaryOp::REGEX_MATCH_CI, expr, parseBitwiseOrExpr());
+    }
+    if (match(TokenType::EXCLAIM_TILDE)) {
+        if (is_not) error("Unexpected NOT before regex operator");
+        return makeBinary(parser::v3::BinaryOp::REGEX_NOT_MATCH, expr, parseBitwiseOrExpr());
+    }
+    if (match(TokenType::EXCLAIM_TILDE_STAR)) {
+        if (is_not) error("Unexpected NOT before regex operator");
+        return makeBinary(parser::v3::BinaryOp::REGEX_NOT_MATCH_CI, expr, parseBitwiseOrExpr());
+    }
     if (is_not) error("Expected LIKE, ILIKE, or SIMILAR after NOT");
     return expr;
 }
@@ -516,6 +532,30 @@ parser::v3::Expression* Parser::parsePrimaryExpr() {
         auto* lit = makeLiteralString(std::string(str));
         advance();
         return lit;
+    }
+    // PostgreSQL typed string literal syntax, e.g. bool 't' / boolean 'false'.
+    // We only reinterpret BOOL/BOOLEAN as a type specifier when immediately
+    // followed by a string literal token; otherwise the keyword remains available
+    // for normal expression parsing paths.
+    if ((check(TokenType::KW_BOOL) || check(TokenType::KW_BOOLEAN)) &&
+        (lexer_.peek().type == TokenType::STRING_LITERAL ||
+         lexer_.peek().type == TokenType::DOLLAR_STRING ||
+         lexer_.peek().type == TokenType::ESCAPE_STRING)) {
+        PgDataType type = parseDataType();
+        if (!(check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING) ||
+              check(TokenType::ESCAPE_STRING))) {
+            error("Expected string literal after boolean type specifier");
+            return makeLiteralNull();
+        }
+        uint32_t id = current_token_.value.string_id;
+        std::string_view str = lexer_.stringPool().get(id);
+        auto* value = makeLiteralString(std::string(str));
+        advance();
+
+        auto* expr = arena()->create<parser::v3::CastExpr>();
+        expr->expr = value;
+        expr->target_type = pgTypeToTypeName(type, string_pool_);
+        return expr;
     }
     if (matchKeyword(TokenType::KW_NULL)) return makeLiteralNull();
     if (matchKeyword(TokenType::KW_TRUE)) return makeLiteralBool(true);

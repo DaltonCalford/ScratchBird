@@ -112,6 +112,14 @@ Unmodified upstream regression mode (`pg_regress`):
 - `SCRATCHBIRD_PG_REGRESS_INPUT_DIR` defaults to `tests/compatibility/postgresql/repos/postgres/src/test/regress`.
 - `SCRATCHBIRD_PG_REGRESS_SCHEDULE` defaults to `parallel_schedule`.
 - `SCRATCHBIRD_PG_REGRESS_TESTS` optionally appends specific test names for subset/smoke execution.
+- `SCRATCHBIRD_PG_REGRESS_SKIP_FILE` defaults to `tests/compatibility/postgresql/config/upstream_skip_tests.txt` and allows explicit deferred-test filtering with reasons.
+- `SCRATCHBIRD_PG_REGRESS_SKIP_TESTS` optionally adds ad-hoc skip names (space or comma separated).
+
+Upstream skip evidence is emitted to:
+- `results/ctest/<run_id>/upstream/upstream_skipped_tests.txt`
+
+Current deferred upstream test:
+- `cluster` (deferred until ScratchBird CLUSTER functionality is implemented).
 
 If `sb_pg_isql` is unavailable, set `SCRATCHBIRD_PG_ISQL` to a valid `sb_pg_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
 

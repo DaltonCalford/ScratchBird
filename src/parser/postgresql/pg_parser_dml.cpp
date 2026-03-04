@@ -106,7 +106,14 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
             if (matchKeyword(TokenType::KW_LATERAL)) {
                 ref->lateral = true;
             }
+            bool only_table = false;
+            if (matchKeyword(TokenType::KW_ONLY) || matchIdentifierKeyword("ONLY")) {
+                only_table = true;
+            }
             if (match(TokenType::LEFT_PAREN)) {
+                if (only_table) {
+                    error("ONLY is not valid for subquery table references");
+                }
                 if (!check(TokenType::KW_SELECT)) {
                     error("Expected SELECT in subquery table reference");
                 }
@@ -361,7 +368,18 @@ void Parser::parseSelectList(std::vector<SelectItem>& items) {
             item.column_name = parser::v3::schemaPathToString(column_ref->column.table_path, string_pool_);
             item.expr = nullptr;
         } else if (matchKeyword(TokenType::KW_AS)) {
-            item.alias = parseIdentifier();
+            if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+                isNonReservedKeyword(current_token_.type)) {
+                item.alias = parseIdentifier();
+            } else if (matchKeyword(TokenType::KW_TRUE)) {
+                item.alias = "true";
+            } else if (matchKeyword(TokenType::KW_FALSE)) {
+                item.alias = "false";
+            } else if (matchKeyword(TokenType::KW_UNKNOWN)) {
+                item.alias = "unknown";
+            } else {
+                error("Expected identifier");
+            }
         } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
             item.alias = parseIdentifier();
         }

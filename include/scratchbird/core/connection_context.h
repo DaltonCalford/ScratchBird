@@ -372,6 +372,23 @@ namespace scratchbird::core
         int64_t lastRowsAffected() const { return last_rows_affected_; }
         uint32_t lastErrorCode() const { return last_error_code_; }
         const std::string& lastSqlstate() const { return last_sqlstate_; }
+        void pushNotice(const std::string& message)
+        {
+            if (!message.empty())
+            {
+                pending_notices_.push_back(message);
+            }
+        }
+        std::vector<std::string> consumeNotices()
+        {
+            std::vector<std::string> notices = std::move(pending_notices_);
+            pending_notices_.clear();
+            return notices;
+        }
+        void clearNotices()
+        {
+            pending_notices_.clear();
+        }
 
         // Session settings (Firebird ISQL compatibility)
         void set_sql_dialect(uint8_t dialect)
@@ -528,6 +545,7 @@ namespace scratchbird::core
         uint32_t last_error_code_ = 0;
         std::string last_sqlstate_;
         uint64_t last_activity_time_ = 0;
+        std::vector<std::string> pending_notices_;
 
         IOStats connection_io_stats_;
         IOStats transaction_io_stats_;

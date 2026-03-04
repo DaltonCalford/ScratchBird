@@ -1585,13 +1585,28 @@ core::Status FirebirdAdapter::handleConnect(network::Connection* conn) {
     fb_state_ = FirebirdProtocolState::CONNECT_RECEIVED;
 
     // Send accept (or accept_data for auth)
-    if (config_.require_authentication) {
+    //
+    // Emulation security policy boundary:
+    // Firebird lane controls its own auth handshake and plugin negotiation.
+    const bool firebird_require_authentication = config_.require_authentication;
+    const bool firebird_policy_auth_supported =
+        (config_.auth_method == AuthMethod::SCRAM_SHA_256 ||
+         config_.auth_method == AuthMethod::SCRAM_SHA_512 ||
+         config_.auth_method == AuthMethod::PASSWORD);
+    const char* firebird_auth_plugin = firebird::AUTH_PLUGIN_SRP256;
+    if (firebird_require_authentication) {
+        if (!firebird_policy_auth_supported) {
+            sendErrorResponse(conn,
+                              firebird::ErrorCode::isc_login,
+                              "Configured authentication method is not supported by Firebird emulation policy");
+            return sendBuffer(conn);
+        }
         // Request authentication
         std::vector<uint8_t> auth_data;
         std::vector<uint8_t> keys;
         sendAcceptData(conn, firebird::DEFAULT_PROTOCOL_VERSION,
                       firebird::ARCH_GENERIC, 1, auth_data,
-                      firebird::AUTH_PLUGIN_SRP256, false, keys);
+                      firebird_auth_plugin, false, keys);
         fb_state_ = FirebirdProtocolState::AUTH_CONTINUE;
     } else {
         // Trust authentication

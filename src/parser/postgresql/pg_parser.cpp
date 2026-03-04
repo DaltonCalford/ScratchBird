@@ -390,6 +390,124 @@ parser::v3::Statement* Parser::parseStatementInternal() {
 
     emitDebugSpan(current_token_.span);
 
+    if (check(TokenType::IDENTIFIER)) {
+        auto capture_remaining_clause = [&]() -> std::string {
+            if (check(TokenType::SEMICOLON) || check(TokenType::END_OF_FILE)) {
+                return {};
+            }
+
+            std::string_view input = lexer_.input();
+            size_t start = current_token_.span.start.offset;
+            size_t end = start;
+            Token last = current_token_;
+            while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                last = current_token_;
+                advance();
+            }
+            end = last.span.start.offset + last.span.length;
+            if (end > input.size()) {
+                end = input.size();
+            }
+            if (end <= start) {
+                return {};
+            }
+            return std::string(input.substr(start, end - start));
+        };
+
+        auto consume_remaining_clause = [&]() {
+            while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+        };
+
+        auto make_alter_system_stmt =
+            [&](const std::string& key, const std::string& payload) -> parser::v3::AlterSystemStmt* {
+                auto* stmt = arena()->create<parser::v3::AlterSystemStmt>();
+                stmt->name = string_pool_.intern(key);
+                auto* lit = arena()->create<parser::v3::LiteralExpr>();
+                lit->literal_type = parser::v3::LiteralType::STRING;
+                lit->string_value = string_pool_.intern(payload);
+                stmt->value = lit;
+                return stmt;
+            };
+
+        if (matchIdentifierKeyword("CHECKPOINT")) {
+            if (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                error("CHECKPOINT does not accept trailing clauses");
+                consume_remaining_clause();
+                return nullptr;
+            }
+            return arena()->create<parser::v3::SweepDatabaseStmt>();
+        }
+
+        if (matchIdentifierKeyword("LOAD")) {
+            bool if_not_exists = false;
+            if (matchKeyword(TokenType::KW_IF)) {
+                consumeKeyword(TokenType::KW_NOT, "Expected NOT after IF");
+                consumeKeyword(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+                if_not_exists = true;
+            }
+
+            // Accept both LOAD EXTENSION <name> and LOAD <name>.
+            matchIdentifierKeyword("EXTENSION");
+
+            std::string extension_name;
+            if (check(TokenType::STRING_LITERAL)) {
+                extension_name = std::string(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+            } else {
+                extension_name = parseIdentifier();
+            }
+            std::string payload = capture_remaining_clause();
+            if (if_not_exists) {
+                if (!payload.empty()) {
+                    payload.insert(0, ";");
+                }
+                payload.insert(0, "IF_NOT_EXISTS=1");
+            }
+            return make_alter_system_stmt("platform.extension.load." + extension_name, payload);
+        }
+
+        if (matchIdentifierKeyword("CLUSTER")) {
+            std::string payload = capture_remaining_clause();
+            return make_alter_system_stmt("maintenance.cluster", payload);
+        }
+
+        if (matchIdentifierKeyword("WAIT")) {
+            if (!matchKeyword(TokenType::KW_FOR)) {
+                error("Expected FOR after WAIT");
+                consume_remaining_clause();
+                return nullptr;
+            }
+            if (!matchIdentifierKeyword("LSN")) {
+                error("Expected LSN after WAIT FOR");
+                consume_remaining_clause();
+                return nullptr;
+            }
+
+            std::string lsn_value;
+            if (check(TokenType::STRING_LITERAL)) {
+                lsn_value = std::string(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+            } else if (check(TokenType::IDENTIFIER) ||
+                       check(TokenType::QUOTED_IDENTIFIER) ||
+                       isNonReservedKeyword(current_token_.type)) {
+                lsn_value = parseIdentifier();
+            } else {
+                error("Expected LSN value after WAIT FOR LSN");
+                consume_remaining_clause();
+                return nullptr;
+            }
+
+            std::string payload = "LSN=" + lsn_value;
+            std::string trailing = capture_remaining_clause();
+            if (!trailing.empty()) {
+                payload += ";" + trailing;
+            }
+            return make_alter_system_stmt("admin.wait_for_lsn", payload);
+        }
+    }
+
     switch (current_token_.type) {
         case TokenType::KW_SELECT:
             {

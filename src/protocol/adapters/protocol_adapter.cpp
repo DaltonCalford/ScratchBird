@@ -26,8 +26,11 @@
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/parser/v3_compiler.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <unordered_map>
+#include <unordered_set>
 
 #ifdef _WIN32
 #include <process.h>
@@ -104,6 +107,254 @@ std::string buildNativeCompileDiagnostic(core::Database* db,
         message.append(trace.diagnostic_sql_context());
     }
     return message;
+}
+
+std::string trimAscii(const std::string& input) {
+    size_t begin = 0;
+    while (begin < input.size() &&
+           std::isspace(static_cast<unsigned char>(input[begin])) != 0) {
+        ++begin;
+    }
+    size_t end = input.size();
+    while (end > begin &&
+           std::isspace(static_cast<unsigned char>(input[end - 1])) != 0) {
+        --end;
+    }
+    return input.substr(begin, end - begin);
+}
+
+std::string toUpperAscii(const std::string& input) {
+    std::string out = input;
+    for (char& ch : out) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    return out;
+}
+
+bool isPostgresDialectTag(const std::string& tag) {
+    const std::string upper = toUpperAscii(trimAscii(tag));
+    return upper == "POSTGRESQL" || upper == "POSTGRES" || upper == "PG";
+}
+
+std::string stripIdentifierQuotes(std::string token) {
+    token = trimAscii(token);
+    if (token.size() >= 2 && token.front() == '"' && token.back() == '"') {
+        token = token.substr(1, token.size() - 2);
+    }
+    return trimAscii(token);
+}
+
+bool parseInheritsParentNames(const std::string& sql, std::vector<std::string>& parents_out) {
+    parents_out.clear();
+    const std::string trimmed = trimAscii(sql);
+    const std::string upper = toUpperAscii(trimmed);
+    if (upper.rfind("CREATE", 0) != 0 || upper.find("TABLE") == std::string::npos) {
+        return false;
+    }
+
+    const size_t inherits_pos = upper.find("INHERITS");
+    if (inherits_pos == std::string::npos) {
+        return false;
+    }
+
+    size_t open = trimmed.find('(', inherits_pos);
+    if (open == std::string::npos) {
+        return false;
+    }
+
+    bool in_quotes = false;
+    size_t close = std::string::npos;
+    int depth = 0;
+    for (size_t i = open; i < trimmed.size(); ++i) {
+        char ch = trimmed[i];
+        if (ch == '"') {
+            in_quotes = !in_quotes;
+        }
+        if (in_quotes) {
+            continue;
+        }
+        if (ch == '(') {
+            ++depth;
+        } else if (ch == ')') {
+            --depth;
+            if (depth == 0) {
+                close = i;
+                break;
+            }
+        }
+    }
+    if (close == std::string::npos || close <= open + 1) {
+        return false;
+    }
+
+    const std::string list = trimmed.substr(open + 1, close - open - 1);
+    std::string current;
+    in_quotes = false;
+    for (size_t i = 0; i < list.size(); ++i) {
+        const char ch = list[i];
+        if (ch == '"') {
+            in_quotes = !in_quotes;
+            current.push_back(ch);
+            continue;
+        }
+        if (ch == ',' && !in_quotes) {
+            std::string token = trimAscii(current);
+            if (!token.empty()) {
+                std::string token_upper = toUpperAscii(token);
+                if (token_upper.rfind("ONLY ", 0) == 0) {
+                    token = trimAscii(token.substr(5));
+                }
+                parents_out.push_back(token);
+            }
+            current.clear();
+            continue;
+        }
+        current.push_back(ch);
+    }
+    std::string tail = trimAscii(current);
+    if (!tail.empty()) {
+        std::string tail_upper = toUpperAscii(tail);
+        if (tail_upper.rfind("ONLY ", 0) == 0) {
+            tail = trimAscii(tail.substr(5));
+        }
+        parents_out.push_back(tail);
+    }
+
+    return !parents_out.empty();
+}
+
+bool resolveParentTable(core::CatalogManager* catalog,
+                        core::ConnectionContext* conn_ctx,
+                        const std::string& parent_token,
+                        core::CatalogManager::TableInfo& table_info) {
+    if (catalog == nullptr || conn_ctx == nullptr) {
+        return false;
+    }
+
+    auto try_get_table = [&](const core::ID& schema_id, const std::string& table_name) {
+        if (schema_id == core::ID{} || table_name.empty()) {
+            return false;
+        }
+        core::ErrorContext table_ctx;
+        return catalog->getTable(schema_id, table_name, table_info, &table_ctx) == core::Status::OK;
+    };
+
+    std::string raw = trimAscii(parent_token);
+    std::string table_name = stripIdentifierQuotes(raw);
+    std::string schema_name;
+
+    const size_t dot = raw.find_last_of('.');
+    if (dot != std::string::npos) {
+        schema_name = stripIdentifierQuotes(raw.substr(0, dot));
+        table_name = stripIdentifierQuotes(raw.substr(dot + 1));
+    }
+
+    const core::ID current_schema_id = conn_ctx->getCurrentSchemaId();
+    if (try_get_table(current_schema_id, table_name)) {
+        return true;
+    }
+
+    if (!schema_name.empty()) {
+        core::CatalogManager::SchemaInfo schema_info;
+        core::ErrorContext schema_ctx;
+        if (catalog->getSchema(schema_name, schema_info, &schema_ctx) == core::Status::OK &&
+            try_get_table(schema_info.schema_id, table_name)) {
+            return true;
+        }
+    }
+
+    const auto& search_path = conn_ctx->search_path();
+    for (const auto& path : search_path) {
+        core::CatalogManager::SchemaInfo schema_info;
+        core::ErrorContext schema_ctx;
+        if (catalog->getSchema(path, schema_info, &schema_ctx) != core::Status::OK) {
+            continue;
+        }
+        if (try_get_table(schema_info.schema_id, table_name)) {
+            return true;
+        }
+    }
+
+    core::CatalogManager::SchemaInfo public_schema;
+    core::ErrorContext public_ctx;
+    if (catalog->getSchema("public", public_schema, &public_ctx) == core::Status::OK &&
+        try_get_table(public_schema.schema_id, table_name)) {
+        return true;
+    }
+
+    return false;
+}
+
+std::vector<std::string> collectMergedInheritsColumnsForPg(const std::string& sql,
+                                                           core::Database* db,
+                                                           core::ConnectionContext* conn_ctx) {
+    std::vector<std::string> notices;
+    if (db == nullptr || conn_ctx == nullptr) {
+        return notices;
+    }
+
+    std::vector<std::string> parents;
+    if (!parseInheritsParentNames(sql, parents) || parents.size() < 2) {
+        return notices;
+    }
+
+    auto* catalog = db->catalog_manager();
+    if (catalog == nullptr) {
+        return notices;
+    }
+
+    struct ColumnSignature {
+        uint16_t type = 0;
+        uint32_t precision = 0;
+        uint32_t scale = 0;
+        std::string display_name;
+    };
+
+    std::unordered_map<std::string, ColumnSignature> seen;
+    std::unordered_set<std::string> emitted;
+
+    for (const auto& parent : parents) {
+        core::CatalogManager::TableInfo parent_table;
+        if (!resolveParentTable(catalog, conn_ctx, parent, parent_table)) {
+            continue;
+        }
+
+        std::vector<core::CatalogManager::ColumnInfo> parent_columns;
+        core::ErrorContext cols_ctx;
+        if (catalog->getColumns(parent_table.table_id, parent_columns, &cols_ctx) != core::Status::OK) {
+            continue;
+        }
+
+        for (const auto& col : parent_columns) {
+            const std::string key = toUpperAscii(col.column_name);
+            auto it = seen.find(key);
+            if (it == seen.end()) {
+                ColumnSignature sig;
+                sig.type = col.data_type;
+                sig.precision = col.type_precision;
+                sig.scale = col.type_scale;
+                sig.display_name = col.column_name;
+                seen.emplace(key, std::move(sig));
+                continue;
+            }
+
+            const bool compatible =
+                it->second.type == col.data_type &&
+                it->second.precision == col.type_precision &&
+                it->second.scale == col.type_scale;
+            if (!compatible) {
+                continue;
+            }
+            if (emitted.insert(key).second) {
+                const std::string& display = it->second.display_name.empty()
+                    ? col.column_name
+                    : it->second.display_name;
+                notices.push_back(display);
+            }
+        }
+    }
+
+    return notices;
 }
 } // namespace
 
@@ -776,6 +1027,10 @@ core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
         return core::Status::OK;
     }
 
+    if (connection_ctx_ != nullptr) {
+        connection_ctx_->clearNotices();
+    }
+
     auto exec_result = executor_->execute(bytecode);
     if (!exec_result.success()) {
         result.has_error = true;
@@ -818,6 +1073,37 @@ core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
         else if (sql_upper.find("DROP") == 0) result.command_tag = "DROP";
         else if (sql_upper.find("ALTER") == 0) result.command_tag = "ALTER";
         else result.command_tag = "OK";
+    }
+
+    if (!exec_result.hasResultSet() &&
+        connection_ctx_ != nullptr &&
+        isPostgresDialectTag(connection_ctx_->dialect_tag())) {
+        auto merged_columns = collectMergedInheritsColumnsForPg(sql,
+                                                                engineDatabase(),
+                                                                connection_ctx_.get());
+        for (const auto& column_name : merged_columns) {
+            result.notices.push_back(
+                "merging multiple inherited definitions of column \"" + column_name + "\"");
+        }
+    }
+
+    if (connection_ctx_ != nullptr) {
+        auto pending_notices = connection_ctx_->consumeNotices();
+        for (const auto& notice : pending_notices) {
+            if (notice.empty()) {
+                continue;
+            }
+            bool exists = false;
+            for (const auto& existing : result.notices) {
+                if (existing == notice) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                result.notices.push_back(notice);
+            }
+        }
     }
 
     return core::Status::OK;

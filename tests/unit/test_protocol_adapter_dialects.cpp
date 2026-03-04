@@ -68,6 +68,13 @@ public:
         return T::computeCachingSha2PasswordAuth(password, scramble);
     }
 
+    bool validateAuthResponse(const std::string& expected_plugin,
+                              const std::string& auth_response,
+                              const uint8_t* scramble,
+                              const std::string& password) {
+        return T::validateAuthResponse(expected_plugin, auth_response, scramble, password);
+    }
+
     uint64_t getContractFeatureMask() const {
         return T::contractServerFeatureMask();
     }
@@ -207,6 +214,35 @@ bool pgContainsMessageType(const std::vector<char>& types, char expected) {
     return std::find(types.begin(), types.end(), expected) != types.end();
 }
 
+int32_t readPgAuthenticationType(const std::vector<uint8_t>& stream) {
+    size_t offset = 0;
+    while (offset + 5 <= stream.size()) {
+        const char msg_type = static_cast<char>(stream[offset]);
+        const uint32_t msg_len =
+            (static_cast<uint32_t>(stream[offset + 1]) << 24) |
+            (static_cast<uint32_t>(stream[offset + 2]) << 16) |
+            (static_cast<uint32_t>(stream[offset + 3]) << 8) |
+            static_cast<uint32_t>(stream[offset + 4]);
+        if (msg_len < 4) {
+            break;
+        }
+        const size_t frame_len = 1 + static_cast<size_t>(msg_len);
+        if (offset + frame_len > stream.size()) {
+            break;
+        }
+        if (msg_type == pg::BackendMsg::AUTHENTICATION && msg_len >= 8) {
+            const size_t payload_offset = offset + 5;
+            return static_cast<int32_t>(
+                (static_cast<uint32_t>(stream[payload_offset]) << 24) |
+                (static_cast<uint32_t>(stream[payload_offset + 1]) << 16) |
+                (static_cast<uint32_t>(stream[payload_offset + 2]) << 8) |
+                static_cast<uint32_t>(stream[payload_offset + 3]));
+        }
+        offset += frame_len;
+    }
+    return -1;
+}
+
 core::Status sendPgFrontendPacket(AdapterHarness<PostgresqlAdapter>& adapter,
                                   network::Connection* conn,
                                   uint8_t type,
@@ -246,6 +282,67 @@ std::vector<uint8_t> buildPgExecutePayload(const std::string& portal_name, uint3
     writePgCString(payload, portal_name);
     writePgInt32(payload, max_rows);
     return payload;
+}
+
+std::vector<uint8_t> buildPgSaslInitialPayload(const std::string& mechanism,
+                                               const std::string& client_first) {
+    std::vector<uint8_t> payload;
+    writePgCString(payload, mechanism);
+    writePgInt32(payload, static_cast<uint32_t>(client_first.size()));
+    payload.insert(payload.end(), client_first.begin(), client_first.end());
+    return payload;
+}
+
+std::vector<uint8_t> buildPgStartupMessage(const std::string& user,
+                                           const std::string& database) {
+    std::vector<uint8_t> payload;
+    writePgInt32(payload, static_cast<uint32_t>(pg::PROTOCOL_VERSION_3));
+    writePgCString(payload, "user");
+    writePgCString(payload, user);
+    writePgCString(payload, "database");
+    writePgCString(payload, database);
+    payload.push_back('\0');
+
+    std::vector<uint8_t> packet;
+    writePgInt32(packet, static_cast<uint32_t>(4 + payload.size()));
+    packet.insert(packet.end(), payload.begin(), payload.end());
+    return packet;
+}
+
+void writeFbU32BE(std::vector<uint8_t>& out, uint32_t value) {
+    out.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+    out.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>(value & 0xFF));
+}
+
+std::vector<uint8_t> buildFirebirdPacket(uint32_t opcode, const std::vector<uint8_t>& body = {}) {
+    std::vector<uint8_t> packet;
+    packet.reserve(4 + body.size());
+    writeFbU32BE(packet, opcode);
+    packet.insert(packet.end(), body.begin(), body.end());
+    return packet;
+}
+
+std::vector<uint8_t> buildFirebirdConnectBodyForPolicyTest() {
+    std::vector<uint8_t> body;
+    writeFbU32BE(body, firebird::Opcode::op_attach);
+    writeFbU32BE(body, firebird::DEFAULT_PROTOCOL_VERSION);
+    writeFbU32BE(body, firebird::ARCH_GENERIC);
+    writeFbU32BE(body, 1);
+    writeFbU32BE(body, 1);
+    writeFbU32BE(body, 0);
+    return body;
+}
+
+uint32_t readFbU32BE(const std::vector<uint8_t>& data, size_t offset = 0) {
+    if (offset + 4 > data.size()) {
+        return 0;
+    }
+    return (static_cast<uint32_t>(data[offset]) << 24) |
+           (static_cast<uint32_t>(data[offset + 1]) << 16) |
+           (static_cast<uint32_t>(data[offset + 2]) << 8) |
+            static_cast<uint32_t>(data[offset + 3]);
 }
 } // namespace
 
@@ -403,6 +500,155 @@ TEST(ProtocolAdapterDialectsC1, PostgreSQLServerVersionFormat) {
     // Should match PostgreSQL format like "15.4 (ScratchBird 1.0)"
     EXPECT_TRUE(it->second.find(".") != std::string::npos);
     EXPECT_TRUE(it->second.find("ScratchBird") != std::string::npos);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsUnsupportedConfiguredAuthMethodAtStartup) {
+    cleanupDb("test_pg_policy_reject_unsupported_auth.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_policy_reject_unsupported_auth.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::TOKEN;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 113);
+
+    const auto startup_packet = buildPgStartupMessage("policy_user", "policy_db");
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    EXPECT_EQ(adapter.processIncomingPacket(&conn), core::Status::NOT_SUPPORTED);
+
+    const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    ASSERT_FALSE(message_types.empty());
+    EXPECT_EQ(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsPeerConfiguredMethodAtStartup) {
+    cleanupDb("test_pg_policy_reject_peer_auth.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_policy_reject_peer_auth.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::PEER;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 118);
+
+    const auto startup_packet = buildPgStartupMessage("policy_user", "policy_db");
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    EXPECT_EQ(adapter.processIncomingPacket(&conn), core::Status::NOT_SUPPORTED);
+
+    const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    ASSERT_FALSE(message_types.empty());
+    EXPECT_EQ(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyAllowsMd5ConfiguredMethodAtStartup) {
+    cleanupDb("test_pg_policy_allow_md5_auth.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_policy_allow_md5_auth.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::MD5;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 115);
+
+    const auto startup_packet = buildPgStartupMessage("policy_user", "policy_db");
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+    EXPECT_EQ(readPgAuthenticationType(conn.getWriteBuffer()), pg::AuthType::MD5_PASSWORD);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyNormalizesScram512ToScram256AtStartup) {
+    cleanupDb("test_pg_policy_scram512_normalize.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_policy_scram512_normalize.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::SCRAM_SHA_512;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 116);
+
+    const auto startup_packet = buildPgStartupMessage("policy_user", "policy_db");
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+    EXPECT_EQ(readPgAuthenticationType(conn.getWriteBuffer()), pg::AuthType::SASL);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsUnsupportedSaslMechanismDeterministically) {
+    cleanupDb("test_pg_policy_reject_sasl_mechanism.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_policy_reject_sasl_mechanism.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::SCRAM_SHA_256;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 119);
+
+    const auto startup_packet = buildPgStartupMessage("policy_user", "policy_db");
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::SASL_INITIAL),
+                  buildPgSaslInitialPayload("OAUTHBEARER", "n,,n=policy_user,r=nonce")),
+              core::Status::OK);
+
+    const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    ASSERT_FALSE(message_types.empty());
+    EXPECT_EQ(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsScramPlusChannelBindingDeterministically) {
+    cleanupDb("test_pg_policy_reject_scram_plus.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_policy_reject_scram_plus.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::SCRAM_SHA_256;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 120);
+
+    const auto startup_packet = buildPgStartupMessage("policy_user", "policy_db");
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::SASL_INITIAL),
+                  buildPgSaslInitialPayload("SCRAM-SHA-256",
+                                            "p=tls-server-end-point,,n=policy_user,r=nonce")),
+              core::Status::OK);
+
+    const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    ASSERT_FALSE(message_types.empty());
+    EXPECT_EQ(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
 }
 
 TEST(ProtocolAdapterDialectsC1, PostgreSQLParameterStatusKeys) {
@@ -771,6 +1017,71 @@ TEST(ProtocolAdapterDialectsC3, MySQLCachingSha2PasswordAuth) {
     EXPECT_TRUE(empty_result.empty());
 }
 
+TEST(ProtocolAdapterDialectsC3, MySQLPolicyRejectsSha256PasswordInVerifierPath) {
+    cleanupDb("test_mysql_policy_sha256_reject.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_policy_sha256_reject.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    uint8_t scramble[20] = {0};
+
+    EXPECT_FALSE(adapter.validateAuthResponse("sha256_password", "", scramble, "secret"));
+    EXPECT_FALSE(adapter.validateAuthResponse("sha256_password", "proof", scramble, "secret"));
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLPolicyAuthSocketVerifierRequiresEmptyProof) {
+    cleanupDb("test_mysql_policy_auth_socket_verifier.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_policy_auth_socket_verifier.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    uint8_t scramble[20] = {0};
+
+    EXPECT_TRUE(adapter.validateAuthResponse("auth_socket", "", scramble, ""));
+    EXPECT_FALSE(adapter.validateAuthResponse("auth_socket", "x", scramble, ""));
+    EXPECT_FALSE(adapter.validateAuthResponse("auth_socket", "", scramble, "nonempty"));
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLPolicyRejectsUnknownPluginInVerifierPath) {
+    cleanupDb("test_mysql_policy_reject_unknown_plugin.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_policy_reject_unknown_plugin.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    uint8_t scramble[20] = {0};
+
+    EXPECT_FALSE(adapter.validateAuthResponse("unknown_auth_plugin", "proof", scramble, ""));
+    EXPECT_FALSE(adapter.validateAuthResponse("unknown_auth_plugin", "", scramble, "secret"));
+    EXPECT_FALSE(adapter.validateAuthResponse("unknown_auth_plugin", "proof", scramble, "secret"));
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLPolicyAllowsNativeAndCachingSha2Plugins) {
+    cleanupDb("test_mysql_policy_allow_native_and_sha2.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_policy_allow_native_and_sha2.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    uint8_t scramble[20] = {0};
+
+    const auto native = adapter.computeNativePasswordAuth("secret", scramble);
+    const std::string native_response(native.begin(), native.end());
+    EXPECT_TRUE(native.empty() || adapter.validateAuthResponse("mysql_native_password",
+                                                               native_response,
+                                                               scramble,
+                                                               "secret"));
+
+    const auto sha2 = adapter.computeCachingSha2PasswordAuth("secret", scramble);
+    const std::string sha2_response(sha2.begin(), sha2.end());
+    EXPECT_TRUE(sha2.empty() || adapter.validateAuthResponse("caching_sha2_password",
+                                                             sha2_response,
+                                                             scramble,
+                                                             "secret"));
+}
+
 TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserRequestsClearPasswordAuthSwitch) {
     cleanupDb("test_mysql_change_user_auth_switch.sbdb");
 
@@ -1029,4 +1340,77 @@ TEST(ProtocolAdapterDialectsC3, MySQLErrorMappingOutOfRangeUses22003) {
     EXPECT_EQ(payload[0], mysql::ERR_PACKET);
     EXPECT_EQ(readMySqlErrorCode(payload), 1264);
     EXPECT_EQ(readMySqlSqlState(payload), "22003");
+}
+
+TEST(ProtocolAdapterDialectsFirebird, FirebirdPolicyRejectsUnsupportedConfiguredAuthMethodAtConnect) {
+    cleanupDb("test_fb_policy_reject_unsupported_auth.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_fb_policy_reject_unsupported_auth.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::TOKEN;
+
+    AdapterHarness<FirebirdAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 114);
+
+    const auto packet = buildFirebirdPacket(firebird::Opcode::op_connect,
+                                            buildFirebirdConnectBodyForPolicyTest());
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto& out = conn.getWriteBuffer();
+    ASSERT_GE(out.size(), 4u);
+    EXPECT_EQ(readFbU32BE(out), firebird::Opcode::op_response);
+    EXPECT_NE(readFbU32BE(out), firebird::Opcode::op_accept_data);
+}
+
+TEST(ProtocolAdapterDialectsFirebird, FirebirdPolicyAllowsPasswordConfiguredMethodAtConnect) {
+    cleanupDb("test_fb_policy_allow_password_auth.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_fb_policy_allow_password_auth.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::PASSWORD;
+
+    AdapterHarness<FirebirdAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 117);
+
+    const auto packet = buildFirebirdPacket(firebird::Opcode::op_connect,
+                                            buildFirebirdConnectBodyForPolicyTest());
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto& out = conn.getWriteBuffer();
+    ASSERT_GE(out.size(), 4u);
+    EXPECT_EQ(readFbU32BE(out), firebird::Opcode::op_accept_data);
+}
+
+TEST(ProtocolAdapterDialectsFirebird, FirebirdPolicyAllowsScram512ConfiguredMethodAtConnect) {
+    cleanupDb("test_fb_policy_allow_scram512_auth.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_fb_policy_allow_scram512_auth.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::SCRAM_SHA_512;
+
+    AdapterHarness<FirebirdAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 121);
+
+    const auto packet = buildFirebirdPacket(firebird::Opcode::op_connect,
+                                            buildFirebirdConnectBodyForPolicyTest());
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto& out = conn.getWriteBuffer();
+    ASSERT_GE(out.size(), 4u);
+    EXPECT_EQ(readFbU32BE(out), firebird::Opcode::op_accept_data);
 }

@@ -34,6 +34,7 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <unordered_set>
 
 // For MD5
 #ifdef HAVE_OPENSSL
@@ -187,6 +188,150 @@ std::string toLowerAscii(std::string value) {
         return static_cast<char>(std::tolower(ch));
     });
     return value;
+}
+
+std::string toUpperAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
+    });
+    return value;
+}
+
+bool parseInheritsParentNames(const std::string& sql, std::vector<std::string>& parents_out) {
+    parents_out.clear();
+    std::string trimmed = trimAscii(sql);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    std::string upper = toUpperAscii(trimmed);
+    if (upper.rfind("CREATE", 0) != 0 || upper.find("TABLE") == std::string::npos) {
+        return false;
+    }
+
+    const size_t inherits_pos = upper.find("INHERITS");
+    if (inherits_pos == std::string::npos) {
+        return false;
+    }
+
+    const size_t open = trimmed.find('(', inherits_pos);
+    if (open == std::string::npos) {
+        return false;
+    }
+
+    bool in_quotes = false;
+    int depth = 0;
+    size_t close = std::string::npos;
+    for (size_t i = open; i < trimmed.size(); ++i) {
+        char ch = trimmed[i];
+        if (ch == '"') {
+            in_quotes = !in_quotes;
+        }
+        if (in_quotes) {
+            continue;
+        }
+        if (ch == '(') {
+            ++depth;
+        } else if (ch == ')') {
+            --depth;
+            if (depth == 0) {
+                close = i;
+                break;
+            }
+        }
+    }
+    if (close == std::string::npos || close <= open + 1) {
+        return false;
+    }
+
+    std::string list = trimmed.substr(open + 1, close - open - 1);
+    std::string token;
+    in_quotes = false;
+    for (char ch : list) {
+        if (ch == '"') {
+            in_quotes = !in_quotes;
+            token.push_back(ch);
+            continue;
+        }
+        if (ch == ',' && !in_quotes) {
+            std::string parent = trimAscii(token);
+            if (!parent.empty()) {
+                std::string parent_upper = toUpperAscii(parent);
+                if (parent_upper.rfind("ONLY ", 0) == 0) {
+                    parent = trimAscii(parent.substr(5));
+                }
+                parents_out.push_back(parent);
+            }
+            token.clear();
+            continue;
+        }
+        token.push_back(ch);
+    }
+
+    std::string tail = trimAscii(token);
+    if (!tail.empty()) {
+        std::string tail_upper = toUpperAscii(tail);
+        if (tail_upper.rfind("ONLY ", 0) == 0) {
+            tail = trimAscii(tail.substr(5));
+        }
+        parents_out.push_back(tail);
+    }
+
+    return !parents_out.empty();
+}
+
+void collectInheritsMergeNotices(client::Connection* client_conn,
+                                 const std::string& sql,
+                                 std::vector<std::string>& notices_out) {
+    if (client_conn == nullptr) {
+        return;
+    }
+
+    std::vector<std::string> parents;
+    if (!parseInheritsParentNames(sql, parents) || parents.size() < 2) {
+        return;
+    }
+
+    struct ColumnSignature {
+        protocol::WireType type = protocol::WireType::UNKNOWN;
+        int32_t type_modifier = 0;
+        std::string display_name;
+    };
+
+    std::unordered_map<std::string, ColumnSignature> seen_columns;
+    std::unordered_set<std::string> emitted;
+
+    for (const auto& parent : parents) {
+        client::ResultSet parent_rs;
+        core::ErrorContext parent_ctx;
+        const std::string probe_sql = "SELECT * FROM " + parent + " LIMIT 0";
+        if (client_conn->executeQuery(probe_sql, &parent_rs, &parent_ctx) != core::Status::OK) {
+            continue;
+        }
+
+        for (const auto& column : parent_rs.getColumns()) {
+            const std::string key = toLowerAscii(column.name);
+            auto it = seen_columns.find(key);
+            if (it == seen_columns.end()) {
+                ColumnSignature sig;
+                sig.type = column.type;
+                sig.type_modifier = column.type_modifier;
+                sig.display_name = column.name;
+                seen_columns.emplace(key, std::move(sig));
+                continue;
+            }
+
+            if (it->second.type == column.type &&
+                it->second.type_modifier == column.type_modifier &&
+                emitted.insert(key).second) {
+                const std::string& display_name =
+                    it->second.display_name.empty() ? column.name : it->second.display_name;
+                notices_out.push_back(
+                    "merging multiple inherited definitions of column \"" +
+                    display_name + "\"");
+            }
+        }
+    }
 }
 
 bool tryBuildShowServerParameterResult(
@@ -634,6 +779,8 @@ core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
         }
     }
 
+    collectInheritsMergeNotices(client_.get(), rewritten.query, result.notices);
+
     return core::Status::OK;
 }
 
@@ -853,6 +1000,12 @@ core::Status PostgresqlAdapter::sendQueryResult(network::Connection* conn,
                                  result.error_message, result.error_detail, result.error_hint);
     }
 
+    for (const auto& notice : result.notices) {
+        if (!notice.empty()) {
+            sendNoticeResponse(conn, "NOTICE", notice);
+        }
+    }
+
     if (!result.columns.empty()) {
         // Send row description
         sendRowDescription(conn, result.columns);
@@ -990,10 +1143,30 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
     client_parameters_["scratchbird.bound_database"] = database_name_;
 
     // Request authentication
+    //
+    // Emulation security policy boundary:
+    // PostgreSQL lane resolves its own auth-method policy and does not
+    // implicitly inherit non-PostgreSQL method variants.
+    bool policy_auth_method_supported = true;
+    auto resolvePostgresqlPolicyAuthMethod = [&]() -> AuthMethod {
+        AuthMethod method = config_.auth_method;
+        if (method == AuthMethod::SCRAM_SHA_512) {
+            method = AuthMethod::SCRAM_SHA_256;
+        }
+        if (method != AuthMethod::PASSWORD &&
+            method != AuthMethod::MD5 &&
+            method != AuthMethod::SCRAM_SHA_256) {
+            policy_auth_method_supported = false;
+        }
+        return method;
+    };
+
     if (config_.require_authentication) {
-        auth_method_ = config_.auth_method;
-        if (auth_method_ == AuthMethod::SCRAM_SHA_512) {
-            auth_method_ = AuthMethod::SCRAM_SHA_256;
+        auth_method_ = resolvePostgresqlPolicyAuthMethod();
+        if (!policy_auth_method_supported) {
+            sendErrorResponse(conn, "FATAL", "0A000",
+                              "Configured authentication method is not supported by PostgreSQL emulation policy");
+            return core::Status::NOT_SUPPORTED;
         }
         client_config_.manual_auth = true;
 
@@ -1762,6 +1935,11 @@ core::Status PostgresqlAdapter::handleExecute(network::Connection* conn) {
         sendProtocolError(conn, result.error_code, result.sqlstate,
                   result.error_message, result.error_detail, result.error_hint);
     } else {
+        for (const auto& notice : result.notices) {
+            if (!notice.empty()) {
+                sendNoticeResponse(conn, "NOTICE", notice);
+            }
+        }
         if (portal.buffered_rows.empty() && !result.rows.empty() && max_rows > 0) {
             portal.buffered_rows = result.rows;
         }
@@ -2887,8 +3065,10 @@ bool PostgresqlAdapter::parseCopyQuery(const std::string& sql, CopyContext& ctx,
     } else if (is_to && target_upper == "STDOUT") {
         ctx.to_stdout = true;
     } else {
-        error = "COPY only supports STDIN/STDOUT targets";
-        return true;
+        // Non-stream COPY targets (e.g., COPY ... FROM '/path/file') are
+        // executed directly by the engine. The adapter only intercepts
+        // COPY STDIN/STDOUT for pgwire stream framing.
+        return false;
     }
 
     struct Token {

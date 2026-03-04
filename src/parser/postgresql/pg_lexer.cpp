@@ -121,6 +121,7 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"null", TokenType::KW_NULL},
         {"true", TokenType::KW_TRUE},
         {"false", TokenType::KW_FALSE},
+        {"unknown", TokenType::KW_UNKNOWN},
         {"exists", TokenType::KW_EXISTS},
         {"cast", TokenType::KW_CAST},
         {"as", TokenType::KW_AS},
