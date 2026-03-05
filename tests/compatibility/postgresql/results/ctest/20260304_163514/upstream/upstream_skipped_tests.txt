@@ -1,0 +1,6 @@
+generated_utc=2026-03-04T21:35:14Z
+schedule=/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/parallel_schedule
+filtered_schedule=/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_163514/upstream/parallel_schedule.filtered
+selected_count=2
+executed_count=2
+skipped=none

@@ -1,0 +1,67 @@
+{
+  "dashboard_id": "scratchbird-auth-plugin-slo",
+  "version": "2026-03-04",
+  "plugin_scope": [
+    "trust_reject",
+    "peer",
+    "password_compat",
+    "token_authkey",
+    "certificate_mtls",
+    "jwt_oidc",
+    "oauth_validator",
+    "proxy_assertion",
+    "workload_identity",
+    "ident",
+    "radius",
+    "pam",
+    "ldap",
+    "kerberos",
+    "scram",
+    "webauthn",
+    "factor_chain"
+  ],
+  "panels": [
+    {
+      "id": "auth-latency-p95",
+      "title": "Auth Latency P95",
+      "metric": "auth.plugin.request.duration_ms",
+      "stat": "p95",
+      "group_by": ["plugin_id", "method_id"],
+      "window": "5m"
+    },
+    {
+      "id": "auth-latency-p99",
+      "title": "Auth Latency P99",
+      "metric": "auth.plugin.request.duration_ms",
+      "stat": "p99",
+      "group_by": ["plugin_id", "method_id"],
+      "window": "5m"
+    },
+    {
+      "id": "auth-deny-rate",
+      "title": "Auth Deny Rate",
+      "metric": "auth.plugin.outcome.count",
+      "filter": {
+        "rc": "deny"
+      },
+      "stat": "rate",
+      "window": "15m"
+    },
+    {
+      "id": "auth-challenge-completion-rate",
+      "title": "Challenge Completion Rate",
+      "expression": "auth.plugin.challenge.completed.count / auth.plugin.challenge.started.count",
+      "window": "15m"
+    },
+    {
+      "id": "auth-provider-error-rate",
+      "title": "Auth Provider Error Rate",
+      "metric": "auth.plugin.outcome.count",
+      "filter": {
+        "rc": "error"
+      },
+      "stat": "rate",
+      "window": "15m"
+    }
+  ]
+}

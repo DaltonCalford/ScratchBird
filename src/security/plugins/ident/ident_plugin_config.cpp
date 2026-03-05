@@ -43,6 +43,22 @@ bool parseBool(std::string value, bool& out) {
     return false;
 }
 
+bool parseRuntimeProfile(std::string value, IdentRuntimeProfile& out) {
+    value = trimAscii(std::move(value));
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (value == "production" || value == "prod") {
+        out = IdentRuntimeProfile::PRODUCTION;
+        return true;
+    }
+    if (value == "test") {
+        out = IdentRuntimeProfile::TEST;
+        return true;
+    }
+    return false;
+}
+
 bool parseUInt32(const std::string& value, uint32_t& out) {
     try {
         out = static_cast<uint32_t>(std::stoul(trimAscii(value)));
@@ -94,6 +110,13 @@ IdentPluginConfigStatus loadIdentPluginConfig(const std::map<std::string, std::s
     if (require_match_it != values.end() &&
         !parseBool(require_match_it->second, out.require_username_match)) {
         set_error("require_username_match must be boolean");
+        return IdentPluginConfigStatus::INVALID_VALUE;
+    }
+
+    auto profile_it = values.find("runtime_profile");
+    if (profile_it != values.end() &&
+        !parseRuntimeProfile(profile_it->second, out.runtime_profile)) {
+        set_error("runtime_profile must be one of: production, test");
         return IdentPluginConfigStatus::INVALID_VALUE;
     }
 

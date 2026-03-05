@@ -956,6 +956,63 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest,
+       AlterTablespaceOpcodeRoutesWithoutUnknownOpcodeReject)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0403"});
+
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_ALTER_TABLESPACE),
+        Value::Object{{"tablespace", Value(Value::List{Value(std::string("missing_ts"))})},
+                      {"alterations",
+                       Value(Value::List{
+                           Value(Value::Object{{"action", Value(static_cast<uint64_t>(0))},
+                                               {"autoextend_enabled", Value(false)}})})}});
+
+    EXPECT_EQ(result.error().find("IRX_0403"), std::string::npos) << result.error();
+
+    EXPECT_EQ(reject_before,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0403"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       DropSequenceUserGroupOpcodesRouteWithoutUnknownOpcodeReject)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0403"});
+
+    struct DispatchCase
+    {
+        Opcode opcode;
+        Value::Object payload;
+    };
+
+    const std::array<DispatchCase, 3> cases = {{
+        {Opcode::SBLR3_DROP_SEQUENCE,
+         Value::Object{{"flags", Value(static_cast<uint64_t>(0x01))},
+                       {"path", Value(Value::List{Value(std::string("missing_seq"))})}}},
+        {Opcode::SBLR3_DROP_USER,
+         Value::Object{{"flags", Value(static_cast<uint64_t>(0x01))},
+                       {"path", Value(Value::List{Value(std::string("missing_user"))})}}},
+        {Opcode::SBLR3_DROP_GROUP,
+         Value::Object{{"flags", Value(static_cast<uint64_t>(0x01))},
+                       {"path", Value(Value::List{Value(std::string("missing_group"))})}}},
+    }};
+
+    for (const auto& entry : cases)
+    {
+        ExecutionResult result = executeVNext(
+            static_cast<uint16_t>(entry.opcode), entry.payload);
+        EXPECT_EQ(result.error().find("IRX_0403"), std::string::npos) << result.error();
+    }
+
+    EXPECT_EQ(reject_before,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0403"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
        ShowRemoteObjectsFallsBackToCatalogSnapshotWhenRemoteRuntimeFails)
 {
     const auto fixture =

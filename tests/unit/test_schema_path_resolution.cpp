@@ -416,6 +416,40 @@ TEST_F(SchemaPathResolutionTest, ExecutorDropTableUsesCurrentSchema)
     EXPECT_EQ(catalog_->getTable(public_schema, "drop_target", table_info, &ctx), Status::OK);
 }
 
+TEST_F(SchemaPathResolutionTest, ExecutorDropTableIfExistsEmitsPostgreSqlNotice)
+{
+    ID user_schema = createSchemaPath("users.alice");
+
+    conn_->setCurrentSchemaId(user_schema);
+    conn_->set_search_path({"public"});
+    conn_->setCurrentUser(system_user_id_, true);
+    conn_->set_dialect_tag("postgresql");
+
+    auto result = executeSql("DROP TABLE IF EXISTS missing_table");
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto notices = conn_->consumeNotices();
+    ASSERT_EQ(notices.size(), 1u);
+    EXPECT_EQ(notices[0], "table \"missing_table\" does not exist, skipping");
+}
+
+TEST_F(SchemaPathResolutionTest, ExecutorDropSchemaIfExistsEmitsPostgreSqlNotice)
+{
+    ID user_schema = createSchemaPath("users.alice");
+
+    conn_->setCurrentSchemaId(user_schema);
+    conn_->set_search_path({"public"});
+    conn_->setCurrentUser(system_user_id_, true);
+    conn_->set_dialect_tag("postgresql");
+
+    auto result = executeSql("DROP SCHEMA IF EXISTS missing_schema");
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto notices = conn_->consumeNotices();
+    ASSERT_EQ(notices.size(), 1u);
+    EXPECT_EQ(notices[0], "schema \"missing_schema\" does not exist, skipping");
+}
+
 TEST_F(SchemaPathResolutionTest, ExecutorCreateTableUsesCurrentSchema)
 {
     ID user_schema = createSchemaPath("users.alice");

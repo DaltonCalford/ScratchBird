@@ -240,7 +240,7 @@ def main() -> int:
     parser.add_argument("--pg-host", default="127.0.0.1")
     parser.add_argument("--pg-port", default="16432")
     parser.add_argument("--pg-db", default="main")
-    parser.add_argument("--pg-user", default="pg_admin")
+    parser.add_argument("--pg-user", default="postgres")
     parser.add_argument("--pg-password", default="")
 
     parser.add_argument("--my-isql", default="")

@@ -495,7 +495,7 @@ std::string deriveFirebirdDatabaseName(std::string_view file_path) {
         for (char& ch : ext) {
             ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
         }
-        if (ext == "fdb" || ext == "gdb") {
+        if (ext == "fdb" || ext == "gdb" || ext == "sbdb") {
             base = base.substr(0, dot);
         }
     }

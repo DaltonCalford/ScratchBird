@@ -43,6 +43,22 @@ bool parseBool(std::string value, bool& out) {
     return false;
 }
 
+bool parseRuntimeProfile(std::string value, KerberosRuntimeProfile& out) {
+    value = trimAscii(std::move(value));
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (value == "production" || value == "prod") {
+        out = KerberosRuntimeProfile::PRODUCTION;
+        return true;
+    }
+    if (value == "test") {
+        out = KerberosRuntimeProfile::TEST;
+        return true;
+    }
+    return false;
+}
+
 bool parseUInt32(const std::string& value, uint32_t& out) {
     try {
         out = static_cast<uint32_t>(std::stoul(trimAscii(value)));
@@ -96,6 +112,13 @@ KerberosPluginConfigStatus loadKerberosPluginConfig(
     auto replay_it = values.find("max_replay_window_ms");
     if (replay_it != values.end() && !parseUInt32(replay_it->second, out.max_replay_window_ms)) {
         set_error("max_replay_window_ms must be numeric");
+        return KerberosPluginConfigStatus::INVALID_VALUE;
+    }
+
+    auto profile_it = values.find("runtime_profile");
+    if (profile_it != values.end() &&
+        !parseRuntimeProfile(profile_it->second, out.runtime_profile)) {
+        set_error("runtime_profile must be one of: production, test");
         return KerberosPluginConfigStatus::INVALID_VALUE;
     }
 

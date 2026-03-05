@@ -20,11 +20,17 @@ enum class KerberosPluginConfigStatus : uint8_t {
     INVALID_VALUE,
 };
 
+enum class KerberosRuntimeProfile : uint8_t {
+    PRODUCTION = 0,
+    TEST = 1,
+};
+
 struct KerberosPluginConfig {
     std::string service_principal;
     std::string keytab_path;
     bool allow_delegation = false;
     uint32_t max_replay_window_ms = 30000;
+    KerberosRuntimeProfile runtime_profile = KerberosRuntimeProfile::PRODUCTION;
     std::vector<std::string> allowed_kdc_endpoints;
 };
 

@@ -96,6 +96,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
     {"TABLE_REF", SchemaDef{"TABLE_REF", {
         FieldDef{"table_path", FieldType::SCHEMA_PATH, ""},
         FieldDef{"query", FieldType::OPT, "stmt"},
+        FieldDef{"function", FieldType::OPT, "expr"},
         FieldDef{"alias", FieldType::OPT, "ident"},
         FieldDef{"table_flags", FieldType::U16, ""},
     }}},

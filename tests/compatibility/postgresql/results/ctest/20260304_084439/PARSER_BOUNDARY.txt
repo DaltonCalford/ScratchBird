@@ -1,0 +1,4 @@
+parser_core=v3
+parser_mode=emulation_surface_only
+protocol_surface=postgresql_v3
+statement_path=v3_core_parser_then_emulation_adapter

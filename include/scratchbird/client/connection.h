@@ -205,6 +205,11 @@ public:
      */
     const std::string& getCommandTag() const;
 
+    /**
+     * Get non-fatal notices emitted during statement execution.
+     */
+    const std::vector<std::string>& getNotices() const;
+
     // ============================
     // Navigation
     // ============================

@@ -214,6 +214,8 @@ private:
     Statement* parseAlterToken();
     Statement* parseAlterQuotaProfile();
     Statement* parseAlterExtension();
+    Statement* parseAlterPublication();
+    Statement* parseAlterSubscription();
     Statement* parseAlterReplicationChannel();
     Statement* parseAlterCdcTable();
     Statement* parseAlterDatabaseConnection();

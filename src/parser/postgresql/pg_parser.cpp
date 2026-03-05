@@ -51,6 +51,7 @@ bool Parser::isNonReservedKeyword(TokenType type) const {
         case TokenType::KW_OPTIONS:
         case TokenType::KW_COMMENT:
         case TokenType::KW_LANGUAGE:
+        case TokenType::KW_PLPGSQL:
         case TokenType::KW_VERSION:
         case TokenType::KW_ROLE:
         case TokenType::KW_ACTION:
@@ -63,6 +64,10 @@ bool Parser::isNonReservedKeyword(TokenType type) const {
         case TokenType::KW_ABSOLUTE:
         case TokenType::KW_RELATIVE:
         case TokenType::KW_LOCATION:
+        case TokenType::KW_EXPLAIN:
+        case TokenType::KW_ANY:
+        case TokenType::KW_SOME:
+        case TokenType::KW_OID:
             return true;
         default:
             return false;
@@ -89,6 +94,7 @@ static std::string tokenToString(TokenType type) {
         case TokenType::KW_OPTIONS: return "options";
         case TokenType::KW_COMMENT: return "comment";
         case TokenType::KW_LANGUAGE: return "language";
+        case TokenType::KW_PLPGSQL: return "plpgsql";
         case TokenType::KW_VERSION: return "version";
         case TokenType::KW_ROLE: return "role";
         case TokenType::KW_ACTION: return "action";
@@ -101,6 +107,10 @@ static std::string tokenToString(TokenType type) {
         case TokenType::KW_ABSOLUTE: return "absolute";
         case TokenType::KW_RELATIVE: return "relative";
         case TokenType::KW_LOCATION: return "location";
+        case TokenType::KW_EXPLAIN: return "explain";
+        case TokenType::KW_ANY: return "any";
+        case TokenType::KW_SOME: return "some";
+        case TokenType::KW_OID: return "oid";
         default: return "";
     }
 }
@@ -339,9 +349,11 @@ ParseResult Parser::parseStatement() {
     try {
         statement_ = parseStatementInternal();
 
-        // Check for extra tokens after the statement
         if (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
-            error("Unexpected token after statement");
+            error("Unexpected trailing tokens after statement");
+            while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+                advance();
+            }
         }
     } catch (const std::exception& e) {
         error(e.what());
@@ -389,6 +401,47 @@ parser::v3::Statement* Parser::parseStatementInternal() {
     }
 
     emitDebugSpan(current_token_.span);
+
+    if (check(TokenType::ERROR)) {
+        std::string_view input = lexer_.input();
+        size_t start = current_token_.span.start.offset;
+        bool is_psql_meta = false;
+        size_t meta_start = start;
+        if (start < input.size() && input[start] == '\\') {
+            is_psql_meta = true;
+            meta_start = start;
+        } else if (start > 0 && input[start - 1] == '\\') {
+            is_psql_meta = true;
+            meta_start = start - 1;
+        }
+
+        if (is_psql_meta) {
+            uint32_t meta_line = current_token_.span.start.line;
+            Token last = current_token_;
+            while (!check(TokenType::END_OF_FILE) &&
+                   current_token_.span.start.line == meta_line) {
+                last = current_token_;
+                advance();
+            }
+
+            size_t end = last.span.start.offset + last.span.length;
+            if (end > input.size()) {
+                end = input.size();
+            }
+            std::string payload;
+            if (end > meta_start) {
+                payload = std::string(input.substr(meta_start, end - meta_start));
+            }
+
+            auto* stmt = arena()->create<parser::v3::AlterSystemStmt>();
+            stmt->name = string_pool_.intern("postgresql.compat.psql_meta");
+            auto* lit = arena()->create<parser::v3::LiteralExpr>();
+            lit->literal_type = parser::v3::LiteralType::STRING;
+            lit->string_value = string_pool_.intern(payload);
+            stmt->value = lit;
+            return stmt;
+        }
+    }
 
     if (check(TokenType::IDENTIFIER)) {
         auto capture_remaining_clause = [&]() -> std::string {
@@ -473,6 +526,31 @@ parser::v3::Statement* Parser::parseStatementInternal() {
             return make_alter_system_stmt("maintenance.cluster", payload);
         }
 
+        if (matchIdentifierKeyword("REFRESH")) {
+            std::string payload = capture_remaining_clause();
+            return make_alter_system_stmt("postgresql.compat.refresh", payload);
+        }
+
+        if (matchIdentifierKeyword("REINDEX")) {
+            std::string payload = capture_remaining_clause();
+            return make_alter_system_stmt("postgresql.compat.reindex", payload);
+        }
+
+        if (matchIdentifierKeyword("DISCARD")) {
+            std::string payload = capture_remaining_clause();
+            return make_alter_system_stmt("postgresql.compat.discard", payload);
+        }
+
+        if (matchIdentifierKeyword("PREPARE")) {
+            std::string payload = capture_remaining_clause();
+            return make_alter_system_stmt("postgresql.compat.prepare", payload);
+        }
+
+        if (matchIdentifierKeyword("LISTEN")) {
+            std::string payload = capture_remaining_clause();
+            return make_alter_system_stmt("postgresql.compat.listen", payload);
+        }
+
         if (matchIdentifierKeyword("WAIT")) {
             if (!matchKeyword(TokenType::KW_FOR)) {
                 error("Expected FOR after WAIT");
@@ -539,6 +617,37 @@ parser::v3::Statement* Parser::parseStatementInternal() {
             return parseCallStmtV3();
         case TokenType::KW_DO:
             return parseDoStmtV3();
+        case TokenType::KW_DECLARE:
+            {
+                consume(TokenType::KW_DECLARE, "Expected DECLARE");
+                auto* stmt = arena()->create<parser::v3::AlterSystemStmt>();
+                stmt->name = string_pool_.intern("postgresql.compat.declare");
+                auto* lit = arena()->create<parser::v3::LiteralExpr>();
+                lit->literal_type = parser::v3::LiteralType::STRING;
+
+                std::string payload;
+                if (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                    std::string_view input = lexer_.input();
+                    size_t start = current_token_.span.start.offset;
+                    size_t end = start;
+                    Token last = current_token_;
+                    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                        last = current_token_;
+                        advance();
+                    }
+                    end = last.span.start.offset + last.span.length;
+                    if (end > input.size()) {
+                        end = input.size();
+                    }
+                    if (end > start) {
+                        payload = std::string(input.substr(start, end - start));
+                    }
+                }
+
+                lit->string_value = string_pool_.intern(payload);
+                stmt->value = lit;
+                return stmt;
+            }
         case TokenType::KW_CREATE: {
             consume(TokenType::KW_CREATE, "Expected CREATE");
             parser::v3::Statement* stmt = parseCreateStmtV3();
@@ -810,7 +919,18 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
 
     if (default_is_database_alias)
     {
-        schema = normalized_schema;
+        // In manager-bound emulation, explicit schema qualifiers are still
+        // relative to the emulated database root.
+        if (!normalized_default.empty() &&
+            normalized_schema != normalized_default &&
+            normalized_schema.rfind(normalized_default + ".", 0) != 0)
+        {
+            schema = normalized_default + "." + normalized_schema;
+        }
+        else
+        {
+            schema = normalized_schema;
+        }
         return;
     }
 

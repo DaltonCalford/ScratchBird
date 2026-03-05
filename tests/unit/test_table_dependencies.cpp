@@ -437,7 +437,37 @@ TEST_F(TableDependencyTest, ComplexMixedDependencies)
 }
 
 // ========================================================================
-// TEST 9: Verify dependencies are properly tracked
+// TEST 9: DROP TABLE tolerates stale owned dependency records
+// ========================================================================
+
+TEST_F(TableDependencyTest, DropTableIgnoresStaleOwnedIndexDependency)
+{
+    ErrorContext ctx;
+
+    ID table_id = createTestTable("stale_owned_dep_table");
+    ID stale_index_id = generateUuidV7();
+    ID dep_id;
+
+    ASSERT_EQ(catalog->createDependency(
+        stale_index_id, CatalogManager::ObjectType::INDEX,
+        table_id, CatalogManager::ObjectType::TABLE,
+        CatalogManager::DependencyType::AUTO,
+        dep_id, &ctx), Status::OK);
+
+    Status status = catalog->dropTable(table_id, false, &ctx);
+    EXPECT_EQ(status, Status::OK) << "DROP TABLE should tolerate stale owned dependency: "
+                                  << ctx.message;
+
+    CatalogManager::TableInfo table_info;
+    EXPECT_NE(catalog->getTable(table_id, table_info, &ctx), Status::OK);
+
+    std::vector<CatalogManager::DependencyInfo> deps;
+    ASSERT_EQ(catalog->getDependents(table_id, deps, &ctx), Status::OK);
+    EXPECT_TRUE(deps.empty()) << "Table dependents should be cleared after drop";
+}
+
+// ========================================================================
+// TEST 10: Verify dependencies are properly tracked
 // ========================================================================
 
 TEST_F(TableDependencyTest, DependencyTrackingVerification)

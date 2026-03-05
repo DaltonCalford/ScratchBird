@@ -197,6 +197,63 @@ std::string toUpperAscii(std::string value) {
     return value;
 }
 
+std::string escapeScramUsername(const std::string& username) {
+    std::string out;
+    out.reserve(username.size());
+    for (char ch : username) {
+        if (ch == ',') {
+            out.append("=2C");
+        } else if (ch == '=') {
+            out.append("=3D");
+        } else {
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
+std::string normalizePostgresqlScramClientFirst(const std::string& client_first,
+                                                const std::string& username) {
+    // libpq may send an empty SCRAM username ("n=,") and rely on startup user.
+    // Normalize that form for the internal SCRAM provider.
+    if (username.empty()) {
+        return client_first;
+    }
+
+    const size_t first_comma = client_first.find(',');
+    if (first_comma == std::string::npos) {
+        return client_first;
+    }
+    const size_t second_comma = client_first.find(',', first_comma + 1);
+    if (second_comma == std::string::npos) {
+        return client_first;
+    }
+
+    const size_t bare_pos = second_comma + 1;
+    if (bare_pos + 2 >= client_first.size() ||
+        client_first.compare(bare_pos, 2, "n=") != 0) {
+        return client_first;
+    }
+
+    const size_t nonce_tag = client_first.find(",r=", bare_pos + 2);
+    if (nonce_tag == std::string::npos) {
+        return client_first;
+    }
+
+    const bool username_is_empty = (nonce_tag == bare_pos + 2);
+    if (username_is_empty) {
+        const std::string nonce = client_first.substr(nonce_tag + 3);
+        if (nonce.empty()) {
+            return client_first;
+        }
+
+        const std::string gs2_prefix = client_first.substr(0, bare_pos);
+        return gs2_prefix + "n=" + escapeScramUsername(username) + ",r=" + nonce;
+    }
+
+    return client_first;
+}
+
 bool parseInheritsParentNames(const std::string& sql, std::vector<std::string>& parents_out) {
     parents_out.clear();
     std::string trimmed = trimAscii(sql);
@@ -595,6 +652,14 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             std::fflush(stderr);
         }
         if (set_status != core::Status::OK) {
+            const std::string fallback_schema = "users.public";
+            core::Status fallback_status = execute_set(fallback_schema);
+            if (fallback_status == core::Status::OK) {
+                server_parameters_["search_path"] = fallback_schema;
+                search_path_set_ = true;
+                return core::Status::OK;
+            }
+
             std::string client_err = client_ ? client_->getLastError() : std::string();
             if (ctx && ctx->message.empty() && !client_err.empty()) {
                 ctx->set(set_status,
@@ -780,6 +845,21 @@ core::Status PostgresqlAdapter::executeRemoteQuery(const QueryContext& query,
     }
 
     collectInheritsMergeNotices(client_.get(), rewritten.query, result.notices);
+
+    auto append_notice = [&](const std::string& notice_text) {
+        if (notice_text.empty()) {
+            return;
+        }
+        for (const auto& existing : result.notices) {
+            if (existing == notice_text) {
+                return;
+            }
+        }
+        result.notices.push_back(notice_text);
+    };
+    for (const auto& notice : rs.getNotices()) {
+        append_notice(notice);
+    }
 
     return core::Status::OK;
 }
@@ -1039,6 +1119,27 @@ core::Status PostgresqlAdapter::sendProtocolError(network::Connection* conn,
 // ============================================================================
 
 core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) {
+    // Parser workers are reused across client sessions; clear per-session
+    // adapter state so auth/session context cannot leak between logins.
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+    search_path_set_ = false;
+    txn_failed_ = false;
+    sync_pending_ = false;
+    pending_operations_.clear();
+    copy_context_ = CopyContext{};
+    statements_.clear();
+    portals_.clear();
+    client_parameters_.clear();
+    database_name_.clear();
+    username_.clear();
+    pg_schema_id_ = core::ID{};
+    scram_step_ = 0;
+    auth_method_ = AuthMethod::SCRAM_SHA_256;
+    initializeServerParameters();
+
     if (current_msg_data_.size() < 8) {
         return core::Status::INVALID_ARGUMENT;
     }
@@ -1150,12 +1251,23 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
     bool policy_auth_method_supported = true;
     auto resolvePostgresqlPolicyAuthMethod = [&]() -> AuthMethod {
         AuthMethod method = config_.auth_method;
+        if (method == AuthMethod::MD5) {
+            return AuthMethod::MD5;
+        }
         if (method == AuthMethod::SCRAM_SHA_512) {
-            method = AuthMethod::SCRAM_SHA_256;
+            // PostgreSQL wire policy normalizes SCRAM-512 to SCRAM-256.
+            return AuthMethod::SCRAM_SHA_256;
+        }
+        if (method == AuthMethod::SCRAM_SHA_256) {
+            return AuthMethod::SCRAM_SHA_256;
+        }
+        if (method == AuthMethod::PASSWORD) {
+            return AuthMethod::PASSWORD;
         }
         if (method != AuthMethod::PASSWORD &&
             method != AuthMethod::MD5 &&
-            method != AuthMethod::SCRAM_SHA_256) {
+            method != AuthMethod::SCRAM_SHA_256 &&
+            method != AuthMethod::SCRAM_SHA_512) {
             policy_auth_method_supported = false;
         }
         return method;
@@ -1168,6 +1280,7 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
                               "Configured authentication method is not supported by PostgreSQL emulation policy");
             return core::Status::NOT_SUPPORTED;
         }
+
         client_config_.manual_auth = true;
 
         if (auth_method_ == AuthMethod::MD5) {
@@ -1404,6 +1517,7 @@ core::Status PostgresqlAdapter::handlePasswordMessage(network::Connection* conn)
 
             std::string client_first(reinterpret_cast<const char*>(current_msg_data_.data() + offset),
                                      static_cast<size_t>(resp_len));
+            client_first = normalizePostgresqlScramClientFirst(client_first, username_);
 
             if (mechanism != "SCRAM-SHA-256") {
                 sendErrorResponse(conn, "FATAL", "0A000", "Unsupported SASL mechanism");
@@ -2126,6 +2240,22 @@ core::Status PostgresqlAdapter::handleCopyFail(network::Connection* conn) {
 }
 
 core::Status PostgresqlAdapter::handleTerminate(network::Connection* conn) {
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+    search_path_set_ = false;
+    sync_pending_ = false;
+    pending_operations_.clear();
+    copy_context_ = CopyContext{};
+    statements_.clear();
+    portals_.clear();
+    client_parameters_.clear();
+    database_name_.clear();
+    username_.clear();
+    pg_schema_id_ = core::ID{};
+    scram_step_ = 0;
+    txn_failed_ = false;
     pg_state_ = PgProtocolState::CLOSING;
     conn->close(network::CloseReason::CLIENT_DISCONNECT);
     return core::Status::OK;

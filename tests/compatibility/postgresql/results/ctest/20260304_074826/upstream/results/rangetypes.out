@@ -1,0 +1,1174 @@
+-- Tests for range data types.
+--
+-- test input parser
+-- (type textrange was already made in test_setup.sql)
+--
+-- negative tests; should fail
+select ''::textrange;
+ expr1 
+-------
+ 
+(1 row)
+
+select '-[a,z)'::textrange;
+ expr1  
+--------
+ -[a,z)
+(1 row)
+
+select '[a,z) - '::textrange;
+  expr1   
+----------
+ [a,z) - 
+(1 row)
+
+select '(",a)'::textrange;
+ expr1 
+-------
+ (",a)
+(1 row)
+
+select '(,,a)'::textrange;
+ expr1 
+-------
+ (,,a)
+(1 row)
+
+select '(),a)'::textrange;
+ expr1 
+-------
+ (),a)
+(1 row)
+
+select '(a,))'::textrange;
+ expr1 
+-------
+ (a,))
+(1 row)
+
+select '(],a)'::textrange;
+ expr1 
+-------
+ (],a)
+(1 row)
+
+select '(a,])'::textrange;
+ expr1 
+-------
+ (a,])
+(1 row)
+
+select '[z,a]'::textrange;
+ expr1 
+-------
+ [z,a]
+(1 row)
+
+-- should succeed
+select '  empty  '::textrange;
+   expr1   
+-----------
+   empty  
+(1 row)
+
+select ' ( empty, empty )  '::textrange;
+        expr1        
+---------------------
+  ( empty, empty )  
+(1 row)
+
+select ' ( " a " " a ", " z " " z " )  '::textrange;
+              expr1              
+---------------------------------
+  ( " a " " a ", " z " " z " )  
+(1 row)
+
+select '(a,)'::textrange;
+ expr1 
+-------
+ (a,)
+(1 row)
+
+select '[,z]'::textrange;
+ expr1 
+-------
+ [,z]
+(1 row)
+
+select '[a,]'::textrange;
+ expr1 
+-------
+ [a,]
+(1 row)
+
+select '(,)'::textrange;
+ expr1 
+-------
+ (,)
+(1 row)
+
+select '[ , ]'::textrange;
+ expr1 
+-------
+ [ , ]
+(1 row)
+
+select '["",""]'::textrange;
+  expr1  
+---------
+ ["",""]
+(1 row)
+
+select '[",",","]'::textrange;
+   expr1   
+-----------
+ [",",","]
+(1 row)
+
+select '["\\","\\"]'::textrange;
+    expr1    
+-------------
+ ["\\","\\"]
+(1 row)
+
+select '(\\,a)'::textrange;
+ expr1  
+--------
+ (\\,a)
+(1 row)
+
+select '((,z)'::textrange;
+ expr1 
+-------
+ ((,z)
+(1 row)
+
+select '([,z)'::textrange;
+ expr1 
+-------
+ ([,z)
+(1 row)
+
+select '(!,()'::textrange;
+ expr1 
+-------
+ (!,()
+(1 row)
+
+select '(!,[)'::textrange;
+ expr1 
+-------
+ (!,[)
+(1 row)
+
+select '[a,a]'::textrange;
+ expr1 
+-------
+ [a,a]
+(1 row)
+
+-- these are allowed but normalize to empty:
+select '[a,a)'::textrange;
+ expr1 
+-------
+ [a,a)
+(1 row)
+
+select '(a,a]'::textrange;
+ expr1 
+-------
+ (a,a]
+(1 row)
+
+select '(a,a)'::textrange;
+ expr1 
+-------
+ (a,a)
+(1 row)
+
+-- Also try it with non-error-throwing API
+select pg_input_is_valid('(1,4)', 'int4range');
+ expr1 
+-------
+ 
+(1 row)
+
+select pg_input_is_valid('(1,4', 'int4range');
+ expr1 
+-------
+ 
+(1 row)
+
+select * from pg_input_error_info('(1,4', 'int4range');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+select pg_input_is_valid('(4,1)', 'int4range');
+ expr1 
+-------
+ 
+(1 row)
+
+select * from pg_input_error_info('(4,1)', 'int4range');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+select pg_input_is_valid('(4,zed)', 'int4range');
+ expr1 
+-------
+ 
+(1 row)
+
+select * from pg_input_error_info('(4,zed)', 'int4range');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+select pg_input_is_valid('[1,2147483647]', 'int4range');
+ expr1 
+-------
+ 
+(1 row)
+
+select * from pg_input_error_info('[1,2147483647]', 'int4range');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+select pg_input_is_valid('[2000-01-01,5874897-12-31]', 'daterange');
+ expr1 
+-------
+ 
+(1 row)
+
+select * from pg_input_error_info('[2000-01-01,5874897-12-31]', 'daterange');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+--
+-- create some test data and test the operators
+--
+CREATE TABLE numrange_test (nr NUMRANGE);
+ERROR:  Parse error at line 1, column 32: Expected identifier
+create index numrange_test_btree on numrange_test(nr);
+ERROR:  Object not found
+INSERT INTO numrange_test VALUES('[,)');
+ERROR:  Object not found
+INSERT INTO numrange_test VALUES('[3,]');
+ERROR:  Object not found
+INSERT INTO numrange_test VALUES('[, 5)');
+ERROR:  Object not found
+INSERT INTO numrange_test VALUES(numrange(1.1, 2.2));
+ERROR:  Parse error at line 1, column 34: Expected expression
+INSERT INTO numrange_test VALUES('empty');
+ERROR:  Object not found
+INSERT INTO numrange_test VALUES(numrange(1.7, 1.7, '[]'));
+ERROR:  Parse error at line 1, column 34: Expected expression
+SELECT nr, isempty(nr), lower(nr), upper(nr) FROM numrange_test;
+ERROR:  Table or view not found: numrange_test (Object not found)
+SELECT nr, lower_inc(nr), lower_inf(nr), upper_inc(nr), upper_inf(nr) FROM numrange_test;
+ERROR:  Table or view not found: numrange_test (Object not found)
+SELECT * FROM numrange_test WHERE range_contains(nr, numrange(1.9,1.91));
+ERROR:  Parse error at line 1, column 54: Expected expression
+SELECT * FROM numrange_test WHERE nr @> numrange(1.0,10000.1);
+ERROR:  Parse error at line 1, column 41: Expected expression
+SELECT * FROM numrange_test WHERE range_contained_by(numrange(-1e7,-10000.1), nr);
+ERROR:  Parse error at line 1, column 54: Expected expression
+SELECT * FROM numrange_test WHERE 1.9 <@ nr;
+ERROR:  Table or view not found: numrange_test (Object not found)
+select * from numrange_test where nr = 'empty';
+ERROR:  Table or view not found: numrange_test (Object not found)
+select * from numrange_test where nr = '(1.1, 2.2)';
+ERROR:  Table or view not found: numrange_test (Object not found)
+select * from numrange_test where nr = '[1.1, 2.2)';
+ERROR:  Table or view not found: numrange_test (Object not found)
+select * from numrange_test where nr < 'empty';
+ERROR:  Table or view not found: numrange_test (Object not found)
+select * from numrange_test where nr < numrange(-1000.0, -1000.0,'[]');
+ERROR:  Parse error at line 1, column 40: Expected expression
+select * from numrange_test where nr < numrange(0.0, 1.0,'[]');
+ERROR:  Parse error at line 1, column 40: Expected expression
+select * from numrange_test where nr < numrange(1000.0, 1001.0,'[]');
+ERROR:  Parse error at line 1, column 40: Expected expression
+select * from numrange_test where nr <= 'empty';
+ERROR:  Table or view not found: numrange_test (Object not found)
+select * from numrange_test where nr >= 'empty';
+ERROR:  Table or view not found: numrange_test (Object not found)
+select * from numrange_test where nr > 'empty';
+ERROR:  Table or view not found: numrange_test (Object not found)
+select * from numrange_test where nr > numrange(-1001.0, -1000.0,'[]');
+ERROR:  Parse error at line 1, column 40: Expected expression
+select * from numrange_test where nr > numrange(0.0, 1.0,'[]');
+ERROR:  Parse error at line 1, column 40: Expected expression
+select * from numrange_test where nr > numrange(1000.0, 1000.0,'[]');
+ERROR:  Parse error at line 1, column 40: Expected expression
+select numrange(2.0, 1.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(2.0, 3.0) -|- numrange(3.0, 4.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select range_adjacent(numrange(2.0, 3.0), numrange(3.1, 4.0));
+ERROR:  Parse error at line 1, column 23: Expected expression
+select range_adjacent(numrange(2.0, 3.0), numrange(3.1, null));
+ERROR:  Parse error at line 1, column 23: Expected expression
+select numrange(2.0, 3.0, '[]') -|- numrange(3.0, 4.0, '()');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 2.0) -|- numrange(2.0, 3.0,'[]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select range_adjacent(numrange(2.0, 3.0, '(]'), numrange(1.0, 2.0, '(]'));
+ERROR:  Parse error at line 1, column 23: Expected expression
+select numrange(1.1, 3.3) <@ numrange(0.1,10.1);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(0.1, 10.1) <@ numrange(1.1,3.3);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.1, 2.2) - numrange(2.0, 3.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.1, 2.2) - numrange(2.2, 3.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.1, 2.2,'[]') - numrange(2.0, 3.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select range_minus(numrange(10.1,12.2,'[]'), numrange(110.0,120.2,'(]'));
+ERROR:  Parse error at line 1, column 20: Expected expression
+select range_minus(numrange(10.1,12.2,'[]'), numrange(0.0,120.2,'(]'));
+ERROR:  Parse error at line 1, column 20: Expected expression
+select range_minus_multi('empty'::numrange, numrange(2.0, 3.0));
+ERROR:  Parse error at line 1, column 35: Expected identifier
+select range_minus_multi(numrange(1.1, 2.2), 'empty'::numrange);
+ERROR:  Parse error at line 1, column 26: Expected expression
+select range_minus_multi(numrange(1.1, 2.2), numrange(2.0, 3.0));
+ERROR:  Parse error at line 1, column 26: Expected expression
+select range_minus_multi(numrange(1.1, 2.2), numrange(2.2, 3.0));
+ERROR:  Parse error at line 1, column 26: Expected expression
+select range_minus_multi(numrange(1.1, 2.2,'[]'), numrange(2.0, 3.0));
+ERROR:  Parse error at line 1, column 26: Expected expression
+select range_minus_multi(numrange(1.0, 3.0), numrange(1.5, 2.0));
+ERROR:  Parse error at line 1, column 26: Expected expression
+select range_minus_multi(numrange(10.1,12.2,'[]'), numrange(110.0,120.2,'(]'));
+ERROR:  Parse error at line 1, column 26: Expected expression
+select range_minus_multi(numrange(10.1,12.2,'[]'), numrange(0.0,120.2,'(]'));
+ERROR:  Parse error at line 1, column 26: Expected expression
+select range_minus_multi(numrange(1.0,3.0,'[]'), numrange(1.5,2.0,'(]'));
+ERROR:  Parse error at line 1, column 26: Expected expression
+select numrange(4.5, 5.5, '[]') && numrange(5.5, 6.5);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 2.0) << numrange(3.0, 4.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 3.0,'[]') << numrange(3.0, 4.0,'[]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 3.0,'()') << numrange(3.0, 4.0,'()');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 2.0) >> numrange(3.0, 4.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(3.0, 70.0) &< numrange(6.6, 100.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.1, 2.2) < numrange(1.0, 200.2);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.1, 2.2) < numrange(1.1, 1.2);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 2.0) + numrange(2.0, 3.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 2.0) + numrange(1.5, 3.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 2.0) + numrange(2.5, 3.0); -- should fail
+ERROR:  Parse error at line 1, column 8: Expected expression
+select range_merge(numrange(1.0, 2.0), numrange(2.0, 3.0));
+ERROR:  Parse error at line 1, column 20: Expected expression
+select range_merge(numrange(1.0, 2.0), numrange(1.5, 3.0));
+ERROR:  Parse error at line 1, column 20: Expected expression
+select range_merge(numrange(1.0, 2.0), numrange(2.5, 3.0)); -- shouldn't fail
+ERROR:  Parse error at line 1, column 20: Expected expression
+select numrange(1.0, 2.0) * numrange(2.0, 3.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 2.0) * numrange(1.5, 3.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select numrange(1.0, 2.0) * numrange(2.5, 3.0);
+ERROR:  Parse error at line 1, column 8: Expected expression
+select range_intersect_agg(nr) from numrange_test;
+ERROR:  Table or view not found: numrange_test (Object not found)
+select range_intersect_agg(nr) from numrange_test where false;
+ERROR:  Table or view not found: numrange_test (Object not found)
+select range_intersect_agg(nr) from numrange_test where nr @> 4.0;
+ERROR:  Table or view not found: numrange_test (Object not found)
+analyze numrange_test;
+ERROR:  Failed to resolve table 'numrange_test': Object not found
+create table numrange_test2(nr numrange);
+ERROR:  Parse error at line 1, column 32: Expected identifier
+create index numrange_test2_hash_idx on numrange_test2 using hash (nr);
+ERROR:  Parse error at line 1, column 62: Expected identifier
+INSERT INTO numrange_test2 VALUES('[, 5)');
+ERROR:  Object not found
+INSERT INTO numrange_test2 VALUES(numrange(1.1, 2.2));
+ERROR:  Parse error at line 1, column 35: Expected expression
+INSERT INTO numrange_test2 VALUES(numrange(1.1, 2.2));
+ERROR:  Parse error at line 1, column 35: Expected expression
+INSERT INTO numrange_test2 VALUES(numrange(1.1, 2.2,'()'));
+ERROR:  Parse error at line 1, column 35: Expected expression
+INSERT INTO numrange_test2 VALUES('empty');
+ERROR:  Object not found
+select * from numrange_test2 where nr = 'empty'::numrange;
+ERROR:  Parse error at line 1, column 50: Expected identifier
+select * from numrange_test2 where nr = numrange(1.1, 2.2);
+ERROR:  Parse error at line 1, column 41: Expected expression
+select * from numrange_test2 where nr = numrange(1.1, 2.3);
+ERROR:  Parse error at line 1, column 41: Expected expression
+set enable_nestloop=t;
+ERROR:  SET enable_nestloop requires ON/OFF/TRUE/FALSE/1/0
+set enable_hashjoin=f;
+ERROR:  SET enable_hashjoin requires ON/OFF/TRUE/FALSE/1/0
+set enable_mergejoin=f;
+ERROR:  SET enable_mergejoin requires ON/OFF/TRUE/FALSE/1/0
+select * from numrange_test natural join numrange_test2 order by nr;
+ERROR:  Table or view not found: numrange_test (Object not found)
+set enable_nestloop=f;
+ERROR:  SET enable_nestloop requires ON/OFF/TRUE/FALSE/1/0
+set enable_hashjoin=t;
+ERROR:  SET enable_hashjoin requires ON/OFF/TRUE/FALSE/1/0
+set enable_mergejoin=f;
+ERROR:  SET enable_mergejoin requires ON/OFF/TRUE/FALSE/1/0
+select * from numrange_test natural join numrange_test2 order by nr;
+ERROR:  Table or view not found: numrange_test (Object not found)
+set enable_nestloop=f;
+ERROR:  SET enable_nestloop requires ON/OFF/TRUE/FALSE/1/0
+set enable_hashjoin=f;
+ERROR:  SET enable_hashjoin requires ON/OFF/TRUE/FALSE/1/0
+set enable_mergejoin=t;
+ERROR:  SET enable_mergejoin requires ON/OFF/TRUE/FALSE/1/0
+select * from numrange_test natural join numrange_test2 order by nr;
+ERROR:  Table or view not found: numrange_test (Object not found)
+set enable_nestloop to default;
+set enable_hashjoin to default;
+set enable_mergejoin to default;
+-- keep numrange_test around to help exercise dump/reload
+DROP TABLE numrange_test2;
+ERROR:  DROP TABLE resolve failed for numrange_test2: Object not found
+--
+-- Apply a subset of the above tests on a collatable type, too
+--
+CREATE TABLE textrange_test (tr textrange);
+create index textrange_test_btree on textrange_test(tr);
+INSERT INTO textrange_test VALUES('[,)');
+INSERT INTO textrange_test VALUES('["a",]');
+INSERT INTO textrange_test VALUES('[,"q")');
+INSERT INTO textrange_test VALUES(textrange('b', 'g'));
+INSERT INTO textrange_test VALUES('empty');
+INSERT INTO textrange_test VALUES(textrange('d', 'd', '[]'));
+SELECT tr, isempty(tr), lower(tr), upper(tr) FROM textrange_test;
+   tr   | expr1 | expr2  | expr3  
+--------+-------+--------+--------
+ [,)    |       | [,)    | [,)
+ ["a",] |       | ["a",] | ["A",]
+ [,"q") |       | [,"q") | [,"Q")
+        |       |        | 
+ empty  |       | empty  | EMPTY
+        |       |        | 
+(6 rows)
+
+SELECT tr, lower_inc(tr), lower_inf(tr), upper_inc(tr), upper_inf(tr) FROM textrange_test;
+   tr   | expr1 | expr2 | expr3 | expr4 
+--------+-------+-------+-------+-------
+ [,)    |       |       |       | 
+ ["a",] |       |       |       | 
+ [,"q") |       |       |       | 
+        |       |       |       | 
+ empty  |       |       |       | 
+        |       |       |       | 
+(6 rows)
+
+SELECT * FROM textrange_test WHERE range_contains(tr, textrange('f', 'fx'));
+ tr 
+----
+(0 rows)
+
+SELECT * FROM textrange_test WHERE tr @> textrange('a', 'z');
+ tr 
+----
+(0 rows)
+
+SELECT * FROM textrange_test WHERE range_contained_by(textrange('0','9'), tr);
+ tr 
+----
+(0 rows)
+
+SELECT * FROM textrange_test WHERE 'e'::text <@ tr;
+ tr 
+----
+(0 rows)
+
+select * from textrange_test where tr = 'empty';
+  tr   
+-------
+ empty
+(1 row)
+
+select * from textrange_test where tr = '("b","g")';
+ tr 
+----
+(0 rows)
+
+select * from textrange_test where tr = '["b","g")';
+ tr 
+----
+(0 rows)
+
+select * from textrange_test where tr < 'empty';
+   tr   
+--------
+ [,)
+ ["a",]
+ [,"q")
+(3 rows)
+
+-- test canonical form for int4range
+select int4range(1, 10, '[]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select int4range(1, 10, '[)');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select int4range(1, 10, '(]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select int4range(1, 10, '()');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select int4range(1, 2, '()');
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- test canonical form for daterange
+select daterange('2000-01-10'::date, '2000-01-20'::date, '[]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('2000-01-10'::date, '2000-01-20'::date, '[)');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('2000-01-10'::date, '2000-01-20'::date, '(]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('2000-01-10'::date, '2000-01-20'::date, '()');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('2000-01-10'::date, '2000-01-11'::date, '()');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('2000-01-10'::date, '2000-01-11'::date, '(]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('-infinity'::date, '2000-01-01'::date, '()');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('-infinity'::date, '2000-01-01'::date, '[)');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('2000-01-01'::date, 'infinity'::date, '[)');
+ERROR:  Parse error at line 1, column 8: Expected expression
+select daterange('2000-01-01'::date, 'infinity'::date, '[]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- test GiST index that's been built incrementally
+create table test_range_gist(ir int4range);
+ERROR:  Parse error at line 1, column 33: Expected identifier
+create index test_range_gist_idx on test_range_gist using gist (ir);
+ERROR:  Object not found
+insert into test_range_gist select int4range(g, g+10) from generate_series(1,2000) g;
+ERROR:  Parse error at line 1, column 36: Expected expression
+insert into test_range_gist select 'empty'::int4range from generate_series(1,500) g;
+ERROR:  Parse error at line 1, column 45: Expected identifier
+insert into test_range_gist select int4range(g, g+10000) from generate_series(1,1000) g;
+ERROR:  Parse error at line 1, column 36: Expected expression
+insert into test_range_gist select 'empty'::int4range from generate_series(1,500) g;
+ERROR:  Parse error at line 1, column 45: Expected identifier
+insert into test_range_gist select int4range(NULL,g*10,'(]') from generate_series(1,100) g;
+ERROR:  Parse error at line 1, column 36: Expected expression
+insert into test_range_gist select int4range(g*10,NULL,'(]') from generate_series(1,100) g;
+ERROR:  Parse error at line 1, column 36: Expected expression
+insert into test_range_gist select int4range(g, g+10) from generate_series(1,2000) g;
+ERROR:  Parse error at line 1, column 36: Expected expression
+-- test statistics and selectivity estimation as well
+--
+-- We don't check the accuracy of selectivity estimation, but at least check
+-- it doesn't fall.
+analyze test_range_gist;
+ERROR:  Failed to resolve table 'test_range_gist': Object not found
+-- first, verify non-indexed results
+SET enable_seqscan    = t;
+ERROR:  SET enable_seqscan requires ON/OFF/TRUE/FALSE/1/0
+SET enable_indexscan  = f;
+ERROR:  SET enable_indexscan requires ON/OFF/TRUE/FALSE/1/0
+SET enable_bitmapscan = f;
+ERROR:  SET enable_bitmapscan requires ON/OFF/TRUE/FALSE/1/0
+select count(*) from test_range_gist where ir @> 'empty'::int4range;
+ERROR:  Parse error at line 1, column 59: Expected identifier
+select count(*) from test_range_gist where ir = int4range(10,20);
+ERROR:  Parse error at line 1, column 49: Expected expression
+select count(*) from test_range_gist where ir @> 10;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir @> int4range(10,20);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_gist where ir && int4range(10,20);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir <@ int4range(10,50);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_gist where ir << int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir >> int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir &< int4range(100,500);
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir &> int4range(100,500);
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir -|- int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir @> '{}'::int4multirange;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir @> int4multirange(int4range(10,20), int4range(30,40));
+ERROR:  Parse error at line 1, column 65: Expected expression
+select count(*) from test_range_gist where ir && '{(10,20),(30,40),(50,60)}'::int4multirange;
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir <@ '{(10,30),(40,60),(70,90)}'::int4multirange;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir << int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir >> int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir &< int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir &> int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir -|- int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+-- now check same queries using index
+SET enable_seqscan    = f;
+ERROR:  SET enable_seqscan requires ON/OFF/TRUE/FALSE/1/0
+SET enable_indexscan  = t;
+ERROR:  SET enable_indexscan requires ON/OFF/TRUE/FALSE/1/0
+SET enable_bitmapscan = f;
+ERROR:  SET enable_bitmapscan requires ON/OFF/TRUE/FALSE/1/0
+select count(*) from test_range_gist where ir @> 'empty'::int4range;
+ERROR:  Parse error at line 1, column 59: Expected identifier
+select count(*) from test_range_gist where ir = int4range(10,20);
+ERROR:  Parse error at line 1, column 49: Expected expression
+select count(*) from test_range_gist where ir @> 10;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir @> int4range(10,20);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_gist where ir && int4range(10,20);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir <@ int4range(10,50);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_gist where ir << int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir >> int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir &< int4range(100,500);
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir &> int4range(100,500);
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir -|- int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir @> '{}'::int4multirange;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir @> int4multirange(int4range(10,20), int4range(30,40));
+ERROR:  Parse error at line 1, column 65: Expected expression
+select count(*) from test_range_gist where ir && '{(10,20),(30,40),(50,60)}'::int4multirange;
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir <@ '{(10,30),(40,60),(70,90)}'::int4multirange;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir << int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir >> int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir &< int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir &> int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir -|- int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+-- now check same queries using a bulk-loaded index
+drop index test_range_gist_idx;
+ERROR:  Table-scoped object requires table and name
+create index test_range_gist_idx on test_range_gist using gist (ir);
+ERROR:  Object not found
+select count(*) from test_range_gist where ir @> 'empty'::int4range;
+ERROR:  Parse error at line 1, column 59: Expected identifier
+select count(*) from test_range_gist where ir = int4range(10,20);
+ERROR:  Parse error at line 1, column 49: Expected expression
+select count(*) from test_range_gist where ir @> 10;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir @> int4range(10,20);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_gist where ir && int4range(10,20);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir <@ int4range(10,50);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_gist where ir << int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir >> int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir &< int4range(100,500);
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir &> int4range(100,500);
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir -|- int4range(100,500);
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir @> '{}'::int4multirange;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir @> int4multirange(int4range(10,20), int4range(30,40));
+ERROR:  Parse error at line 1, column 65: Expected expression
+select count(*) from test_range_gist where ir && '{(10,20),(30,40),(50,60)}'::int4multirange;
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir <@ '{(10,30),(40,60),(70,90)}'::int4multirange;
+ERROR:  Table or view not found: test_range_gist (Object not found)
+select count(*) from test_range_gist where ir << int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir >> int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+select count(*) from test_range_gist where ir &< int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir &> int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 48: Expected expression
+select count(*) from test_range_gist where ir -|- int4multirange(int4range(100,200), int4range(400,500));
+ERROR:  Parse error at line 1, column 47: Unexpected token after statement
+-- test SP-GiST index that's been built incrementally
+create table test_range_spgist(ir int4range);
+ERROR:  Parse error at line 1, column 35: Expected identifier
+create index test_range_spgist_idx on test_range_spgist using spgist (ir);
+ERROR:  Object not found
+insert into test_range_spgist select int4range(g, g+10) from generate_series(1,2000) g;
+ERROR:  Parse error at line 1, column 38: Expected expression
+insert into test_range_spgist select 'empty'::int4range from generate_series(1,500) g;
+ERROR:  Parse error at line 1, column 47: Expected identifier
+insert into test_range_spgist select int4range(g, g+10000) from generate_series(1,1000) g;
+ERROR:  Parse error at line 1, column 38: Expected expression
+insert into test_range_spgist select 'empty'::int4range from generate_series(1,500) g;
+ERROR:  Parse error at line 1, column 47: Expected identifier
+insert into test_range_spgist select int4range(NULL,g*10,'(]') from generate_series(1,100) g;
+ERROR:  Parse error at line 1, column 38: Expected expression
+insert into test_range_spgist select int4range(g*10,NULL,'(]') from generate_series(1,100) g;
+ERROR:  Parse error at line 1, column 38: Expected expression
+insert into test_range_spgist select int4range(g, g+10) from generate_series(1,2000) g;
+ERROR:  Parse error at line 1, column 38: Expected expression
+-- first, verify non-indexed results
+SET enable_seqscan    = t;
+ERROR:  SET enable_seqscan requires ON/OFF/TRUE/FALSE/1/0
+SET enable_indexscan  = f;
+ERROR:  SET enable_indexscan requires ON/OFF/TRUE/FALSE/1/0
+SET enable_bitmapscan = f;
+ERROR:  SET enable_bitmapscan requires ON/OFF/TRUE/FALSE/1/0
+select count(*) from test_range_spgist where ir @> 'empty'::int4range;
+ERROR:  Parse error at line 1, column 61: Expected identifier
+select count(*) from test_range_spgist where ir = int4range(10,20);
+ERROR:  Parse error at line 1, column 51: Expected expression
+select count(*) from test_range_spgist where ir @> 10;
+ERROR:  Table or view not found: test_range_spgist (Object not found)
+select count(*) from test_range_spgist where ir @> int4range(10,20);
+ERROR:  Parse error at line 1, column 52: Expected expression
+select count(*) from test_range_spgist where ir && int4range(10,20);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir <@ int4range(10,50);
+ERROR:  Parse error at line 1, column 52: Expected expression
+select count(*) from test_range_spgist where ir << int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir >> int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir &< int4range(100,500);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_spgist where ir &> int4range(100,500);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_spgist where ir -|- int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+-- now check same queries using index
+SET enable_seqscan    = f;
+ERROR:  SET enable_seqscan requires ON/OFF/TRUE/FALSE/1/0
+SET enable_indexscan  = t;
+ERROR:  SET enable_indexscan requires ON/OFF/TRUE/FALSE/1/0
+SET enable_bitmapscan = f;
+ERROR:  SET enable_bitmapscan requires ON/OFF/TRUE/FALSE/1/0
+select count(*) from test_range_spgist where ir @> 'empty'::int4range;
+ERROR:  Parse error at line 1, column 61: Expected identifier
+select count(*) from test_range_spgist where ir = int4range(10,20);
+ERROR:  Parse error at line 1, column 51: Expected expression
+select count(*) from test_range_spgist where ir @> 10;
+ERROR:  Table or view not found: test_range_spgist (Object not found)
+select count(*) from test_range_spgist where ir @> int4range(10,20);
+ERROR:  Parse error at line 1, column 52: Expected expression
+select count(*) from test_range_spgist where ir && int4range(10,20);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir <@ int4range(10,50);
+ERROR:  Parse error at line 1, column 52: Expected expression
+select count(*) from test_range_spgist where ir << int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir >> int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir &< int4range(100,500);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_spgist where ir &> int4range(100,500);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_spgist where ir -|- int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+-- now check same queries using a bulk-loaded index
+drop index test_range_spgist_idx;
+ERROR:  Table-scoped object requires table and name
+create index test_range_spgist_idx on test_range_spgist using spgist (ir);
+ERROR:  Object not found
+select count(*) from test_range_spgist where ir @> 'empty'::int4range;
+ERROR:  Parse error at line 1, column 61: Expected identifier
+select count(*) from test_range_spgist where ir = int4range(10,20);
+ERROR:  Parse error at line 1, column 51: Expected expression
+select count(*) from test_range_spgist where ir @> 10;
+ERROR:  Table or view not found: test_range_spgist (Object not found)
+select count(*) from test_range_spgist where ir @> int4range(10,20);
+ERROR:  Parse error at line 1, column 52: Expected expression
+select count(*) from test_range_spgist where ir && int4range(10,20);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir <@ int4range(10,50);
+ERROR:  Parse error at line 1, column 52: Expected expression
+select count(*) from test_range_spgist where ir << int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir >> int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+select count(*) from test_range_spgist where ir &< int4range(100,500);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_spgist where ir &> int4range(100,500);
+ERROR:  Parse error at line 1, column 50: Expected expression
+select count(*) from test_range_spgist where ir -|- int4range(100,500);
+ERROR:  Parse error at line 1, column 49: Unexpected token after statement
+-- test index-only scans
+explain (costs off)
+select ir from test_range_spgist where ir -|- int4range(10,20) order by ir;
+ERROR:  Parse error at line 1, column 10: Expected ) after EXPLAIN options
+select ir from test_range_spgist where ir -|- int4range(10,20) order by ir;
+ERROR:  Parse error at line 1, column 43: Unexpected token after statement
+RESET enable_seqscan;
+RESET enable_indexscan;
+RESET enable_bitmapscan;
+-- test elem <@ range operator
+create table test_range_elem(i int4);
+create index test_range_elem_idx on test_range_elem (i);
+insert into test_range_elem select i from generate_series(1,100) i;
+ERROR:  Parse error at line 1, column 58: Unexpected token after statement
+SET enable_seqscan    = f;
+ERROR:  SET enable_seqscan requires ON/OFF/TRUE/FALSE/1/0
+select count(*) from test_range_elem where i <@ int4range(10,50);
+ERROR:  Parse error at line 1, column 49: Expected expression
+-- also test spgist index on anyrange expression
+create index on test_range_elem using spgist(int4range(i,i+10));
+ERROR:  Parse error at line 1, column 46: Expected expression
+explain (costs off)
+select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
+ERROR:  Parse error at line 1, column 10: Expected ) after EXPLAIN options
+select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
+ERROR:  Parse error at line 1, column 44: Expected expression
+RESET enable_seqscan;
+drop table test_range_elem;
+ERROR:  DROP TABLE failed for test_range_elem id=019cb8e6-5a50-784d-bb6e-c64b66d67873 (status 4002) post_status=0
+--
+-- Btree_gist is not included by default, so to test exclusion
+-- constraints with range types, use singleton int ranges for the "="
+-- portion of the constraint.
+--
+create table test_range_excl(
+  room int4range,
+  speaker int4range,
+  during tsrange,
+  exclude using gist (room with =, during with &&),
+  exclude using gist (speaker with =, during with &&)
+);
+ERROR:  Parse error at line 2, column 8: Expected identifier
+insert into test_range_excl
+  values(int4range(123, 123, '[]'), int4range(1, 1, '[]'), '[2010-01-02 10:00, 2010-01-02 11:00)');
+ERROR:  Parse error at line 2, column 10: Expected expression
+insert into test_range_excl
+  values(int4range(123, 123, '[]'), int4range(2, 2, '[]'), '[2010-01-02 11:00, 2010-01-02 12:00)');
+ERROR:  Parse error at line 2, column 10: Expected expression
+insert into test_range_excl
+  values(int4range(123, 123, '[]'), int4range(3, 3, '[]'), '[2010-01-02 10:10, 2010-01-02 11:00)');
+ERROR:  Parse error at line 2, column 10: Expected expression
+insert into test_range_excl
+  values(int4range(124, 124, '[]'), int4range(3, 3, '[]'), '[2010-01-02 10:10, 2010-01-02 11:10)');
+ERROR:  Parse error at line 2, column 10: Expected expression
+insert into test_range_excl
+  values(int4range(125, 125, '[]'), int4range(1, 1, '[]'), '[2010-01-02 10:10, 2010-01-02 11:00)');
+ERROR:  Parse error at line 2, column 10: Expected expression
+-- test bigint ranges
+select int8range(10000000000::int8, 20000000000::int8,'(]');
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- test tstz ranges
+set timezone to '-08';
+select '[2010-01-01 01:00:00 -05, 2010-01-01 02:00:00 -08)'::tstzrange;
+ERROR:  Parse error at line 1, column 62: Expected identifier
+-- should fail
+select '[2010-01-01 01:00:00 -08, 2010-01-01 02:00:00 -05)'::tstzrange;
+ERROR:  Parse error at line 1, column 62: Expected identifier
+set timezone to default;
+--
+-- Test user-defined range of floats
+-- (type float8range was already made in test_setup.sql)
+--
+--should fail
+create type bogus_float8range as range (subtype=float8, subtype_diff=float4mi);
+select '[123.001, 5.e9)'::float8range @> 888.882::float8;
+ expr1 
+-------
+      
+(1 row)
+
+create table float8range_test(f8r float8range, i int);
+insert into float8range_test values(float8range(-100.00007, '1.111113e9'), 42);
+select * from float8range_test;
+ f8r | i  
+-----+----
+     | 42
+(1 row)
+
+drop table float8range_test;
+--
+-- Test range types over domains
+--
+create domain mydomain as int4;
+create type mydomainrange as range(subtype=mydomain);
+select '[4,50)'::mydomainrange @> 7::mydomain;
+ expr1 
+-------
+      
+(1 row)
+
+drop domain mydomain;  -- fail
+drop domain mydomain cascade;
+ERROR:  Parse error at line 1, column 22: Unexpected token after statement
+--
+-- Test domains over range types
+--
+create domain restrictedrange as int4range check (upper(value) < 10);
+ERROR:  Parse error at line 1, column 34: Expected identifier
+select '[4,5)'::restrictedrange @> 7;
+ expr1 
+-------
+ 
+(1 row)
+
+select '[4,50)'::restrictedrange @> 7; -- should fail
+ expr1 
+-------
+ 
+(1 row)
+
+drop domain restrictedrange;
+ERROR:  Domain not found: Domain not found
+--
+-- Test multiple range types over the same subtype
+--
+create type textrange1 as range(subtype=text, collation="C");
+create type textrange2 as range(subtype=text, collation="C");
+select textrange1('a','Z') @> 'b'::text;
+ expr1 
+-------
+ 
+(1 row)
+
+select textrange2('a','z') @> 'b'::text;
+ expr1 
+-------
+ 
+(1 row)
+
+drop type textrange1;
+drop type textrange2;
+--
+-- Test polymorphic type system
+--
+create function anyarray_anyrange_func(a anyarray, r anyrange)
+  returns anyelement as 'select $1[1] + lower($2);' language sql;
+select anyarray_anyrange_func(ARRAY[1,2], int4range(10,20));
+ERROR:  Parse error at line 1, column 43: Expected expression
+-- should fail
+select anyarray_anyrange_func(ARRAY[1,2], numrange(10,20));
+ERROR:  Parse error at line 1, column 43: Expected expression
+drop function anyarray_anyrange_func(anyarray, anyrange);
+ERROR:  Parse error at line 1, column 37: Unexpected token after statement
+-- should fail
+create function bogus_func(anyelement)
+  returns anyrange as 'select int4range(1,10)' language sql;
+-- should fail
+create function bogus_func(int)
+  returns anyrange as 'select int4range(1,10)' language sql;
+ERROR:  Failed to create function 'bogus_func': Function already exists. Use OR REPLACE to update.
+create function range_add_bounds(anyrange)
+  returns anyelement as 'select lower($1) + upper($1)' language sql;
+select range_add_bounds(int4range(1, 17));
+ERROR:  Parse error at line 1, column 25: Expected expression
+select range_add_bounds(numrange(1.0001, 123.123));
+ERROR:  Parse error at line 1, column 25: Expected expression
+create function rangetypes_sql(q anyrange, b anyarray, out c anyelement)
+  as $$ select upper($1) + $2[1] $$
+  language sql;
+ERROR:  Parse error at line 1, column 62: Expected )
+select rangetypes_sql(int4range(1,10), ARRAY[2,20]);
+ERROR:  Parse error at line 1, column 23: Expected expression
+select rangetypes_sql(numrange(1,10), ARRAY[2,20]);  -- match failure
+ERROR:  Parse error at line 1, column 23: Expected expression
+create function anycompatiblearray_anycompatiblerange_func(a anycompatiblearray, r anycompatiblerange)
+  returns anycompatible as 'select $1[1] + lower($2);' language sql;
+select anycompatiblearray_anycompatiblerange_func(ARRAY[1,2], int4range(10,20));
+ERROR:  Parse error at line 1, column 63: Expected expression
+select anycompatiblearray_anycompatiblerange_func(ARRAY[1,2], numrange(10,20));
+ERROR:  Parse error at line 1, column 63: Expected expression
+-- should fail
+select anycompatiblearray_anycompatiblerange_func(ARRAY[1.1,2], int4range(10,20));
+ERROR:  Parse error at line 1, column 65: Expected expression
+drop function anycompatiblearray_anycompatiblerange_func(anycompatiblearray, anycompatiblerange);
+ERROR:  Parse error at line 1, column 57: Unexpected token after statement
+-- should fail
+create function bogus_func(anycompatible)
+  returns anycompatiblerange as 'select int4range(1,10)' language sql;
+ERROR:  Failed to create function 'bogus_func': Function already exists. Use OR REPLACE to update.
+--
+-- Arrays of ranges
+--
+select ARRAY[numrange(1.1, 1.2), numrange(12.3, 155.5)];
+ERROR:  Parse error at line 1, column 14: Expected expression
+create table i8r_array (f1 int, f2 int8range[]);
+ERROR:  Parse error at line 1, column 36: Expected identifier
+insert into i8r_array values (42, array[int8range(1,10), int8range(2,20)]);
+ERROR:  Parse error at line 1, column 41: Expected expression
+select * from i8r_array;
+ERROR:  Table or view not found: i8r_array (Object not found)
+drop table i8r_array;
+ERROR:  DROP TABLE resolve failed for i8r_array: Object not found
+--
+-- Ranges of arrays
+--
+create type arrayrange as range (subtype=int4[]);
+select arrayrange(ARRAY[1,2], ARRAY[2,1]);
+ expr1 
+-------
+ 
+(1 row)
+
+select arrayrange(ARRAY[2,1], ARRAY[1,2]);  -- fail
+ expr1 
+-------
+ 
+(1 row)
+
+select array[1,1] <@ arrayrange(array[1,2], array[2,1]);
+ expr1 
+-------
+ 
+(1 row)
+
+select array[1,3] <@ arrayrange(array[1,2], array[2,1]);
+ expr1 
+-------
+ 
+(1 row)
+
+--
+-- Ranges of composites
+--
+create type two_ints as (a int, b int);
+create type two_ints_range as range (subtype = two_ints);
+-- with debug_parallel_query on, this exercises tqueue.c's range remapping
+select *, row_to_json(upper(t)) as u from
+  (values (two_ints_range(row(1,2), row(3,4))),
+          (two_ints_range(row(5,6), row(7,8)))) v(t);
+ERROR:  Parse error at line 2, column 4: Expected SELECT in subquery table reference
+-- this must be rejected to avoid self-inclusion issues:
+alter type two_ints add attribute c two_ints_range;
+ERROR:  Parse error at line 1, column 7: Unsupported ALTER statement for V3 PostgreSQL parser
+drop type two_ints cascade;
+--
+-- Check behavior when subtype lacks a hash function
+--
+create type varbitrange as range (subtype = varbit);
+set enable_sort = off;  -- try to make it pick a hash setop implementation
+select '(01,10)'::varbitrange except select '(10,11)'::varbitrange;
+ERROR:  Parse error at line 1, column 31: Unexpected token after statement
+reset enable_sort;
+--
+-- OUT/INOUT/TABLE functions
+--
+-- infer anyrange from anyrange
+create function outparam_succeed(i anyrange, out r anyrange, out t text)
+  as $$ select $1, 'foo'::text $$ language sql;
+ERROR:  Parse error at line 1, column 52: Expected )
+select * from outparam_succeed(int4range(1,2));
+ERROR:  Parse error at line 1, column 31: Unexpected token after statement
+create function outparam2_succeed(r anyrange, out lu anyarray, out ul anyarray)
+  as $$ select array[lower($1), upper($1)], array[upper($1), lower($1)] $$
+  language sql;
+ERROR:  Parse error at line 1, column 54: Expected )
+select * from outparam2_succeed(int4range(1,11));
+ERROR:  Parse error at line 1, column 32: Unexpected token after statement
+-- infer anyarray from anyrange
+create function outparam_succeed2(i anyrange, out r anyarray, out t text)
+  as $$ select ARRAY[upper($1)], 'foo'::text $$ language sql;
+ERROR:  Parse error at line 1, column 53: Expected )
+select * from outparam_succeed2(int4range(int4range(1,2)));
+ERROR:  Parse error at line 1, column 32: Unexpected token after statement
+-- infer anyelement from anyrange
+create function inoutparam_succeed(out i anyelement, inout r anyrange)
+  as $$ select upper($1), $1 $$ language sql;
+ERROR:  Parse error at line 1, column 42: Expected )
+select * from inoutparam_succeed(int4range(1,2));
+ERROR:  Parse error at line 1, column 33: Unexpected token after statement
+create function table_succeed(r anyrange)
+  returns table(l anyelement, u anyelement)
+  as $$ select lower($1), upper($1) $$
+  language sql;
+ERROR:  Parse error at line 2, column 17: Expected )
+select * from table_succeed(int4range(1,11));
+ERROR:  Parse error at line 1, column 28: Unexpected token after statement
+-- should fail
+create function outparam_fail(i anyelement, out r anyrange, out t text)
+  as $$ select '[1,10]', 'foo' $$ language sql;
+ERROR:  Parse error at line 1, column 51: Expected )
+--should fail
+create function inoutparam_fail(inout i anyelement, out r anyrange)
+  as $$ select $1, '[1,10]' $$ language sql;
+ERROR:  Parse error at line 1, column 41: Expected )
+--should fail
+create function table_fail(i anyelement) returns table(i anyelement, r anyrange)
+  as $$ select $1, '[1,10]' $$ language sql;
+ERROR:  Parse error at line 1, column 56: Expected )
+--
+-- Test support functions
+--
+-- empty range
+explain (verbose, costs off)
+select current_date <@ daterange 'empty';
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- unbounded range
+explain (verbose, costs off)
+select current_date <@ daterange(NULL, NULL);
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- only lower bound present
+explain (verbose, costs off)
+select current_date <@ daterange('2000-01-01', NULL, '[)');
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- only upper bound present
+explain (verbose, costs off)
+select current_date <@ daterange(NULL, '2000-01-01', '(]');
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- lower range "-Infinity" excluded
+explain (verbose, costs off)
+select current_date <@ daterange('-Infinity', '1997-04-10'::date, '()');
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- lower range "-Infinity" included
+explain (verbose, costs off)
+select current_date <@ daterange('-Infinity', '1997-04-10'::date, '[)');
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- upper range "Infinity" excluded
+explain (verbose, costs off)
+select current_date <@ daterange('2002-09-25'::date, 'Infinity', '[)');
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- upper range "Infinity" included
+explain (verbose, costs off)
+select current_date <@ daterange('2002-09-25'::date, 'Infinity', '[]');
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- should also work if we use "@>"
+explain (verbose, costs off)
+select daterange('-Infinity', '1997-04-10'::date, '()') @> current_date;
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+explain (verbose, costs off)
+select daterange('2002-09-25'::date, 'Infinity', '[]') @> current_date;
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- Check that volatile cases are not optimized
+explain (verbose, costs off)
+select now() <@ tstzrange('2024-01-20 00:00', '2024-01-21 00:00');
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+explain (verbose, costs off)  -- unsafe!
+select clock_timestamp() <@ tstzrange('2024-01-20 00:00', '2024-01-21 00:00');
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+explain (verbose, costs off)
+select clock_timestamp() <@ tstzrange('2024-01-20 00:00', NULL);
+ERROR:  Parse error at line 1, column 19: Expected ) after EXPLAIN options
+-- test a custom range type with a non-default operator class
+create type textrange_supp as range (
+   subtype = text,
+   subtype_opclass = text_pattern_ops
+);
+create temp table text_support_test (t text collate "C");
+ERROR:  Record not found in catalog page
+insert into text_support_test values ('a'), ('c'), ('d'), ('ch');
+ERROR:  Object not found
+explain (costs off)
+select * from text_support_test where t <@ textrange_supp('a', 'd');
+ERROR:  Parse error at line 1, column 10: Expected ) after EXPLAIN options
+select * from text_support_test where t <@ textrange_supp('a', 'd');
+ERROR:  Table or view not found: text_support_test (Object not found)
+drop table text_support_test;
+ERROR:  DROP TABLE resolve failed for text_support_test: Object not found
+drop type textrange_supp;

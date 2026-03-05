@@ -23,6 +23,7 @@
 #include "scratchbird/server/ipc_server.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -2073,12 +2074,31 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
     client_config_.bound_db_uuid = config_.bound_db_uuid;
     client_config_.manual_auth = !username_.empty() && remote_password_.empty();
+    auto setPreferredAuthMethods = [&](protocol::AuthMethod primary) {
+        client_config_.preferred_auth_methods.clear();
+        client_config_.preferred_auth_methods.push_back(primary);
+        const std::array<protocol::AuthMethod, 5> fallbacks = {
+            protocol::AuthMethod::SCRAM_SHA_256,
+            protocol::AuthMethod::SCRAM_SHA_512,
+            protocol::AuthMethod::PEER,
+            protocol::AuthMethod::PASSWORD,
+            protocol::AuthMethod::MD5
+        };
+        for (auto method : fallbacks) {
+            if (method == primary) {
+                continue;
+            }
+            client_config_.preferred_auth_methods.push_back(method);
+        }
+    };
     if (!username_.empty()) {
         client_config_.username = username_;
         client_config_.password = remote_password_;
+        setPreferredAuthMethods(mapAuthMethod(auth_method_));
     } else {
         client_config_.username = "bootstrap";
         client_config_.password.clear();
+        client_config_.preferred_auth_methods.clear();
     }
 
     core::Status status = core::Status::OK;

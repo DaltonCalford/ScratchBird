@@ -86,8 +86,8 @@ This lane is emulation-only proof. Core parser proof is the native ScratchBird l
 Before running PostgreSQL compatibility tests, provision a PostgreSQL-wire login in the target ScratchBird database. The runner can do this automatically:
 
 ```bash
-export SCRATCHBIRD_PG_USER=pg_admin
-export SCRATCHBIRD_PG_PASSWORD='PgAdmin_Compat1!'
+export SCRATCHBIRD_PG_USER=postgres
+export SCRATCHBIRD_PG_PASSWORD='postgres'
 export SCRATCHBIRD_PG_DB=main
 export SCRATCHBIRD_PG_ADMIN_USER=SYSTEM
 export SCRATCHBIRD_PG_ADMIN_PASSWORD='<admin-or-bootstrap-password>'
@@ -100,7 +100,7 @@ Runner auth/provisioning controls:
 - `SCRATCHBIRD_PG_ADMIN_USER` with `SCRATCHBIRD_PG_ADMIN_PASSWORD` or `SCRATCHBIRD_PG_ADMIN_PASSWORD_FILE` define the provisioning principal.
 - `SCRATCHBIRD_PG_BOOTSTRAP_TOKEN_FILE` optionally points to bootstrap token file used when admin password is not supplied.
 - `SCRATCHBIRD_PG_OWNER_DB` (default `main`) is used when listener owner-binding rejects database switching.
-- Default compatibility lane target is `SCRATCHBIRD_PG_USER=pg_admin`, `SCRATCHBIRD_PG_DB=main`.
+- Default compatibility lane target is `SCRATCHBIRD_PG_USER=postgres`, `SCRATCHBIRD_PG_DB=main`.
 - `SCRATCHBIRD_PG_REQUIRE_SB_EMULATION=1` (default) requires endpoint fingerprint output to include `ScratchBird` so native `postgres` targets are rejected.
 - `SCRATCHBIRD_PG_COMPAT_RUN=1` converts unreachable/auth provisioning issues from `SKIP` to hard `FAIL`.
 

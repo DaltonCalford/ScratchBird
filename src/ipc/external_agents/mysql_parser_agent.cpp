@@ -522,6 +522,14 @@ core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::Erro
         return core::Status::OK;
     };
 
+    auto rejectDeterministic = [&](const char* name, const char* policy_row) {
+        std::string message = std::string(name) +
+                              " is unsupported by ScratchBird MySQL emulation policy (" +
+                              policy_row + ")";
+        sendErrorPacket(state, 1235, "42000", message);
+        return core::Status::OK;
+    };
+
     auto readNullTerminated = [&](size_t& offset) -> std::string {
         size_t start = offset;
         while (offset < packet.size() && packet[offset] != '\0') {
@@ -704,21 +712,38 @@ core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::Erro
             return handleResetConnection(state, ctx);
 
         case mysql::COM_SLEEP:
-            return unsupported("COM_SLEEP");
+            return rejectDeterministic("COM_SLEEP", "EPFC-040");
         case mysql::COM_SHUTDOWN:
             sendErrorPacket(state, 1227, "42000",
                             "COM_SHUTDOWN requires elevated server privileges");
             return core::Status::OK;
-        case mysql::COM_PROCESS_KILL:
-            return unsupported("COM_PROCESS_KILL");
+        case mysql::COM_PROCESS_KILL: {
+            if (packet.size() < 5) {
+                sendErrorPacket(state, 1210, "HY000", "Malformed COM_PROCESS_KILL packet");
+                return core::Status::OK;
+            }
+
+            uint32_t thread_id = readUint32LE(packet.data() + 1);
+            if (thread_id == 0) {
+                sendErrorPacket(state, 1094, "HY000", "Unknown thread id: 0");
+                return core::Status::OK;
+            }
+
+            std::string sql = "KILL " + std::to_string(thread_id);
+            std::vector<uint8_t> query_packet;
+            query_packet.reserve(sql.size() + 1);
+            query_packet.push_back(mysql::COM_QUERY);
+            query_packet.insert(query_packet.end(), sql.begin(), sql.end());
+            return handleQuery(state, query_packet, ctx);
+        }
         case mysql::COM_TIME:
-            return unsupported("COM_TIME");
+            return rejectDeterministic("COM_TIME", "EPFC-042");
         case mysql::COM_DELAYED_INSERT:
-            return unsupported("COM_DELAYED_INSERT");
+            return rejectDeterministic("COM_DELAYED_INSERT", "EPFC-043");
         case mysql::COM_CONNECT:
-            return unsupported("COM_CONNECT");
+            return rejectDeterministic("COM_CONNECT", "EPFC-044");
         case mysql::COM_CONNECT_OUT:
-            return unsupported("COM_CONNECT_OUT");
+            return rejectDeterministic("COM_CONNECT_OUT", "EPFC-045");
         case mysql::COM_REGISTER_SLAVE:
             return unsupported("COM_REGISTER_SLAVE");
         case mysql::COM_BINLOG_DUMP:
@@ -726,15 +751,18 @@ core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::Erro
         case mysql::COM_TABLE_DUMP:
             return unsupported("COM_TABLE_DUMP");
         case mysql::COM_DAEMON:
-            return unsupported("COM_DAEMON");
+            return rejectDeterministic("COM_DAEMON", "EPFC-049");
         case mysql::COM_BINLOG_DUMP_GTID:
             return unsupported("COM_BINLOG_DUMP_GTID");
         case mysql::COM_CLONE:
-            return unsupported("COM_CLONE");
+            // Deterministic simulation path: CLONE remains emulated, never file-native.
+            sendOKPacket(state, 0, 0, state.status_flags, 1,
+                        "COM_CLONE simulated by ScratchBird MySQL emulation");
+            return core::Status::OK;
         case mysql::COM_SUBSCRIBE_GROUP_REPLICATION_STREAM:
             return unsupported("COM_SUBSCRIBE_GROUP_REPLICATION_STREAM");
         case mysql::COM_END:
-            return unsupported("COM_END");
+            return rejectDeterministic("COM_END", "EPFC-053");
             
         default:
             sendErrorPacket(state, 1047, "08S01", "Unknown command: " + std::to_string(cmd));

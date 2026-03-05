@@ -1,0 +1,879 @@
+diff -U3 /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/expected/test_setup.out /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_083938/upstream/results/test_setup.out
+--- /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/expected/test_setup.out	2026-02-03 15:30:02.140410333 -0500
++++ /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_083938/upstream/results/test_setup.out	2026-03-04 08:40:57.862067087 -0500
+@@ -21,6 +21,7 @@
+ -- Create a tablespace we can use in tests.
+ SET allow_in_place_tablespaces = true;
+ CREATE TABLESPACE regress_tblspace LOCATION '';
++ERROR:  Failed to create tablespace 'regress_tblspace': Tablespace 'regress_tblspace' already exists
+ --
+ -- These tables have traditionally been referenced by many tests,
+ -- so create and populate them.  Insert only non-error values here.
+@@ -29,6 +30,7 @@
+ -- of these tables in later tests, as it may affect other tests.)
+ --
+ CREATE TABLE CHAR_TBL(f1 char(4));
++ERROR:  Table already exists: char_tbl
+ INSERT INTO CHAR_TBL (f1) VALUES
+   ('a'),
+   ('ab'),
+@@ -36,6 +38,7 @@
+   ('abcd    ');
+ VACUUM CHAR_TBL;
+ CREATE TABLE FLOAT8_TBL(f1 float8);
++ERROR:  Table already exists: float8_tbl
+ INSERT INTO FLOAT8_TBL(f1) VALUES
+   ('0.0'),
+   ('-34.84'),
+@@ -44,6 +47,7 @@
+   ('-1.2345678901234e-200');
+ VACUUM FLOAT8_TBL;
+ CREATE TABLE INT2_TBL(f1 int2);
++ERROR:  Table already exists: int2_tbl
+ INSERT INTO INT2_TBL(f1) VALUES
+   ('0   '),
+   ('  1234 '),
+@@ -52,6 +56,7 @@
+   ('-32767');
+ VACUUM INT2_TBL;
+ CREATE TABLE INT4_TBL(f1 int4);
++ERROR:  Table already exists: int4_tbl
+ INSERT INTO INT4_TBL(f1) VALUES
+   ('   0  '),
+   ('123456     '),
+@@ -60,6 +65,7 @@
+   ('-2147483647');
+ VACUUM INT4_TBL;
+ CREATE TABLE INT8_TBL(q1 int8, q2 int8);
++ERROR:  Table already exists: int8_tbl
+ INSERT INTO INT8_TBL VALUES
+   ('  123   ','  456'),
+   ('123   ','4567890123456789'),
+@@ -68,6 +74,7 @@
+   ('+4567890123456789','-4567890123456789');
+ VACUUM INT8_TBL;
+ CREATE TABLE POINT_TBL(f1 point);
++ERROR:  Table already exists: point_tbl
+ INSERT INTO POINT_TBL(f1) VALUES
+   ('(0.0,0.0)'),
+   ('(-10.0,0.0)'),
+@@ -81,11 +88,13 @@
+   ('10.0,10.0');
+ -- We intentionally don't vacuum point_tbl here; geometry depends on that
+ CREATE TABLE TEXT_TBL (f1 text);
++ERROR:  Table already exists: text_tbl
+ INSERT INTO TEXT_TBL VALUES
+   ('doh!'),
+   ('hi de ho neighbor');
+ VACUUM TEXT_TBL;
+ CREATE TABLE VARCHAR_TBL(f1 varchar(4));
++ERROR:  Table already exists: varchar_tbl
+ INSERT INTO VARCHAR_TBL (f1) VALUES
+   ('a'),
+   ('ab'),
+@@ -110,10 +119,12 @@
+ 	stringu2	name,
+ 	string4		name
+ );
++ERROR:  Table already exists: onek
+ \set filename :abs_srcdir '/data/onek.data'
+ COPY onek FROM :'filename';
+ VACUUM ANALYZE onek;
+ CREATE TABLE onek2 AS SELECT * FROM onek;
++ERROR:  Table already exists: onek2
+ VACUUM ANALYZE onek2;
+ CREATE TABLE tenk1 (
+ 	unique1		int4,
+@@ -133,11 +144,14 @@
+ 	stringu2	name,
+ 	string4		name
+ );
++ERROR:  Table already exists: tenk1
+ \set filename :abs_srcdir '/data/tenk.data'
+ COPY tenk1 FROM :'filename';
++ERROR:  Failed to receive response
+ VACUUM ANALYZE tenk1;
+ CREATE TABLE tenk2 AS SELECT * FROM tenk1;
+ VACUUM ANALYZE tenk2;
++ERROR:  Table already exists: tenk2
+ CREATE TABLE person (
+ 	name 		text,
+ 	age			int4,
+@@ -145,6 +159,7 @@
+ );
+ \set filename :abs_srcdir '/data/person.data'
+ COPY person FROM :'filename';
++ERROR:  Table already exists: person
+ VACUUM ANALYZE person;
+ CREATE TABLE emp (
+ 	salary 		int4,
+@@ -152,21 +167,24 @@
+ ) INHERITS (person);
+ \set filename :abs_srcdir '/data/emp.data'
+ COPY emp FROM :'filename';
++ERROR:  Table already exists: emp
+ VACUUM ANALYZE emp;
+ CREATE TABLE student (
+ 	gpa 		float8
+ ) INHERITS (person);
+ \set filename :abs_srcdir '/data/student.data'
+ COPY student FROM :'filename';
++ERROR:  Table already exists: student
+ VACUUM ANALYZE student;
+ CREATE TABLE stud_emp (
+ 	percent 	int4
+ ) INHERITS (emp, student);
+-NOTICE:  merging multiple inherited definitions of column "name"
+-NOTICE:  merging multiple inherited definitions of column "age"
+-NOTICE:  merging multiple inherited definitions of column "location"
+ \set filename :abs_srcdir '/data/stud_emp.data'
+ COPY stud_emp FROM :'filename';
++ name | age | location | gpa 
++------+-----+----------+-----
++(0 rows)
++
+ VACUUM ANALYZE stud_emp;
+ CREATE TABLE road (
+ 	name		text,
+@@ -174,12 +192,14 @@
+ );
+ \set filename :abs_srcdir '/data/streets.data'
+ COPY road FROM :'filename';
++ERROR:  Table already exists: road
+ VACUUM ANALYZE road;
+ CREATE TABLE ihighway () INHERITS (road);
+ INSERT INTO ihighway
+    SELECT *
+    FROM ONLY road
+    WHERE name ~ 'I- .*';
++ERROR:  Table already exists: ihighway
+ VACUUM ANALYZE ihighway;
+ CREATE TABLE shighway (
+ 	surface		text
+@@ -188,6 +208,7 @@
+    SELECT *, 'asphalt'
+    FROM ONLY road
+    WHERE name ~ 'State Hwy.*';
++ERROR:  Table already exists: shighway
+ VACUUM ANALYZE shighway;
+ --
+ -- We must have some enum type in the database for opr_sanity and type_sanity.
+@@ -197,7 +218,9 @@
+ -- Also create some non-built-in range types.
+ --
+ create type float8range as range (subtype = float8, subtype_diff = float8mi);
++ERROR:  Type already exists: stoplight
+ create type textrange as range (subtype = text, collation = "C");
++ERROR:  Type already exists: float8range
+ --
+ -- Create some C functions that will be used by various tests.
+ --
+@@ -205,6 +228,7 @@
+     RETURNS bool
+     AS :'regresslib', 'binary_coercible'
+     LANGUAGE C STRICT STABLE PARALLEL SAFE;
++ERROR:  Type already exists: textrange
+ -- Use hand-rolled hash functions and operator classes to get predictable
+ -- result on different machines.  The hash function for int4 simply returns
+ -- the sum of the values passed to it and the one for text returns the length
+@@ -213,9 +237,11 @@
+     returns int8 as $$
+     select value + seed;
+     $$ language sql strict immutable parallel safe;
++ERROR:  Failed to create function 'binary_coercible': Function already exists. Use OR REPLACE to update.
+ create operator class part_test_int4_ops for type int4 using hash as
+     operator 1 =,
+     function 2 part_hashint4_noop(int4, int8);
++ERROR:  Failed to create function 'part_hashint4_noop': Function already exists. Use OR REPLACE to update.
+ create function part_hashtext_length(value text, seed int8)
+     returns int8 as $$
+     select length(coalesce(value, ''))::int8
+@@ -223,6 +249,7 @@
+ create operator class part_test_text_ops for type text using hash as
+     operator 1 =,
+     function 2 part_hashtext_length(text, int8);
++ERROR:  Failed to create function 'part_hashtext_length': Function already exists. Use OR REPLACE to update.
+ --
+ -- These functions are used in tests that used to use md5(), which we now
+ -- mostly avoid so that the tests will pass in FIPS mode.
+diff -U3 /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/expected/boolean.out /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_083938/upstream/results/boolean.out
+--- /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/expected/boolean.out	2026-02-03 15:30:02.121410511 -0500
++++ /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_083938/upstream/results/boolean.out	2026-03-04 08:40:59.790047480 -0500
+@@ -5,385 +5,191 @@
+ -- sanity check - if this fails go insane!
+ --
+ SELECT 1 AS one;
+- one 
+------
+-   1
++ expr1 
++-------
++     1
+ (1 row)
+ 
+ -- ******************testing built-in type bool********************
+ -- check bool input syntax
+ SELECT true AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 16: Expected identifier
+ SELECT false AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 17: Expected identifier
+ SELECT bool 't' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool '   f           ' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'true' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'test' AS error;
+-ERROR:  invalid input syntax for type boolean: "test"
+-LINE 1: SELECT bool 'test' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'false' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'foo' AS error;
+-ERROR:  invalid input syntax for type boolean: "foo"
+-LINE 1: SELECT bool 'foo' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'y' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'yes' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'yeah' AS error;
+-ERROR:  invalid input syntax for type boolean: "yeah"
+-LINE 1: SELECT bool 'yeah' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'n' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'no' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'nay' AS error;
+-ERROR:  invalid input syntax for type boolean: "nay"
+-LINE 1: SELECT bool 'nay' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'on' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'off' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'of' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'o' AS error;
+-ERROR:  invalid input syntax for type boolean: "o"
+-LINE 1: SELECT bool 'o' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'on_' AS error;
+-ERROR:  invalid input syntax for type boolean: "on_"
+-LINE 1: SELECT bool 'on_' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'off_' AS error;
+-ERROR:  invalid input syntax for type boolean: "off_"
+-LINE 1: SELECT bool 'off_' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool '1' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool '11' AS error;
+-ERROR:  invalid input syntax for type boolean: "11"
+-LINE 1: SELECT bool '11' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool '0' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool '000' AS error;
+-ERROR:  invalid input syntax for type boolean: "000"
+-LINE 1: SELECT bool '000' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool '' AS error;
+-ERROR:  invalid input syntax for type boolean: ""
+-LINE 1: SELECT bool '' AS error;
+-                    ^
++ERROR:  Parse error at line 1, column 8: Expected expression
+ -- Also try it with non-error-throwing API
+ SELECT pg_input_is_valid('true', 'bool');
+- pg_input_is_valid 
+--------------------
+- t
++ expr1 
++-------
++ 
+ (1 row)
+ 
+ SELECT pg_input_is_valid('asdf', 'bool');
+- pg_input_is_valid 
+--------------------
+- f
++ expr1 
++-------
++ 
+ (1 row)
+ 
+ SELECT * FROM pg_input_error_info('junk', 'bool');
+-                    message                    | detail | hint | sql_error_code 
+------------------------------------------------+--------+------+----------------
+- invalid input syntax for type boolean: "junk" |        |      | 22P02
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+ -- and, or, not in qualifications
+ SELECT bool 't' or bool 'f' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 't' and bool 'f' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT not bool 'f' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 12: Expected expression
+ SELECT bool 't' = bool 'f' AS false;
+- false 
+--------
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 't' <> bool 'f' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 't' > bool 'f' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 't' >= bool 'f' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'f' < bool 't' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ SELECT bool 'f' <= bool 't' AS true;
+- true 
+-------
+- t
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 8: Expected expression
+ -- explicit casts to/from text
+ SELECT 'TrUe'::text::boolean AS true, 'fAlse'::text::boolean AS false;
+- true | false 
+-------+-------
+- t    | f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 33: Expected identifier
+ SELECT '    true   '::text::boolean AS true,
+        '     FALSE'::text::boolean AS false;
+- true | false 
+-------+-------
+- t    | f
+-(1 row)
+-
++ERROR:  Parse error at line 1, column 40: Expected identifier
+ SELECT true::boolean::text AS true, false::boolean::text AS false;
+- true | false 
+-------+-------
+- true | false
++ERROR:  Parse error at line 1, column 31: Expected identifier
++SELECT '  tru e '::text::boolean AS invalid;    -- error
++ expr1 
++-------
++ 
+ (1 row)
+ 
+-SELECT '  tru e '::text::boolean AS invalid;    -- error
+-ERROR:  invalid input syntax for type boolean: "  tru e "
+ SELECT ''::text::boolean AS invalid;            -- error
+-ERROR:  invalid input syntax for type boolean: ""
++ expr1 
++-------
++ 
++(1 row)
++
+ CREATE TABLE BOOLTBL1 (f1 bool);
+ INSERT INTO BOOLTBL1 (f1) VALUES (bool 't');
++ERROR:  Parse error at line 1, column 35: Expected expression
+ INSERT INTO BOOLTBL1 (f1) VALUES (bool 'True');
++ERROR:  Parse error at line 1, column 35: Expected expression
+ INSERT INTO BOOLTBL1 (f1) VALUES (bool 'true');
++ERROR:  Parse error at line 1, column 35: Expected expression
+ -- BOOLTBL1 should be full of true's at this point
+ SELECT BOOLTBL1.* FROM BOOLTBL1;
+  f1 
+ ----
+- t
+- t
+- t
+-(3 rows)
++(0 rows)
+ 
+ SELECT BOOLTBL1.*
+    FROM BOOLTBL1
+    WHERE f1 = bool 'true';
+- f1 
+-----
+- t
+- t
+- t
+-(3 rows)
+-
++ERROR:  Parse error at line 3, column 15: Expected expression
+ SELECT BOOLTBL1.*
+    FROM BOOLTBL1
+    WHERE f1 <> bool 'false';
+- f1 
+-----
+- t
+- t
+- t
+-(3 rows)
+-
++ERROR:  Parse error at line 3, column 16: Expected expression
+ SELECT BOOLTBL1.*
+    FROM BOOLTBL1
+    WHERE booleq(bool 'false', f1);
+- f1 
+-----
+-(0 rows)
+-
++ERROR:  Parse error at line 3, column 17: Expected expression
+ INSERT INTO BOOLTBL1 (f1) VALUES (bool 'f');
++ERROR:  Parse error at line 1, column 35: Expected expression
+ SELECT BOOLTBL1.*
+    FROM BOOLTBL1
+    WHERE f1 = bool 'false';
+- f1 
+-----
+- f
+-(1 row)
+-
++ERROR:  Parse error at line 3, column 15: Expected expression
+ CREATE TABLE BOOLTBL2 (f1 bool);
+ INSERT INTO BOOLTBL2 (f1) VALUES (bool 'f');
++ERROR:  Parse error at line 1, column 35: Expected expression
+ INSERT INTO BOOLTBL2 (f1) VALUES (bool 'false');
++ERROR:  Parse error at line 1, column 35: Expected expression
+ INSERT INTO BOOLTBL2 (f1) VALUES (bool 'False');
++ERROR:  Parse error at line 1, column 35: Expected expression
+ INSERT INTO BOOLTBL2 (f1) VALUES (bool 'FALSE');
++ERROR:  Parse error at line 1, column 35: Expected expression
+ -- This is now an invalid expression
+ -- For pre-v6.3 this evaluated to false - thomas 1997-10-23
+ INSERT INTO BOOLTBL2 (f1)
+    VALUES (bool 'XXX');
+-ERROR:  invalid input syntax for type boolean: "XXX"
+-LINE 2:    VALUES (bool 'XXX');
+-                        ^
++ERROR:  Parse error at line 2, column 12: Expected expression
+ -- BOOLTBL2 should be full of false's at this point
+ SELECT BOOLTBL2.* FROM BOOLTBL2;
+  f1 
+ ----
+- f
+- f
+- f
+- f
+-(4 rows)
++(0 rows)
+ 
+ SELECT BOOLTBL1.*, BOOLTBL2.*
+    FROM BOOLTBL1, BOOLTBL2
+    WHERE BOOLTBL2.f1 <> BOOLTBL1.f1;
+- f1 | f1 
+-----+----
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+-(12 rows)
++ f1 | f1 | f1 | f1 
++----+----+----+----
++(0 rows)
+ 
+ SELECT BOOLTBL1.*, BOOLTBL2.*
+    FROM BOOLTBL1, BOOLTBL2
+    WHERE boolne(BOOLTBL2.f1,BOOLTBL1.f1);
+- f1 | f1 
+-----+----
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+-(12 rows)
++ f1 | f1 | f1 | f1 
++----+----+----+----
++(0 rows)
+ 
+ SELECT BOOLTBL1.*, BOOLTBL2.*
+    FROM BOOLTBL1, BOOLTBL2
+    WHERE BOOLTBL2.f1 = BOOLTBL1.f1 and BOOLTBL1.f1 = bool 'false';
+- f1 | f1 
+-----+----
+- f  | f
+- f  | f
+- f  | f
+- f  | f
+-(4 rows)
+-
++ERROR:  Parse error at line 3, column 54: Expected expression
+ SELECT BOOLTBL1.*, BOOLTBL2.*
+    FROM BOOLTBL1, BOOLTBL2
+    WHERE BOOLTBL2.f1 = BOOLTBL1.f1 or BOOLTBL1.f1 = bool 'true'
+    ORDER BY BOOLTBL1.f1, BOOLTBL2.f1;
+- f1 | f1 
+-----+----
+- f  | f
+- f  | f
+- f  | f
+- f  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+- t  | f
+-(16 rows)
+-
++ERROR:  Parse error at line 3, column 53: Expected expression
+ --
+ -- SQL syntax
+ -- Try all combinations to ensure that we get nothing when we expect nothing
+@@ -394,36 +200,28 @@
+    WHERE f1 IS TRUE;
+  f1 
+ ----
+- t
+- t
+- t
+-(3 rows)
++(0 rows)
+ 
+ SELECT f1
+    FROM BOOLTBL1
+    WHERE f1 IS NOT FALSE;
+  f1 
+ ----
+- t
+- t
+- t
+-(3 rows)
++(0 rows)
+ 
+ SELECT f1
+    FROM BOOLTBL1
+    WHERE f1 IS FALSE;
+  f1 
+ ----
+- f
+-(1 row)
++(0 rows)
+ 
+ SELECT f1
+    FROM BOOLTBL1
+    WHERE f1 IS NOT TRUE;
+  f1 
+ ----
+- f
+-(1 row)
++(0 rows)
+ 
+ SELECT f1
+    FROM BOOLTBL2
+@@ -444,22 +242,14 @@
+    WHERE f1 IS FALSE;
+  f1 
+ ----
+- f
+- f
+- f
+- f
+-(4 rows)
++(0 rows)
+ 
+ SELECT f1
+    FROM BOOLTBL2
+    WHERE f1 IS NOT TRUE;
+  f1 
+ ----
+- f
+- f
+- f
+- f
+-(4 rows)
++(0 rows)
+ 
+ --
+ -- Tests for BooleanTest
+@@ -477,13 +267,7 @@
+     b IS UNKNOWN AS isunknown,
+     b IS NOT UNKNOWN AS isnotunknown
+ FROM booltbl3 ORDER BY o;
+-   d   | istrue | isnottrue | isfalse | isnotfalse | isunknown | isnotunknown 
+--------+--------+-----------+---------+------------+-----------+--------------
+- true  | t      | f         | f       | t          | f         | t
+- false | f      | t         | t       | f          | f         | t
+- null  | f      | t         | f       | t          | t         | f
+-(3 rows)
+-
++ERROR:  Parse error at line 7, column 10: Expected NULL, TRUE, FALSE, DISTINCT, or UNKNOWN after IS
+ -- Test to make sure short-circuiting and NULL handling is
+ -- correct. Use a table as source to prevent constant simplification
+ -- from interfering.
+@@ -493,95 +277,95 @@
+ -- AND expression need to return null if there's any nulls and not all
+ -- of the value are true
+ SELECT istrue AND isnul AND istrue FROM booltbl4;
+- ?column? 
+-----------
++ expr1  
++--------
+  (null)
+ (1 row)
+ 
+ SELECT istrue AND istrue AND isnul FROM booltbl4;
+- ?column? 
+-----------
++ expr1  
++--------
+  (null)
+ (1 row)
+ 
+ SELECT isnul AND istrue AND istrue FROM booltbl4;
+- ?column? 
+-----------
++ expr1  
++--------
+  (null)
+ (1 row)
+ 
+ SELECT isfalse AND isnul AND istrue FROM booltbl4;
+- ?column? 
+-----------
+- f
++ expr1 
++-------
++ 
+ (1 row)
+ 
+ SELECT istrue AND isfalse AND isnul FROM booltbl4;
+- ?column? 
+-----------
+- f
++ expr1 
++-------
++ 
+ (1 row)
+ 
+ SELECT isnul AND istrue AND isfalse FROM booltbl4;
+- ?column? 
+-----------
+- f
++ expr1 
++-------
++ 
+ (1 row)
+ 
+ -- OR expression need to return null if there's any nulls and none
+ -- of the value is true
+ SELECT isfalse OR isnul OR isfalse FROM booltbl4;
+- ?column? 
+-----------
++ expr1  
++--------
+  (null)
+ (1 row)
+ 
+ SELECT isfalse OR isfalse OR isnul FROM booltbl4;
+- ?column? 
+-----------
++ expr1  
++--------
+  (null)
+ (1 row)
+ 
+ SELECT isnul OR isfalse OR isfalse FROM booltbl4;
+- ?column? 
+-----------
++ expr1  
++--------
+  (null)
+ (1 row)
+ 
+ SELECT isfalse OR isnul OR istrue FROM booltbl4;
+- ?column? 
+-----------
+- t
++ expr1 
++-------
++ \x01
+ (1 row)
+ 
+ SELECT istrue OR isfalse OR isnul FROM booltbl4;
+- ?column? 
+-----------
+- t
++ expr1 
++-------
++ \x01
+ (1 row)
+ 
+ SELECT isnul OR istrue OR isfalse FROM booltbl4;
+- ?column? 
+-----------
+- t
++ expr1 
++-------
++ \x01
+ (1 row)
+ 
+ -- Casts
+ SELECT 0::boolean;
+- bool 
+-------
++ expr1 
++-------
+  f
+ (1 row)
+ 
+ SELECT 1::boolean;
+- bool 
+-------
++ expr1 
++-------
+  t
+ (1 row)
+ 
+ SELECT 2::boolean;
+- bool 
+-------
++ expr1 
++-------
+  t
+ (1 row)
+ 

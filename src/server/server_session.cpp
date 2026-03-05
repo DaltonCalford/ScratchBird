@@ -49,6 +49,7 @@ namespace scratchbird {
 namespace server {
 
 namespace {
+constexpr const char* kServerNoticeChannel = "sb.notice";
 
 struct CopyStreamState {
     uint64_t stream_id{0};
@@ -2930,6 +2931,27 @@ core::Status ServerSession::handleCancel(const protocol::Message& msg, core::Err
     return protocol_session_->sendMessage(response, ctx);
 }
 
+core::Status ServerSession::sendPendingNotices(core::ErrorContext* ctx) {
+    if (!protocol_session_ || !conn_ctx_) {
+        return core::Status::OK;
+    }
+
+    auto notices = conn_ctx_->consumeNotices();
+    for (const auto& notice : notices) {
+        if (notice.empty()) {
+            continue;
+        }
+        std::vector<uint8_t> payload(notice.begin(), notice.end());
+        auto msg = protocol::ProtocolCodec::buildNotification(
+            conn_ctx_->getProcId(), kServerNoticeChannel, payload, 0, 0);
+        auto status = protocol_session_->sendMessage(msg, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+    }
+    return core::Status::OK;
+}
+
 core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode,
                                             const std::string& sql,
                                             core::ErrorContext* ctx) {
@@ -3095,6 +3117,11 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
             return status;
         }
 
+        status = sendPendingNotices(ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
         std::string tag = "COPY " + std::to_string(rows);
         protocol::Message response = protocol::ProtocolCodec::buildCommandComplete(tag, rows);
         status = protocol_session_->sendMessage(response, ctx);
@@ -3130,6 +3157,10 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
         command, exec_result.affectedCount());
     if (conn_ctx_) {
         conn_ctx_->endStatementTrackingSuccess(exec_result.affectedCount());
+    }
+    core::Status notice_status = sendPendingNotices(ctx);
+    if (notice_status != core::Status::OK) {
+        return notice_status;
     }
     core::Status send_status = protocol_session_->sendMessage(response, ctx);
     if (send_status != core::Status::OK) {
@@ -3178,6 +3209,11 @@ static protocol::WireType dataTypeToWireType(core::DataType type) {
 core::Status ServerSession::sendResultSet(const sblr::ResultSet* results, core::ErrorContext* ctx) {
     if (!results) {
         return sendError("Internal error: null result set", "XX000", ctx);
+    }
+
+    core::Status notice_status = sendPendingNotices(ctx);
+    if (notice_status != core::Status::OK) {
+        return notice_status;
     }
 
     // Build column descriptions using ColumnInfo

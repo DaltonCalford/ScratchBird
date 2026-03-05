@@ -23,9 +23,12 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <limits>
 #if defined(_WIN32)
     #include <winsock2.h>
     #include <ws2tcpip.h>
@@ -152,6 +155,216 @@ static bool tokenMatchesAny(const std::string& token,
         return false;
     }
     return std::find(candidates.begin(), candidates.end(), token) != candidates.end();
+}
+
+constexpr const char* kAuthPluginExchangeIdKey = "auth.plugin.exchange_id";
+constexpr const char* kAuthPluginInitialPayloadKey = "auth.plugin.client_payload";
+constexpr const char* kAuthPluginPeerPidKey = "auth.peer_pid";
+
+static std::string toLowerAscii(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+static std::string sliceToString(const sb_auth_slice_t& slice)
+{
+    if (!slice.ptr || slice.len == 0) {
+        return {};
+    }
+    const char* begin = reinterpret_cast<const char*>(slice.ptr);
+    return std::string(begin, begin + slice.len);
+}
+
+static std::string boundedCString(const char* value, std::size_t max_len)
+{
+    if (!value || max_len == 0) {
+        return {};
+    }
+    std::size_t len = 0;
+    while (len < max_len && value[len] != '\0') {
+        ++len;
+    }
+    return std::string(value, value + len);
+}
+
+static bool parseUint64Value(const std::string& text, uint64_t& out_value)
+{
+    const std::string trimmed = trimAscii(text);
+    if (trimmed.empty()) {
+        return false;
+    }
+
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(trimmed.c_str(), &end, 10);
+    if (end == nullptr || *end != '\0') {
+        return false;
+    }
+    if (errno == ERANGE) {
+        return false;
+    }
+
+    out_value = static_cast<uint64_t>(parsed);
+    return true;
+}
+
+static bool parseUint32Value(const std::string& text, uint32_t& out_value)
+{
+    uint64_t parsed = 0;
+    if (!parseUint64Value(text, parsed) ||
+        parsed > std::numeric_limits<uint32_t>::max()) {
+        return false;
+    }
+
+    out_value = static_cast<uint32_t>(parsed);
+    return true;
+}
+
+static sb_auth_transport_t mapPluginTransport(const ConnectionInfo& conn)
+{
+    if (conn.is_unix_socket) {
+        return SB_AUTH_TRANSPORT_LOCAL;
+    }
+
+    const std::string protocol = toLowerAscii(trimAscii(conn.protocol));
+    if (protocol == "ipc" || protocol == "named_pipe") {
+        return SB_AUTH_TRANSPORT_IPC;
+    }
+    return SB_AUTH_TRANSPORT_INET;
+}
+
+struct PluginConnectionContextBundle {
+    sb_auth_connection_ctx_v1 ctx{};
+    std::string username;
+    std::string client_address;
+    std::string server_address;
+};
+
+static PluginConnectionContextBundle makePluginConnectionContext(const AuthContext& auth_ctx)
+{
+    PluginConnectionContextBundle bundle{};
+    const ConnectionInfo& conn = auth_ctx.connectionInfo();
+
+    bundle.username = auth_ctx.username();
+    bundle.client_address = conn.client_address;
+    bundle.server_address = conn.server_address;
+
+    bundle.ctx.struct_size = sizeof(sb_auth_connection_ctx_v1);
+    std::memset(bundle.ctx.database_uuid, 0, sizeof(bundle.ctx.database_uuid));
+    bundle.ctx.transport = mapPluginTransport(conn);
+    bundle.ctx.connection_flags = conn.is_ssl ? 1u : 0u;
+    bundle.ctx.username = sb_auth_slice_t{
+        bundle.username.empty() ? nullptr : reinterpret_cast<const uint8_t*>(bundle.username.data()),
+        static_cast<uint32_t>(bundle.username.size())
+    };
+    bundle.ctx.client_address = sb_auth_slice_t{
+        bundle.client_address.empty()
+            ? nullptr
+            : reinterpret_cast<const uint8_t*>(bundle.client_address.data()),
+        static_cast<uint32_t>(bundle.client_address.size())
+    };
+    bundle.ctx.server_address = sb_auth_slice_t{
+        bundle.server_address.empty()
+            ? nullptr
+            : reinterpret_cast<const uint8_t*>(bundle.server_address.data()),
+        static_cast<uint32_t>(bundle.server_address.size())
+    };
+    bundle.ctx.peer_uid = conn.peer_uid;
+    bundle.ctx.peer_gid = conn.peer_gid;
+    bundle.ctx.peer_pid = 0;
+
+    uint32_t peer_pid = 0;
+    if (parseUint32Value(auth_ctx.getSessionProperty(kAuthPluginPeerPidKey), peer_pid)) {
+        bundle.ctx.peer_pid = peer_pid;
+    }
+
+    return bundle;
+}
+
+static const char* pluginRcToCode(sb_auth_rc_t rc)
+{
+    switch (rc) {
+        case SB_AUTH_RC_OK:
+            return "AUTH_PLUGIN_RUNTIME_OK";
+        case SB_AUTH_RC_CONTINUE:
+            return "AUTH_PLUGIN_RUNTIME_CONTINUE";
+        case SB_AUTH_RC_DENY:
+            return "AUTH_PLUGIN_RUNTIME_DENY";
+        case SB_AUTH_RC_ERROR:
+            return "AUTH_PLUGIN_RUNTIME_ERROR";
+        case SB_AUTH_RC_UNSUPPORTED:
+            return "AUTH_PLUGIN_RUNTIME_UNSUPPORTED";
+        case SB_AUTH_RC_INVALID_ARGUMENT:
+            return "AUTH_PLUGIN_RUNTIME_BAD_REQUEST";
+        case SB_AUTH_RC_POLICY_VIOLATION:
+            return "AUTH_PLUGIN_RUNTIME_POLICY_VIOLATION";
+        case SB_AUTH_RC_SIGNATURE_INVALID:
+            return "AUTH_PLUGIN_RUNTIME_SIGNATURE_INVALID";
+        case SB_AUTH_RC_UNAUTHORIZED_PLUGIN:
+            return "AUTH_PLUGIN_RUNTIME_UNAUTHORIZED";
+        default:
+            return "AUTH_PLUGIN_RUNTIME_UNKNOWN";
+    }
+}
+
+static AuthFailReason mapPluginFailureReason(sb_auth_rc_t rc)
+{
+    switch (rc) {
+        case SB_AUTH_RC_DENY:
+            return AuthFailReason::INVALID_CREDENTIALS;
+        case SB_AUTH_RC_POLICY_VIOLATION:
+        case SB_AUTH_RC_SIGNATURE_INVALID:
+        case SB_AUTH_RC_UNAUTHORIZED_PLUGIN:
+            return AuthFailReason::NOT_ALLOWED;
+        case SB_AUTH_RC_INVALID_ARGUMENT:
+            return AuthFailReason::PROTOCOL_ERROR;
+        default:
+            return AuthFailReason::INTERNAL_ERROR;
+    }
+}
+
+static AuthResult mapPluginStepResult(AuthContext& auth_ctx,
+                                      const sb_auth_step_result_v1& plugin_result)
+{
+    std::vector<uint8_t> payload;
+    if (plugin_result.payload.ptr != nullptr && plugin_result.payload.len > 0) {
+        payload.assign(plugin_result.payload.ptr,
+                       plugin_result.payload.ptr + plugin_result.payload.len);
+    }
+
+    if (plugin_result.rc == SB_AUTH_RC_CONTINUE) {
+        auth_ctx.setState(AuthState::IN_PROGRESS);
+        return AuthResult::continueAuth(payload);
+    }
+
+    if (plugin_result.rc == SB_AUTH_RC_OK) {
+        std::string resolved_user = sliceToString(plugin_result.principal.resolved_username);
+        if (resolved_user.empty()) {
+            resolved_user = auth_ctx.username();
+        }
+
+        auth_ctx.setAuthenticatedUser(resolved_user);
+        auth_ctx.setSessionProperty(
+            "auth.plugin_assurance_level",
+            std::to_string(plugin_result.principal.assurance_level));
+
+        AuthResult result = AuthResult::success(resolved_user);
+        result.response_data = std::move(payload);
+        return result;
+    }
+
+    const AuthFailReason reason = mapPluginFailureReason(plugin_result.rc);
+    std::string failure_message = trimAscii(
+        boundedCString(plugin_result.plugin_error_code, sizeof(plugin_result.plugin_error_code)));
+    if (failure_message.empty()) {
+        failure_message = pluginRcToCode(plugin_result.rc);
+    }
+
+    auth_ctx.setFailure(reason, failure_message);
+    return AuthResult::failure(reason, failure_message);
 }
 
 bool HBARule::matches(const ConnectionInfo& conn, const std::string& username,
@@ -1024,52 +1237,48 @@ AuthResult AuthManager::startAuthentication(AuthContext& ctx) {
     ctx.setAuthType(auth_type);
 
     AuthMethod* method = nullptr;
-    bool using_legacy_fallback = false;
+    bool use_plugin_runtime = false;
+    std::string selected_method_id;
+
+    if (config_.auth_plugin_registry_enabled && auth_plugin_manager_) {
+        auth_plugin_manager_->resolveMethodIdForAuthType(auth_type, selected_method_id);
+        if (!selected_method_id.empty()) {
+            ctx.setSessionProperty("auth.selected_method_id", selected_method_id);
+        }
+    }
 
     // Plugin registry dispatch is primary; legacy fallback is explicit.
     if (config_.auth_plugin_registry_enabled && auth_plugin_manager_) {
-        std::string method_id;
-        if (auth_plugin_manager_->resolveMethodIdForAuthType(auth_type, method_id) &&
-            auth_plugin_manager_->isMethodAvailable(method_id)) {
-            auto it = auth_methods_.find(auth_type);
-            if (it != auth_methods_.end()) {
-                method = it->second.get();
+        if (!selected_method_id.empty() &&
+            auth_plugin_manager_->isMethodAvailable(selected_method_id)) {
+            if (auth_plugin_manager_->isRuntimeMethodAvailable(selected_method_id)) {
+                use_plugin_runtime = true;
+                ctx.setSessionProperty("auth.plugin_registry", "enabled");
+                ctx.setSessionProperty("auth.plugin_method_id", selected_method_id);
+            } else if (config_.allow_legacy_auth_fallback) {
+                ctx.setSessionProperty("auth.plugin_registry", "legacy_fallback");
+                ctx.setSessionProperty("auth.legacy_fallback", "true");
             } else {
                 return AuthResult::failure(AuthFailReason::INTERNAL_ERROR,
-                                           "AUTH_PLUGIN_LOAD_FAILED: plugin method dispatch backend missing");
+                                           "AUTH_PLUGIN_LOAD_FAILED: runtime plugin dispatch backend missing");
             }
-            ctx.setSessionProperty("auth.plugin_registry", "enabled");
-            ctx.setSessionProperty("auth.plugin_method_id", method_id);
         } else if (config_.allow_legacy_auth_fallback) {
-            using_legacy_fallback = true;
             ctx.setSessionProperty("auth.plugin_registry", "legacy_fallback");
+            ctx.setSessionProperty("auth.legacy_fallback", "true");
         } else {
             return AuthResult::failure(
                 AuthFailReason::NOT_ALLOWED,
                 "AUTH_PLUGIN_POLICY_DENIED: requested method is unavailable in plugin registry");
         }
-    } else {
-        using_legacy_fallback = true;
     }
 
-    if (!method) {
+    if (!use_plugin_runtime) {
         auto it = auth_methods_.find(auth_type);
         if (it == auth_methods_.end()) {
             return AuthResult::failure(AuthFailReason::INTERNAL_ERROR,
                                        "Authentication method not implemented");
         }
         method = it->second.get();
-    }
-    if (using_legacy_fallback) {
-        ctx.setSessionProperty("auth.legacy_fallback", "true");
-    }
-
-    std::string selected_method_id;
-    if (config_.auth_plugin_registry_enabled && auth_plugin_manager_) {
-        auth_plugin_manager_->resolveMethodIdForAuthType(auth_type, selected_method_id);
-        if (!selected_method_id.empty()) {
-            ctx.setSessionProperty("auth.selected_method_id", selected_method_id);
-        }
     }
 
     std::vector<std::string> selected_method_tokens;
@@ -1133,19 +1342,50 @@ AuthResult AuthManager::startAuthentication(AuthContext& ctx) {
             "AUTH_CLIENT_PINNING_VIOLATION: channel binding required for selected method");
     }
 
-    // Check if method is suitable for this connection
-    if (!method->isSuitable(conn)) {
-        return AuthResult::failure(AuthFailReason::NOT_ALLOWED,
-                                   "Authentication method not suitable for this connection");
-    }
+    AuthResult result;
+    if (use_plugin_runtime) {
+        PluginConnectionContextBundle plugin_conn = makePluginConnectionContext(ctx);
+        sb_auth_exchange_t exchange = 0;
+        sb_auth_step_result_v1 plugin_result{};
+        core::ErrorContext plugin_ctx;
 
-    // Initialize method with options from HBA rule
-    if (rule && !rule->auth_options.empty()) {
-        method->initialize(rule->auth_options, nullptr);
-    }
+        auto dispatch_status = auth_plugin_manager_->beginAuth(
+            selected_method_id,
+            plugin_conn.ctx,
+            ctx.getAuthDataBinary(kAuthPluginInitialPayloadKey),
+            &exchange,
+            &plugin_result,
+            &plugin_ctx);
+        if (dispatch_status != core::Status::OK) {
+            const std::string detail = plugin_ctx.message.empty()
+                ? "runtime plugin dispatch failed"
+                : plugin_ctx.message;
+            const std::string message = "AUTH_PLUGIN_LOAD_FAILED: " + detail;
+            ctx.setFailure(AuthFailReason::INTERNAL_ERROR, message);
+            result = AuthResult::failure(AuthFailReason::INTERNAL_ERROR, message);
+        } else {
+            result = mapPluginStepResult(ctx, plugin_result);
+            if (result.state == AuthState::IN_PROGRESS) {
+                ctx.setAuthData(kAuthPluginExchangeIdKey, std::to_string(exchange));
+            } else {
+                ctx.setAuthData(kAuthPluginExchangeIdKey, "");
+            }
+        }
+    } else {
+        // Check if method is suitable for this connection
+        if (!method->isSuitable(conn)) {
+            return AuthResult::failure(AuthFailReason::NOT_ALLOWED,
+                                       "Authentication method not suitable for this connection");
+        }
 
-    // Start authentication
-    AuthResult result = method->start(ctx);
+        // Initialize method with options from HBA rule
+        if (rule && !rule->auth_options.empty()) {
+            method->initialize(rule->auth_options, nullptr);
+        }
+
+        // Start authentication
+        result = method->start(ctx);
+    }
 
     if (result.state == AuthState::SUCCESS) {
         const bool no_login_direct = isTruthySetting(
@@ -1177,15 +1417,76 @@ AuthResult AuthManager::startAuthentication(AuthContext& ctx) {
 AuthResult AuthManager::continueAuthentication(AuthContext& ctx,
                                                 const std::vector<uint8_t>& data)
 {
-    if (config_.auth_plugin_registry_enabled && auth_plugin_manager_ &&
-        !config_.allow_legacy_auth_fallback) {
-        std::string method_id;
-        if (auth_plugin_manager_->resolveMethodIdForAuthType(ctx.authType(), method_id) &&
-            !auth_plugin_manager_->isMethodAvailable(method_id)) {
-            return AuthResult::failure(
-                AuthFailReason::NOT_ALLOWED,
-                "AUTH_PLUGIN_POLICY_DENIED: auth method unavailable during continuation");
+    std::string plugin_method_id = ctx.getSessionProperty("auth.plugin_method_id");
+    if (plugin_method_id.empty() && config_.auth_plugin_registry_enabled && auth_plugin_manager_) {
+        auth_plugin_manager_->resolveMethodIdForAuthType(ctx.authType(), plugin_method_id);
+    }
+
+    const bool plugin_runtime_selected =
+        config_.auth_plugin_registry_enabled &&
+        auth_plugin_manager_ &&
+        ctx.getSessionProperty("auth.plugin_registry") == "enabled" &&
+        !plugin_method_id.empty() &&
+        auth_plugin_manager_->isRuntimeMethodAvailable(plugin_method_id);
+
+    if (plugin_runtime_selected) {
+        const std::string exchange_text = ctx.getAuthData(kAuthPluginExchangeIdKey);
+        uint64_t exchange = 0;
+        if (!parseUint64Value(exchange_text, exchange)) {
+            const std::string message =
+                "AUTH_PLUGIN_PROTOCOL_ERROR: missing runtime exchange handle";
+            ctx.setFailure(AuthFailReason::PROTOCOL_ERROR, message);
+            return AuthResult::failure(AuthFailReason::PROTOCOL_ERROR, message);
         }
+
+        sb_auth_step_result_v1 plugin_result{};
+        core::ErrorContext plugin_ctx;
+        const auto dispatch_status = auth_plugin_manager_->continueAuth(
+            plugin_method_id,
+            static_cast<sb_auth_exchange_t>(exchange),
+            data,
+            &plugin_result,
+            &plugin_ctx);
+        if (dispatch_status != core::Status::OK) {
+            const std::string detail = plugin_ctx.message.empty()
+                ? "runtime continuation dispatch failed"
+                : plugin_ctx.message;
+            const std::string message = "AUTH_PLUGIN_LOAD_FAILED: " + detail;
+            ctx.setFailure(AuthFailReason::INTERNAL_ERROR, message);
+            return AuthResult::failure(AuthFailReason::INTERNAL_ERROR, message);
+        }
+
+        AuthResult result = mapPluginStepResult(ctx, plugin_result);
+        if (result.state != AuthState::IN_PROGRESS) {
+            ctx.setAuthData(kAuthPluginExchangeIdKey, "");
+        }
+
+        if (result.state == AuthState::SUCCESS) {
+            stats_.successful_authentications++;
+            const auto& conn = ctx.connectionInfo();
+            if (rate_limiter_) {
+                rate_limiter_->recordSuccess(ctx.username(), conn.client_address);
+            }
+            logAuthEvent(AuthAuditEvent::Type::AUTH_SUCCESS, ctx, result);
+        } else if (result.state == AuthState::FAILURE) {
+            stats_.failed_authentications++;
+            const auto& conn = ctx.connectionInfo();
+            if (rate_limiter_) {
+                rate_limiter_->recordFailure(ctx.username(), conn.client_address);
+            }
+            logAuthEvent(AuthAuditEvent::Type::AUTH_FAILURE, ctx, result);
+        }
+
+        return result;
+    }
+
+    if (config_.auth_plugin_registry_enabled && auth_plugin_manager_ &&
+        !config_.allow_legacy_auth_fallback &&
+        !plugin_method_id.empty() &&
+        !auth_plugin_manager_->isMethodAvailable(plugin_method_id)) {
+        return AuthResult::failure(
+            AuthFailReason::NOT_ALLOWED,
+            "AUTH_PLUGIN_POLICY_DENIED: auth method unavailable during continuation");
     }
 
     auto it = auth_methods_.find(ctx.authType());
@@ -1216,6 +1517,29 @@ AuthResult AuthManager::continueAuthentication(AuthContext& ctx,
 }
 
 void AuthManager::abortAuthentication(AuthContext& ctx) {
+    std::string plugin_method_id = ctx.getSessionProperty("auth.plugin_method_id");
+    if (plugin_method_id.empty() && config_.auth_plugin_registry_enabled && auth_plugin_manager_) {
+        auth_plugin_manager_->resolveMethodIdForAuthType(ctx.authType(), plugin_method_id);
+    }
+
+    const bool plugin_runtime_selected =
+        config_.auth_plugin_registry_enabled &&
+        auth_plugin_manager_ &&
+        ctx.getSessionProperty("auth.plugin_registry") == "enabled" &&
+        !plugin_method_id.empty() &&
+        auth_plugin_manager_->isRuntimeMethodAvailable(plugin_method_id);
+
+    if (plugin_runtime_selected) {
+        uint64_t exchange = 0;
+        if (parseUint64Value(ctx.getAuthData(kAuthPluginExchangeIdKey), exchange)) {
+            auth_plugin_manager_->abortAuth(
+                plugin_method_id,
+                static_cast<sb_auth_exchange_t>(exchange));
+        }
+        ctx.setAuthData(kAuthPluginExchangeIdKey, "");
+        return;
+    }
+
     auto it = auth_methods_.find(ctx.authType());
     if (it != auth_methods_.end()) {
         it->second->abort(ctx);

@@ -237,6 +237,7 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesAdminClusterAndServiceControlSurf
         {"BACKUP DATABASE '/tmp/scratchbird.sbk'", "admin.backup"},
         {"RESTORE DATABASE '/tmp/scratchbird.sbk'", "admin.restore"},
         {"VALIDATE DATABASE", "admin.validate"},
+        {"CHECKPOINT", "admin.checkpoint"},
         {"CREATE CLUSTER WORKLOAD CLASS wl_oltp 'MAX_CONCURRENCY=64'",
          "cluster.workload_class.create.wl_oltp"},
         {"ALTER CLUSTER WORKLOAD ROUTE rt_hot 'CLASS=wl_oltp'",
@@ -272,6 +273,12 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsRemovedVacuumAndClusterShowAlias
     }
     {
         Parser parser("CLUSTER SHOW ROUTING PLAN");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+    {
+        Parser parser("WAIT FOR LSN '0/16B6C50'");
         auto result = parser.parseStatement();
         EXPECT_FALSE(result.success());
         EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
@@ -737,6 +744,37 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidWithRecursiveSearchCycleF
     }
 }
 
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesWithSetOperatorClosureAndRejectsMinusAlias) {
+    {
+        Parser parser(
+            "WITH c AS (SELECT 1 AS n) "
+            "SELECT n FROM c "
+            "UNION ALL "
+            "SELECT n FROM c");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::SelectStmt);
+    }
+
+    {
+        Parser parser(
+            "WITH c AS (SELECT 1 AS n) "
+            "SELECT n FROM c "
+            "EXCEPT "
+            "SELECT n FROM c");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::SelectStmt);
+    }
+
+    {
+        Parser parser("SELECT 1 MINUS SELECT 1");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+}
+
 TEST(ParserV3NativeExtensionSurfaceTest, ParsesDeferrableConstraintSurfaces) {
     {
         Parser parser(
@@ -1053,7 +1091,7 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesRuntimeConsistencyAndSingleWriter
     }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesPublicationSubscriptionSurfaces) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesPublicationSubscriptionLifecycleSurfaces) {
     {
         Parser parser("CREATE PUBLICATION pub_all FOR ALL TABLES");
         auto result = parser.parseStatement();
@@ -1061,8 +1099,32 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesPublicationSubscriptionSurfaces) 
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
     }
     {
+        Parser parser("ALTER PUBLICATION pub_all ADD TABLE orders");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+    }
+    {
+        Parser parser("DROP PUBLICATION IF EXISTS pub_all");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+    }
+    {
         Parser parser(
             "CREATE SUBSCRIPTION sub_main CONNECTION 'host=127.0.0.1 dbname=main' PUBLICATION pub_all");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+    }
+    {
+        Parser parser("ALTER SUBSCRIPTION sub_main SET (enabled = false)");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+    }
+    {
+        Parser parser("DROP SUBSCRIPTION IF EXISTS sub_main");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success());
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);

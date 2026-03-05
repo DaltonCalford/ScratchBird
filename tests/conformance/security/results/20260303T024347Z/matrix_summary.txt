@@ -1,0 +1,4 @@
+SEC_LANE_SUMMARY|native|9|0|0
+SEC_LANE_SUMMARY|postgresql|0|0|9
+SEC_LANE_SUMMARY|mysql|0|0|9
+SEC_LANE_SUMMARY|firebird|0|0|9

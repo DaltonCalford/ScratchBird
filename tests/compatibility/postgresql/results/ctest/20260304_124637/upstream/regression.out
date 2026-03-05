@@ -1,0 +1,7 @@
+# using postmaster on 127.0.0.1, port 16432
+not ok 1     - object_address                           1794 ms
+not ok 2     - tablespace                               7219 ms
+1..2
+# 2 of 2 tests failed.
+# The differences that caused some tests to fail can be viewed in the file "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_124637/upstream/regression.diffs".
+# A copy of the test summary that you see above is saved in the file "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_124637/upstream/regression.out".

@@ -59,9 +59,12 @@ struct ParsedPasswordHashes {
     bool is_json = false;
     std::string bcrypt;
     std::string md5;
+    std::string firebird_legacy_enc;
     ScramRecord scram256;
     ScramRecord scram512;
 };
+
+constexpr const char* kFirebirdLegacySecretPrefix = "{fb_legacy_enc}";
 
 struct CatalogAuthContext {
     bool resolved = false;
@@ -629,6 +632,9 @@ ParsedPasswordHashes parsePasswordHashes(const std::string& password_hash) {
         if (doc.contains("md5") && doc["md5"].is_string()) {
             out.md5 = doc["md5"].get<std::string>();
         }
+        if (doc.contains("firebird_legacy_enc") && doc["firebird_legacy_enc"].is_string()) {
+            out.firebird_legacy_enc = doc["firebird_legacy_enc"].get<std::string>();
+        }
         if (doc.contains("scram") && doc["scram"].is_object()) {
             const auto& scram = doc["scram"];
             if (scram.contains("sha256")) {
@@ -1190,6 +1196,7 @@ AuthResult LocalAuthProvider::authenticate(
     // SECURITY FIX (CRITICAL-1): Always verify password hash even if user doesn't exist
     // This prevents timing attacks and user enumeration
     std::string actual_hash;
+    std::string firebird_legacy_enc;
     bool user_exists = (status == Status::OK);
     bool bootstrap_allowed = false;
     CatalogManager::BootstrapState bootstrap_state = CatalogManager::BootstrapState::UNINITIALIZED;
@@ -1203,6 +1210,7 @@ AuthResult LocalAuthProvider::authenticate(
     if (user_exists) {
         actual_hash = db_user.password_hash;
         auto parsed = parsePasswordHashes(actual_hash);
+        firebird_legacy_enc = parsed.firebird_legacy_enc;
         if (parsed.is_json && !parsed.bcrypt.empty()) {
             actual_hash = parsed.bcrypt;
         }
@@ -1399,6 +1407,14 @@ AuthResult LocalAuthProvider::authenticate(
     try {
         if (!actual_hash.empty()) {
             password_valid = PasswordHash::verifyPassword(password, actual_hash);
+        }
+        if (!password_valid &&
+            user_exists &&
+            !firebird_legacy_enc.empty() &&
+            password.rfind(kFirebirdLegacySecretPrefix, 0) == 0) {
+            const std::string provided =
+                password.substr(std::strlen(kFirebirdLegacySecretPrefix));
+            password_valid = timingSafeEqual(provided, firebird_legacy_enc);
         }
     } catch (const std::exception& e) {
         // Log detailed error internally for administrators

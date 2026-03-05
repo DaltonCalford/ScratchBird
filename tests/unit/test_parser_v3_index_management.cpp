@@ -156,6 +156,39 @@ TEST(ParserV3IndexManagementTest, ParsesAnalyzeIndexAndShowIndexReporting) {
     }
 }
 
+TEST(ParserV3IndexManagementTest, ParsesDropTablespaceSurface) {
+    Parser parser("DROP TABLESPACE IF EXISTS ts_hot FORCE");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "expected parse success";
+    ASSERT_EQ(result.statement()->kind(), ASTKind::DropTablespaceStmt);
+    auto* stmt = static_cast<DropTablespaceStmt*>(result.statement());
+    EXPECT_TRUE(stmt->if_exists);
+    EXPECT_TRUE(stmt->force);
+}
+
+TEST(ParserV3IndexManagementTest, ParsesAlterTablespaceActions) {
+    Parser parser(
+        "ALTER TABLESPACE ts_hot AUTOEXTEND ON AUTOEXTEND_SIZE 128 MAXSIZE UNLIMITED RENAME TO ts_cold");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success()) << "expected parse success";
+    ASSERT_EQ(result.statement()->kind(), ASTKind::AlterTablespaceStmt);
+    auto* stmt = static_cast<AlterTablespaceStmt*>(result.statement());
+    ASSERT_EQ(stmt->alterations.size(), 4u);
+
+    EXPECT_EQ(stmt->alterations[0].action, TablespaceAlterAction::SET_AUTOEXTEND);
+    EXPECT_TRUE(stmt->alterations[0].autoextend_enabled);
+
+    EXPECT_EQ(stmt->alterations[1].action,
+              TablespaceAlterAction::SET_AUTOEXTEND_SIZE);
+    EXPECT_EQ(stmt->alterations[1].size_mb, 128u);
+
+    EXPECT_EQ(stmt->alterations[2].action, TablespaceAlterAction::SET_MAXSIZE);
+    EXPECT_EQ(stmt->alterations[2].size_mb, 0u);
+
+    EXPECT_EQ(stmt->alterations[3].action, TablespaceAlterAction::RENAME_TO);
+    EXPECT_NE(stmt->alterations[3].new_name, StringPool::INVALID_ID);
+}
+
 TEST(ParserV3IndexManagementTest, ParsesExtendedCreateIndexTypes) {
     {
         Parser parser("CREATE INDEX idx_a ON t USING IVF_SQ8_HYBRID (c)");

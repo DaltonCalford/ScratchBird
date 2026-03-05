@@ -526,6 +526,15 @@ void Lexer::skipWhitespace() {
         char c = peek_char();
         if (isWhitespace(c)) {
             advance();
+        } else if (c == '\\') {
+            // psql meta-commands (e.g. \d, \c) are client-side directives,
+            // not SQL. Skip the entire line in compatibility parsing mode.
+            while (!isAtEnd() && peek_char() != '\n') {
+                advance();
+            }
+            if (!isAtEnd()) {
+                advance();
+            }
         } else if (c == '-' && peek_char_ahead(1) == '-') {
             skipLineComment();
         } else if (c == '/' && peek_char_ahead(1) == '*') {

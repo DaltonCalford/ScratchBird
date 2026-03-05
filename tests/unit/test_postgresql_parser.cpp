@@ -998,6 +998,18 @@ TEST_F(PostgreSQLParserTest, DropView) {
     expectSuccess("DROP VIEW active_users");
 }
 
+TEST_F(PostgreSQLParserTest, DropTablespaceSurfaceMapsFlags) {
+    Parser parser("DROP TABLESPACE IF EXISTS fast_ts FORCE");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(result.statement(), nullptr);
+    ASSERT_EQ(result.statement()->kind(), scratchbird::parser::v3::ASTKind::DropTablespaceStmt);
+    auto* stmt =
+        static_cast<scratchbird::parser::v3::DropTablespaceStmt*>(result.statement());
+    EXPECT_TRUE(stmt->if_exists);
+    EXPECT_TRUE(stmt->force);
+}
+
 TEST_F(PostgreSQLParserTest, AlterTableBasic) {
     expectSuccess("ALTER TABLE users ADD COLUMN age INT");
     expectSuccess("ALTER TABLE users DROP COLUMN age");
@@ -1096,6 +1108,85 @@ TEST_F(PostgreSQLParserTest, CheckpointClusterAndWaitStatements) {
     expectError("WAIT");
     expectError("WAIT FOR");
     expectError("WAIT FOR LSN");
+}
+
+TEST_F(PostgreSQLParserTest, CheckpointClusterAndWaitMapToCanonicalInternalRoutes) {
+    {
+        Parser parser("CHECKPOINT");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_NE(result.statement(), nullptr);
+        EXPECT_EQ(result.statement()->kind(),
+                  scratchbird::parser::v3::ASTKind::SweepDatabaseStmt);
+    }
+
+    {
+        Parser parser("CLUSTER users USING idx_users_id");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_NE(result.statement(), nullptr);
+        ASSERT_EQ(result.statement()->kind(),
+                  scratchbird::parser::v3::ASTKind::AlterSystemStmt);
+        auto* stmt =
+            static_cast<scratchbird::parser::v3::AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(result.stringPool().get(stmt->name)), "maintenance.cluster");
+    }
+
+    {
+        Parser parser("WAIT FOR LSN '0/16B6C50' WITH (TIMEOUT = '5s')");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_NE(result.statement(), nullptr);
+        ASSERT_EQ(result.statement()->kind(),
+                  scratchbird::parser::v3::ASTKind::AlterSystemStmt);
+        auto* stmt =
+            static_cast<scratchbird::parser::v3::AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(result.stringPool().get(stmt->name)), "admin.wait_for_lsn");
+        ASSERT_NE(stmt->value, nullptr);
+        ASSERT_EQ(stmt->value->kind(),
+                  scratchbird::parser::v3::ASTKind::LiteralExpr);
+        auto* lit = static_cast<scratchbird::parser::v3::LiteralExpr*>(stmt->value);
+        std::string payload = std::string(result.stringPool().get(lit->string_value));
+        EXPECT_NE(payload.find("LSN=0/16B6C50"), std::string::npos);
+    }
+}
+
+TEST_F(PostgreSQLParserTest, ExtensionPublicationAndSubscriptionLifecycleMapToCanonicalKeys) {
+    auto expectAlterSystemKey = [&](const std::string& sql, const std::string& expected_key) {
+        Parser parser(sql);
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << sql;
+        ASSERT_NE(result.statement(), nullptr);
+        ASSERT_EQ(result.statement()->kind(),
+                  scratchbird::parser::v3::ASTKind::AlterSystemStmt) << sql;
+        auto* stmt =
+            static_cast<scratchbird::parser::v3::AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(result.stringPool().get(stmt->name)), expected_key) << sql;
+    };
+
+    expectAlterSystemKey("LOAD IF NOT EXISTS EXTENSION pg_trgm",
+                         "platform.extension.load.pg_trgm");
+    expectAlterSystemKey("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA ext",
+                         "platform.extension.create.pg_trgm");
+    expectAlterSystemKey("ALTER EXTENSION pg_trgm UPDATE TO '1.1'",
+                         "platform.extension.alter.pg_trgm");
+    expectAlterSystemKey("DROP EXTENSION IF EXISTS pg_trgm CASCADE",
+                         "platform.extension.drop.pg_trgm");
+
+    expectAlterSystemKey("CREATE PUBLICATION pub_all FOR ALL TABLES",
+                         "replication.publication.create.pub_all");
+    expectAlterSystemKey("ALTER PUBLICATION pub_all ADD TABLE users",
+                         "replication.publication.alter.pub_all");
+    expectAlterSystemKey("DROP PUBLICATION IF EXISTS pub_all CASCADE",
+                         "replication.publication.drop.pub_all");
+
+    expectAlterSystemKey(
+        "CREATE SUBSCRIPTION sub_main CONNECTION 'host=127.0.0.1 dbname=main' PUBLICATION pub_all",
+        "replication.subscription.create.sub_main");
+    expectAlterSystemKey("ALTER SUBSCRIPTION sub_main SET (enabled = false)",
+                         "replication.subscription.alter.sub_main");
+    expectAlterSystemKey("DROP SUBSCRIPTION IF EXISTS sub_main RESTRICT",
+                         "replication.subscription.drop.sub_main");
 }
 
 TEST_F(PostgreSQLParserTest, CopyStatements) {
@@ -1261,4 +1352,21 @@ TEST_F(PostgreSQLParserTest, DropTableUsesUnqualifiedPathForDatabaseAliasDefault
     EXPECT_EQ(canonical_path.type, scratchbird::parser::v3::PathType::UNQUALIFIED);
     ASSERT_EQ(canonical_path.components.size(), 1u);
     EXPECT_EQ(canonical_result.stringPool().get(canonical_path.components[0]), "sb_tx_truth");
+}
+
+TEST_F(PostgreSQLParserTest, DropTableQualifiesSchemaUnderDatabaseAliasRoot) {
+    Parser parser("DROP TABLE IF EXISTS testschema.part", nullptr, "main");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_NE(result.statement(), nullptr);
+    ASSERT_EQ(result.statement()->kind(), scratchbird::parser::v3::ASTKind::DropTableStmt);
+
+    auto* stmt = static_cast<scratchbird::parser::v3::DropTableStmt*>(result.statement());
+    ASSERT_EQ(stmt->tables.size(), 1u);
+    const auto& path = stmt->tables.front();
+    EXPECT_EQ(path.type, scratchbird::parser::v3::PathType::ABSOLUTE);
+    ASSERT_EQ(path.components.size(), 3u);
+    EXPECT_EQ(result.stringPool().get(path.components[0]), "main");
+    EXPECT_EQ(result.stringPool().get(path.components[1]), "testschema");
+    EXPECT_EQ(result.stringPool().get(path.components[2]), "part");
 }

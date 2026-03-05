@@ -1,0 +1,33 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+    Start  320: CatalogDomainExtensionContractTest.DomainSecurityValidationIntegrityContracts
+1/6 Test  #320: CatalogDomainExtensionContractTest.DomainSecurityValidationIntegrityContracts ...   Passed    0.27 sec
+    Start 3693: SecurityPhase3_3_ColumnPermissions
+2/6 Test #3693: SecurityPhase3_3_ColumnPermissions ..............................................   Passed    3.55 sec
+    Start 3694: SecurityPhase3_5_RLS_DML
+3/6 Test #3694: SecurityPhase3_5_RLS_DML ........................................................   Passed    3.95 sec
+    Start 3699: DomainEncryption
+4/6 Test #3699: DomainEncryption ................................................................   Passed    0.34 sec
+    Start 3700: DomainSecurity
+5/6 Test #3700: DomainSecurity ..................................................................   Passed    1.01 sec
+    Start 3703: DomainE2EScenarios
+6/6 Test #3703: DomainE2EScenarios ..............................................................   Passed    3.54 sec
+
+100% tests passed, 0 tests failed out of 6
+
+Label Time Summary:
+audit                 =   1.01 sec*proc (1 test)
+column_permissions    =   3.55 sec*proc (1 test)
+dml                   =   3.95 sec*proc (1 test)
+domain                =   4.89 sec*proc (3 tests)
+e2e                   =   3.54 sec*proc (1 test)
+encryption            =   0.34 sec*proc (1 test)
+enforcement           =   3.95 sec*proc (1 test)
+integration           =  12.39 sec*proc (5 tests)
+masking               =   1.01 sec*proc (1 test)
+phase3                =   7.50 sec*proc (2 tests)
+rls                   =   3.95 sec*proc (1 test)
+security              =   8.86 sec*proc (4 tests)
+unit                  =   0.27 sec*proc (1 test)
+
+Total Test time (real) =  12.75 sec

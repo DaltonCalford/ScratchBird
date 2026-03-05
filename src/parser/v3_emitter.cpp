@@ -2647,10 +2647,46 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
                 path.components.push_back(s->tablespace_name);
             }
             payload["tablespace"] = toSchemaPath(path);
-            payload["options"] = Value(Value::Object{
-                {"count", Value(uint64_t(0))},
-                {"key", Value(std::string())},
-                {"value", Value(makeInstr(emitLiteral(nullptr)))}});
+
+            uint64_t option_count = s->alterations.empty() ? uint64_t(1)
+                                                           : uint64_t(s->alterations.size());
+            std::string option_key = "UNHANDLED";
+            Instruction option_value = emitLiteral(nullptr);
+            if (!s->alterations.empty()) {
+                const auto& alteration = s->alterations.front();
+                switch (alteration.action) {
+                    case parser::v3::TablespaceAlterAction::SET_AUTOEXTEND:
+                        option_key = "AUTOEXTEND";
+                        option_value =
+                            makeBoolLiteralInstruction(alteration.autoextend_enabled);
+                        break;
+                    case parser::v3::TablespaceAlterAction::SET_AUTOEXTEND_SIZE:
+                        option_key = "AUTOEXTEND_SIZE";
+                        option_value = makeInt64LiteralInstruction(
+                            static_cast<int64_t>(alteration.size_mb));
+                        break;
+                    case parser::v3::TablespaceAlterAction::SET_MAXSIZE:
+                        option_key = "MAXSIZE";
+                        option_value = makeInt64LiteralInstruction(
+                            static_cast<int64_t>(alteration.size_mb));
+                        break;
+                    case parser::v3::TablespaceAlterAction::RENAME_TO:
+                        option_key = "RENAME_TO";
+                        if (alteration.new_name != parser::v3::StringPool::INVALID_ID) {
+                            option_value = makeStringLiteralInstruction(
+                                std::string(pool_.get(alteration.new_name)));
+                        } else {
+                            option_value = emitLiteral(nullptr);
+                        }
+                        break;
+                    default:
+                        option_key = "UNHANDLED";
+                        option_value = emitLiteral(nullptr);
+                        break;
+                }
+            }
+
+            payload["options"] = makeOptionKvPlaceholder(option_count, option_key, option_value);
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -3272,11 +3308,29 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlDrop(parser::v3::Statement*
                                 s->if_exists ? 0x01 : 0x00);
             }
         case parser::v3::ASTKind::DropRoleStmt:
-            return makeDrop(Opcode::SBLR3_DROP_ROLE, static_cast<parser::v3::DropRoleStmt*>(stmt)->roles.front(), 13);
+            {
+                auto* s = static_cast<parser::v3::DropRoleStmt*>(stmt);
+                uint64_t flags = 0;
+                if (s->if_exists) flags |= 0x01;
+                if (s->cascade) flags |= 0x02;
+                return makeDrop(Opcode::SBLR3_DROP_ROLE, s->roles.front(), 13, flags);
+            }
         case parser::v3::ASTKind::DropGroupStmt:
-            return makeDrop(Opcode::SBLR3_DROP_GROUP, static_cast<parser::v3::DropGroupStmt*>(stmt)->groups.front(), 15);
+            {
+                auto* s = static_cast<parser::v3::DropGroupStmt*>(stmt);
+                uint64_t flags = 0;
+                if (s->if_exists) flags |= 0x01;
+                if (s->cascade) flags |= 0x02;
+                return makeDrop(Opcode::SBLR3_DROP_GROUP, s->groups.front(), 15, flags);
+            }
         case parser::v3::ASTKind::DropUserStmt:
-            return makeDrop(Opcode::SBLR3_DROP_USER, static_cast<parser::v3::DropUserStmt*>(stmt)->users.front(), 14);
+            {
+                auto* s = static_cast<parser::v3::DropUserStmt*>(stmt);
+                uint64_t flags = 0;
+                if (s->if_exists) flags |= 0x01;
+                if (s->cascade) flags |= 0x02;
+                return makeDrop(Opcode::SBLR3_DROP_USER, s->users.front(), 14, flags);
+            }
         case parser::v3::ASTKind::DropExceptionStmt:
             {
                 auto* s = static_cast<parser::v3::DropExceptionStmt*>(stmt);
@@ -5757,6 +5811,9 @@ Value V3Emitter::toTableRef(parser::v3::TableRefNode* node) {
     } else if (node->ref_type == parser::v3::TableRefNode::Type::SUBQUERY && node->subquery) {
         o["table_path"] = Value(Value::List{});
         o["query"] = Value(makeInstr(emitStatement(node->subquery)));
+    } else if (node->ref_type == parser::v3::TableRefNode::Type::FUNCTION && node->function) {
+        o["table_path"] = Value(Value::List{});
+        o["function"] = Value(makeInstr(emitExpression(node->function)));
     } else {
         // Subquery/function references are encoded as empty table_path with alias only (placeholder).
         o["table_path"] = Value(Value::List{});

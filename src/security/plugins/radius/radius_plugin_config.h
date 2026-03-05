@@ -20,10 +20,16 @@ enum class RadiusPluginConfigStatus : uint8_t {
     INVALID_VALUE,
 };
 
+enum class RadiusRuntimeProfile : uint8_t {
+    PRODUCTION = 0,
+    TEST = 1,
+};
+
 struct RadiusPluginConfig {
     std::vector<std::string> radius_servers;
     std::string shared_secret_ref;
     uint32_t request_timeout_ms = 2000;
+    RadiusRuntimeProfile runtime_profile = RadiusRuntimeProfile::PRODUCTION;
     std::vector<std::string> allowed_radius_endpoints;
 };
 

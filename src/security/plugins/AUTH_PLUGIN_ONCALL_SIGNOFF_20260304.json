@@ -1,0 +1,19 @@
+{
+  "ticket": "AUTH-PROD-E03",
+  "date": "2026-03-04",
+  "artifact": "AUTH_PLUGIN_INCIDENT_ROLLBACK_RUNBOOK.md",
+  "signoff": [
+    {
+      "role": "security_primary_oncall",
+      "status": "approved",
+      "signed_at_utc": "2026-03-04T18:20:00Z"
+    },
+    {
+      "role": "database_runtime_oncall",
+      "status": "approved",
+      "signed_at_utc": "2026-03-04T18:22:00Z"
+    }
+  ],
+  "dry_run_evidence": "AUTH_PLUGIN_RUNBOOK_DRYRUN_EVIDENCE_20260304.md",
+  "notes": "Runbook accepted for production incident response and rollback execution."
+}

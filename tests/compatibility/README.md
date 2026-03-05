@@ -159,9 +159,26 @@ ctest -R "CompatibilityExampleDbSetup|CompatibilityScratchBirdNative|Compatibili
 ./scripts/example_db_manager.sh static-down
 ```
 
-The bootstrap/seed SQL is at:
+The bootstrap and post-bootstrap seed SQL are at:
 
 - `tests/compatibility/scratchbird/example_sql/00_bootstrap_seed.sql`
+- `tests/compatibility/scratchbird/example_sql/01_post_bootstrap_seed.sql`
+
+Cross-engine default auth identities for harness runs are seeded into:
+
+- `compat_identity_user_map_contract` (canonical identity + per-engine login aliases/auth method/policy/profile metadata; contract fixture)
+
+When the unified example harness runs, the generated profile files also export:
+
+- `SCRATCHBIRD_EXAMPLE_COMPAT_*` variables for canonical + per-engine alias credentials.
+
+Standardized development-window credential defaults are documented in:
+
+- `docs/DEFAULT_TEST_ENGINE_CREDENTIALS.md`
+
+Current limitation:
+
+- Alias principals are represented in the contract table for deterministic test assertions; runtime auth resolution is still finalized independently.
 
 Native chain scripts (including deterministic test-data inserts) are listed in:
 

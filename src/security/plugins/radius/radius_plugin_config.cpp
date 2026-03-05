@@ -5,6 +5,7 @@
 
 #include "radius_plugin_config.h"
 
+#include <algorithm>
 #include <cctype>
 #include <sstream>
 
@@ -33,6 +34,22 @@ bool parseUInt32(const std::string& value, uint32_t& out) {
     } catch (...) {
         return false;
     }
+}
+
+bool parseRuntimeProfile(std::string value, RadiusRuntimeProfile& out) {
+    value = trimAscii(std::move(value));
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (value == "production" || value == "prod") {
+        out = RadiusRuntimeProfile::PRODUCTION;
+        return true;
+    }
+    if (value == "test") {
+        out = RadiusRuntimeProfile::TEST;
+        return true;
+    }
+    return false;
 }
 
 std::vector<std::string> splitCsv(const std::string& value) {
@@ -72,6 +89,13 @@ RadiusPluginConfigStatus loadRadiusPluginConfig(const std::map<std::string, std:
     auto timeout_it = values.find("request_timeout_ms");
     if (timeout_it != values.end() && !parseUInt32(timeout_it->second, out.request_timeout_ms)) {
         set_error("request_timeout_ms must be numeric");
+        return RadiusPluginConfigStatus::INVALID_VALUE;
+    }
+
+    auto profile_it = values.find("runtime_profile");
+    if (profile_it != values.end() &&
+        !parseRuntimeProfile(profile_it->second, out.runtime_profile)) {
+        set_error("runtime_profile must be one of: production, test");
         return RadiusPluginConfigStatus::INVALID_VALUE;
     }
 

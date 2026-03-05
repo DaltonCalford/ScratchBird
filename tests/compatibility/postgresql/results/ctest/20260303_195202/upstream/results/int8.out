@@ -1,0 +1,436 @@
+--
+-- INT8
+-- Test int8 64-bit integers.
+--
+-- int8_tbl was already created and filled in test_setup.sql.
+-- Here we just try to insert bad values.
+INSERT INTO INT8_TBL(q1) VALUES ('      ');
+ERROR:  Type mismatch for column 'q1':  is not a number (value: '      ', target: INT64) (value:       )
+INSERT INTO INT8_TBL(q1) VALUES ('xxx');
+ERROR:  Type mismatch for column 'q1': xxx is not a number (value: 'xxx', target: INT64) (value: xxx)
+INSERT INTO INT8_TBL(q1) VALUES ('3908203590239580293850293850329485');
+ERROR:  Type mismatch for column 'q1': INT64 value out of range (value: '3908203590239580293850293850329485', target: INT64) (value: 3908203590239580293850293850329485)
+INSERT INTO INT8_TBL(q1) VALUES ('-1204982019841029840928340329840934');
+ERROR:  Type mismatch for column 'q1': INT64 value out of range (value: '-1204982019841029840928340329840934', target: INT64) (value: -1204982019841029840928340329840934)
+INSERT INTO INT8_TBL(q1) VALUES ('- 123');
+ERROR:  Type mismatch for column 'q1': - 123 is not a number (value: '- 123', target: INT64) (value: - 123)
+INSERT INTO INT8_TBL(q1) VALUES ('  345     5');
+ERROR:  Type mismatch for column 'q1': 345     5 is not a number (value: '  345     5', target: INT64) (value:   345     5)
+INSERT INTO INT8_TBL(q1) VALUES ('');
+ERROR:  Type mismatch for column 'q1':  is not a number (value: '', target: INT64)
+SELECT * FROM INT8_TBL;
+        q1        |        q2         
+------------------+-------------------
+              123 |               456
+              123 |  4567890123456789
+ 4567890123456789 |               123
+ 4567890123456789 |  4567890123456789
+ 4567890123456789 | -4567890123456789
+(5 rows)
+
+-- Also try it with non-error-throwing API
+SELECT pg_input_is_valid('34', 'int8');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT pg_input_is_valid('asdf', 'int8');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT pg_input_is_valid('10000000000000000000', 'int8');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT * FROM pg_input_error_info('10000000000000000000', 'int8');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+-- int8/int8 cmp
+SELECT * FROM INT8_TBL WHERE q2 = 4567890123456789;
+        q1        |        q2        
+------------------+------------------
+              123 | 4567890123456789
+ 4567890123456789 | 4567890123456789
+(2 rows)
+
+SELECT * FROM INT8_TBL WHERE q2 <> 4567890123456789;
+ERROR:  Failed to receive response
+SELECT * FROM INT8_TBL WHERE q2 < 4567890123456789;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 > 4567890123456789;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 <= 4567890123456789;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 >= 4567890123456789;
+ERROR:  Failed to send query
+-- int8/int4 cmp
+SELECT * FROM INT8_TBL WHERE q2 = 456;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 <> 456;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 < 456;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 > 456;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 <= 456;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 >= 456;
+ERROR:  Failed to send query
+-- int4/int8 cmp
+SELECT * FROM INT8_TBL WHERE 123 = q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE 123 <> q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE 123 < q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE 123 > q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE 123 <= q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE 123 >= q1;
+ERROR:  Failed to send query
+-- int8/int2 cmp
+SELECT * FROM INT8_TBL WHERE q2 = '456'::int2;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 <> '456'::int2;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 < '456'::int2;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 > '456'::int2;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 <= '456'::int2;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE q2 >= '456'::int2;
+ERROR:  Failed to send query
+-- int2/int8 cmp
+SELECT * FROM INT8_TBL WHERE '123'::int2 = q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE '123'::int2 <> q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE '123'::int2 < q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE '123'::int2 > q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE '123'::int2 <= q1;
+ERROR:  Failed to send query
+SELECT * FROM INT8_TBL WHERE '123'::int2 >= q1;
+ERROR:  Failed to send query
+SELECT q1 AS plus, -q1 AS minus FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT q1, q2, q1 + q2 AS plus FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT q1, q2, q1 - q2 AS minus FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT q1, q2, q1 * q2 AS multiply FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT q1, q2, q1 * q2 AS multiply FROM INT8_TBL
+ WHERE q1 < 1000 or (q2 > 0 and q2 < 1000);
+ERROR:  Failed to send query
+SELECT q1, q2, q1 / q2 AS divide, q1 % q2 AS mod FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT q1, float8(q1) FROM INT8_TBL;
+ERROR:  Parse error at line 1, column 12: Expected expression
+SELECT q2, float8(q2) FROM INT8_TBL;
+ERROR:  Parse error at line 1, column 12: Expected expression
+SELECT 37 + q1 AS plus4 FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT 37 - q1 AS minus4 FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT 2 * q1 AS "twice int4" FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT q1 * 2 AS "twice int4" FROM INT8_TBL;
+ERROR:  Failed to send query
+-- int8 op int4
+SELECT q1 + 42::int4 AS "8plus4", q1 - 42::int4 AS "8minus4", q1 * 42::int4 AS "8mul4", q1 / 42::int4 AS "8div4" FROM INT8_TBL;
+ERROR:  Failed to send query
+-- int4 op int8
+SELECT 246::int4 + q1 AS "4plus8", 246::int4 - q1 AS "4minus8", 246::int4 * q1 AS "4mul8", 246::int4 / q1 AS "4div8" FROM INT8_TBL;
+ERROR:  Failed to send query
+-- int8 op int2
+SELECT q1 + 42::int2 AS "8plus2", q1 - 42::int2 AS "8minus2", q1 * 42::int2 AS "8mul2", q1 / 42::int2 AS "8div2" FROM INT8_TBL;
+ERROR:  Failed to send query
+-- int2 op int8
+SELECT 246::int2 + q1 AS "2plus8", 246::int2 - q1 AS "2minus8", 246::int2 * q1 AS "2mul8", 246::int2 / q1 AS "2div8" FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT q2, abs(q2) FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT min(q1), min(q2) FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT max(q1), max(q2) FROM INT8_TBL;
+ERROR:  Failed to send query
+-- TO_CHAR()
+--
+SELECT to_char(q1, '9G999G999G999G999G999'), to_char(q2, '9,999,999,999,999,999')
+	FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q1, '9G999G999G999G999G999D999G999'), to_char(q2, '9,999,999,999,999,999.999,999')
+	FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char( (q1 * -1), '9999999999999999PR'), to_char( (q2 * -1), '9999999999999999.999PR')
+	FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char( (q1 * -1), '9999999999999999S'), to_char( (q2 * -1), 'S9999999999999999')
+	FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'MI9999999999999999')     FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, '9999999999999999PL')     FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'FMS9999999999999999')    FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'FM9999999999999999THPR') FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'SG9999999999999999th')   FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, '0999999999999999')       FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'S0999999999999999')      FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'FM0999999999999999')     FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'FM9999999999999999.000') FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'L9999999999999999.000')  FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'FM9999999999999999.999') FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'S 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9') FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, E'99999 "text" 9999 "9999" 999 "\\"text between quote marks\\"" 9999') FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, '999999SG9999999999')     FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(q2, 'FMRN')                   FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT to_char(1234, '9.99EEEE');
+ERROR:  Failed to send query
+SELECT to_char(1234::int8, '9.99eeee');
+ERROR:  Failed to send query
+SELECT to_char(-1234::int8, '9.99eeee');
+ERROR:  Failed to send query
+SELECT to_char(1234, '99999V99');
+ERROR:  Failed to send query
+SELECT to_char(1234::int8, '99999V99');
+ERROR:  Failed to send query
+-- check min/max values and overflow behavior
+select '-9223372036854775808'::int8;
+ERROR:  Failed to send query
+select '-9223372036854775809'::int8;
+ERROR:  Failed to send query
+select '9223372036854775807'::int8;
+ERROR:  Failed to send query
+select '9223372036854775808'::int8;
+ERROR:  Failed to send query
+select -('-9223372036854775807'::int8);
+ERROR:  Failed to send query
+select -('-9223372036854775808'::int8);
+ERROR:  Failed to send query
+select 0::int8 - '-9223372036854775808'::int8;
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 + '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '-9223372036854775800'::int8 + '-9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 - '-9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '-9223372036854775800'::int8 - '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 * '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 / '0'::int8;
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 % '0'::int8;
+ERROR:  Failed to send query
+select abs('-9223372036854775808'::int8);
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 + '100'::int4;
+ERROR:  Failed to send query
+select '-9223372036854775800'::int8 - '100'::int4;
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 * '100'::int4;
+ERROR:  Failed to send query
+select '100'::int4 + '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '-100'::int4 - '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '100'::int4 * '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 + '100'::int2;
+ERROR:  Failed to send query
+select '-9223372036854775800'::int8 - '100'::int2;
+ERROR:  Failed to send query
+select '9223372036854775800'::int8 * '100'::int2;
+ERROR:  Failed to send query
+select '-9223372036854775808'::int8 / '0'::int2;
+ERROR:  Failed to send query
+select '100'::int2 + '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '-100'::int2 - '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '100'::int2 * '9223372036854775800'::int8;
+ERROR:  Failed to send query
+select '100'::int2 / '0'::int8;
+ERROR:  Failed to send query
+SELECT CAST(q1 AS int4) FROM int8_tbl WHERE q2 = 456;
+ERROR:  Failed to send query
+SELECT CAST(q1 AS int4) FROM int8_tbl WHERE q2 <> 456;
+ERROR:  Failed to send query
+SELECT CAST(q1 AS int2) FROM int8_tbl WHERE q2 = 456;
+ERROR:  Failed to send query
+SELECT CAST(q1 AS int2) FROM int8_tbl WHERE q2 <> 456;
+ERROR:  Failed to send query
+SELECT CAST('42'::int2 AS int8), CAST('-37'::int2 AS int8);
+ERROR:  Failed to send query
+SELECT CAST(q1 AS float4), CAST(q2 AS float8) FROM INT8_TBL;
+ERROR:  Failed to send query
+SELECT CAST('36854775807.0'::float4 AS int8);
+ERROR:  Failed to send query
+SELECT CAST('922337203685477580700.0'::float8 AS int8);
+ERROR:  Failed to send query
+SELECT CAST(q1 AS oid) FROM INT8_TBL;
+ERROR:  Parse error at line 1, column 19: Expected identifier
+SELECT oid::int8 FROM pg_class WHERE relname = 'pg_class';
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- bit operations
+SELECT q1, q2, q1 & q2 AS "and", q1 | q2 AS "or", q1 # q2 AS "xor", ~q1 AS "not" FROM INT8_TBL;
+ERROR:  Parse error at line 1, column 54: Unexpected token after statement
+SELECT q1, q1 << 2 AS "shl", q1 >> 3 AS "shr" FROM INT8_TBL;
+ERROR:  Parse error at line 1, column 15: Unexpected token after statement
+-- generate_series
+SELECT * FROM generate_series('+4567890123456789'::int8, '+4567890123456799'::int8);
+ERROR:  Parse error at line 1, column 30: Unexpected token after statement
+SELECT * FROM generate_series('+4567890123456789'::int8, '+4567890123456799'::int8, 0);
+ERROR:  Parse error at line 1, column 30: Unexpected token after statement
+SELECT * FROM generate_series('+4567890123456789'::int8, '+4567890123456799'::int8, 2);
+ERROR:  Parse error at line 1, column 30: Unexpected token after statement
+-- corner case
+SELECT (-1::int8<<63)::text;
+ERROR:  Parse error at line 1, column 17: Expected )
+SELECT ((-1::int8<<63)+1)::text;
+ERROR:  Parse error at line 1, column 18: Expected )
+-- check sane handling of INT64_MIN overflow cases
+SELECT (-9223372036854775808)::int8 * (-1)::int8;
+ERROR:  Parse error at line 1, column 9: stoll
+SELECT (-9223372036854775808)::int8 / (-1)::int8;
+ERROR:  Parse error at line 1, column 9: stoll
+SELECT (-9223372036854775808)::int8 % (-1)::int8;
+ERROR:  Parse error at line 1, column 9: stoll
+SELECT (-9223372036854775808)::int8 * (-1)::int4;
+ERROR:  Parse error at line 1, column 9: stoll
+SELECT (-9223372036854775808)::int8 / (-1)::int4;
+ERROR:  Parse error at line 1, column 9: stoll
+SELECT (-9223372036854775808)::int8 % (-1)::int4;
+ERROR:  Parse error at line 1, column 9: stoll
+SELECT (-9223372036854775808)::int8 * (-1)::int2;
+ERROR:  Parse error at line 1, column 9: stoll
+SELECT (-9223372036854775808)::int8 / (-1)::int2;
+ERROR:  Parse error at line 1, column 9: stoll
+SELECT (-9223372036854775808)::int8 % (-1)::int2;
+ERROR:  Parse error at line 1, column 9: stoll
+-- check rounding when casting from float
+SELECT x, x::int8 AS int8_value
+FROM (VALUES (-2.5::float8),
+             (-1.5::float8),
+             (-0.5::float8),
+             (0.0::float8),
+             (0.5::float8),
+             (1.5::float8),
+             (2.5::float8)) t(x);
+ERROR:  Parse error at line 2, column 7: Expected SELECT in subquery table reference
+-- check rounding when casting from numeric
+SELECT x, x::int8 AS int8_value
+FROM (VALUES (-2.5::numeric),
+             (-1.5::numeric),
+             (-0.5::numeric),
+             (0.0::numeric),
+             (0.5::numeric),
+             (1.5::numeric),
+             (2.5::numeric)) t(x);
+ERROR:  Parse error at line 2, column 7: Expected SELECT in subquery table reference
+-- test gcd()
+SELECT a, b, gcd(a, b), gcd(a, -b), gcd(b, a), gcd(-b, a)
+FROM (VALUES (0::int8, 0::int8),
+             (0::int8, 29893644334::int8),
+             (288484263558::int8, 29893644334::int8),
+             (-288484263558::int8, 29893644334::int8),
+             ((-9223372036854775808)::int8, 1::int8),
+             ((-9223372036854775808)::int8, 9223372036854775807::int8),
+             ((-9223372036854775808)::int8, 4611686018427387904::int8)) AS v(a, b);
+ERROR:  Parse error at line 2, column 7: Expected SELECT in subquery table reference
+SELECT gcd((-9223372036854775808)::int8, 0::int8); -- overflow
+ERROR:  Parse error at line 1, column 13: stoll
+SELECT gcd((-9223372036854775808)::int8, (-9223372036854775808)::int8); -- overflow
+ERROR:  Parse error at line 1, column 13: stoll
+-- test lcm()
+SELECT a, b, lcm(a, b), lcm(a, -b), lcm(b, a), lcm(-b, a)
+FROM (VALUES (0::int8, 0::int8),
+             (0::int8, 29893644334::int8),
+             (29893644334::int8, 29893644334::int8),
+             (288484263558::int8, 29893644334::int8),
+             (-288484263558::int8, 29893644334::int8),
+             ((-9223372036854775808)::int8, 0::int8)) AS v(a, b);
+ERROR:  Parse error at line 2, column 7: Expected SELECT in subquery table reference
+SELECT lcm((-9223372036854775808)::int8, 1::int8); -- overflow
+ERROR:  Parse error at line 1, column 13: stoll
+SELECT lcm(9223372036854775807::int8, 9223372036854775806::int8); -- overflow
+ERROR:  Failed to send query
+-- non-decimal literals
+SELECT int8 '0b100101';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0o273';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0x42F';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0b';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0o';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0x';
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- cases near overflow
+SELECT int8 '0b111111111111111111111111111111111111111111111111111111111111111';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0b1000000000000000000000000000000000000000000000000000000000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0o777777777777777777777';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0o1000000000000000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0x7FFFFFFFFFFFFFFF';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0x8000000000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '-0b1000000000000000000000000000000000000000000000000000000000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '-0b1000000000000000000000000000000000000000000000000000000000000001';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '-0o1000000000000000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '-0o1000000000000000000001';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '-0x8000000000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '-0x8000000000000001';
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- underscores
+SELECT int8 '1_000_000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '1_2_3';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0x1EEE_FFFF';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0o2_73';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '0b_10_0101';
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- error cases
+SELECT int8 '_100';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '100_';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int8 '100__000';
+ERROR:  Parse error at line 1, column 8: Expected expression

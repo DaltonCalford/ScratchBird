@@ -241,6 +241,11 @@ private:
     core::Status sendResultSet(const sblr::ResultSet* results, core::ErrorContext* ctx);
 
     /**
+     * Flush pending connection notices over the native wire channel.
+     */
+    core::Status sendPendingNotices(core::ErrorContext* ctx);
+
+    /**
      * Send an error response
      */
     core::Status sendError(const std::string& message,

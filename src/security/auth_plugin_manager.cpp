@@ -14,6 +14,7 @@
 #include <array>
 #include <cctype>
 #include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -325,6 +326,24 @@ void closeSharedModule(void* handle) {
 }
 #endif
 
+const char* sharedLibraryExtension() {
+#if defined(_WIN32)
+    return ".dll";
+#elif defined(__APPLE__)
+    return ".dylib";
+#else
+    return ".so";
+#endif
+}
+
+std::string builtinModuleLeafName(const std::string& plugin_id) {
+    const std::size_t dot = plugin_id.find_last_of('.');
+    if (dot == std::string::npos || dot + 1 >= plugin_id.size()) {
+        return plugin_id;
+    }
+    return plugin_id.substr(dot + 1);
+}
+
 uint64_t hostNowUnixMs() {
     const auto now = std::chrono::system_clock::now();
     return static_cast<uint64_t>(
@@ -500,6 +519,140 @@ bool AuthPluginManager::hasPlugin(const std::string& plugin_id) const {
 
 bool AuthPluginManager::isMethodAvailable(const std::string& method_id) const {
     return method_to_plugin_.find(method_id) != method_to_plugin_.end();
+}
+
+bool AuthPluginManager::isRuntimeMethodAvailable(const std::string& method_id) const {
+    std::lock_guard<std::mutex> lock(runtime_mutex_);
+    return runtime_method_index_.find(method_id) != runtime_method_index_.end();
+}
+
+core::Status AuthPluginManager::beginAuth(const std::string& method_id,
+                                          const sb_auth_connection_ctx_v1& conn_ctx,
+                                          const std::vector<uint8_t>& client_payload,
+                                          sb_auth_exchange_t* inout_exchange,
+                                          sb_auth_step_result_v1* out_result,
+                                          core::ErrorContext* ctx) {
+    if (inout_exchange == nullptr || out_result == nullptr) {
+        if (ctx) {
+            ctx->message = "Auth plugin beginAuth requires exchange/result buffers";
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    std::lock_guard<std::mutex> lock(runtime_mutex_);
+    const auto runtime_it = runtime_method_index_.find(method_id);
+    if (runtime_it == runtime_method_index_.end()) {
+        if (ctx) {
+            ctx->message = "Auth plugin runtime method unavailable: " + method_id;
+        }
+        return core::Status::NOT_FOUND;
+    }
+    if (runtime_it->second >= runtime_plugins_.size()) {
+        if (ctx) {
+            ctx->message = "Auth plugin runtime index out of range";
+        }
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    RuntimePlugin& runtime = runtime_plugins_[runtime_it->second];
+    if (!runtime.api || !runtime.api->begin_auth || runtime.instance == 0) {
+        if (ctx) {
+            ctx->message = "Auth plugin runtime begin_auth unavailable";
+        }
+        return core::Status::NOT_SUPPORTED;
+    }
+
+    std::memset(out_result, 0, sizeof(*out_result));
+    out_result->struct_size = sizeof(*out_result);
+    out_result->principal.struct_size = sizeof(out_result->principal);
+
+    sb_auth_slice_t method_slice{
+        reinterpret_cast<const uint8_t*>(method_id.data()),
+        static_cast<uint32_t>(method_id.size())
+    };
+    sb_auth_slice_t payload_slice{
+        client_payload.empty() ? nullptr : client_payload.data(),
+        static_cast<uint32_t>(client_payload.size())
+    };
+
+    sb_auth_exchange_t exchange = *inout_exchange;
+    const sb_auth_rc_t rc = runtime.api->begin_auth(runtime.instance,
+                                                    method_slice,
+                                                    &conn_ctx,
+                                                    payload_slice,
+                                                    &exchange,
+                                                    out_result);
+    out_result->rc = rc;
+    *inout_exchange = exchange;
+    return core::Status::OK;
+}
+
+core::Status AuthPluginManager::continueAuth(const std::string& method_id,
+                                             sb_auth_exchange_t exchange,
+                                             const std::vector<uint8_t>& client_payload,
+                                             sb_auth_step_result_v1* out_result,
+                                             core::ErrorContext* ctx) {
+    if (out_result == nullptr) {
+        if (ctx) {
+            ctx->message = "Auth plugin continueAuth requires result buffer";
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    std::lock_guard<std::mutex> lock(runtime_mutex_);
+    const auto runtime_it = runtime_method_index_.find(method_id);
+    if (runtime_it == runtime_method_index_.end()) {
+        if (ctx) {
+            ctx->message = "Auth plugin runtime method unavailable: " + method_id;
+        }
+        return core::Status::NOT_FOUND;
+    }
+    if (runtime_it->second >= runtime_plugins_.size()) {
+        if (ctx) {
+            ctx->message = "Auth plugin runtime index out of range";
+        }
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    RuntimePlugin& runtime = runtime_plugins_[runtime_it->second];
+    if (!runtime.api || !runtime.api->continue_auth || runtime.instance == 0) {
+        if (ctx) {
+            ctx->message = "Auth plugin runtime continue_auth unavailable";
+        }
+        return core::Status::NOT_SUPPORTED;
+    }
+
+    std::memset(out_result, 0, sizeof(*out_result));
+    out_result->struct_size = sizeof(*out_result);
+    out_result->principal.struct_size = sizeof(out_result->principal);
+
+    sb_auth_slice_t payload_slice{
+        client_payload.empty() ? nullptr : client_payload.data(),
+        static_cast<uint32_t>(client_payload.size())
+    };
+
+    const sb_auth_rc_t rc = runtime.api->continue_auth(runtime.instance,
+                                                       exchange,
+                                                       payload_slice,
+                                                       out_result);
+    out_result->rc = rc;
+    return core::Status::OK;
+}
+
+void AuthPluginManager::abortAuth(const std::string& method_id, sb_auth_exchange_t exchange) {
+    std::lock_guard<std::mutex> lock(runtime_mutex_);
+    const auto runtime_it = runtime_method_index_.find(method_id);
+    if (runtime_it == runtime_method_index_.end()) {
+        return;
+    }
+    if (runtime_it->second >= runtime_plugins_.size()) {
+        return;
+    }
+    RuntimePlugin& runtime = runtime_plugins_[runtime_it->second];
+    if (!runtime.api || !runtime.api->abort_auth || runtime.instance == 0) {
+        return;
+    }
+    runtime.api->abort_auth(runtime.instance, exchange);
 }
 
 bool AuthPluginManager::resolveMethodIdForAuthType(AuthType auth_type,
@@ -682,6 +835,10 @@ core::Status AuthPluginManager::loadPolicy(core::ErrorContext* ctx) {
 
 core::Status AuthPluginManager::admitPlugins(core::ErrorContext* ctx) {
     closeRuntimePlugins();
+    {
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        runtime_method_index_.clear();
+    }
     loaded_plugins_.clear();
     admission_issues_.clear();
     method_to_plugin_.clear();
@@ -728,6 +885,127 @@ core::Status AuthPluginManager::admitPlugins(core::ErrorContext* ctx) {
 }
 
 void AuthPluginManager::registerBuiltinPhase1Plugins() {
+    auto register_runtime_methods = [&](const std::vector<AuthPluginMethodInfo>& methods,
+                                        std::size_t runtime_index) {
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        for (const auto& method : methods) {
+            runtime_method_index_[method.method_id] = runtime_index;
+        }
+    };
+
+    auto try_attach_builtin_runtime = [&](const AuthPluginInfo& info) {
+        if (config_.plugin_root.empty()) {
+            return;
+        }
+
+        const std::string leaf = builtinModuleLeafName(info.plugin_id);
+        const std::filesystem::path module_path =
+            std::filesystem::path(config_.plugin_root) /
+            info.plugin_id /
+            ("libscratchbird_auth_" + leaf + sharedLibraryExtension());
+        if (!std::filesystem::exists(module_path)) {
+            return;
+        }
+
+        void* module_handle = openSharedModule(module_path);
+        if (!module_handle) {
+            recordAdmissionIssue(
+                info.plugin_id,
+                AuthPluginRejectReason::AUTH_PLUGIN_LOAD_FAILED,
+                "Failed to load built-in auth plugin module");
+            return;
+        }
+
+        auto get_api = reinterpret_cast<sb_auth_plugin_get_api_v1_fn>(
+            resolveSharedSymbol(module_handle, kPluginSymbolGetApi));
+        if (!get_api) {
+            closeSharedModule(module_handle);
+            recordAdmissionIssue(
+                info.plugin_id,
+                AuthPluginRejectReason::AUTH_PLUGIN_LOAD_FAILED,
+                "Built-in plugin missing symbol sb_auth_plugin_get_api_v1");
+            return;
+        }
+
+        const sb_auth_plugin_descriptor_v1* descriptor = nullptr;
+        const sb_auth_plugin_api_v1* api = nullptr;
+        const sb_auth_rc_t rc = get_api(
+            SB_AUTH_ABI_MAJOR,
+            &host_api_,
+            &descriptor,
+            &api);
+        if (rc != SB_AUTH_RC_OK || descriptor == nullptr || api == nullptr) {
+            closeSharedModule(module_handle);
+            recordAdmissionIssue(
+                info.plugin_id,
+                AuthPluginRejectReason::AUTH_PLUGIN_ABI_INCOMPATIBLE,
+                "Built-in plugin ABI handshake rejected");
+            return;
+        }
+        if (descriptor->abi_major != SB_AUTH_ABI_MAJOR ||
+            descriptor->abi_minor > SB_AUTH_ABI_MINOR) {
+            closeSharedModule(module_handle);
+            recordAdmissionIssue(
+                info.plugin_id,
+                AuthPluginRejectReason::AUTH_PLUGIN_ABI_INCOMPATIBLE,
+                "Built-in plugin ABI version mismatch");
+            return;
+        }
+        if (std::string(descriptor->plugin_id) != info.plugin_id) {
+            closeSharedModule(module_handle);
+            recordAdmissionIssue(
+                info.plugin_id,
+                AuthPluginRejectReason::AUTH_PLUGIN_ID_UNKNOWN,
+                "Built-in plugin descriptor id mismatch");
+            return;
+        }
+
+        RuntimePlugin runtime_plugin;
+        runtime_plugin.info = info;
+        runtime_plugin.module_path = module_path.string();
+        runtime_plugin.descriptor = descriptor;
+        runtime_plugin.api = api;
+        runtime_plugin.module_handle = module_handle;
+
+        if (runtime_plugin.api->create_instance) {
+            sb_auth_plugin_instance_t instance = 0;
+            const sb_auth_rc_t create_rc =
+                runtime_plugin.api->create_instance(&instance);
+            if (create_rc != SB_AUTH_RC_OK || instance == 0) {
+                closeSharedModule(module_handle);
+                recordAdmissionIssue(
+                    info.plugin_id,
+                    AuthPluginRejectReason::AUTH_PLUGIN_LOAD_FAILED,
+                    "Built-in plugin create_instance failed");
+                return;
+            }
+            runtime_plugin.instance = instance;
+        }
+
+        if (runtime_plugin.api->configure_instance) {
+            const sb_auth_slice_t empty_config{nullptr, 0};
+            const sb_auth_rc_t configure_rc =
+                runtime_plugin.api->configure_instance(runtime_plugin.instance, empty_config);
+            if (configure_rc != SB_AUTH_RC_OK &&
+                configure_rc != SB_AUTH_RC_UNSUPPORTED) {
+                if (runtime_plugin.api->destroy_instance && runtime_plugin.instance != 0) {
+                    runtime_plugin.api->destroy_instance(runtime_plugin.instance);
+                    runtime_plugin.instance = 0;
+                }
+                closeSharedModule(module_handle);
+                recordAdmissionIssue(
+                    info.plugin_id,
+                    AuthPluginRejectReason::AUTH_PLUGIN_LOAD_FAILED,
+                    "Built-in plugin configure_instance failed");
+                return;
+            }
+        }
+
+        const std::size_t runtime_index = runtime_plugins_.size();
+        runtime_plugins_.push_back(std::move(runtime_plugin));
+        register_runtime_methods(info.methods, runtime_index);
+    };
+
     for (const auto& builtin : kBuiltinPhase1Plugins) {
         auto policy_it = allowed_plugins_.find(builtin.plugin_id);
         if (policy_it == allowed_plugins_.end()) {
@@ -771,6 +1049,7 @@ void AuthPluginManager::registerBuiltinPhase1Plugins() {
         for (const auto& method : info.methods) {
             method_to_plugin_[method.method_id] = info.plugin_id;
         }
+        try_attach_builtin_runtime(info);
     }
 }
 
@@ -994,6 +1273,14 @@ core::Status AuthPluginManager::admitExternalPlugin(const std::string& plugin_id
             "Plugin ABI version mismatch");
         return core::Status::NOT_SUPPORTED;
     }
+    if (std::string(descriptor->plugin_id) != plugin_id) {
+        closeSharedModule(module_handle);
+        recordAdmissionIssue(
+            plugin_id,
+            AuthPluginRejectReason::AUTH_PLUGIN_ID_UNKNOWN,
+            "Plugin descriptor id mismatch");
+        return core::Status::INVALID_ARGUMENT;
+    }
 
     AuthPluginInfo info;
     info.plugin_id = plugin_id;
@@ -1013,7 +1300,49 @@ core::Status AuthPluginManager::admitExternalPlugin(const std::string& plugin_id
     runtime_plugin.descriptor = descriptor;
     runtime_plugin.api = api;
     runtime_plugin.module_handle = module_handle;
+
+    if (runtime_plugin.api->create_instance) {
+        sb_auth_plugin_instance_t instance = 0;
+        const sb_auth_rc_t create_rc =
+            runtime_plugin.api->create_instance(&instance);
+        if (create_rc != SB_AUTH_RC_OK || instance == 0) {
+            closeSharedModule(module_handle);
+            recordAdmissionIssue(
+                plugin_id,
+                AuthPluginRejectReason::AUTH_PLUGIN_LOAD_FAILED,
+                "Plugin create_instance failed");
+            return core::Status::NOT_FOUND;
+        }
+        runtime_plugin.instance = instance;
+    }
+
+    if (runtime_plugin.api->configure_instance) {
+        const sb_auth_slice_t empty_config{nullptr, 0};
+        const sb_auth_rc_t configure_rc =
+            runtime_plugin.api->configure_instance(runtime_plugin.instance, empty_config);
+        if (configure_rc != SB_AUTH_RC_OK &&
+            configure_rc != SB_AUTH_RC_UNSUPPORTED) {
+            if (runtime_plugin.api->destroy_instance && runtime_plugin.instance != 0) {
+                runtime_plugin.api->destroy_instance(runtime_plugin.instance);
+                runtime_plugin.instance = 0;
+            }
+            closeSharedModule(module_handle);
+            recordAdmissionIssue(
+                plugin_id,
+                AuthPluginRejectReason::AUTH_PLUGIN_LOAD_FAILED,
+                "Plugin configure_instance failed");
+            return core::Status::NOT_FOUND;
+        }
+    }
+
+    const std::size_t runtime_index = runtime_plugins_.size();
     runtime_plugins_.push_back(std::move(runtime_plugin));
+    {
+        std::lock_guard<std::mutex> lock(runtime_mutex_);
+        for (const auto& method : info.methods) {
+            runtime_method_index_[method.method_id] = runtime_index;
+        }
+    }
 
     plugin_index_[info.plugin_id] = loaded_plugins_.size();
     loaded_plugins_.push_back(info);
@@ -1105,11 +1434,13 @@ void AuthPluginManager::resetState() {
     missing_required_plugins_.clear();
     allowed_plugins_.clear();
     method_to_plugin_.clear();
+    runtime_method_index_.clear();
     plugin_index_.clear();
     trusted_signer_kids_.clear();
 }
 
 void AuthPluginManager::closeRuntimePlugins() {
+    std::lock_guard<std::mutex> lock(runtime_mutex_);
     for (auto& runtime : runtime_plugins_) {
         if (runtime.api && runtime.instance != 0 && runtime.api->destroy_instance) {
             runtime.api->destroy_instance(runtime.instance);
@@ -1121,6 +1452,7 @@ void AuthPluginManager::closeRuntimePlugins() {
         }
     }
     runtime_plugins_.clear();
+    runtime_method_index_.clear();
 }
 
 }  // namespace security

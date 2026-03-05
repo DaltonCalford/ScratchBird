@@ -1,0 +1,1452 @@
+diff -U3 /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/expected/drop_if_exists.out /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_162758/upstream/results/drop_if_exists.out
+--- /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/expected/drop_if_exists.out	2026-02-03 15:30:02.124410483 -0500
++++ /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_162758/upstream/results/drop_if_exists.out	2026-03-04 16:28:01.916236248 -0500
+@@ -3,64 +3,57 @@
+ --
+ -- table (will be really dropped at the end)
+ DROP TABLE test_exists;
+-ERROR:  table "test_exists" does not exist
++ERROR:  DROP TABLE resolve failed for test_exists: Object not found
+ DROP TABLE IF EXISTS test_exists;
+-NOTICE:  table "test_exists" does not exist, skipping
+ CREATE TABLE test_exists (a int, b text);
+ -- view
+ DROP VIEW test_view_exists;
+-ERROR:  view "test_view_exists" does not exist
++ERROR:  Object not found
+ DROP VIEW IF EXISTS test_view_exists;
+-NOTICE:  view "test_view_exists" does not exist, skipping
+ CREATE VIEW test_view_exists AS select * from test_exists;
+ DROP VIEW IF EXISTS test_view_exists;
+ DROP VIEW test_view_exists;
+-ERROR:  view "test_view_exists" does not exist
++ERROR:  Object not found
+ -- index
+ DROP INDEX test_index_exists;
+-ERROR:  index "test_index_exists" does not exist
++ERROR:  Table-scoped object requires table and name
+ DROP INDEX IF EXISTS test_index_exists;
+-NOTICE:  index "test_index_exists" does not exist, skipping
+ CREATE INDEX test_index_exists on test_exists(a);
+ DROP INDEX IF EXISTS test_index_exists;
+ DROP INDEX test_index_exists;
+-ERROR:  index "test_index_exists" does not exist
++ERROR:  Table-scoped object requires table and name
+ -- sequence
+ DROP SEQUENCE test_sequence_exists;
+ ERROR:  sequence "test_sequence_exists" does not exist
+ DROP SEQUENCE IF EXISTS test_sequence_exists;
+-NOTICE:  sequence "test_sequence_exists" does not exist, skipping
+ CREATE SEQUENCE test_sequence_exists;
+ DROP SEQUENCE IF EXISTS test_sequence_exists;
+ DROP SEQUENCE test_sequence_exists;
+ ERROR:  sequence "test_sequence_exists" does not exist
+ -- schema
+ DROP SCHEMA test_schema_exists;
+-ERROR:  schema "test_schema_exists" does not exist
++ERROR:  Schema not found: Schema path not found
+ DROP SCHEMA IF EXISTS test_schema_exists;
+-NOTICE:  schema "test_schema_exists" does not exist, skipping
+ CREATE SCHEMA test_schema_exists;
+ DROP SCHEMA IF EXISTS test_schema_exists;
+ DROP SCHEMA test_schema_exists;
+-ERROR:  schema "test_schema_exists" does not exist
++ERROR:  Schema not found: Object not found
+ -- type
+ DROP TYPE test_type_exists;
+-ERROR:  type "test_type_exists" does not exist
++ERROR:  Domain not found: Domain not found
+ DROP TYPE IF EXISTS test_type_exists;
+-NOTICE:  type "test_type_exists" does not exist, skipping
+ CREATE type test_type_exists as (a int, b text);
+ DROP TYPE IF EXISTS test_type_exists;
+ DROP TYPE test_type_exists;
+-ERROR:  type "test_type_exists" does not exist
++ERROR:  Domain not found: Domain not found
+ -- domain
+ DROP DOMAIN test_domain_exists;
+-ERROR:  type "test_domain_exists" does not exist
++ERROR:  Domain not found: Domain not found
+ DROP DOMAIN IF EXISTS test_domain_exists;
+-NOTICE:  type "test_domain_exists" does not exist, skipping
+ CREATE domain test_domain_exists as int not null check (value > 0);
+ DROP DOMAIN IF EXISTS test_domain_exists;
+ DROP DOMAIN test_domain_exists;
+-ERROR:  type "test_domain_exists" does not exist
++ERROR:  Domain not found: Domain not found
+ ---
+ --- role/user/group
+ ---
+@@ -70,42 +63,32 @@
+ DROP USER regress_test_u2;
+ ERROR:  role "regress_test_u2" does not exist
+ DROP USER IF EXISTS regress_test_u1, regress_test_u2;
+-NOTICE:  role "regress_test_u2" does not exist, skipping
+ DROP USER regress_test_u1;
+ ERROR:  role "regress_test_u1" does not exist
+ DROP ROLE regress_test_r2;
+ ERROR:  role "regress_test_r2" does not exist
+ DROP ROLE IF EXISTS regress_test_r1, regress_test_r2;
+-NOTICE:  role "regress_test_r2" does not exist, skipping
+ DROP ROLE regress_test_r1;
+ ERROR:  role "regress_test_r1" does not exist
+ DROP GROUP regress_test_g2;
+ ERROR:  role "regress_test_g2" does not exist
+ DROP GROUP IF EXISTS regress_test_g1, regress_test_g2;
+-NOTICE:  role "regress_test_g2" does not exist, skipping
+ DROP GROUP regress_test_g1;
+ ERROR:  role "regress_test_g1" does not exist
+ -- collation
+ DROP COLLATION IF EXISTS test_collation_exists;
+-NOTICE:  collation "test_collation_exists" does not exist, skipping
+ -- conversion
+ DROP CONVERSION test_conversion_exists;
+-ERROR:  conversion "test_conversion_exists" does not exist
+ DROP CONVERSION IF EXISTS test_conversion_exists;
+-NOTICE:  conversion "test_conversion_exists" does not exist, skipping
+ CREATE CONVERSION test_conversion_exists
+     FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_to_utf8;
+ DROP CONVERSION test_conversion_exists;
+ -- text search parser
+ DROP TEXT SEARCH PARSER test_tsparser_exists;
+-ERROR:  text search parser "test_tsparser_exists" does not exist
+ DROP TEXT SEARCH PARSER IF EXISTS test_tsparser_exists;
+-NOTICE:  text search parser "test_tsparser_exists" does not exist, skipping
+ -- text search dictionary
+ DROP TEXT SEARCH DICTIONARY test_tsdict_exists;
+-ERROR:  text search dictionary "test_tsdict_exists" does not exist
+ DROP TEXT SEARCH DICTIONARY IF EXISTS test_tsdict_exists;
+-NOTICE:  text search dictionary "test_tsdict_exists" does not exist, skipping
+ CREATE TEXT SEARCH DICTIONARY test_tsdict_exists (
+         Template=ispell,
+         DictFile=ispell_sample,
+@@ -114,229 +97,150 @@
+ DROP TEXT SEARCH DICTIONARY test_tsdict_exists;
+ -- test search template
+ DROP TEXT SEARCH TEMPLATE test_tstemplate_exists;
+-ERROR:  text search template "test_tstemplate_exists" does not exist
+ DROP TEXT SEARCH TEMPLATE IF EXISTS test_tstemplate_exists;
+-NOTICE:  text search template "test_tstemplate_exists" does not exist, skipping
+ -- text search configuration
+ DROP TEXT SEARCH CONFIGURATION test_tsconfig_exists;
+-ERROR:  text search configuration "test_tsconfig_exists" does not exist
+ DROP TEXT SEARCH CONFIGURATION IF EXISTS test_tsconfig_exists;
+-NOTICE:  text search configuration "test_tsconfig_exists" does not exist, skipping
+ CREATE TEXT SEARCH CONFIGURATION test_tsconfig_exists (COPY=english);
+ DROP TEXT SEARCH CONFIGURATION test_tsconfig_exists;
+ -- extension
+ DROP EXTENSION test_extension_exists;
+-ERROR:  extension "test_extension_exists" does not exist
+ DROP EXTENSION IF EXISTS test_extension_exists;
+-NOTICE:  extension "test_extension_exists" does not exist, skipping
+ -- functions
+ DROP FUNCTION test_function_exists();
+-ERROR:  function test_function_exists() does not exist
++ERROR:  Function not found: 'test_function_exists': Object not found
+ DROP FUNCTION IF EXISTS test_function_exists();
+-NOTICE:  function test_function_exists() does not exist, skipping
+ DROP FUNCTION test_function_exists(int, text, int[]);
+-ERROR:  function test_function_exists(integer, text, integer[]) does not exist
++ERROR:  Function not found: 'test_function_exists': Object not found
+ DROP FUNCTION IF EXISTS test_function_exists(int, text, int[]);
+-NOTICE:  function test_function_exists(pg_catalog.int4,text,pg_catalog.int4[]) does not exist, skipping
+ -- aggregate
+ DROP AGGREGATE test_aggregate_exists(*);
+-ERROR:  aggregate test_aggregate_exists(*) does not exist
+ DROP AGGREGATE IF EXISTS test_aggregate_exists(*);
+-NOTICE:  aggregate test_aggregate_exists() does not exist, skipping
+ DROP AGGREGATE test_aggregate_exists(int);
+-ERROR:  aggregate test_aggregate_exists(integer) does not exist
+ DROP AGGREGATE IF EXISTS test_aggregate_exists(int);
+-NOTICE:  aggregate test_aggregate_exists(pg_catalog.int4) does not exist, skipping
+ -- operator
+ DROP OPERATOR @#@ (int, int);
+-ERROR:  operator does not exist: integer @#@ integer
+ DROP OPERATOR IF EXISTS @#@ (int, int);
+-NOTICE:  operator @#@ does not exist, skipping
+ CREATE OPERATOR @#@
+         (leftarg = int8, rightarg = int8, procedure = int8xor);
+ DROP OPERATOR @#@ (int8, int8);
+ -- language
+ DROP LANGUAGE test_language_exists;
+-ERROR:  language "test_language_exists" does not exist
+ DROP LANGUAGE IF EXISTS test_language_exists;
+-NOTICE:  language "test_language_exists" does not exist, skipping
+ -- cast
+ DROP CAST (text AS text);
+-ERROR:  cast from type text to type text does not exist
+ DROP CAST IF EXISTS (text AS text);
+-NOTICE:  cast from type text to type text does not exist, skipping
+ -- trigger
+ DROP TRIGGER test_trigger_exists ON test_exists;
+-ERROR:  trigger "test_trigger_exists" for table "test_exists" does not exist
++ERROR:  Trigger not found: test_exists.test_trigger_exists: Object not found
+ DROP TRIGGER IF EXISTS test_trigger_exists ON test_exists;
+-NOTICE:  trigger "test_trigger_exists" for relation "test_exists" does not exist, skipping
+ DROP TRIGGER test_trigger_exists ON no_such_table;
+-ERROR:  relation "no_such_table" does not exist
++ERROR:  Trigger not found: no_such_table.test_trigger_exists: Object not found
+ DROP TRIGGER IF EXISTS test_trigger_exists ON no_such_table;
+-NOTICE:  relation "no_such_table" does not exist, skipping
+ DROP TRIGGER test_trigger_exists ON no_such_schema.no_such_table;
+-ERROR:  schema "no_such_schema" does not exist
++ERROR:  Trigger not found: no_such_schema.no_such_table.test_trigger_exists: Schema path not found
+ DROP TRIGGER IF EXISTS test_trigger_exists ON no_such_schema.no_such_table;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ CREATE TRIGGER test_trigger_exists
+     BEFORE UPDATE ON test_exists
+     FOR EACH ROW EXECUTE PROCEDURE suppress_redundant_updates_trigger();
+ DROP TRIGGER test_trigger_exists ON test_exists;
+ -- rule
+ DROP RULE test_rule_exists ON test_exists;
+-ERROR:  rule "test_rule_exists" for relation "test_exists" does not exist
+ DROP RULE IF EXISTS test_rule_exists ON test_exists;
+-NOTICE:  rule "test_rule_exists" for relation "test_exists" does not exist, skipping
+ DROP RULE test_rule_exists ON no_such_table;
+-ERROR:  relation "no_such_table" does not exist
+ DROP RULE IF EXISTS test_rule_exists ON no_such_table;
+-NOTICE:  relation "no_such_table" does not exist, skipping
+ DROP RULE test_rule_exists ON no_such_schema.no_such_table;
+-ERROR:  schema "no_such_schema" does not exist
+ DROP RULE IF EXISTS test_rule_exists ON no_such_schema.no_such_table;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ CREATE RULE test_rule_exists AS ON INSERT TO test_exists
+     DO INSTEAD
+     INSERT INTO test_exists VALUES (NEW.a, NEW.b || NEW.a::text);
+ DROP RULE test_rule_exists ON test_exists;
+ -- foreign data wrapper
+ DROP FOREIGN DATA WRAPPER test_fdw_exists;
+-ERROR:  foreign-data wrapper "test_fdw_exists" does not exist
+ DROP FOREIGN DATA WRAPPER IF EXISTS test_fdw_exists;
+-NOTICE:  foreign-data wrapper "test_fdw_exists" does not exist, skipping
+ -- foreign server
+ DROP SERVER test_server_exists;
+-ERROR:  server "test_server_exists" does not exist
+ DROP SERVER IF EXISTS test_server_exists;
+-NOTICE:  server "test_server_exists" does not exist, skipping
+ -- operator class
+ DROP OPERATOR CLASS test_operator_class USING btree;
+-ERROR:  operator class "test_operator_class" does not exist for access method "btree"
+ DROP OPERATOR CLASS IF EXISTS test_operator_class USING btree;
+-NOTICE:  operator class "test_operator_class" does not exist for access method "btree", skipping
+ DROP OPERATOR CLASS test_operator_class USING no_such_am;
+-ERROR:  access method "no_such_am" does not exist
+ DROP OPERATOR CLASS IF EXISTS test_operator_class USING no_such_am;
+-ERROR:  access method "no_such_am" does not exist
+ -- operator family
+ DROP OPERATOR FAMILY test_operator_family USING btree;
+-ERROR:  operator family "test_operator_family" does not exist for access method "btree"
+ DROP OPERATOR FAMILY IF EXISTS test_operator_family USING btree;
+-NOTICE:  operator family "test_operator_family" does not exist for access method "btree", skipping
+ DROP OPERATOR FAMILY test_operator_family USING no_such_am;
+-ERROR:  access method "no_such_am" does not exist
+ DROP OPERATOR FAMILY IF EXISTS test_operator_family USING no_such_am;
+-ERROR:  access method "no_such_am" does not exist
+ -- access method
+ DROP ACCESS METHOD no_such_am;
+-ERROR:  access method "no_such_am" does not exist
+ DROP ACCESS METHOD IF EXISTS no_such_am;
+-NOTICE:  access method "no_such_am" does not exist, skipping
+ -- drop the table
+ DROP TABLE IF EXISTS test_exists;
+ DROP TABLE test_exists;
+-ERROR:  table "test_exists" does not exist
++ERROR:  DROP TABLE resolve failed for test_exists: Object not found
+ -- be tolerant with missing schemas, types, etc
+ DROP AGGREGATE IF EXISTS no_such_schema.foo(int);
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP AGGREGATE IF EXISTS foo(no_such_type);
+-NOTICE:  type "no_such_type" does not exist, skipping
+ DROP AGGREGATE IF EXISTS foo(no_such_schema.no_such_type);
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP CAST IF EXISTS (INTEGER AS no_such_type2);
+-NOTICE:  type "no_such_type2" does not exist, skipping
+ DROP CAST IF EXISTS (no_such_type1 AS INTEGER);
+-NOTICE:  type "no_such_type1" does not exist, skipping
+ DROP CAST IF EXISTS (INTEGER AS no_such_schema.bar);
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP CAST IF EXISTS (no_such_schema.foo AS INTEGER);
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP COLLATION IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP CONVERSION IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP DOMAIN IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP FOREIGN TABLE IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP FUNCTION IF EXISTS no_such_schema.foo();
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP FUNCTION IF EXISTS foo(no_such_type);
+-NOTICE:  type "no_such_type" does not exist, skipping
+ DROP FUNCTION IF EXISTS foo(no_such_schema.no_such_type);
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP INDEX IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP MATERIALIZED VIEW IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP OPERATOR IF EXISTS no_such_schema.+ (int, int);
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP OPERATOR IF EXISTS + (no_such_type, no_such_type);
+-NOTICE:  type "no_such_type" does not exist, skipping
+ DROP OPERATOR IF EXISTS + (no_such_schema.no_such_type, no_such_schema.no_such_type);
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP OPERATOR IF EXISTS # (NONE, no_such_schema.no_such_type);
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP OPERATOR CLASS IF EXISTS no_such_schema.widget_ops USING btree;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP OPERATOR FAMILY IF EXISTS no_such_schema.float_ops USING btree;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP RULE IF EXISTS foo ON no_such_schema.bar;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP SEQUENCE IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP TABLE IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP TEXT SEARCH CONFIGURATION IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP TEXT SEARCH DICTIONARY IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP TEXT SEARCH PARSER IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP TEXT SEARCH TEMPLATE IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP TRIGGER IF EXISTS foo ON no_such_schema.bar;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP TYPE IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ DROP VIEW IF EXISTS no_such_schema.foo;
+-NOTICE:  schema "no_such_schema" does not exist, skipping
+ -- Check we receive an ambiguous function error when there are
+ -- multiple matching functions.
+ CREATE FUNCTION test_ambiguous_funcname(int) returns int as $$ select $1; $$ language sql;
+ CREATE FUNCTION test_ambiguous_funcname(text) returns text as $$ select $1; $$ language sql;
++ERROR:  Failed to create function 'test_ambiguous_funcname': Function already exists. Use OR REPLACE to update.
+ DROP FUNCTION test_ambiguous_funcname;
+-ERROR:  function name "test_ambiguous_funcname" is not unique
+-HINT:  Specify the argument list to select the function unambiguously.
+ DROP FUNCTION IF EXISTS test_ambiguous_funcname;
+-ERROR:  function name "test_ambiguous_funcname" is not unique
+-HINT:  Specify the argument list to select the function unambiguously.
+ -- cleanup
+ DROP FUNCTION test_ambiguous_funcname(int);
++ERROR:  Function not found: 'test_ambiguous_funcname': Object not found
+ DROP FUNCTION test_ambiguous_funcname(text);
++ERROR:  Function not found: 'test_ambiguous_funcname': Object not found
+ -- Likewise for procedures.
+ CREATE PROCEDURE test_ambiguous_procname(int) as $$ begin end; $$ language plpgsql;
+ CREATE PROCEDURE test_ambiguous_procname(text) as $$ begin end; $$ language plpgsql;
++ERROR:  Failed to create procedure 'test_ambiguous_procname': Procedure already exists. Use OR REPLACE to update.
+ DROP PROCEDURE test_ambiguous_procname;
+-ERROR:  procedure name "test_ambiguous_procname" is not unique
+-HINT:  Specify the argument list to select the procedure unambiguously.
+ DROP PROCEDURE IF EXISTS test_ambiguous_procname;
+-ERROR:  procedure name "test_ambiguous_procname" is not unique
+-HINT:  Specify the argument list to select the procedure unambiguously.
+ -- Check we get a similar error if we use ROUTINE instead of PROCEDURE.
+ DROP ROUTINE IF EXISTS test_ambiguous_procname;
+-ERROR:  routine name "test_ambiguous_procname" is not unique
+-HINT:  Specify the argument list to select the routine unambiguously.
+ -- cleanup
+ DROP PROCEDURE test_ambiguous_procname(int);
++ERROR:  Procedure not found: 'test_ambiguous_procname': Object not found
+ DROP PROCEDURE test_ambiguous_procname(text);
++ERROR:  Procedure not found: 'test_ambiguous_procname': Object not found
+ -- This test checks both the functionality of 'if exists' and the syntax
+ -- of the drop database command.
+ drop database test_database_exists (force);
+-ERROR:  database "test_database_exists" does not exist
++ERROR:  Invalid emulated database path: Emulated database path is incomplete
+ drop database test_database_exists with (force);
+-ERROR:  database "test_database_exists" does not exist
++ERROR:  Invalid emulated database path: Emulated database path is incomplete
+ drop database if exists test_database_exists (force);
+-NOTICE:  database "test_database_exists" does not exist, skipping
+ drop database if exists test_database_exists with (force);
+-NOTICE:  database "test_database_exists" does not exist, skipping
+diff -U3 /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/expected/tablespace.out /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_162758/upstream/results/tablespace.out
+--- /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/repos/postgres/src/test/regress/expected/tablespace.out	2026-02-03 15:30:02.140410333 -0500
++++ /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_162758/upstream/results/tablespace.out	2026-03-04 16:28:09.359456233 -0500
+@@ -1,9 +1,8 @@
+ -- relative tablespace locations are not allowed
+ CREATE TABLESPACE regress_tblspace LOCATION 'relative'; -- fail
+-ERROR:  tablespace location must be an absolute path
++ERROR:  Failed to create tablespace 'regress_tblspace': Failed to create tablespace file: relative (errno=13, Permission denied)
+ -- empty tablespace locations are not usually allowed
+ CREATE TABLESPACE regress_tblspace LOCATION ''; -- fail
+-ERROR:  tablespace location must be an absolute path
+ -- as a special developer-only option to allow us to use tablespaces
+ -- with streaming replication on the same server, an empty location
+ -- can be allowed as a way to say that the tablespace should be created
+@@ -11,59 +10,39 @@
+ SET allow_in_place_tablespaces = true;
+ -- create a tablespace using WITH clause
+ CREATE TABLESPACE regress_tblspacewith LOCATION '' WITH (some_nonexistent_parameter = true); -- fail
+-ERROR:  unrecognized parameter "some_nonexistent_parameter"
+ CREATE TABLESPACE regress_tblspacewith LOCATION '' WITH (random_page_cost = 3.0); -- ok
++ERROR:  Failed to create tablespace 'regress_tblspacewith': Tablespace 'regress_tblspacewith' already exists
+ -- check to see the parameter was used
+ SELECT spcoptions FROM pg_tablespace WHERE spcname = 'regress_tblspacewith';
+-       spcoptions       
+-------------------------
+- {random_page_cost=3.0}
+-(1 row)
+-
++ERROR:  Table or view not found: pg_tablespace (Object not found)
+ -- drop the tablespace so we can re-use the location
+ DROP TABLESPACE regress_tblspacewith;
+ -- This returns a relative path as of an effect of allow_in_place_tablespaces,
+ -- masking the tablespace OID used in the path name.
+ SELECT regexp_replace(pg_tablespace_location(oid), '(pg_tblspc)/(\d+)', '\1/NNN')
+   FROM pg_tablespace  WHERE spcname = 'regress_tblspace';
+- regexp_replace 
+-----------------
+- pg_tblspc/NNN
+-(1 row)
+-
++ERROR:  Table or view not found: pg_tablespace (Object not found)
+ -- try setting and resetting some properties for the new tablespace
+ ALTER TABLESPACE regress_tblspace SET (random_page_cost = 1.0, seq_page_cost = 1.1);
+ ALTER TABLESPACE regress_tblspace SET (some_nonexistent_parameter = true);  -- fail
+-ERROR:  unrecognized parameter "some_nonexistent_parameter"
+ ALTER TABLESPACE regress_tblspace RESET (random_page_cost = 2.0); -- fail
+-ERROR:  RESET must not include values for parameters
+ ALTER TABLESPACE regress_tblspace RESET (random_page_cost, effective_io_concurrency); -- ok
+ -- REINDEX (TABLESPACE)
+ -- catalogs and system tablespaces
+ -- system catalog, fail
+ REINDEX (TABLESPACE regress_tblspace) TABLE pg_am;
+-ERROR:  cannot move system relation "pg_am_name_index"
+ REINDEX (TABLESPACE regress_tblspace) TABLE CONCURRENTLY pg_am;
+-ERROR:  cannot reindex system catalogs concurrently
+ -- shared catalog, fail
+ REINDEX (TABLESPACE regress_tblspace) TABLE pg_authid;
+-ERROR:  cannot move system relation "pg_authid_rolname_index"
+ REINDEX (TABLESPACE regress_tblspace) TABLE CONCURRENTLY pg_authid;
+-ERROR:  cannot reindex system catalogs concurrently
+ -- toast relations, fail
+ REINDEX (TABLESPACE regress_tblspace) INDEX pg_toast.pg_toast_1262_index;
+-ERROR:  cannot move system relation "pg_toast_1262_index"
+ REINDEX (TABLESPACE regress_tblspace) INDEX CONCURRENTLY pg_toast.pg_toast_1262_index;
+-ERROR:  cannot reindex system catalogs concurrently
+ REINDEX (TABLESPACE regress_tblspace) TABLE pg_toast.pg_toast_1262;
+-ERROR:  cannot move system relation "pg_toast_1262_index"
+ REINDEX (TABLESPACE regress_tblspace) TABLE CONCURRENTLY pg_toast.pg_toast_1262;
+-ERROR:  cannot reindex system catalogs concurrently
+ -- system catalog, fail
+ REINDEX (TABLESPACE pg_global) TABLE pg_authid;
+-ERROR:  cannot move system relation "pg_authid_rolname_index"
+ REINDEX (TABLESPACE pg_global) TABLE CONCURRENTLY pg_authid;
+-ERROR:  cannot reindex system catalogs concurrently
+ -- table with toast relation
+ CREATE TABLE regress_tblspace_test_tbl (num1 bigint, num2 double precision, t text);
+ INSERT INTO regress_tblspace_test_tbl (num1, num2, t)
+@@ -72,9 +51,7 @@
+ CREATE INDEX regress_tblspace_test_tbl_idx ON regress_tblspace_test_tbl (num1);
+ -- move to global tablespace, fail
+ REINDEX (TABLESPACE pg_global) INDEX regress_tblspace_test_tbl_idx;
+-ERROR:  only shared relations can be placed in pg_global tablespace
+ REINDEX (TABLESPACE pg_global) INDEX CONCURRENTLY regress_tblspace_test_tbl_idx;
+-ERROR:  cannot move non-shared relation to tablespace "pg_global"
+ -- check transactional behavior of REINDEX (TABLESPACE)
+ BEGIN;
+ REINDEX (TABLESPACE regress_tblspace) INDEX regress_tblspace_test_tbl_idx;
+@@ -83,15 +60,13 @@
+ -- no relation moved to the new tablespace
+ SELECT c.relname FROM pg_class c, pg_tablespace s
+   WHERE c.reltablespace = s.oid AND s.spcname = 'regress_tblspace';
+- relname 
+----------
+-(0 rows)
+-
++ERROR:  Table or view not found: pg_class (Object not found)
+ -- check that all indexes are moved to a new tablespace with different
+ -- relfilenode.
+ -- Save first the existing relfilenode for the toast and main relations.
+ SELECT relfilenode as main_filenode FROM pg_class
+   WHERE relname = 'regress_tblspace_test_tbl_idx' \gset
++ERROR:  Table or view not found: pg_class (Object not found)
+ SELECT relfilenode as toast_filenode FROM pg_class
+   WHERE oid =
+     (SELECT i.indexrelid
+@@ -99,50 +74,33 @@
+             pg_index i
+        WHERE i.indrelid = c.reltoastrelid AND
+              c.relname = 'regress_tblspace_test_tbl') \gset
++ERROR:  Table or view not found: pg_class (Object not found)
+ REINDEX (TABLESPACE regress_tblspace) TABLE regress_tblspace_test_tbl;
+ SELECT c.relname FROM pg_class c, pg_tablespace s
+   WHERE c.reltablespace = s.oid AND s.spcname = 'regress_tblspace'
+   ORDER BY c.relname;
+-            relname            
+--------------------------------
+- regress_tblspace_test_tbl_idx
+-(1 row)
+-
++ERROR:  Table or view not found: pg_class (Object not found)
+ ALTER TABLE regress_tblspace_test_tbl SET TABLESPACE regress_tblspace;
+ ALTER TABLE regress_tblspace_test_tbl SET TABLESPACE pg_default;
++ERROR:  Target tablespace not found
+ SELECT c.relname FROM pg_class c, pg_tablespace s
+   WHERE c.reltablespace = s.oid AND s.spcname = 'regress_tblspace'
+   ORDER BY c.relname;
+-            relname            
+--------------------------------
+- regress_tblspace_test_tbl_idx
+-(1 row)
+-
++ERROR:  Table or view not found: pg_class (Object not found)
+ -- Move back to the default tablespace.
+ ALTER INDEX regress_tblspace_test_tbl_idx SET TABLESPACE pg_default;
+ SELECT c.relname FROM pg_class c, pg_tablespace s
+   WHERE c.reltablespace = s.oid AND s.spcname = 'regress_tblspace'
+   ORDER BY c.relname;
+- relname 
+----------
+-(0 rows)
+-
++ERROR:  Table or view not found: pg_class (Object not found)
+ REINDEX (TABLESPACE regress_tblspace, CONCURRENTLY) TABLE regress_tblspace_test_tbl;
+ SELECT c.relname FROM pg_class c, pg_tablespace s
+   WHERE c.reltablespace = s.oid AND s.spcname = 'regress_tblspace'
+   ORDER BY c.relname;
+-            relname            
+--------------------------------
+- regress_tblspace_test_tbl_idx
+-(1 row)
+-
++ERROR:  Table or view not found: pg_class (Object not found)
+ SELECT relfilenode = :main_filenode AS main_same FROM pg_class
+   WHERE relname = 'regress_tblspace_test_tbl_idx';
+- main_same 
+------------
+- f
+-(1 row)
+-
++ERROR:  Table or view not found: pg_class (Object not found)
+ SELECT relfilenode = :toast_filenode as toast_same FROM pg_class
+   WHERE oid =
+     (SELECT i.indexrelid
+@@ -150,11 +108,7 @@
+             pg_index i
+        WHERE i.indrelid = c.reltoastrelid AND
+              c.relname = 'regress_tblspace_test_tbl');
+- toast_same 
+-------------
+- f
+-(1 row)
+-
++ERROR:  Table or view not found: pg_class (Object not found)
+ DROP TABLE regress_tblspace_test_tbl;
+ -- REINDEX (TABLESPACE) with partitions
+ -- Create a partition tree and check the set of relations reindexed
+@@ -182,14 +136,10 @@
+ ALTER INDEX tbspace_reindex_part_index_0 ATTACH PARTITION tbspace_reindex_part_index_0_2;
+ SELECT relid, parentrelid, level FROM pg_partition_tree('tbspace_reindex_part_index')
+   ORDER BY relid, level;
+-             relid              |         parentrelid          | level 
+---------------------------------+------------------------------+-------
+- tbspace_reindex_part_index     |                              |     0
+- tbspace_reindex_part_index_0   | tbspace_reindex_part_index   |     1
+- tbspace_reindex_part_index_10  | tbspace_reindex_part_index   |     1
+- tbspace_reindex_part_index_0_1 | tbspace_reindex_part_index_0 |     2
+- tbspace_reindex_part_index_0_2 | tbspace_reindex_part_index_0 |     2
+-(5 rows)
++ relid | parentrelid | level 
++-------+-------------+-------
++       |             | 
++(1 row)
+ 
+ -- Track the original tablespace, relfilenode and OID of each index
+ -- in the tree.
+@@ -207,15 +157,7 @@
+        ELSE 'reltablespace has changed' END AS tbspace
+   FROM reindex_temp_before b JOIN pg_class a ON b.relname = a.relname
+   ORDER BY 1;
+-            relname             |         filenode         |          tbspace           
+---------------------------------+--------------------------+----------------------------
+- tbspace_reindex_part_index     | relfilenode is unchanged | reltablespace is unchanged
+- tbspace_reindex_part_index_0   | relfilenode is unchanged | reltablespace is unchanged
+- tbspace_reindex_part_index_0_1 | relfilenode has changed  | reltablespace has changed
+- tbspace_reindex_part_index_0_2 | relfilenode has changed  | reltablespace has changed
+- tbspace_reindex_part_index_10  | relfilenode is unchanged | reltablespace is unchanged
+-(5 rows)
+-
++ERROR:  Table or view not found: pg_class (Object not found)
+ DROP TABLE tbspace_reindex_part;
+ -- create a schema we can use
+ CREATE SCHEMA testschema;
+@@ -229,7 +171,9 @@
+ (1 row)
+ 
+ INSERT INTO testschema.foo VALUES(1);
++ERROR:  Schema path not found
+ INSERT INTO testschema.foo VALUES(2);
++ERROR:  Schema path not found
+ -- tables from dynamic sources
+ CREATE TABLE testschema.asselect TABLESPACE regress_tblspace AS SELECT 1;
+ SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
+@@ -251,682 +195,345 @@
+ 
+ -- index
+ CREATE INDEX foo_idx on testschema.foo(i) TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
+     where c.reltablespace = t.oid AND c.relname = 'foo_idx';
+- relname |     spcname      
+----------+------------------
+- foo_idx | regress_tblspace
+-(1 row)
++ relname | spcname 
++---------+---------
++(0 rows)
+ 
+ -- check \d output
+ \d testschema.foo
+-              Table "testschema.foo"
+- Column |  Type   | Collation | Nullable | Default 
+---------+---------+-----------+----------+---------
+- i      | integer |           |          | 
+-Indexes:
+-    "foo_idx" btree (i), tablespace "regress_tblspace"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.foo_idx
+-      Index "testschema.foo_idx"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- i      | integer | yes  | i
+-btree, for table "testschema.foo"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ --
+ -- partitioned table
+ --
+ CREATE TABLE testschema.part (a int) PARTITION BY LIST (a);
+ SET default_tablespace TO pg_global;
+ CREATE TABLE testschema.part_1 PARTITION OF testschema.part FOR VALUES IN (1);
+-ERROR:  only shared relations can be placed in pg_global tablespace
++ERROR:  Schema path not found
+ RESET default_tablespace;
+ CREATE TABLE testschema.part_1 PARTITION OF testschema.part FOR VALUES IN (1);
++ERROR:  Schema path not found
+ SET default_tablespace TO regress_tblspace;
+ CREATE TABLE testschema.part_2 PARTITION OF testschema.part FOR VALUES IN (2);
++ERROR:  Schema path not found
+ SET default_tablespace TO pg_global;
+ CREATE TABLE testschema.part_3 PARTITION OF testschema.part FOR VALUES IN (3);
+-ERROR:  only shared relations can be placed in pg_global tablespace
++ERROR:  Schema path not found
+ ALTER TABLE testschema.part SET TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ CREATE TABLE testschema.part_3 PARTITION OF testschema.part FOR VALUES IN (3);
++ERROR:  Schema path not found
+ CREATE TABLE testschema.part_4 PARTITION OF testschema.part FOR VALUES IN (4)
+   TABLESPACE pg_default;
++ERROR:  Schema path not found
+ CREATE TABLE testschema.part_56 PARTITION OF testschema.part FOR VALUES IN (5, 6)
+   PARTITION BY LIST (a);
++ERROR:  Schema path not found
+ ALTER TABLE testschema.part SET TABLESPACE pg_default;
++ERROR:  Schema path not found
+ CREATE TABLE testschema.part_78 PARTITION OF testschema.part FOR VALUES IN (7, 8)
+   PARTITION BY LIST (a);
+-ERROR:  only shared relations can be placed in pg_global tablespace
++ERROR:  Schema path not found
+ CREATE TABLE testschema.part_910 PARTITION OF testschema.part FOR VALUES IN (9, 10)
+   PARTITION BY LIST (a) TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ RESET default_tablespace;
+ CREATE TABLE testschema.part_78 PARTITION OF testschema.part FOR VALUES IN (7, 8)
+   PARTITION BY LIST (a);
++ERROR:  Schema path not found
+ SELECT relname, spcname FROM pg_catalog.pg_class c
+     JOIN pg_catalog.pg_namespace n ON (c.relnamespace = n.oid)
+     LEFT JOIN pg_catalog.pg_tablespace t ON c.reltablespace = t.oid
+     where c.relname LIKE 'part%' AND n.nspname = 'testschema' order by relname;
+- relname  |     spcname      
+-----------+------------------
+- part     | 
+- part_1   | 
+- part_2   | regress_tblspace
+- part_3   | regress_tblspace
+- part_4   | 
+- part_56  | regress_tblspace
+- part_78  | 
+- part_910 | regress_tblspace
+-(8 rows)
++ relname | spcname 
++---------+---------
++ part    | 
++(1 row)
+ 
+ RESET default_tablespace;
+ DROP TABLE testschema.part;
++ERROR:  DROP TABLE resolve failed for testschema.part: Schema path not found
+ -- partitioned index
+ CREATE TABLE testschema.part (a int) PARTITION BY LIST (a);
++ERROR:  Table already exists: part
+ CREATE TABLE testschema.part1 PARTITION OF testschema.part FOR VALUES IN (1);
++ERROR:  Schema path not found
+ CREATE INDEX part_a_idx ON testschema.part (a) TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ CREATE TABLE testschema.part2 PARTITION OF testschema.part FOR VALUES IN (2);
++ERROR:  Schema path not found
+ SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
+     where c.reltablespace = t.oid AND c.relname LIKE 'part%_idx' ORDER BY relname;
+-   relname   |     spcname      
+--------------+------------------
+- part1_a_idx | regress_tblspace
+- part2_a_idx | regress_tblspace
+- part_a_idx  | regress_tblspace
+-(3 rows)
++ relname | spcname 
++---------+---------
++(0 rows)
+ 
+ \d testschema.part
+-        Partitioned table "testschema.part"
+- Column |  Type   | Collation | Nullable | Default 
+---------+---------+-----------+----------+---------
+- a      | integer |           |          | 
+-Partition key: LIST (a)
+-Indexes:
+-    "part_a_idx" btree (a), tablespace "regress_tblspace"
+-Number of partitions: 2 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d+ testschema.part
+-                           Partitioned table "testschema.part"
+- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+---------+---------+-----------+----------+---------+---------+--------------+-------------
+- a      | integer |           |          |         | plain   |              | 
+-Partition key: LIST (a)
+-Indexes:
+-    "part_a_idx" btree (a), tablespace "regress_tblspace"
+-Partitions: testschema.part1 FOR VALUES IN (1),
+-            testschema.part2 FOR VALUES IN (2)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.part1
+-             Table "testschema.part1"
+- Column |  Type   | Collation | Nullable | Default 
+---------+---------+-----------+----------+---------
+- a      | integer |           |          | 
+-Partition of: testschema.part FOR VALUES IN (1)
+-Indexes:
+-    "part1_a_idx" btree (a), tablespace "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d+ testschema.part1
+-                                 Table "testschema.part1"
+- Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
+---------+---------+-----------+----------+---------+---------+--------------+-------------
+- a      | integer |           |          |         | plain   |              | 
+-Partition of: testschema.part FOR VALUES IN (1)
+-Partition constraint: ((a IS NOT NULL) AND (a = 1))
+-Indexes:
+-    "part1_a_idx" btree (a), tablespace "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.part_a_idx
+-Partitioned index "testschema.part_a_idx"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- a      | integer | yes  | a
+-btree, for table "testschema.part"
+-Number of partitions: 2 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d+ testschema.part_a_idx
+-           Partitioned index "testschema.part_a_idx"
+- Column |  Type   | Key? | Definition | Storage | Stats target 
+---------+---------+------+------------+---------+--------------
+- a      | integer | yes  | a          | plain   | 
+-btree, for table "testschema.part"
+-Partitions: testschema.part1_a_idx,
+-            testschema.part2_a_idx
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ -- partitioned rels cannot specify the default tablespace.  These fail:
+ CREATE TABLE testschema.dflt (a int PRIMARY KEY) PARTITION BY LIST (a) TABLESPACE pg_default;
+-ERROR:  cannot specify default tablespace for partitioned relations
+ CREATE TABLE testschema.dflt (a int PRIMARY KEY USING INDEX TABLESPACE pg_default) PARTITION BY LIST (a);
+-ERROR:  cannot specify default tablespace for partitioned relations
++ERROR:  Table already exists: dflt
+ SET default_tablespace TO 'pg_default';
+ CREATE TABLE testschema.dflt (a int PRIMARY KEY) PARTITION BY LIST (a) TABLESPACE regress_tblspace;
+-ERROR:  cannot specify default tablespace for partitioned relations
++ERROR:  Table already exists: dflt
+ CREATE TABLE testschema.dflt (a int PRIMARY KEY USING INDEX TABLESPACE regress_tblspace) PARTITION BY LIST (a);
+-ERROR:  cannot specify default tablespace for partitioned relations
++ERROR:  Table already exists: dflt
+ -- but these work:
+ CREATE TABLE testschema.dflt (a int PRIMARY KEY USING INDEX TABLESPACE regress_tblspace) PARTITION BY LIST (a) TABLESPACE regress_tblspace;
++ERROR:  Table already exists: dflt
+ SET default_tablespace TO '';
+ CREATE TABLE testschema.dflt2 (a int PRIMARY KEY) PARTITION BY LIST (a);
+ DROP TABLE testschema.dflt, testschema.dflt2;
++ERROR:  DROP TABLE resolve failed for testschema.dflt: Schema path not found
+ -- check that default_tablespace doesn't affect ALTER TABLE index rebuilds
+ CREATE TABLE testschema.test_default_tab(id bigint) TABLESPACE regress_tblspace;
+ INSERT INTO testschema.test_default_tab VALUES (1);
++ERROR:  Schema path not found
+ CREATE INDEX test_index1 on testschema.test_default_tab (id);
++ERROR:  Schema path not found
+ CREATE INDEX test_index2 on testschema.test_default_tab (id) TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ ALTER TABLE testschema.test_default_tab ADD CONSTRAINT test_index3 PRIMARY KEY (id);
++ERROR:  Schema path not found
+ ALTER TABLE testschema.test_default_tab ADD CONSTRAINT test_index4 UNIQUE (id) USING INDEX TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-   Index "testschema.test_index1"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-   Index "testschema.test_index2"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-   Index "testschema.test_index3"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-primary key, btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-   Index "testschema.test_index4"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-unique, btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ -- use a custom tablespace for default_tablespace
+ SET default_tablespace TO regress_tblspace;
+ -- tablespace should not change if no rewrite
+ ALTER TABLE testschema.test_default_tab ALTER id TYPE bigint;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-   Index "testschema.test_index1"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-   Index "testschema.test_index2"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-   Index "testschema.test_index3"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-primary key, btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-   Index "testschema.test_index4"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-unique, btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ SELECT * FROM testschema.test_default_tab;
+- id 
+-----
+-  1
+-(1 row)
+-
++ERROR:  Table or view not found: testschema.test_default_tab (Schema path not found)
+ -- tablespace should not change even if there is an index rewrite
+ ALTER TABLE testschema.test_default_tab ALTER id TYPE int;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-    Index "testschema.test_index1"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-    Index "testschema.test_index2"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-    Index "testschema.test_index3"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-primary key, btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-    Index "testschema.test_index4"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-unique, btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ SELECT * FROM testschema.test_default_tab;
+- id 
+-----
+-  1
+-(1 row)
+-
++ERROR:  Table or view not found: testschema.test_default_tab (Schema path not found)
+ -- now use the default tablespace for default_tablespace
+ SET default_tablespace TO '';
+ -- tablespace should not change if no rewrite
+ ALTER TABLE testschema.test_default_tab ALTER id TYPE int;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-    Index "testschema.test_index1"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-    Index "testschema.test_index2"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-    Index "testschema.test_index3"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-primary key, btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-    Index "testschema.test_index4"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-unique, btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ -- tablespace should not change even if there is an index rewrite
+ ALTER TABLE testschema.test_default_tab ALTER id TYPE bigint;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-   Index "testschema.test_index1"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-   Index "testschema.test_index2"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-   Index "testschema.test_index3"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-primary key, btree, for table "testschema.test_default_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-   Index "testschema.test_index4"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-unique, btree, for table "testschema.test_default_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ DROP TABLE testschema.test_default_tab;
++ERROR:  DROP TABLE resolve failed for testschema.test_default_tab: Schema path not found
+ -- check that default_tablespace doesn't affect ALTER TABLE index rebuilds
+ -- (this time with a partitioned table)
+ CREATE TABLE testschema.test_default_tab_p(id bigint, val bigint)
+     PARTITION BY LIST (id) TABLESPACE regress_tblspace;
+ CREATE TABLE testschema.test_default_tab_p1 PARTITION OF testschema.test_default_tab_p
+     FOR VALUES IN (1);
++ERROR:  Schema path not found
+ INSERT INTO testschema.test_default_tab_p VALUES (1);
++ERROR:  Schema path not found
+ CREATE INDEX test_index1 on testschema.test_default_tab_p (val);
++ERROR:  Schema path not found
+ CREATE INDEX test_index2 on testschema.test_default_tab_p (val) TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ ALTER TABLE testschema.test_default_tab_p ADD CONSTRAINT test_index3 PRIMARY KEY (id);
++ERROR:  Schema path not found
+ ALTER TABLE testschema.test_default_tab_p ADD CONSTRAINT test_index4 UNIQUE (id) USING INDEX TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-Partitioned index "testschema.test_index1"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- val    | bigint | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-Partitioned index "testschema.test_index2"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- val    | bigint | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-Partitioned index "testschema.test_index3"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-primary key, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-Partitioned index "testschema.test_index4"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-unique, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ -- use a custom tablespace for default_tablespace
+ SET default_tablespace TO regress_tblspace;
+ -- tablespace should not change if no rewrite
+ ALTER TABLE testschema.test_default_tab_p ALTER val TYPE bigint;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-Partitioned index "testschema.test_index1"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- val    | bigint | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-Partitioned index "testschema.test_index2"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- val    | bigint | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-Partitioned index "testschema.test_index3"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-primary key, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-Partitioned index "testschema.test_index4"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-unique, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ SELECT * FROM testschema.test_default_tab_p;
+- id | val 
+-----+-----
+-  1 |    
+-(1 row)
+-
++ERROR:  Table or view not found: testschema.test_default_tab_p (Schema path not found)
+ -- tablespace should not change even if there is an index rewrite
+ ALTER TABLE testschema.test_default_tab_p ALTER val TYPE int;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-Partitioned index "testschema.test_index1"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- val    | integer | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-Partitioned index "testschema.test_index2"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- val    | integer | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-Partitioned index "testschema.test_index3"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-primary key, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-Partitioned index "testschema.test_index4"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-unique, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ SELECT * FROM testschema.test_default_tab_p;
+- id | val 
+-----+-----
+-  1 |    
+-(1 row)
+-
++ERROR:  Table or view not found: testschema.test_default_tab_p (Schema path not found)
+ -- now use the default tablespace for default_tablespace
+ SET default_tablespace TO '';
+ -- tablespace should not change if no rewrite
+ ALTER TABLE testschema.test_default_tab_p ALTER val TYPE int;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-Partitioned index "testschema.test_index1"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- val    | integer | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-Partitioned index "testschema.test_index2"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- val    | integer | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-Partitioned index "testschema.test_index3"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-primary key, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-Partitioned index "testschema.test_index4"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-unique, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ -- tablespace should not change even if there is an index rewrite
+ ALTER TABLE testschema.test_default_tab_p ALTER val TYPE bigint;
++ERROR:  Schema path not found
+ \d testschema.test_index1
+-Partitioned index "testschema.test_index1"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- val    | bigint | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index2
+-Partitioned index "testschema.test_index2"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- val    | bigint | yes  | val
+-btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index3
+-Partitioned index "testschema.test_index3"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-primary key, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_index4
+-Partitioned index "testschema.test_index4"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- id     | bigint | yes  | id
+-unique, btree, for table "testschema.test_default_tab_p"
+-Number of partitions: 1 (Use \d+ to list them.)
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ DROP TABLE testschema.test_default_tab_p;
++ERROR:  DROP TABLE resolve failed for testschema.test_default_tab_p: Schema path not found
+ -- check that default_tablespace affects index additions in ALTER TABLE
+ CREATE TABLE testschema.test_tab(id int) TABLESPACE regress_tblspace;
+ INSERT INTO testschema.test_tab VALUES (1);
++ERROR:  Schema path not found
+ SET default_tablespace TO regress_tblspace;
+ ALTER TABLE testschema.test_tab ADD CONSTRAINT test_tab_unique UNIQUE (id);
++ERROR:  Schema path not found
+ SET default_tablespace TO '';
+ ALTER TABLE testschema.test_tab ADD CONSTRAINT test_tab_pkey PRIMARY KEY (id);
++ERROR:  Schema path not found
+ \d testschema.test_tab_unique
+-  Index "testschema.test_tab_unique"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-unique, btree, for table "testschema.test_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_tab_pkey
+-   Index "testschema.test_tab_pkey"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- id     | integer | yes  | id
+-primary key, btree, for table "testschema.test_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ SELECT * FROM testschema.test_tab;
+- id 
+-----
+-  1
+-(1 row)
+-
++ERROR:  Table or view not found: testschema.test_tab (Schema path not found)
+ DROP TABLE testschema.test_tab;
++ERROR:  DROP TABLE resolve failed for testschema.test_tab: Schema path not found
+ -- check that default_tablespace is handled correctly by multi-command
+ -- ALTER TABLE that includes a tablespace-preserving rewrite
+ CREATE TABLE testschema.test_tab(a int, b int, c int);
++ERROR:  Table already exists: test_tab
+ SET default_tablespace TO regress_tblspace;
+ ALTER TABLE testschema.test_tab ADD CONSTRAINT test_tab_unique UNIQUE (a);
++ERROR:  Schema path not found
+ CREATE INDEX test_tab_a_idx ON testschema.test_tab (a);
++ERROR:  Schema path not found
+ SET default_tablespace TO '';
+ CREATE INDEX test_tab_b_idx ON testschema.test_tab (b);
++ERROR:  Schema path not found
+ \d testschema.test_tab_unique
+-  Index "testschema.test_tab_unique"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- a      | integer | yes  | a
+-unique, btree, for table "testschema.test_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_tab_a_idx
+-  Index "testschema.test_tab_a_idx"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- a      | integer | yes  | a
+-btree, for table "testschema.test_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_tab_b_idx
+-  Index "testschema.test_tab_b_idx"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- b      | integer | yes  | b
+-btree, for table "testschema.test_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ ALTER TABLE testschema.test_tab ALTER b TYPE bigint, ADD UNIQUE (c);
++ERROR:  Schema path not found
+ \d testschema.test_tab_unique
+-  Index "testschema.test_tab_unique"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- a      | integer | yes  | a
+-unique, btree, for table "testschema.test_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_tab_a_idx
+-  Index "testschema.test_tab_a_idx"
+- Column |  Type   | Key? | Definition 
+---------+---------+------+------------
+- a      | integer | yes  | a
+-btree, for table "testschema.test_tab"
+-Tablespace: "regress_tblspace"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ \d testschema.test_tab_b_idx
+-  Index "testschema.test_tab_b_idx"
+- Column |  Type  | Key? | Definition 
+---------+--------+------+------------
+- b      | bigint | yes  | b
+-btree, for table "testschema.test_tab"
+-
++ERROR:  Execution error: Type mismatch: expected BOOLEAN
+ DROP TABLE testschema.test_tab;
++ERROR:  DROP TABLE resolve failed for testschema.test_tab: Schema path not found
+ -- let's try moving a table from one place to another
+ CREATE TABLE testschema.atable AS VALUES (1), (2);
+ CREATE UNIQUE INDEX anindex ON testschema.atable(column1);
++ERROR:  Schema path not found
+ ALTER TABLE testschema.atable SET TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ ALTER INDEX testschema.anindex SET TABLESPACE regress_tblspace;
+ ALTER INDEX testschema.part_a_idx SET TABLESPACE pg_global;
+-ERROR:  only shared relations can be placed in pg_global tablespace
+ ALTER INDEX testschema.part_a_idx SET TABLESPACE pg_default;
+ ALTER INDEX testschema.part_a_idx SET TABLESPACE regress_tblspace;
+ INSERT INTO testschema.atable VALUES(3);	-- ok
++ERROR:  Schema path not found
+ INSERT INTO testschema.atable VALUES(1);	-- fail (checks index)
+-ERROR:  duplicate key value violates unique constraint "anindex"
+-DETAIL:  Key (column1)=(1) already exists.
++ERROR:  Schema path not found
+ SELECT COUNT(*) FROM testschema.atable;		-- checks heap
+- count 
+--------
+-     3
+-(1 row)
+-
++ERROR:  Table or view not found: testschema.atable (Schema path not found)
+ -- let's try moving a materialized view from one place to another
+ CREATE MATERIALIZED VIEW testschema.amv AS SELECT * FROM testschema.atable;
+ ALTER MATERIALIZED VIEW testschema.amv SET TABLESPACE regress_tblspace;
+ REFRESH MATERIALIZED VIEW testschema.amv;
+ SELECT COUNT(*) FROM testschema.amv;
+- count 
+--------
+-     3
+-(1 row)
+-
++ERROR:  Table or view not found: testschema.amv (Schema path not found)
+ -- Will fail with bad path
+ CREATE TABLESPACE regress_badspace LOCATION '/no/such/location';
+-ERROR:  directory "/no/such/location" does not exist
++ERROR:  Failed to create tablespace 'regress_badspace': Failed to create tablespace file: /no/such/location (errno=2, No such file or directory)
+ -- No such tablespace
+ CREATE TABLE bar (i int) TABLESPACE regress_nosuchspace;
+-ERROR:  tablespace "regress_nosuchspace" does not exist
++ERROR:  Tablespace 'regress_nosuchspace' not found
+ -- Fail, in use for some partitioned object
+ DROP TABLESPACE regress_tblspace;
+-ERROR:  tablespace "regress_tblspace" cannot be dropped because some objects depend on it
+-DETAIL:  tablespace for index testschema.part_a_idx
++ERROR:  Failed to drop tablespace 'regress_tblspace': Tablespace 'regress_tblspace' is not empty. Use FORCE to drop anyway.
+ ALTER INDEX testschema.part_a_idx SET TABLESPACE pg_default;
+ -- Fail, not empty
+ DROP TABLESPACE regress_tblspace;
+-ERROR:  tablespace "regress_tblspace" is not empty
++ERROR:  Failed to drop tablespace 'regress_tblspace': Tablespace 'regress_tblspace' is not empty. Use FORCE to drop anyway.
+ -- Adequate cache initialization before GRANT
+ \c -
+ BEGIN;
+@@ -935,19 +542,20 @@
+ CREATE ROLE regress_tablespace_user1 login;
+ CREATE ROLE regress_tablespace_user2 login;
+ GRANT USAGE ON SCHEMA testschema TO regress_tablespace_user2;
++ERROR:  Schema 'testschema' not found: Object not found
+ ALTER TABLESPACE regress_tblspace OWNER TO regress_tablespace_user1;
+ CREATE TABLE testschema.tablespace_acl (c int);
+ -- new owner lacks permission to create this index from scratch
+ CREATE INDEX k ON testschema.tablespace_acl (c) TABLESPACE regress_tblspace;
++ERROR:  Schema path not found
+ ALTER TABLE testschema.tablespace_acl OWNER TO regress_tablespace_user2;
+ SET SESSION ROLE regress_tablespace_user2;
++ERROR:  Permission denied: Role 'regress_tablespace_user2' not granted to current user
+ CREATE TABLE tablespace_table (i int) TABLESPACE regress_tblspace; -- fail
+-ERROR:  permission denied for tablespace regress_tblspace
+ ALTER TABLE testschema.tablespace_acl ALTER c TYPE bigint;
++ERROR:  Schema path not found
+ REINDEX (TABLESPACE regress_tblspace) TABLE tablespace_table; -- fail
+-ERROR:  permission denied for tablespace regress_tblspace
+ REINDEX (TABLESPACE regress_tblspace, CONCURRENTLY) TABLE tablespace_table; -- fail
+-ERROR:  permission denied for tablespace regress_tblspace
+ RESET ROLE;
+ ALTER TABLESPACE regress_tblspace RENAME TO regress_tblspace_renamed;
+ ALTER TABLE ALL IN TABLESPACE regress_tblspace_renamed SET TABLESPACE pg_default;
+@@ -955,19 +563,11 @@
+ ALTER MATERIALIZED VIEW ALL IN TABLESPACE regress_tblspace_renamed SET TABLESPACE pg_default;
+ -- Should show notice that nothing was done
+ ALTER TABLE ALL IN TABLESPACE regress_tblspace_renamed SET TABLESPACE pg_default;
+-NOTICE:  no matching relations in tablespace "regress_tblspace_renamed" found
+ ALTER MATERIALIZED VIEW ALL IN TABLESPACE regress_tblspace_renamed SET TABLESPACE pg_default;
+-NOTICE:  no matching relations in tablespace "regress_tblspace_renamed" found
+ -- Should succeed
+ DROP TABLESPACE regress_tblspace_renamed;
++ERROR:  Failed to drop tablespace 'regress_tblspace_renamed': Tablespace 'regress_tblspace_renamed' is not empty. Use FORCE to drop anyway.
+ DROP SCHEMA testschema CASCADE;
+-NOTICE:  drop cascades to 7 other objects
+-DETAIL:  drop cascades to table testschema.foo
+-drop cascades to table testschema.asselect
+-drop cascades to table testschema.asexecute
+-drop cascades to table testschema.part
+-drop cascades to table testschema.atable
+-drop cascades to materialized view testschema.amv
+-drop cascades to table testschema.tablespace_acl
++ERROR:  Schema not found: Object not found
+ DROP ROLE regress_tablespace_user1;
+ DROP ROLE regress_tablespace_user2;

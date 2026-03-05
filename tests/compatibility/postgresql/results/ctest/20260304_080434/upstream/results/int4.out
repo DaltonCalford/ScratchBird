@@ -1,0 +1,336 @@
+--
+-- INT4
+--
+-- int4_tbl was already created and filled in test_setup.sql.
+-- Here we just try to insert bad values.
+INSERT INTO INT4_TBL(f1) VALUES ('34.5');
+ERROR:  Type mismatch for column 'f1': 34.5 is not a number (value: '34.5', target: INT32) (value: 34.5)
+INSERT INTO INT4_TBL(f1) VALUES ('1000000000000');
+ERROR:  Type mismatch for column 'f1': INT32 value out of range (value: '1000000000000', target: INT32) (value: 1000000000000)
+INSERT INTO INT4_TBL(f1) VALUES ('asdf');
+ERROR:  Type mismatch for column 'f1': asdf is not a number (value: 'asdf', target: INT32) (value: asdf)
+INSERT INTO INT4_TBL(f1) VALUES ('     ');
+ERROR:  Type mismatch for column 'f1':  is not a number (value: '     ', target: INT32) (value:      )
+INSERT INTO INT4_TBL(f1) VALUES ('   asdf   ');
+ERROR:  Type mismatch for column 'f1': asdf is not a number (value: '   asdf   ', target: INT32) (value:    asdf   )
+INSERT INTO INT4_TBL(f1) VALUES ('- 1234');
+ERROR:  Type mismatch for column 'f1': - 1234 is not a number (value: '- 1234', target: INT32) (value: - 1234)
+INSERT INTO INT4_TBL(f1) VALUES ('123       5');
+ERROR:  Type mismatch for column 'f1': 123       5 is not a number (value: '123       5', target: INT32) (value: 123       5)
+INSERT INTO INT4_TBL(f1) VALUES ('');
+ERROR:  Type mismatch for column 'f1':  is not a number (value: '', target: INT32)
+SELECT * FROM INT4_TBL;
+     f1      
+-------------
+           0
+      123456
+     -123456
+  2147483647
+ -2147483647
+           0
+      123456
+     -123456
+  2147483647
+ -2147483647
+(10 rows)
+
+-- Also try it with non-error-throwing API
+SELECT pg_input_is_valid('34', 'int4');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT pg_input_is_valid('asdf', 'int4');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT pg_input_is_valid('1000000000000', 'int4');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT * FROM pg_input_error_info('1000000000000', 'int4');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT i.* FROM INT4_TBL i WHERE i.f1 <> int2 '0';
+ERROR:  Parse error at line 1, column 42: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 <> int4 '0';
+ERROR:  Parse error at line 1, column 42: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 = int2 '0';
+ERROR:  Parse error at line 1, column 41: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 = int4 '0';
+ERROR:  Parse error at line 1, column 41: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 < int2 '0';
+ERROR:  Parse error at line 1, column 41: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 < int4 '0';
+ERROR:  Parse error at line 1, column 41: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 <= int2 '0';
+ERROR:  Parse error at line 1, column 42: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 <= int4 '0';
+ERROR:  Parse error at line 1, column 42: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 > int2 '0';
+ERROR:  Parse error at line 1, column 41: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 > int4 '0';
+ERROR:  Parse error at line 1, column 41: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 >= int2 '0';
+ERROR:  Parse error at line 1, column 42: Expected expression
+SELECT i.* FROM INT4_TBL i WHERE i.f1 >= int4 '0';
+ERROR:  Parse error at line 1, column 42: Expected expression
+-- positive odds
+SELECT i.* FROM INT4_TBL i WHERE (i.f1 % int2 '2') = int2 '1';
+ERROR:  Parse error at line 1, column 42: Expected expression
+-- any evens
+SELECT i.* FROM INT4_TBL i WHERE (i.f1 % int4 '2') = int2 '0';
+ERROR:  Parse error at line 1, column 42: Expected expression
+SELECT i.f1, i.f1 * int2 '2' AS x FROM INT4_TBL i;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 * int2 '2' AS x FROM INT4_TBL i
+WHERE abs(f1) < 1073741824;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 * int4 '2' AS x FROM INT4_TBL i;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 * int4 '2' AS x FROM INT4_TBL i
+WHERE abs(f1) < 1073741824;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 + int2 '2' AS x FROM INT4_TBL i;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 + int2 '2' AS x FROM INT4_TBL i
+WHERE f1 < 2147483646;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 + int4 '2' AS x FROM INT4_TBL i;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 + int4 '2' AS x FROM INT4_TBL i
+WHERE f1 < 2147483646;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 - int2 '2' AS x FROM INT4_TBL i;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 - int2 '2' AS x FROM INT4_TBL i
+WHERE f1 > -2147483647;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 - int4 '2' AS x FROM INT4_TBL i;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 - int4 '2' AS x FROM INT4_TBL i
+WHERE f1 > -2147483647;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 / int2 '2' AS x FROM INT4_TBL i;
+ERROR:  Parse error at line 1, column 21: Expected expression
+SELECT i.f1, i.f1 / int4 '2' AS x FROM INT4_TBL i;
+ERROR:  Parse error at line 1, column 21: Expected expression
+--
+-- more complex expressions
+--
+-- variations on unary minus parsing
+SELECT -2+3 AS one;
+  expr1   
+----------
+ 1.000000
+(1 row)
+
+SELECT 4-2 AS two;
+  expr1   
+----------
+ 2.000000
+(1 row)
+
+SELECT 2- -1 AS three;
+  expr1   
+----------
+ 3.000000
+(1 row)
+
+SELECT 2 - -2 AS four;
+  expr1   
+----------
+ 4.000000
+(1 row)
+
+SELECT int2 '2' * int2 '2' = int2 '16' / int2 '4' AS true;
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '2' * int2 '2' = int2 '16' / int4 '4' AS true;
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int2 '2' * int4 '2' = int4 '16' / int2 '4' AS true;
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '1000' < int4 '999' AS false;
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 AS ten;
+   expr1   
+-----------
+ 10.000000
+(1 row)
+
+SELECT 2 + 2 / 2 AS three;
+  expr1   
+----------
+ 3.000000
+(1 row)
+
+SELECT (2 + 2) / 2 AS two;
+  expr1   
+----------
+ 2.000000
+(1 row)
+
+-- corner case
+SELECT (-1::int4<<31)::text;
+ERROR:  Parse error at line 1, column 17: Expected )
+SELECT ((-1::int4<<31)+1)::text;
+ERROR:  Parse error at line 1, column 18: Expected )
+-- check sane handling of INT_MIN overflow cases
+SELECT (-2147483648)::int4 * (-1)::int4;
+       expr1       
+-------------------
+ 2147483648.000000
+(1 row)
+
+SELECT (-2147483648)::int4 / (-1)::int4;
+       expr1       
+-------------------
+ 2147483648.000000
+(1 row)
+
+SELECT (-2147483648)::int4 % (-1)::int4;
+ expr1 
+-------
+     0
+(1 row)
+
+SELECT (-2147483648)::int4 * (-1)::int2;
+       expr1       
+-------------------
+ 2147483648.000000
+(1 row)
+
+SELECT (-2147483648)::int4 / (-1)::int2;
+       expr1       
+-------------------
+ 2147483648.000000
+(1 row)
+
+SELECT (-2147483648)::int4 % (-1)::int2;
+ expr1 
+-------
+     0
+(1 row)
+
+-- check rounding when casting from float
+SELECT x, x::int4 AS int4_value
+FROM (VALUES (-2.5::float8),
+             (-1.5::float8),
+             (-0.5::float8),
+             (0.0::float8),
+             (0.5::float8),
+             (1.5::float8),
+             (2.5::float8)) t(x);
+ERROR:  Parse error at line 2, column 7: Expected SELECT in subquery table reference
+-- check rounding when casting from numeric
+SELECT x, x::int4 AS int4_value
+FROM (VALUES (-2.5::numeric),
+             (-1.5::numeric),
+             (-0.5::numeric),
+             (0.0::numeric),
+             (0.5::numeric),
+             (1.5::numeric),
+             (2.5::numeric)) t(x);
+ERROR:  Parse error at line 2, column 7: Expected SELECT in subquery table reference
+-- test gcd()
+SELECT a, b, gcd(a, b), gcd(a, -b), gcd(b, a), gcd(-b, a)
+FROM (VALUES (0::int4, 0::int4),
+             (0::int4, 6410818::int4),
+             (61866666::int4, 6410818::int4),
+             (-61866666::int4, 6410818::int4),
+             ((-2147483648)::int4, 1::int4),
+             ((-2147483648)::int4, 2147483647::int4),
+             ((-2147483648)::int4, 1073741824::int4)) AS v(a, b);
+ERROR:  Parse error at line 2, column 7: Expected SELECT in subquery table reference
+SELECT gcd((-2147483648)::int4, 0::int4); -- overflow
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT gcd((-2147483648)::int4, (-2147483648)::int4); -- overflow
+ expr1 
+-------
+ 
+(1 row)
+
+-- test lcm()
+SELECT a, b, lcm(a, b), lcm(a, -b), lcm(b, a), lcm(-b, a)
+FROM (VALUES (0::int4, 0::int4),
+             (0::int4, 42::int4),
+             (42::int4, 42::int4),
+             (330::int4, 462::int4),
+             (-330::int4, 462::int4),
+             ((-2147483648)::int4, 0::int4)) AS v(a, b);
+ERROR:  Parse error at line 2, column 7: Expected SELECT in subquery table reference
+SELECT lcm((-2147483648)::int4, 1::int4); -- overflow
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT lcm(2147483647::int4, 2147483646::int4); -- overflow
+ expr1 
+-------
+ 
+(1 row)
+
+-- non-decimal literals
+SELECT int4 '0b100101';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0o273';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0x42F';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0b';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0o';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0x';
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- cases near overflow
+SELECT int4 '0b1111111111111111111111111111111';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0b10000000000000000000000000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0o17777777777';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0o20000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0x7FFFFFFF';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0x80000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '-0b10000000000000000000000000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '-0b10000000000000000000000000000001';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '-0o20000000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '-0o20000000001';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '-0x80000000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '-0x80000001';
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- underscores
+SELECT int4 '1_000_000';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '1_2_3';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0x1EEE_FFFF';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0o2_73';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '0b_10_0101';
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- error cases
+SELECT int4 '_100';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '100_';
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT int4 '100__000';
+ERROR:  Parse error at line 1, column 8: Expected expression

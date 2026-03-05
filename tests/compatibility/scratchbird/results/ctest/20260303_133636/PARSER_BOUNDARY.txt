@@ -1,0 +1,4 @@
+parser_core=v3
+parser_mode=native_core
+protocol_surface=sbwp_native
+statement_path=v3_core_parser_direct

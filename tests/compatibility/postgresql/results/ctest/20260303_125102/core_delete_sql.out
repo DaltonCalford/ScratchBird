@@ -1,0 +1,46 @@
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
+OK
++------+----+-------+
+| id   | a  | expr1 |
++------+----+-------+
+| NULL | 10 | NULL  |
++------+----+-------+
+(1 row)
+OK
++------+----+-------+
+| id   | a  | expr1 |
++------+----+-------+
+| NULL | 10 | NULL  |
++------+----+-------+
+(1 row)

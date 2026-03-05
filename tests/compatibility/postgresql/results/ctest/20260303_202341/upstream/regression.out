@@ -1,0 +1,479 @@
+# using postmaster on 127.0.0.1, port 16432
+not ok 1     - test_setup                              23848 ms
+# parallel group (20 tests):  text int2 int4 varchar oid char name txid pg_lsn regproc boolean uuid float4 float8 money int8 rangetypes enum bit numeric
+not ok 2     + boolean                                 52133 ms
+not ok 3     + char                                    40561 ms
+not ok 4     + name                                    41177 ms
+not ok 5     + varchar                                 32204 ms
+not ok 6     + text                                     7288 ms
+not ok 7     + int2                                    16079 ms
+not ok 8     + int4                                    19087 ms
+not ok 9     + int8                                    77614 ms
+not ok 10    + oid                                     39251 ms
+not ok 11    + float4                                  70797 ms
+not ok 12    + float8                                  71934 ms
+not ok 13    + bit                                    528087 ms
+# (test process exited with exit code 2)
+not ok 14    + numeric                                528086 ms
+# (test process exited with exit code 2)
+not ok 15    + txid                                    43550 ms
+not ok 16    + uuid                                    69092 ms
+not ok 17    + enum                                   528059 ms
+# (test process exited with exit code 2)
+not ok 18    + money                                   77607 ms
+not ok 19    + rangetypes                              77616 ms
+not ok 20    + pg_lsn                                  48143 ms
+not ok 21    + regproc                                 50427 ms
+# parallel group (20 tests):  strings numerology date timestamp time circle line lseg box polygon timetz path inet multirangetypes timestamptz point macaddr macaddr8 md5 interval
+not ok 22    + strings                                    29 ms
+# (test process exited with exit code 2)
+not ok 23    + md5                                       124 ms
+# (test process exited with exit code 2)
+not ok 24    + numerology                                 33 ms
+# (test process exited with exit code 2)
+not ok 25    + point                                     103 ms
+# (test process exited with exit code 2)
+not ok 26    + lseg                                       82 ms
+# (test process exited with exit code 2)
+not ok 27    + line                                       72 ms
+# (test process exited with exit code 2)
+not ok 28    + box                                        82 ms
+# (test process exited with exit code 2)
+not ok 29    + path                                       87 ms
+# (test process exited with exit code 2)
+not ok 30    + polygon                                    83 ms
+# (test process exited with exit code 2)
+not ok 31    + circle                                     70 ms
+# (test process exited with exit code 2)
+not ok 32    + date                                       51 ms
+# (test process exited with exit code 2)
+not ok 33    + time                                       55 ms
+# (test process exited with exit code 2)
+not ok 34    + timetz                                     80 ms
+# (test process exited with exit code 2)
+not ok 35    + timestamp                                  45 ms
+# (test process exited with exit code 2)
+not ok 36    + timestamptz                                86 ms
+# (test process exited with exit code 2)
+not ok 37    + interval                                  116 ms
+# (test process exited with exit code 2)
+not ok 38    + inet                                       78 ms
+# (test process exited with exit code 2)
+not ok 39    + macaddr                                    95 ms
+# (test process exited with exit code 2)
+not ok 40    + macaddr8                                  100 ms
+# (test process exited with exit code 2)
+not ok 41    + multirangetypes                            79 ms
+# (test process exited with exit code 2)
+# parallel group (16 tests):  type_sanity regex horology opr_sanity expressions database comments geometry misc_sanity mvcc tstypes pg_dependencies xid unicode stats_import pg_ndistinct
+not ok 42    + geometry                                   44 ms
+# (test process exited with exit code 2)
+not ok 43    + horology                                   32 ms
+# (test process exited with exit code 2)
+not ok 44    + tstypes                                    50 ms
+# (test process exited with exit code 2)
+not ok 45    + regex                                      31 ms
+# (test process exited with exit code 2)
+not ok 46    + type_sanity                                26 ms
+# (test process exited with exit code 2)
+not ok 47    + opr_sanity                                 31 ms
+# (test process exited with exit code 2)
+not ok 48    + misc_sanity                                44 ms
+# (test process exited with exit code 2)
+not ok 49    + comments                                   41 ms
+# (test process exited with exit code 2)
+not ok 50    + expressions                                34 ms
+# (test process exited with exit code 2)
+not ok 51    + unicode                                    48 ms
+# (test process exited with exit code 2)
+not ok 52    + xid                                        43 ms
+# (test process exited with exit code 2)
+not ok 53    + mvcc                                       39 ms
+# (test process exited with exit code 2)
+not ok 54    + database                                   34 ms
+# (test process exited with exit code 2)
+not ok 55    + stats_import                               46 ms
+# (test process exited with exit code 2)
+not ok 56    + pg_ndistinct                               46 ms
+# (test process exited with exit code 2)
+not ok 57    + pg_dependencies                            42 ms
+# (test process exited with exit code 2)
+# parallel group (6 tests):  copydml insert copy insert_conflict copyselect copyencoding
+not ok 58    + copy                                       22 ms
+# (test process exited with exit code 2)
+not ok 59    + copyselect                                 27 ms
+# (test process exited with exit code 2)
+not ok 60    + copydml                                    21 ms
+# (test process exited with exit code 2)
+not ok 61    + copyencoding                               27 ms
+# (test process exited with exit code 2)
+not ok 62    + insert                                     20 ms
+# (test process exited with exit code 2)
+not ok 63    + insert_conflict                            23 ms
+# (test process exited with exit code 2)
+# parallel group (7 tests):  create_procedure create_type create_schema create_function_c create_misc create_operator create_table
+not ok 64    + create_function_c                          27 ms
+# (test process exited with exit code 2)
+not ok 65    + create_misc                                26 ms
+# (test process exited with exit code 2)
+not ok 66    + create_operator                            27 ms
+# (test process exited with exit code 2)
+not ok 67    + create_procedure                           17 ms
+# (test process exited with exit code 2)
+not ok 68    + create_table                               27 ms
+# (test process exited with exit code 2)
+not ok 69    + create_type                                23 ms
+# (test process exited with exit code 2)
+not ok 70    + create_schema                              24 ms
+# (test process exited with exit code 2)
+# parallel group (5 tests):  index_including_gist index_including create_index_spgist create_view create_index
+not ok 71    + create_index                               26 ms
+# (test process exited with exit code 2)
+not ok 72    + create_index_spgist                        22 ms
+# (test process exited with exit code 2)
+not ok 73    + create_view                                26 ms
+# (test process exited with exit code 2)
+not ok 74    + index_including                            20 ms
+# (test process exited with exit code 2)
+not ok 75    + index_including_gist                       20 ms
+# (test process exited with exit code 2)
+# parallel group (16 tests):  updatable_views typed_table constraints create_function_sql triggers vacuum create_aggregate select roleattributes hash_func infinite_recurse errors create_am inherit drop_if_exists create_cast
+not ok 76    + create_aggregate                           30 ms
+# (test process exited with exit code 2)
+not ok 77    + create_function_sql                        29 ms
+# (test process exited with exit code 2)
+not ok 78    + create_cast                                43 ms
+# (test process exited with exit code 2)
+not ok 79    + constraints                                29 ms
+# (test process exited with exit code 2)
+not ok 80    + triggers                                   29 ms
+# (test process exited with exit code 2)
+not ok 81    + select                                     30 ms
+# (test process exited with exit code 2)
+not ok 82    + inherit                                    42 ms
+# (test process exited with exit code 2)
+not ok 83    + typed_table                                27 ms
+# (test process exited with exit code 2)
+not ok 84    + vacuum                                     29 ms
+# (test process exited with exit code 2)
+not ok 85    + drop_if_exists                             42 ms
+# (test process exited with exit code 2)
+not ok 86    + updatable_views                            26 ms
+# (test process exited with exit code 2)
+not ok 87    + roleattributes                             29 ms
+# (test process exited with exit code 2)
+not ok 88    + create_am                                  41 ms
+# (test process exited with exit code 2)
+not ok 89    + hash_func                                  35 ms
+# (test process exited with exit code 2)
+not ok 90    + errors                                     40 ms
+# (test process exited with exit code 2)
+not ok 91    + infinite_recurse                           35 ms
+# (test process exited with exit code 2)
+not ok 92    - sanity_check                               23 ms
+# (test process exited with exit code 2)
+# parallel group (20 tests):  subselect join select_into select_distinct_on select_having union aggregates random case transactions select_distinct select_implicit portals hash_index arrays namespace prepared_xacts delete btree_index update
+not ok 93    + select_into                                29 ms
+# (test process exited with exit code 2)
+not ok 94    + select_distinct                            42 ms
+# (test process exited with exit code 2)
+not ok 95    + select_distinct_on                         29 ms
+# (test process exited with exit code 2)
+not ok 96    + select_implicit                            44 ms
+# (test process exited with exit code 2)
+not ok 97    + select_having                              28 ms
+# (test process exited with exit code 2)
+not ok 98    + subselect                                  26 ms
+# (test process exited with exit code 2)
+not ok 99    + union                                      28 ms
+# (test process exited with exit code 2)
+not ok 100   + case                                       39 ms
+# (test process exited with exit code 2)
+not ok 101   + join                                       25 ms
+# (test process exited with exit code 2)
+not ok 102   + aggregates                                 31 ms
+# (test process exited with exit code 2)
+not ok 103   + transactions                               39 ms
+# (test process exited with exit code 2)
+not ok 104   + random                                     31 ms
+# (test process exited with exit code 2)
+not ok 105   + portals                                    42 ms
+# (test process exited with exit code 2)
+not ok 106   + arrays                                     45 ms
+# (test process exited with exit code 2)
+not ok 107   + btree_index                                46 ms
+# (test process exited with exit code 2)
+not ok 108   + hash_index                                 44 ms
+# (test process exited with exit code 2)
+not ok 109   + update                                     49 ms
+# (test process exited with exit code 2)
+not ok 110   + delete                                     45 ms
+# (test process exited with exit code 2)
+not ok 111   + namespace                                  44 ms
+# (test process exited with exit code 2)
+not ok 112   + prepared_xacts                             43 ms
+# (test process exited with exit code 2)
+# parallel group (20 tests):  gin brin init_privs gist rowsecurity spgist security_label lock drop_operator privileges collate password matview tablesample identity replica_identity object_address join_hash groupingsets generated_stored
+not ok 113   + brin                                       30 ms
+# (test process exited with exit code 2)
+not ok 114   + gin                                        30 ms
+# (test process exited with exit code 2)
+not ok 115   + gist                                       31 ms
+# (test process exited with exit code 2)
+not ok 116   + spgist                                     31 ms
+# (test process exited with exit code 2)
+not ok 117   + privileges                                 42 ms
+# (test process exited with exit code 2)
+not ok 118   + init_privs                                 30 ms
+# (test process exited with exit code 2)
+not ok 119   + security_label                             32 ms
+# (test process exited with exit code 2)
+not ok 120   + collate                                    42 ms
+# (test process exited with exit code 2)
+not ok 121   + matview                                    44 ms
+# (test process exited with exit code 2)
+not ok 122   + lock                                       31 ms
+# (test process exited with exit code 2)
+not ok 123   + replica_identity                           44 ms
+# (test process exited with exit code 2)
+not ok 124   + rowsecurity                                30 ms
+# (test process exited with exit code 2)
+not ok 125   + object_address                             46 ms
+# (test process exited with exit code 2)
+not ok 126   + tablesample                                43 ms
+# (test process exited with exit code 2)
+not ok 127   + groupingsets                               48 ms
+# (test process exited with exit code 2)
+not ok 128   + drop_operator                              40 ms
+# (test process exited with exit code 2)
+not ok 129   + password                                   36 ms
+# (test process exited with exit code 2)
+not ok 130   + identity                                   37 ms
+# (test process exited with exit code 2)
+not ok 131   + generated_stored                           42 ms
+# (test process exited with exit code 2)
+not ok 132   + join_hash                                  39 ms
+# (test process exited with exit code 2)
+# parallel group (2 tests):  brin_multi brin_bloom
+not ok 133   + brin_bloom                                 27 ms
+# (test process exited with exit code 2)
+not ok 134   + brin_multi                                 23 ms
+# (test process exited with exit code 2)
+# parallel group (20 tests):  nls async alter_operator create_table_like dbsize merge tid sysviews misc without_overlaps misc_functions tidscan tsrf alter_generic tidrangescan generated_virtual collate.icu.utf8 create_role incremental_sort collate.utf8
+not ok 135   + create_table_like                          30 ms
+# (test process exited with exit code 2)
+not ok 136   + alter_generic                              48 ms
+# (test process exited with exit code 2)
+not ok 137   + alter_operator                             29 ms
+# (test process exited with exit code 2)
+not ok 138   + misc                                       38 ms
+# (test process exited with exit code 2)
+not ok 139   + async                                      28 ms
+# (test process exited with exit code 2)
+not ok 140   + dbsize                                     30 ms
+# (test process exited with exit code 2)
+not ok 141   + merge                                      29 ms
+# (test process exited with exit code 2)
+not ok 142   + misc_functions                             43 ms
+# (test process exited with exit code 2)
+not ok 143   + nls                                        26 ms
+# (test process exited with exit code 2)
+not ok 144   + sysviews                                   31 ms
+# (test process exited with exit code 2)
+not ok 145   + tsrf                                       43 ms
+# (test process exited with exit code 2)
+not ok 146   + tid                                        29 ms
+# (test process exited with exit code 2)
+not ok 147   + tidscan                                    42 ms
+# (test process exited with exit code 2)
+not ok 148   + tidrangescan                               44 ms
+# (test process exited with exit code 2)
+not ok 149   + collate.utf8                               51 ms
+# (test process exited with exit code 2)
+not ok 150   + collate.icu.utf8                           45 ms
+# (test process exited with exit code 2)
+not ok 151   + incremental_sort                           46 ms
+# (test process exited with exit code 2)
+not ok 152   + create_role                                46 ms
+# (test process exited with exit code 2)
+not ok 153   + without_overlaps                           38 ms
+# (test process exited with exit code 2)
+not ok 154   + generated_virtual                          43 ms
+# (test process exited with exit code 2)
+# parallel group (8 tests):  stats_ext amutils psql collate.windows.win1252 psql_crosstab psql_pipeline rules collate.linux.utf8
+not ok 155   + rules                                      28 ms
+# (test process exited with exit code 2)
+not ok 156   + psql                                       25 ms
+# (test process exited with exit code 2)
+not ok 157   + psql_crosstab                              27 ms
+# (test process exited with exit code 2)
+not ok 158   + psql_pipeline                              28 ms
+# (test process exited with exit code 2)
+not ok 159   + amutils                                    18 ms
+# (test process exited with exit code 2)
+not ok 160   + stats_ext                                  17 ms
+# (test process exited with exit code 2)
+not ok 161   + collate.linux.utf8                         28 ms
+# (test process exited with exit code 2)
+not ok 162   + collate.windows.win1252                    24 ms
+# (test process exited with exit code 2)
+not ok 163   - select_parallel                            17 ms
+# (test process exited with exit code 2)
+not ok 164   - write_parallel                             18 ms
+# (test process exited with exit code 2)
+not ok 165   - vacuum_parallel                            20 ms
+# (test process exited with exit code 2)
+not ok 166   - maintain_every                             21 ms
+# (test process exited with exit code 2)
+# parallel group (2 tests):  subscription publication
+not ok 167   + publication                                24 ms
+# (test process exited with exit code 2)
+not ok 168   + subscription                               20 ms
+# (test process exited with exit code 2)
+# parallel group (18 tests):  combocid cluster dependency guc foreign_key bitmapops select_views portals_p2 tsearch window foreign_data tsdicts xmlmap functional_deps equivclass stats_rewrite advisory_lock indirect_toast
+not ok 169   + select_views                               32 ms
+# (test process exited with exit code 2)
+not ok 170   + portals_p2                                 32 ms
+# (test process exited with exit code 2)
+not ok 171   + foreign_key                                30 ms
+# (test process exited with exit code 2)
+not ok 172   + cluster                                    29 ms
+# (test process exited with exit code 2)
+not ok 173   + dependency                                 29 ms
+# (test process exited with exit code 2)
+not ok 174   + guc                                        29 ms
+# (test process exited with exit code 2)
+not ok 175   + bitmapops                                  30 ms
+# (test process exited with exit code 2)
+not ok 176   + combocid                                   25 ms
+# (test process exited with exit code 2)
+not ok 177   + tsearch                                    31 ms
+# (test process exited with exit code 2)
+not ok 178   + tsdicts                                    35 ms
+# (test process exited with exit code 2)
+not ok 179   + foreign_data                               32 ms
+# (test process exited with exit code 2)
+not ok 180   + window                                     31 ms
+# (test process exited with exit code 2)
+not ok 181   + xmlmap                                     39 ms
+# (test process exited with exit code 2)
+not ok 182   + functional_deps                            42 ms
+# (test process exited with exit code 2)
+not ok 183   + advisory_lock                              47 ms
+# (test process exited with exit code 2)
+not ok 184   + indirect_toast                             47 ms
+# (test process exited with exit code 2)
+not ok 185   + equivclass                                 42 ms
+# (test process exited with exit code 2)
+not ok 186   + stats_rewrite                              45 ms
+# (test process exited with exit code 2)
+# parallel group (9 tests):  jsonb_jsonpath sqljson_queryfuncs jsonb sqljson json json_encoding jsonpath sqljson_jsontable jsonpath_encoding
+not ok 187   + json                                       28 ms
+# (test process exited with exit code 2)
+not ok 188   + jsonb                                      26 ms
+# (test process exited with exit code 2)
+not ok 189   + json_encoding                              27 ms
+# (test process exited with exit code 2)
+not ok 190   + jsonpath                                   27 ms
+# (test process exited with exit code 2)
+not ok 191   + jsonpath_encoding                          32 ms
+# (test process exited with exit code 2)
+not ok 192   + jsonb_jsonpath                             18 ms
+# (test process exited with exit code 2)
+not ok 193   + sqljson                                    25 ms
+# (test process exited with exit code 2)
+not ok 194   + sqljson_queryfuncs                         17 ms
+# (test process exited with exit code 2)
+not ok 195   + sqljson_jsontable                          28 ms
+# (test process exited with exit code 2)
+# parallel group (18 tests):  temp truncate alter_table plancache copy2 rangefuncs plpgsql domain polymorphism largeobject rowtypes prepare limit sequence conversion with xml returning
+not ok 196   + plancache                                  31 ms
+# (test process exited with exit code 2)
+not ok 197   + limit                                      44 ms
+# (test process exited with exit code 2)
+not ok 198   + plpgsql                                    32 ms
+# (test process exited with exit code 2)
+not ok 199   + copy2                                      31 ms
+# (test process exited with exit code 2)
+not ok 200   + temp                                       27 ms
+# (test process exited with exit code 2)
+not ok 201   + domain                                     33 ms
+# (test process exited with exit code 2)
+not ok 202   + rangefuncs                                 31 ms
+# (test process exited with exit code 2)
+not ok 203   + prepare                                    43 ms
+# (test process exited with exit code 2)
+not ok 204   + conversion                                 43 ms
+# (test process exited with exit code 2)
+not ok 205   + truncate                                   26 ms
+# (test process exited with exit code 2)
+not ok 206   + alter_table                                29 ms
+# (test process exited with exit code 2)
+not ok 207   + sequence                                   42 ms
+# (test process exited with exit code 2)
+not ok 208   + polymorphism                               38 ms
+# (test process exited with exit code 2)
+not ok 209   + rowtypes                                   39 ms
+# (test process exited with exit code 2)
+not ok 210   + returning                                  43 ms
+# (test process exited with exit code 2)
+not ok 211   + largeobject                                37 ms
+# (test process exited with exit code 2)
+not ok 212   + with                                       41 ms
+# (test process exited with exit code 2)
+not ok 213   + xml                                        41 ms
+# (test process exited with exit code 2)
+# parallel group (18 tests):  compression indexing tuplesort partition_join reloptions partition_merge hash_part partition_info partition_prune partition_split partition_aggregate eager_aggregate memoize explain numa compression_lz4 stats predicate
+not ok 214   + partition_merge                            33 ms
+# (test process exited with exit code 2)
+not ok 215   + partition_split                            34 ms
+# (test process exited with exit code 2)
+not ok 216   + partition_join                             32 ms
+# (test process exited with exit code 2)
+not ok 217   + partition_prune                            33 ms
+# (test process exited with exit code 2)
+not ok 218   + reloptions                                 32 ms
+# (test process exited with exit code 2)
+not ok 219   + hash_part                                  33 ms
+# (test process exited with exit code 2)
+not ok 220   + indexing                                   30 ms
+# (test process exited with exit code 2)
+not ok 221   + partition_aggregate                        39 ms
+# (test process exited with exit code 2)
+not ok 222   + partition_info                             32 ms
+# (test process exited with exit code 2)
+not ok 223   + tuplesort                                  30 ms
+# (test process exited with exit code 2)
+not ok 224   + explain                                    43 ms
+# (test process exited with exit code 2)
+not ok 225   + compression                                29 ms
+# (test process exited with exit code 2)
+not ok 226   + compression_lz4                            45 ms
+# (test process exited with exit code 2)
+not ok 227   + memoize                                    42 ms
+# (test process exited with exit code 2)
+not ok 228   + stats                                      41 ms
+# (test process exited with exit code 2)
+not ok 229   + predicate                                  42 ms
+# (test process exited with exit code 2)
+not ok 230   + numa                                       40 ms
+# (test process exited with exit code 2)
+not ok 231   + eager_aggregate                            35 ms
+# (test process exited with exit code 2)
+# parallel group (2 tests):  event_trigger oidjoins
+not ok 232   + oidjoins                                   28 ms
+# (test process exited with exit code 2)
+not ok 233   + event_trigger                              18 ms
+# (test process exited with exit code 2)
+not ok 234   - event_trigger_login                        19 ms
+# (test process exited with exit code 2)
+not ok 235   - fast_default                               20 ms
+# (test process exited with exit code 2)
+not ok 236   - tablespace                                 19 ms
+# (test process exited with exit code 2)
+not ok 237   - test_setup                                 19 ms
+# (test process exited with exit code 2)
+1..237
+# 237 of 237 tests failed.
+# The differences that caused some tests to fail can be viewed in the file "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260303_202341/upstream/regression.diffs".
+# A copy of the test summary that you see above is saved in the file "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260303_202341/upstream/regression.out".

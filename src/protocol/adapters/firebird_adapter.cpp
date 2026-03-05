@@ -18,19 +18,34 @@
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/firebird_datetime.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/posix_compat.h"
 #include "scratchbird/sblr/firebird_query_compiler.h"
 
 #include <cstring>
+#include <cstdlib>
 #include <random>
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <limits>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <string_view>
+#include <mutex>
+#include <fstream>
+
+#include <nlohmann/json.hpp>
+
+#ifdef __unix__
+#if defined(_GNU_SOURCE) || defined(__linux__)
+#include <crypt.h>
+#define HAVE_CRYPT_R 1
+#endif
+#endif
 
 namespace scratchbird {
 namespace protocol {
@@ -113,7 +128,7 @@ std::string deriveFirebirdDatabaseName(std::string_view file_path) {
         for (char& ch : ext) {
             ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
         }
-        if (ext == "fdb" || ext == "gdb") {
+        if (ext == "fdb" || ext == "gdb" || ext == "sbdb") {
             base = base.substr(0, dot);
         }
     }
@@ -155,6 +170,115 @@ std::string buildLegacyEmulatedFirebirdSchemaPath(const std::string& server,
     return schema;
 }
 
+constexpr const char* kFirebirdLegacyPasswordSalt = "9z";
+constexpr const char* kFirebirdLegacyEncField = "firebird_legacy_enc";
+constexpr const char* kFirebirdLegacySecretPrefix = "{fb_legacy_enc}";
+
+void logFirebirdAuthDebug(const std::string& message) {
+    const char* stderr_flag = std::getenv("SCRATCHBIRD_FB_AUTH_DEBUG_STDERR");
+    if (stderr_flag && stderr_flag[0] != '\0' &&
+        std::strcmp(stderr_flag, "0") != 0 &&
+        std::strcmp(stderr_flag, "false") != 0 &&
+        std::strcmp(stderr_flag, "FALSE") != 0) {
+        std::fprintf(stderr, "[fb_auth_debug] %s\n", message.c_str());
+    }
+
+    const char* path = std::getenv("SCRATCHBIRD_FB_AUTH_DEBUG_LOG");
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+    std::ofstream out(path, std::ios::app);
+    if (!out.is_open()) {
+        return;
+    }
+    out << message << '\n';
+}
+
+bool timingSafeStringEquals(const std::string& lhs, const std::string& rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+
+    unsigned char mismatch = 0;
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        mismatch |= static_cast<unsigned char>(lhs[i] ^ rhs[i]);
+    }
+    return mismatch == 0;
+}
+
+std::string encodeHex(const std::string& value) {
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size() * 2);
+    for (unsigned char ch : value) {
+        out.push_back(kHex[(ch >> 4) & 0x0F]);
+        out.push_back(kHex[ch & 0x0F]);
+    }
+    return out;
+}
+
+bool isFirebirdCatalogQuery(const std::string& sql) {
+    std::string upper;
+    upper.reserve(sql.size());
+    for (char ch : sql) {
+        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+    }
+    return upper.find("RDB$") != std::string::npos ||
+           upper.find("MON$") != std::string::npos;
+}
+
+bool computeFirebirdLegacyPasswordEnc(const std::string& password, std::string& enc_out) {
+#ifdef HAVE_CRYPT_R
+    struct crypt_data data;
+    std::memset(&data, 0, sizeof(data));
+    char* hash = crypt_r(password.c_str(), kFirebirdLegacyPasswordSalt, &data);
+    if (hash == nullptr) {
+        return false;
+    }
+    std::string full_hash(hash);
+#elif defined(__unix__)
+    static std::mutex crypt_mutex;
+    std::lock_guard<std::mutex> lock(crypt_mutex);
+    char* hash = crypt(password.c_str(), kFirebirdLegacyPasswordSalt);
+    if (hash == nullptr) {
+        return false;
+    }
+    std::string full_hash(hash);
+#else
+    (void)password;
+    return false;
+#endif
+
+    if (full_hash.size() < 2) {
+        return false;
+    }
+    enc_out.assign(full_hash.data() + 2, full_hash.size() - 2);
+    return true;
+}
+
+std::string buildFirebirdLegacySecret(const std::string& enc) {
+    std::string secret(kFirebirdLegacySecretPrefix);
+    secret += enc;
+    return secret;
+}
+
+std::string extractFirebirdLegacyEncHash(const std::string& password_hash_payload) {
+    if (password_hash_payload.empty() || password_hash_payload.front() != '{') {
+        return {};
+    }
+
+    try {
+        const auto doc = nlohmann::json::parse(password_hash_payload);
+        if (!doc.is_object() || !doc.contains(kFirebirdLegacyEncField) ||
+            !doc[kFirebirdLegacyEncField].is_string()) {
+            return {};
+        }
+        return doc[kFirebirdLegacyEncField].get<std::string>();
+    } catch (const nlohmann::json::exception&) {
+        return {};
+    }
+}
+
 // Minimal BLR parser for SQLDA (scalar fields only; text/varchar/int sizes)
 core::Status parseBlr(const std::vector<uint8_t>& blr,
                       std::vector<FirebirdStatement::BlrField>& fields_out,
@@ -178,7 +302,7 @@ core::Status parseBlr(const std::vector<uint8_t>& blr,
 
     if (!require(1)) return core::Status::INVALID_ARGUMENT;
     uint8_t version = blr[idx++];
-    if (version != 4) {  // Firebird BLR version 4
+    if (version != 4 && version != 5) {  // Firebird BLR versions 4/5
         error_out = "Unsupported BLR version";
         return core::Status::INVALID_ARGUMENT;
     }
@@ -230,6 +354,42 @@ core::Status parseBlr(const std::vector<uint8_t>& blr,
                 field.length = 8;
                 break;
             }
+            case 10: { // blr_float
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 4;
+                break;
+            }
+            case 27: { // blr_double
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 8;
+                break;
+            }
+            case 12: { // blr_sql_date
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 4;
+                break;
+            }
+            case 13: { // blr_sql_time
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 4;
+                break;
+            }
+            case 35: { // blr_timestamp
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 8;
+                break;
+            }
+            case 23: { // blr_bool
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = 1;
+                break;
+            }
             case 14: { // blr_text
                 if (!require(2)) return core::Status::INVALID_ARGUMENT;
                 uint16_t len = static_cast<uint16_t>(blr[idx] | (blr[idx + 1] << 8));
@@ -241,6 +401,16 @@ core::Status parseBlr(const std::vector<uint8_t>& blr,
                 break;
             }
             case 37: { // blr_varying
+                if (!require(2)) return core::Status::INVALID_ARGUMENT;
+                uint16_t len = static_cast<uint16_t>(blr[idx] | (blr[idx + 1] << 8));
+                idx += 2;
+                field.dtype = opcode;
+                field.scale = 0;
+                field.length = len + 2; // includes length prefix
+                field.is_varying = true;
+                break;
+            }
+            case 38: { // blr_varying2
                 if (!require(2)) return core::Status::INVALID_ARGUMENT;
                 uint16_t len = static_cast<uint16_t>(blr[idx] | (blr[idx + 1] << 8));
                 idx += 2;
@@ -320,6 +490,21 @@ int32_t mapStatusToFirebird(core::Status st) {
     }
 }
 
+int32_t normalizeFirebirdErrorCode(const ResultContext& result, core::Status status) {
+    constexpr uint32_t kFirebirdGdsBase = 335544000U;
+    if (result.error_code >= kFirebirdGdsBase) {
+        return static_cast<int32_t>(result.error_code);
+    }
+    if (status != core::Status::OK) {
+        return mapStatusToFirebird(status);
+    }
+    if (result.error_code != 0) {
+        // Engine/internal numeric status not in Firebird GDS domain.
+        return firebird::ErrorCode::isc_dsql_error;
+    }
+    return mapStatusToFirebird(status);
+}
+
 } // namespace
 
 namespace {
@@ -327,30 +512,40 @@ FirebirdStatement::BlrField columnToBlrField(const ProtocolCodec::ColumnInfo& co
     FirebirdStatement::BlrField field{};
     switch (col.type) {
         case WireType::BOOLEAN:
-            field.dtype = 7;  // blr_short for booleans (int16)
-            field.length = 2;
+            field.dtype = 23;  // blr_bool
+            field.length = 1;
             break;
         case WireType::INT16:
             field.dtype = 7;  // blr_short
             field.length = 2;
             break;
         case WireType::INT32:
-        case WireType::DATE:
             field.dtype = 8;  // blr_long
             field.length = 4;
             break;
+        case WireType::DATE:
+            field.dtype = 12;  // blr_sql_date
+            field.length = 4;
+            break;
+        case WireType::TIME:
+            field.dtype = 13;  // blr_sql_time
+            field.length = 4;
+            break;
         case WireType::INT64:
-        case WireType::TIMESTAMP:
-        case WireType::TIMESTAMPTZ:
             field.dtype = 16;  // blr_int64
             field.length = 8;
             break;
+        case WireType::TIMESTAMP:
+        case WireType::TIMESTAMPTZ:
+            field.dtype = 35;  // blr_timestamp
+            field.length = 8;
+            break;
         case WireType::FLOAT32:
-            field.dtype = 27;  // blr_float
+            field.dtype = 10;  // blr_float
             field.length = 4;
             break;
         case WireType::FLOAT64:
-            field.dtype = 26;  // blr_double
+            field.dtype = 27;  // blr_double
             field.length = 8;
             break;
         case WireType::CHAR: {
@@ -393,6 +588,371 @@ FirebirdStatement::BlrField columnToBlrField(const ProtocolCodec::ColumnInfo& co
     }
     return field;
 }
+
+constexpr int32_t kWireDateEpochMjd = 51544;  // 2000-01-01 in MJD
+
+void appendXdrUInt32(std::vector<uint8_t>& out, uint32_t value) {
+    out.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+    out.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>(value & 0xFF));
+}
+
+void appendXdrInt32(std::vector<uint8_t>& out, int32_t value) {
+    appendXdrUInt32(out, static_cast<uint32_t>(value));
+}
+
+void appendXdrUInt64(std::vector<uint8_t>& out, uint64_t value) {
+    for (int i = 7; i >= 0; --i) {
+        out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
+    }
+}
+
+void appendXdrInt64(std::vector<uint8_t>& out, int64_t value) {
+    appendXdrUInt64(out, static_cast<uint64_t>(value));
+}
+
+void appendXdrOpaque(std::vector<uint8_t>& out, const uint8_t* data, size_t len) {
+    if (len > 0 && data != nullptr) {
+        out.insert(out.end(), data, data + len);
+    }
+    while ((out.size() % 4) != 0) {
+        out.push_back(0);
+    }
+}
+
+std::string columnValueAsString(const ProtocolCodec::ColumnValue& value) {
+    return std::string(reinterpret_cast<const char*>(value.data.data()), value.data.size());
+}
+
+int64_t parseInt64Loose(const std::string& text, int64_t fallback = 0) {
+    if (text.empty()) {
+        return fallback;
+    }
+    char* end = nullptr;
+    const long long parsed = std::strtoll(text.c_str(), &end, 10);
+    if (end != nullptr && *end == '\0') {
+        return static_cast<int64_t>(parsed);
+    }
+    return fallback;
+}
+
+double parseDoubleLoose(const std::string& text, double fallback = 0.0) {
+    if (text.empty()) {
+        return fallback;
+    }
+    char* end = nullptr;
+    const double parsed = std::strtod(text.c_str(), &end);
+    if (end != nullptr && *end == '\0') {
+        return parsed;
+    }
+    return fallback;
+}
+
+int32_t decodeInt32Value(const ProtocolCodec::ColumnValue& value) {
+    if (value.data.size() >= sizeof(int32_t)) {
+        int32_t out = 0;
+        std::memcpy(&out, value.data.data(), sizeof(out));
+        return out;
+    }
+    return static_cast<int32_t>(parseInt64Loose(columnValueAsString(value), 0));
+}
+
+int64_t decodeInt64Value(const ProtocolCodec::ColumnValue& value) {
+    if (value.data.size() >= sizeof(int64_t)) {
+        int64_t out = 0;
+        std::memcpy(&out, value.data.data(), sizeof(out));
+        return out;
+    }
+    if (value.data.size() >= sizeof(int32_t)) {
+        int32_t out = 0;
+        std::memcpy(&out, value.data.data(), sizeof(out));
+        return static_cast<int64_t>(out);
+    }
+    return parseInt64Loose(columnValueAsString(value), 0);
+}
+
+float decodeFloat32Value(const ProtocolCodec::ColumnValue& value) {
+    if (value.data.size() >= sizeof(float)) {
+        float out = 0.0f;
+        std::memcpy(&out, value.data.data(), sizeof(out));
+        return out;
+    }
+    return static_cast<float>(parseDoubleLoose(columnValueAsString(value), 0.0));
+}
+
+double decodeFloat64Value(const ProtocolCodec::ColumnValue& value) {
+    if (value.data.size() >= sizeof(double)) {
+        double out = 0.0;
+        std::memcpy(&out, value.data.data(), sizeof(out));
+        return out;
+    }
+    return parseDoubleLoose(columnValueAsString(value), 0.0);
+}
+
+void microsSinceUnixEpochToFirebirdTimestamp(int64_t micros_since_epoch,
+                                             int32_t& date_mjd_out,
+                                             int32_t& time_deci_ms_out) {
+    constexpr int64_t kMicrosPerSecond = 1000000LL;
+    constexpr int64_t kSecondsPerDay = 86400LL;
+    constexpr int64_t kMicrosPerDay = kSecondsPerDay * kMicrosPerSecond;
+
+    int64_t unix_days = micros_since_epoch / kMicrosPerDay;
+    int64_t day_micros = micros_since_epoch % kMicrosPerDay;
+    if (day_micros < 0) {
+        day_micros += kMicrosPerDay;
+        --unix_days;
+    }
+
+    date_mjd_out = static_cast<int32_t>(unix_days + core::FirebirdDateTime::UNIX_EPOCH_MJD);
+    time_deci_ms_out = static_cast<int32_t>(day_micros / 100);
+}
+
+void parseTimestampStringToFirebird(const std::string& text,
+                                    int32_t& date_mjd_out,
+                                    int32_t& time_deci_ms_out) {
+    int year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0, fraction = 0;
+    const int parsed = std::sscanf(text.c_str(), "%d-%d-%d %d:%d:%d.%d",
+                                   &year, &month, &day, &hour, &minute, &second, &fraction);
+    if (parsed >= 3) {
+        date_mjd_out = core::FirebirdDateTime::dateToMJD(year, month, day);
+        if (parsed < 6) {
+            hour = 0;
+            minute = 0;
+            second = 0;
+            fraction = 0;
+        }
+        time_deci_ms_out = core::FirebirdDateTime::timeToDeciMs(hour, minute, second, fraction);
+        return;
+    }
+
+    date_mjd_out = core::FirebirdDateTime::UNIX_EPOCH_MJD;
+    time_deci_ms_out = 0;
+}
+
+int32_t toFirebirdSqlDate(const ProtocolCodec::ColumnValue& value, WireType wire_type) {
+    if (wire_type == WireType::DATE && value.data.size() >= sizeof(int32_t)) {
+        int32_t days_since_2000 = 0;
+        std::memcpy(&days_since_2000, value.data.data(), sizeof(days_since_2000));
+        return days_since_2000 + kWireDateEpochMjd;
+    }
+
+    const std::string text = columnValueAsString(value);
+    const int32_t parsed_mjd = core::FirebirdDateTime::parseDate(text);
+    if (parsed_mjd >= 0) {
+        return parsed_mjd;
+    }
+    return decodeInt32Value(value);
+}
+
+int32_t toFirebirdSqlTime(const ProtocolCodec::ColumnValue& value, WireType wire_type) {
+    if (wire_type == WireType::TIME && value.data.size() >= sizeof(int64_t)) {
+        int64_t micros = 0;
+        std::memcpy(&micros, value.data.data(), sizeof(micros));
+        return static_cast<int32_t>(micros / 100);
+    }
+
+    const std::string text = columnValueAsString(value);
+    const int32_t parsed_time = core::FirebirdDateTime::parseTime(text);
+    if (parsed_time >= 0) {
+        return parsed_time;
+    }
+    return decodeInt32Value(value);
+}
+
+void toFirebirdTimestampPair(const ProtocolCodec::ColumnValue& value,
+                             WireType wire_type,
+                             int32_t& date_mjd_out,
+                             int32_t& time_deci_ms_out) {
+    if ((wire_type == WireType::TIMESTAMP || wire_type == WireType::TIMESTAMPTZ) &&
+        value.data.size() >= sizeof(int64_t)) {
+        int64_t micros_since_epoch = 0;
+        std::memcpy(&micros_since_epoch, value.data.data(), sizeof(micros_since_epoch));
+        microsSinceUnixEpochToFirebirdTimestamp(micros_since_epoch, date_mjd_out, time_deci_ms_out);
+        return;
+    }
+
+    const std::string text = columnValueAsString(value);
+    parseTimestampStringToFirebird(text, date_mjd_out, time_deci_ms_out);
+}
+
+bool isLikelyNullIndicatorField(const FirebirdStatement::BlrField& field) {
+    return field.dtype == 7 && field.length == 2;
+}
+
+std::vector<FirebirdStatement::BlrField> deriveOutputValueFields(
+    const FirebirdStatement& stmt,
+    size_t logical_columns) {
+    std::vector<FirebirdStatement::BlrField> fields;
+    fields.reserve(logical_columns);
+
+    if (!stmt.output_fields.empty()) {
+        bool paired_layout = logical_columns > 0 && stmt.output_fields.size() >= logical_columns * 2;
+        if (paired_layout) {
+            for (size_t i = 0; i < logical_columns; ++i) {
+                if (!isLikelyNullIndicatorField(stmt.output_fields[i * 2 + 1])) {
+                    paired_layout = false;
+                    break;
+                }
+            }
+            if (paired_layout) {
+                for (size_t i = 0; i < logical_columns; ++i) {
+                    fields.push_back(stmt.output_fields[i * 2]);
+                }
+            }
+        }
+
+        if (fields.empty()) {
+            const size_t take = std::min(logical_columns, stmt.output_fields.size());
+            fields.insert(fields.end(), stmt.output_fields.begin(), stmt.output_fields.begin() + take);
+        }
+    }
+
+    while (fields.size() < logical_columns) {
+        if (fields.size() < stmt.columns.size()) {
+            fields.push_back(columnToBlrField(stmt.columns[fields.size()]));
+            continue;
+        }
+        FirebirdStatement::BlrField fallback{};
+        fallback.dtype = 37;   // blr_varying
+        fallback.length = 258; // payload 256 + 2-byte varying prefix
+        fallback.is_varying = true;
+        fields.push_back(fallback);
+    }
+
+    return fields;
+}
+
+WireType columnWireTypeAt(const FirebirdStatement& stmt, size_t index) {
+    if (index < stmt.columns.size()) {
+        return stmt.columns[index].type;
+    }
+    return WireType::UNKNOWN;
+}
+
+void encodePackedDatum(std::vector<uint8_t>& out,
+                       const FirebirdStatement::BlrField& field,
+                       const ProtocolCodec::ColumnValue& value,
+                       WireType wire_type) {
+    switch (field.dtype) {
+        case 7: { // blr_short (xdr_short)
+            appendXdrInt32(out, static_cast<int16_t>(decodeInt32Value(value)));
+            return;
+        }
+        case 8: { // blr_long (xdr_long)
+            appendXdrInt32(out, decodeInt32Value(value));
+            return;
+        }
+        case 10: { // blr_float
+            const float f = decodeFloat32Value(value);
+            uint32_t bits = 0;
+            std::memcpy(&bits, &f, sizeof(bits));
+            appendXdrUInt32(out, bits);
+            return;
+        }
+        case 12: { // blr_sql_date
+            appendXdrInt32(out, toFirebirdSqlDate(value, wire_type));
+            return;
+        }
+        case 13: { // blr_sql_time
+            appendXdrInt32(out, toFirebirdSqlTime(value, wire_type));
+            return;
+        }
+        case 16: { // blr_int64
+            appendXdrInt64(out, decodeInt64Value(value));
+            return;
+        }
+        case 23: { // blr_bool (opaque 1 byte)
+            const uint8_t v = decodeInt32Value(value) != 0 ? 1 : 0;
+            appendXdrOpaque(out, &v, 1);
+            return;
+        }
+        case 27: { // blr_double
+            const double d = decodeFloat64Value(value);
+            uint64_t bits = 0;
+            std::memcpy(&bits, &d, sizeof(bits));
+            appendXdrUInt64(out, bits);
+            return;
+        }
+        case 35: { // blr_timestamp
+            int32_t date_mjd = 0;
+            int32_t time_deci_ms = 0;
+            toFirebirdTimestampPair(value, wire_type, date_mjd, time_deci_ms);
+            appendXdrInt32(out, date_mjd);
+            appendXdrInt32(out, time_deci_ms);
+            return;
+        }
+        case 14: { // blr_text
+            const std::string text = columnValueAsString(value);
+            std::vector<uint8_t> bytes(field.length, 0);
+            const size_t copy_len = std::min<size_t>(bytes.size(), text.size());
+            if (copy_len > 0) {
+                std::memcpy(bytes.data(), text.data(), copy_len);
+            }
+            appendXdrOpaque(out, bytes.data(), bytes.size());
+            return;
+        }
+        case 37:
+        case 38: { // blr_varying / blr_varying2
+            const std::string text = columnValueAsString(value);
+            uint16_t max_payload = field.length >= 2
+                ? static_cast<uint16_t>(field.length - 2)
+                : static_cast<uint16_t>(text.size());
+            const uint16_t payload = static_cast<uint16_t>(
+                std::min<size_t>(text.size(), static_cast<size_t>(max_payload)));
+            appendXdrInt32(out, payload); // xdr_short
+            appendXdrOpaque(out,
+                            reinterpret_cast<const uint8_t*>(text.data()),
+                            static_cast<size_t>(payload));
+            return;
+        }
+        default: {
+            const std::string text = columnValueAsString(value);
+            const uint16_t payload = static_cast<uint16_t>(
+                std::min<size_t>(text.size(), 32765));
+            appendXdrInt32(out, payload); // xdr_short
+            appendXdrOpaque(out,
+                            reinterpret_cast<const uint8_t*>(text.data()),
+                            static_cast<size_t>(payload));
+            return;
+        }
+    }
+}
+
+std::vector<uint8_t> buildPackedFetchRow(const FirebirdStatement& stmt,
+                                         const std::vector<ProtocolCodec::ColumnValue>& row) {
+    const size_t logical_columns = row.size();
+    const auto value_fields = deriveOutputValueFields(stmt, logical_columns);
+
+    std::vector<uint8_t> payload;
+    const size_t flag_bytes = (logical_columns + 7) / 8;
+    std::vector<uint8_t> null_bitmap(flag_bytes, 0);
+    for (size_t i = 0; i < logical_columns; ++i) {
+        if (row[i].is_null) {
+            null_bitmap[i >> 3] |= static_cast<uint8_t>(1u << (i & 7));
+        }
+    }
+    appendXdrOpaque(payload,
+                    null_bitmap.empty() ? nullptr : null_bitmap.data(),
+                    null_bitmap.size());
+
+    const size_t emit_columns = std::min(value_fields.size(), logical_columns);
+    for (size_t i = 0; i < emit_columns; ++i) {
+        if (row[i].is_null) {
+            continue;
+        }
+        encodePackedDatum(payload, value_fields[i], row[i], columnWireTypeAt(stmt, i));
+    }
+    return payload;
+}
+
+uint32_t estimateOutputMessageLength(const std::vector<FirebirdStatement::BlrField>& fields) {
+    uint32_t len = 0;
+    for (const auto& f : fields) {
+        len += f.length;
+    }
+    return len;
+}
 } // namespace
 
 // ============================================================================
@@ -401,14 +961,11 @@ FirebirdStatement::BlrField columnToBlrField(const ProtocolCodec::ColumnInfo& co
 
 FirebirdAdapter::FirebirdAdapter(const ProtocolAdapterConfig& config)
     : ProtocolAdapter(config) {
-    // Generate initial handles
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<uint32_t> dist(1, 0x7FFFFFFF);
-
-    next_db_handle_ = dist(gen);
-    next_tr_handle_ = dist(gen);
-    next_stmt_handle_ = dist(gen);
+    // Firebird response packets encode object handles as XDR short-compatible values.
+    // Keep generated handles in a compact positive range to avoid truncation/sign issues.
+    next_db_handle_ = 1;
+    next_tr_handle_ = 1;
+    next_stmt_handle_ = 1;
 }
 
 FirebirdAdapter::~FirebirdAdapter() = default;
@@ -417,6 +974,14 @@ void FirebirdAdapter::setRemoteCredentials(const std::string& username,
                                            const std::string& password) {
     username_ = username;
     remote_password_ = password;
+    remote_password_enc_.clear();
+    attach_auth_pending_ = false;
+    pending_attach_db_path_.clear();
+    dpb_auth_plugin_name_.clear();
+    dpb_specific_auth_data_.clear();
+    auth_plugin_name_.clear();
+    auth_data_.clear();
+    allow_proxy_session_auth_ = false;
 }
 
 // ============================================================================
@@ -683,9 +1248,7 @@ core::Status FirebirdAdapter::sendAuthResult(network::Connection* conn,
 core::Status FirebirdAdapter::sendQueryResult(network::Connection* conn,
                                                const ResultContext& result) {
     if (result.has_error) {
-        int32_t code = result.error_code
-            ? static_cast<int32_t>(result.error_code)
-            : firebird::ErrorCode::isc_dsql_error;
+        int32_t code = normalizeFirebirdErrorCode(result, core::Status::OK);
         sendErrorResponse(conn, code, result.error_message, result.sqlstate);
         return core::Status::OK;
     }
@@ -725,7 +1288,15 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         return core::Status::INVALID_ARGUMENT;
     }
 
-    FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(database_path_.string());
+    std::string schema_binding = database_name_;
+    if (schema_binding.empty()) {
+        schema_binding = database_path_.string();
+    }
+    if (schema_binding.empty()) {
+        schema_binding = config_.default_database;
+    }
+
+    FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(schema_binding);
     std::string server = spec.server.empty() ? "localhost" : spec.server;
     std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
     if (db_name.empty()) {
@@ -735,15 +1306,29 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
     auto schema_name = buildEmulatedFirebirdSchemaPath(server, path_components, db_name);
     auto legacy_schema_name = buildLegacyEmulatedFirebirdSchemaPath(server, path_components, db_name);
     firebird_schema_name_ = schema_name;
+    {
+        std::ostringstream oss;
+        oss << "ensureFirebirdSystemTables binding source=" << schema_binding
+            << " schema=" << schema_name
+            << " legacy_schema=" << legacy_schema_name;
+        logFirebirdAuthDebug(oss.str());
+    }
 
     core::CatalogManager::SchemaInfo fb_schema;
     auto status = catalog->getSchema(schema_name, fb_schema, ctx);
+    {
+        std::ostringstream oss;
+        oss << "ensureFirebirdSystemTables getSchema status=" << static_cast<int>(status)
+            << " schema=" << schema_name;
+        logFirebirdAuthDebug(oss.str());
+    }
     if (status != core::Status::OK) {
         if (status == core::Status::INVALID_ARGUMENT || status == core::Status::NOT_FOUND) {
             core::ErrorContext legacy_ctx;
             if (catalog->getSchema(legacy_schema_name, fb_schema, &legacy_ctx) == core::Status::OK) {
                 firebird_schema_name_ = legacy_schema_name;
                 status = core::Status::OK;
+                logFirebirdAuthDebug("ensureFirebirdSystemTables using legacy schema path");
             }
         }
     }
@@ -756,38 +1341,29 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
                                            core::CatalogManager::SchemaType::REMOTE_EMULATED,
                                            schema_id,
                                            ctx);
+        {
+            std::ostringstream oss;
+            oss << "ensureFirebirdSystemTables createSchemaPath status="
+                << static_cast<int>(status)
+                << " schema=" << schema_name;
+            logFirebirdAuthDebug(oss.str());
+        }
         if (status != core::Status::OK) {
             return status;
         }
         status = catalog->getSchema(schema_id, fb_schema, ctx);
+        {
+            std::ostringstream oss;
+            oss << "ensureFirebirdSystemTables getSchemaById status="
+                << static_cast<int>(status)
+                << " schema_id=" << schema_id.toString();
+            logFirebirdAuthDebug(oss.str());
+        }
         if (status != core::Status::OK) {
             return status;
         }
     }
     firebird_schema_id_ = fb_schema.schema_id;
-
-    core::CatalogManager::TableInfo table_info;
-    status = catalog->getTable(fb_schema.schema_id, "RDB$DATABASE", table_info, ctx);
-    if (status == core::Status::OK) {
-        // Ensure minimal catalog views exist alongside the table
-    } else {
-        if (status != core::Status::INVALID_ARGUMENT) {
-            return status;
-        }
-
-        std::vector<core::CatalogManager::ColumnInfo> columns;
-        core::CatalogManager::ColumnInfo col{};
-        col.column_name = "DUMMY";
-        col.data_type = static_cast<uint16_t>(core::DataType::INT32);
-        col.nullable = true;
-        columns.push_back(col);
-
-        core::ID table_id;
-        status = catalog->createTable(fb_schema.schema_id, "RDB$DATABASE", columns, table_id, 0, ctx);
-        if (status != core::Status::OK) {
-            return status;
-        }
-    }
 
     auto ensure_view = [&](const std::string& name,
                            const std::string& definition,
@@ -803,6 +1379,10 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         return catalog->createView(fb_schema.schema_id, name, definition, false,
                                    false, false, column_names, core::ID{}, ctx);
     };
+
+    ensure_view("RDB$DATABASE",
+                "SELECT 1 AS DUMMY",
+                {"DUMMY"});
 
     auto escape_literal = [](const std::string& in) {
         std::string out;
@@ -1364,12 +1944,169 @@ core::Status FirebirdAdapter::compileQuery(const std::string& sql,
 }
 
 core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
+    auto apply_firebird_search_path = [&]() -> core::Status {
+        if (!client_ || firebird_schema_name_.empty()) {
+            return core::Status::OK;
+        }
+
+        auto escape_literal = [](const std::string& in) {
+            std::string out;
+            out.reserve(in.size());
+            for (char ch : in) {
+                if (ch == '\'') {
+                    out.push_back('\'');
+                }
+                out.push_back(ch);
+            }
+            return out;
+        };
+
+        auto set_search_path = [&](const std::string& schema_path) -> core::Status {
+            std::string set_path_sql =
+                "SET search_path TO '" + escape_literal(schema_path) + "'";
+            return client_->execute(set_path_sql, nullptr, ctx);
+        };
+
+        auto build_legacy_schema_path = [&](const std::string& schema_path) -> std::string {
+            static constexpr std::string_view kCanonicalPrefix = "emulated.firebird.";
+            static constexpr std::string_view kCompatibilityPrefix = "emulation.firebird.";
+            static constexpr std::string_view kLegacyPrefix = "remote.emulation.firebird.";
+            if (schema_path.rfind(kCanonicalPrefix, 0) == 0) {
+                return std::string(kLegacyPrefix) +
+                    schema_path.substr(kCanonicalPrefix.size());
+            }
+            if (schema_path.rfind(kCompatibilityPrefix, 0) == 0) {
+                return std::string(kLegacyPrefix) +
+                    schema_path.substr(kCompatibilityPrefix.size());
+            }
+            return {};
+        };
+
+        auto create_remote_emulated_database = [&]() -> core::Status {
+            std::string source_spec = database_name_;
+            if (source_spec.empty()) {
+                source_spec = client_config_.database_name;
+            }
+            if (source_spec.empty()) {
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            std::string create_sql = "CREATE DATABASE '" + escape_literal(source_spec) + "'";
+            sblr::FirebirdQueryCompiler compiler(engineDatabase());
+            if (firebird_schema_id_ != core::ID{}) {
+                compiler.setCurrentSchema(firebird_schema_id_);
+            }
+            auto compile_result = compiler.compile(create_sql);
+            if (!compile_result.success()) {
+                if (ctx) {
+                    const auto& errors = compile_result.errors();
+                    const std::string message = errors.empty()
+                        ? "Failed to compile Firebird emulation database bootstrap DDL"
+                        : errors.front();
+                    ctx->set(core::Status::INVALID_ARGUMENT,
+                             message.c_str(),
+                             __FILE__, __LINE__, __func__);
+                }
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            client::ResultSet rs;
+            return client_->executeBytecode(compile_result.bytecode(),
+                                            create_sql,
+                                            &rs,
+                                            ctx);
+        };
+
+        auto collect_search_path_candidates = [&]() {
+            std::vector<std::string> candidates;
+            auto add_candidate = [&](const std::string& value) {
+                if (value.empty()) {
+                    return;
+                }
+                if (std::find(candidates.begin(), candidates.end(), value) == candidates.end()) {
+                    candidates.push_back(value);
+                }
+            };
+
+            add_candidate(firebird_schema_name_);
+            add_candidate(build_legacy_schema_path(firebird_schema_name_));
+
+            std::string source_spec = database_name_;
+            if (source_spec.empty()) {
+                source_spec = client_config_.database_name;
+            }
+            FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(source_spec);
+            std::string server = spec.server.empty() ? "localhost" : spec.server;
+            std::string db_name = deriveFirebirdDatabaseName(spec.file_path);
+            if (!db_name.empty()) {
+                add_candidate("emulated.firebird." + server + ".databases." + db_name);
+                add_candidate("emulated.firebird." + db_name);
+                add_candidate("remote.emulation.firebird." + server + ".databases." + db_name);
+                add_candidate("remote.emulation.firebird." + db_name);
+            }
+
+            return candidates;
+        };
+
+        auto try_search_path_candidates = [&]() -> core::Status {
+            core::Status last_status = core::Status::NOT_FOUND;
+            auto candidates = collect_search_path_candidates();
+            for (const auto& candidate : candidates) {
+                core::Status status = set_search_path(candidate);
+                if (status == core::Status::OK) {
+                    firebird_schema_name_ = candidate;
+                    std::ostringstream oss;
+                    oss << "ensureRemoteClient search_path set schema=" << candidate;
+                    logFirebirdAuthDebug(oss.str());
+                    return core::Status::OK;
+                }
+                last_status = status;
+            }
+            return last_status;
+        };
+
+        core::Status set_status = try_search_path_candidates();
+        if (set_status == core::Status::OK) {
+            return core::Status::OK;
+        }
+
+        core::Status bootstrap_status = create_remote_emulated_database();
+        core::Status retry_status = try_search_path_candidates();
+        if (retry_status == core::Status::OK) {
+            logFirebirdAuthDebug("ensureRemoteClient set search_path after Firebird bootstrap retry");
+            return core::Status::OK;
+        }
+
+        std::ostringstream oss;
+        oss << "ensureRemoteClient emulated bootstrap failed status="
+            << static_cast<int>(bootstrap_status)
+            << " retry_status=" << static_cast<int>(retry_status)
+            << " schema=" << firebird_schema_name_
+            << " ctx=" << (ctx ? ctx->message : std::string{})
+            << " client_last_error=" << client_->getLastError();
+        logFirebirdAuthDebug(oss.str());
+
+        client_->disconnect();
+        client_.reset();
+        return retry_status;
+    };
+
     if (client_) {
-        return core::Status::OK;
+        return apply_firebird_search_path();
+    }
+
+    std::string requested_database = engine_database_name_;
+    if (requested_database.empty()) {
+        requested_database = database_name_;
     }
 
     std::string selected_database;
-    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+    if (!resolveDatabaseSelection(requested_database, selected_database)) {
+        std::ostringstream oss;
+        oss << "ensureRemoteClient resolveDatabaseSelection denied requested=" << requested_database
+            << " bound_default=" << config_.default_database
+            << " enforce_bound=" << (config_.enforce_bound_database ? 1 : 0);
+        logFirebirdAuthDebug(oss.str());
         if (ctx) {
             ctx->set(core::Status::INVALID_AUTHORIZATION,
                      "Database switch denied by manager binding context",
@@ -1377,7 +2114,7 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         }
         return core::Status::INVALID_AUTHORIZATION;
     }
-    database_name_ = selected_database;
+    engine_database_name_ = selected_database;
     client_config_.database_name = selected_database;
     if (!config_.engine_endpoint.empty()) {
         client_config_.ipc_method = server::IPCMethod::AUTO;
@@ -1395,20 +2132,81 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.connect_client_flags = config_.connect_client_flags;
     client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
     client_config_.bound_db_uuid = config_.bound_db_uuid;
+    const bool use_proxy_session_auth = allow_proxy_session_auth_ && !username_.empty();
+    client_config_.manual_auth = false;
     if (!username_.empty()) {
-        client_config_.username = username_;
-        client_config_.password = remote_password_;
+        if (use_proxy_session_auth) {
+            const char* service_user_env = std::getenv("SCRATCHBIRD_EMULATION_SERVICE_USER");
+            const char* service_password_env = std::getenv("SCRATCHBIRD_EMULATION_SERVICE_PASSWORD");
+            client_config_.username =
+                (service_user_env && service_user_env[0] != '\0') ? service_user_env : "SysArch";
+            client_config_.password =
+                (service_password_env && service_password_env[0] != '\0')
+                    ? service_password_env
+                    : "replaceme";
+        } else {
+            client_config_.username = username_;
+            client_config_.password = remote_password_;
+        }
+        const bool using_firebird_legacy_secret =
+            remote_password_.rfind(kFirebirdLegacySecretPrefix, 0) == 0;
+        if (using_firebird_legacy_secret) {
+            // Legacy Firebird verifier payloads are only supported by PASSWORD auth.
+            client_config_.preferred_auth_methods = {AuthMethod::PASSWORD};
+        } else {
+            AuthMethod preferred_method = config_.auth_method;
+            if (preferred_method == AuthMethod::SCRAM_SHA_512) {
+                // Firebird emulation currently routes SCRAM through SHA-256 parity.
+                preferred_method = AuthMethod::SCRAM_SHA_256;
+            } else if (preferred_method != AuthMethod::SCRAM_SHA_256 &&
+                       preferred_method != AuthMethod::PASSWORD &&
+                       preferred_method != AuthMethod::MD5) {
+                preferred_method = AuthMethod::PASSWORD;
+            }
+            client_config_.preferred_auth_methods = {
+                preferred_method,
+                AuthMethod::SCRAM_SHA_256,
+                AuthMethod::SCRAM_SHA_512,
+                AuthMethod::PASSWORD,
+                AuthMethod::MD5
+            };
+            auto unique_end = std::unique(client_config_.preferred_auth_methods.begin(),
+                                          client_config_.preferred_auth_methods.end());
+            client_config_.preferred_auth_methods.erase(unique_end,
+                                                        client_config_.preferred_auth_methods.end());
+        }
     } else {
         client_config_.username = "BOOTSTRAP";
         client_config_.password.clear();
+        client_config_.preferred_auth_methods.clear();
     }
 
     client_ = std::make_unique<client::Connection>();
+    {
+        std::ostringstream oss;
+        oss << "ensureRemoteClient connect db=" << client_config_.database_name
+            << " user=" << client_config_.username
+            << " pass_len=" << client_config_.password.size()
+            << " pass_hex=" << encodeHex(client_config_.password)
+            << " has_bound_uuid=" << (client_config_.has_bound_db_uuid ? 1 : 0)
+            << " endpoint=" << client_config_.socket_path;
+        logFirebirdAuthDebug(oss.str());
+    }
     auto status = client_->connect(client_config_, ctx);
     if (status != core::Status::OK) {
+        std::ostringstream oss;
+        oss << "ensureRemoteClient connect failed status=" << static_cast<int>(status)
+            << " ctx=" << (ctx ? ctx->message : std::string{})
+            << " client_last_error=" << client_->getLastError();
+        logFirebirdAuthDebug(oss.str());
         client_.reset();
+    } else {
+        std::ostringstream oss;
+        oss << "ensureRemoteClient connect success db=" << client_config_.database_name
+            << " user=" << client_config_.username;
+        logFirebirdAuthDebug(oss.str());
     }
-    if (status == core::Status::OK && !firebird_schema_name_.empty()) {
+    if (status == core::Status::OK && use_proxy_session_auth) {
         auto escape_literal = [](const std::string& in) {
             std::string out;
             out.reserve(in.size());
@@ -1420,15 +2218,19 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             }
             return out;
         };
-        auto set_path_sql = "SET search_path TO '" + escape_literal(firebird_schema_name_) + "'";
-        auto set_status = client_->execute(set_path_sql, nullptr, ctx);
-        if (set_status != core::Status::OK) {
+        std::string set_session_auth =
+            "SET SESSION AUTHORIZATION '" + escape_literal(username_) + "'";
+        auto set_auth_status = client_->execute(set_session_auth, nullptr, ctx);
+        if (set_auth_status != core::Status::OK) {
             client_->disconnect();
             client_.reset();
-            return set_status;
+            return set_auth_status;
         }
     }
-    return status;
+    if (status != core::Status::OK) {
+        return status;
+    }
+    return apply_firebird_search_path();
 }
 
 core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
@@ -1437,7 +2239,7 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
     auto status = ensureEngine(ctx);
     if (status != core::Status::OK) {
         result.has_error = true;
-        result.error_code = static_cast<uint32_t>(status);
+        result.error_code = static_cast<uint32_t>(mapStatusToFirebird(status));
         result.error_message = ctx ? ctx->message : "Failed to initialize engine";
         return status;
     }
@@ -1445,7 +2247,7 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
     status = ensureFirebirdSystemTables(ctx);
     if (status != core::Status::OK) {
         result.has_error = true;
-        result.error_code = static_cast<uint32_t>(status);
+        result.error_code = static_cast<uint32_t>(mapStatusToFirebird(status));
         result.error_message = ctx ? ctx->message : "Failed to initialize Firebird catalogs";
         return status;
     }
@@ -1453,7 +2255,7 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
     status = ensureRemoteClient(ctx);
     if (status != core::Status::OK) {
         result.has_error = true;
-        result.error_code = static_cast<uint32_t>(status);
+        result.error_code = static_cast<uint32_t>(mapStatusToFirebird(status));
         result.error_message = ctx ? ctx->message : "Failed to connect to engine";
         return status;
     }
@@ -1464,15 +2266,67 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
     auto compile_status = compileQuery(query.query, bytecode, compile_error);
     if (compile_status != core::Status::OK) {
         result.has_error = true;
-        result.error_code = static_cast<uint32_t>(compile_status);
+        result.error_code = static_cast<uint32_t>(mapStatusToFirebird(compile_status));
         result.error_message = compile_error.empty() ? "Compilation failed" : compile_error;
         return compile_status;
+    }
+
+    if (isFirebirdCatalogQuery(query.query)) {
+        core::ID previous_user_id{};
+        core::ID previous_role_id{};
+        bool previous_is_superuser = false;
+        bool elevated_security = false;
+        if (connection_ctx_) {
+            previous_user_id = connection_ctx_->getCurrentUserId();
+            previous_role_id = connection_ctx_->getActiveRoleId();
+            previous_is_superuser = connection_ctx_->isSuperuser();
+
+            connection_ctx_->set_dialect_tag("firebird");
+            if (firebird_schema_id_ != core::ID{}) {
+                connection_ctx_->setCurrentSchemaId(firebird_schema_id_);
+            }
+            if (!firebird_schema_name_.empty()) {
+                connection_ctx_->set_current_schema(firebird_schema_name_);
+                connection_ctx_->set_search_path({firebird_schema_name_});
+            }
+
+            if (!previous_is_superuser) {
+                // Firebird metadata catalogs are globally readable in native Firebird.
+                // Elevate local fallback metadata reads to mirror that behavior.
+                connection_ctx_->setCurrentUser(previous_user_id, true);
+                elevated_security = true;
+            }
+        }
+
+        ResultContext local_result;
+        auto local_status = executeBytecode(query.query, bytecode, local_result, ctx);
+
+        if (connection_ctx_ && elevated_security) {
+            connection_ctx_->setCurrentUser(previous_user_id, previous_is_superuser);
+            if (previous_role_id != core::ID{}) {
+                connection_ctx_->setActiveRole(previous_role_id);
+            } else {
+                connection_ctx_->clearActiveRole();
+            }
+        }
+
+        if (local_status == core::Status::OK && !local_result.has_error) {
+            result = std::move(local_result);
+            return core::Status::OK;
+        }
+
+        std::ostringstream oss;
+        oss << "executeRemoteQuery local Firebird catalog fallback failed status="
+            << static_cast<int>(local_status)
+            << " has_error=" << (local_result.has_error ? 1 : 0)
+            << " err=" << local_result.error_message;
+        logFirebirdAuthDebug(oss.str());
     }
 
     status = client_->executeBytecode(bytecode, query.query, &rs, ctx);
     if (status != core::Status::OK) {
         result.has_error = true;
-        result.error_code = static_cast<uint32_t>(status);
+        result.error_code = static_cast<uint32_t>(mapStatusToFirebird(status));
         std::string err = client_->getLastError();
         if (err.empty() && ctx) {
             err = ctx->message;
@@ -1547,6 +2401,16 @@ core::Status FirebirdAdapter::executeRemoteQuery(const QueryContext& query,
 core::Status FirebirdAdapter::handleConnect(network::Connection* conn) {
     // Parse connect packet
     size_t offset = 4;  // Skip opcode
+    allow_proxy_session_auth_ = false;
+    remote_password_.clear();
+    remote_password_enc_.clear();
+    attach_auth_pending_ = false;
+    pending_attach_db_path_.clear();
+    dpb_auth_plugin_name_.clear();
+    dpb_specific_auth_data_.clear();
+    auth_plugin_name_.clear();
+    auth_data_.clear();
+    logFirebirdAuthDebug("handleConnect");
 
     if (current_packet_.size() < 28) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Invalid connect packet");
@@ -1593,12 +2457,13 @@ core::Status FirebirdAdapter::handleConnect(network::Connection* conn) {
         (config_.auth_method == AuthMethod::SCRAM_SHA_256 ||
          config_.auth_method == AuthMethod::SCRAM_SHA_512 ||
          config_.auth_method == AuthMethod::PASSWORD);
-    const char* firebird_auth_plugin = firebird::AUTH_PLUGIN_SRP256;
+    const char* firebird_auth_plugin = firebird::AUTH_PLUGIN_LEGACY;
     if (firebird_require_authentication) {
         if (!firebird_policy_auth_supported) {
             sendErrorResponse(conn,
                               firebird::ErrorCode::isc_login,
-                              "Configured authentication method is not supported by Firebird emulation policy");
+                              "Configured authentication method is not supported by Firebird emulation policy",
+                              "0A000");
             return sendBuffer(conn);
         }
         // Request authentication
@@ -1633,18 +2498,115 @@ core::Status FirebirdAdapter::handleAttach(network::Connection* conn) {
     // DPB (Database Parameter Buffer)
     std::vector<uint8_t> dpb = readBuffer(current_packet_.data(), offset, current_packet_.size());
     parseDpb(dpb);
+    const std::string negotiated_auth_plugin = !dpb_auth_plugin_name_.empty()
+        ? dpb_auth_plugin_name_
+        : auth_plugin_name_;
+    {
+        std::ostringstream oss;
+        oss << "handleAttach username=" << username_
+            << " require_auth=" << (config_.require_authentication ? 1 : 0)
+            << " negotiated_plugin=" << negotiated_auth_plugin
+            << " dpb_plugin=" << dpb_auth_plugin_name_
+            << " cont_plugin=" << auth_plugin_name_
+            << " remote_password_len=" << remote_password_.size()
+            << " remote_password_enc_len=" << remote_password_enc_.size()
+            << " remote_password_enc_hex=" << encodeHex(remote_password_enc_)
+            << " dpb_specific_auth_len=" << dpb_specific_auth_data_.size();
+        logFirebirdAuthDebug(oss.str());
+    }
+    if (remote_password_.empty() && remote_password_enc_.empty() &&
+        !dpb_specific_auth_data_.empty()) {
+        if (negotiated_auth_plugin.empty() ||
+            negotiated_auth_plugin == firebird::AUTH_PLUGIN_LEGACY) {
+            remote_password_enc_.assign(
+                reinterpret_cast<const char*>(dpb_specific_auth_data_.data()),
+                dpb_specific_auth_data_.size());
+            logFirebirdAuthDebug("handleAttach mapped dpb specific auth data to legacy verifier");
+        } else {
+            pending_attach_db_path_ = db_path;
+            attach_auth_pending_ = true;
+            std::vector<uint8_t> auth_response;
+            std::vector<uint8_t> keys;
+            sendContAuth(conn, auth_response,
+                         firebird::AUTH_PLUGIN_LEGACY,
+                         firebird::AUTH_PLUGIN_LEGACY,
+                         keys);
+            fb_state_ = FirebirdProtocolState::AUTH_CONTINUE;
+            logFirebirdAuthDebug("handleAttach requested Legacy_Auth continuation");
+            return sendBuffer(conn);
+        }
+    }
+    allow_proxy_session_auth_ = false;
+    if (!config_.require_authentication && !username_.empty() && remote_password_.empty()) {
+        allow_proxy_session_auth_ = true;
+    }
+
+    if (config_.require_authentication) {
+        if (username_.empty()) {
+            logFirebirdAuthDebug("handleAttach reject: missing username");
+            sendErrorResponse(conn,
+                              firebird::ErrorCode::isc_login,
+                              "Authentication failed",
+                              "28000");
+            return sendBuffer(conn);
+        }
+
+        if (remote_password_.empty() && !remote_password_enc_.empty()) {
+            remote_password_ = buildFirebirdLegacySecret(remote_password_enc_);
+            logFirebirdAuthDebug("handleAttach encoded legacy verifier for backend auth");
+        } else if (remote_password_.empty()) {
+            logFirebirdAuthDebug("handleAttach reject: missing password payload");
+            sendErrorResponse(conn,
+                              firebird::ErrorCode::isc_login,
+                              "Authentication payload is missing",
+                              "28000");
+            return sendBuffer(conn);
+        }
+    }
+
+    attach_auth_pending_ = false;
+    pending_attach_db_path_.clear();
+    logFirebirdAuthDebug("handleAttach calling completeAttach");
+    return completeAttach(conn, db_path);
+}
+
+core::Status FirebirdAdapter::completeAttach(network::Connection* conn,
+                                             const std::string& db_path) {
+    std::string logical_database = db_path;
+    if (logical_database.empty()) {
+        logical_database = database_name_;
+    }
+    if (logical_database.empty()) {
+        logical_database = config_.default_database.empty() ? "default" : config_.default_database;
+    }
+    database_name_ = logical_database;
 
     std::string selected_database;
-    if (!resolveDatabaseSelection(db_path, selected_database)) {
+    if (config_.enforce_bound_database && !config_.default_database.empty()) {
+        selected_database = config_.default_database;
+    } else if (!resolveDatabaseSelection(logical_database, selected_database)) {
+        std::ostringstream oss;
+        oss << "completeAttach denied db switch logical=" << logical_database
+            << " default=" << config_.default_database
+            << " enforce_bound=" << (config_.enforce_bound_database ? 1 : 0);
+        logFirebirdAuthDebug(oss.str());
         sendErrorResponse(conn,
                           firebird::ErrorCode::isc_login,
                           "Database switch denied by manager binding context");
         return sendBuffer(conn);
     }
-
-    database_name_ = std::move(selected_database);
+    {
+        std::ostringstream oss;
+        oss << "completeAttach begin logical=" << logical_database
+            << " selected=" << selected_database
+            << " user=" << username_
+            << " pass_len=" << remote_password_.size()
+            << " pass_enc_len=" << remote_password_enc_.size();
+        logFirebirdAuthDebug(oss.str());
+    }
+    engine_database_name_ = std::move(selected_database);
     client_.reset();
-    client_config_.database_name = database_name_;
+    client_config_.database_name = engine_database_name_;
     if (!config_.engine_endpoint.empty()) {
         client_config_.ipc_method = server::IPCMethod::AUTO;
         client_config_.socket_path = config_.engine_endpoint;
@@ -1663,6 +2625,11 @@ core::Status FirebirdAdapter::handleAttach(network::Connection* conn) {
     core::ErrorContext auth_ctx;
     core::Status auth_status = ensureRemoteClient(&auth_ctx);
     if (auth_status != core::Status::OK) {
+        std::ostringstream oss;
+        oss << "completeAttach ensureRemoteClient failed status="
+            << static_cast<int>(auth_status)
+            << " message=" << auth_ctx.message;
+        logFirebirdAuthDebug(oss.str());
         sendErrorResponse(conn,
                           firebird::ErrorCode::isc_login,
                           auth_ctx.message.empty() ? "Authentication failed" : auth_ctx.message);
@@ -1678,6 +2645,12 @@ core::Status FirebirdAdapter::handleAttach(network::Connection* conn) {
     // Send response
     std::vector<uint8_t> response_data;
     sendResponse(conn, db_handle_, 0, response_data);
+    {
+        std::ostringstream oss;
+        oss << "completeAttach success db_handle=" << db_handle_
+            << " selected=" << engine_database_name_;
+        logFirebirdAuthDebug(oss.str());
+    }
 
     return sendBuffer(conn);
 }
@@ -1688,6 +2661,10 @@ core::Status FirebirdAdapter::handleDetach(network::Connection* conn) {
     uint32_t db_handle = readUInt32(current_packet_.data() + offset);
 
     if (db_handle != db_handle_) {
+        std::ostringstream oss;
+        oss << "handleDetach invalid db handle provided=" << db_handle
+            << " expected=" << db_handle_;
+        logFirebirdAuthDebug(oss.str());
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid database handle");
         return sendBuffer(conn);
     }
@@ -1697,9 +2674,21 @@ core::Status FirebirdAdapter::handleDetach(network::Connection* conn) {
         client_.reset();
     }
     db_handle_ = 0;
+    engine_database_name_.clear();
+    firebird_schema_id_ = core::ID{};
+    firebird_schema_name_.clear();
     active_transactions_.clear();
     fb_state_ = FirebirdProtocolState::AUTHENTICATED;
     current_transaction_ = 0;
+    allow_proxy_session_auth_ = false;
+    remote_password_.clear();
+    remote_password_enc_.clear();
+    attach_auth_pending_ = false;
+    pending_attach_db_path_.clear();
+    dpb_auth_plugin_name_.clear();
+    dpb_specific_auth_data_.clear();
+    auth_plugin_name_.clear();
+    auth_data_.clear();
 
     std::vector<uint8_t> data;
     sendResponse(conn, 0, 0, data);
@@ -1747,8 +2736,7 @@ core::Status FirebirdAdapter::handleDropDatabase(network::Connection* conn) {
     auto status = executeRemoteQuery(ctx, result, &err);
     if (status != core::Status::OK || result.has_error) {
         std::string message = result.error_message.empty() ? err.message : result.error_message;
-        int32_t code = result.error_code ? static_cast<int32_t>(result.error_code)
-                                         : mapStatusToFirebird(status);
+        int32_t code = normalizeFirebirdErrorCode(result, status);
         sendErrorResponse(conn, code, message.empty() ? "DROP DATABASE failed" : message, result.sqlstate);
         return sendBuffer(conn);
     }
@@ -1758,11 +2746,21 @@ core::Status FirebirdAdapter::handleDropDatabase(network::Connection* conn) {
         client_.reset();
     }
     db_handle_ = 0;
+    engine_database_name_.clear();
     active_transactions_.clear();
     fb_state_ = FirebirdProtocolState::AUTHENTICATED;
     database_name_.clear();
     firebird_schema_name_.clear();
     firebird_schema_id_ = core::ID{};
+    allow_proxy_session_auth_ = false;
+    remote_password_.clear();
+    remote_password_enc_.clear();
+    attach_auth_pending_ = false;
+    pending_attach_db_path_.clear();
+    dpb_auth_plugin_name_.clear();
+    dpb_specific_auth_data_.clear();
+    auth_plugin_name_.clear();
+    auth_data_.clear();
 
     std::vector<uint8_t> data;
     sendResponse(conn, 0, 0, data);
@@ -1777,6 +2775,10 @@ core::Status FirebirdAdapter::handleTransaction(network::Connection* conn) {
     offset += 4;
 
     if (db_handle != db_handle_) {
+        std::ostringstream oss;
+        oss << "handleTransaction invalid db handle provided=" << db_handle
+            << " expected=" << db_handle_;
+        logFirebirdAuthDebug(oss.str());
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid database handle");
         return sendBuffer(conn);
     }
@@ -1786,7 +2788,12 @@ core::Status FirebirdAdapter::handleTransaction(network::Connection* conn) {
     (void)tpb;  // Parse if needed
 
     if (!active_transactions_.empty()) {
-        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Transaction already active");
+        // Firebird clients can open multiple logical transaction handles.
+        // In current engine mode we multiplex them onto one backend transaction.
+        uint32_t tr_handle_alias = next_tr_handle_++;
+        active_transactions_.insert(tr_handle_alias);
+        std::vector<uint8_t> data;
+        sendResponse(conn, tr_handle_alias, 0, data);
         return sendBuffer(conn);
     }
 
@@ -1822,21 +2829,25 @@ core::Status FirebirdAdapter::handleCommit(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    core::ErrorContext ctx;
-    auto status = ensureRemoteClient(&ctx);
-    if (status != core::Status::OK) {
-        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Engine unavailable");
-        return sendBuffer(conn);
-    }
-
-    status = client_->commit(&ctx);
-    if (status != core::Status::OK) {
-        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Commit failed");
-        return sendBuffer(conn);
-    }
-
+    const bool commits_backend = (active_transactions_.size() == 1);
     active_transactions_.erase(tr_handle);
-    current_transaction_ = 0;
+    if (commits_backend) {
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        if (status != core::Status::OK) {
+            sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Engine unavailable");
+            return sendBuffer(conn);
+        }
+
+        status = client_->commit(&ctx);
+        if (status != core::Status::OK) {
+            sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Commit failed");
+            return sendBuffer(conn);
+        }
+        current_transaction_ = 0;
+    } else if (tr_handle == current_transaction_) {
+        current_transaction_ = *active_transactions_.begin();
+    }
 
     std::vector<uint8_t> data;
     sendResponse(conn, 0, 0, data);
@@ -1854,21 +2865,25 @@ core::Status FirebirdAdapter::handleRollback(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    core::ErrorContext ctx;
-    auto status = ensureRemoteClient(&ctx);
-    if (status != core::Status::OK) {
-        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Engine unavailable");
-        return sendBuffer(conn);
-    }
-
-    status = client_->rollback(&ctx);
-    if (status != core::Status::OK) {
-        sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Rollback failed");
-        return sendBuffer(conn);
-    }
-
+    const bool rolls_back_backend = (active_transactions_.size() == 1);
     active_transactions_.erase(tr_handle);
-    current_transaction_ = 0;
+    if (rolls_back_backend) {
+        core::ErrorContext ctx;
+        auto status = ensureRemoteClient(&ctx);
+        if (status != core::Status::OK) {
+            sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Engine unavailable");
+            return sendBuffer(conn);
+        }
+
+        status = client_->rollback(&ctx);
+        if (status != core::Status::OK) {
+            sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable, "Rollback failed");
+            return sendBuffer(conn);
+        }
+        current_transaction_ = 0;
+    } else if (tr_handle == current_transaction_) {
+        current_transaction_ = *active_transactions_.begin();
+    }
 
     std::vector<uint8_t> data;
     sendResponse(conn, 0, 0, data);
@@ -1941,6 +2956,10 @@ core::Status FirebirdAdapter::handleAllocateStatement(network::Connection* conn)
     uint32_t db_handle = readUInt32(current_packet_.data() + offset);
 
     if (db_handle != db_handle_) {
+        std::ostringstream oss;
+        oss << "handleAllocateStatement invalid db handle provided=" << db_handle
+            << " expected=" << db_handle_;
+        logFirebirdAuthDebug(oss.str());
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid database handle");
         return sendBuffer(conn);
     }
@@ -1976,7 +2995,7 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
     // SQL statement
     std::string sql = readString(current_packet_.data(), offset, current_packet_.size());
 
-    // Description items (BLR) - store for future SQLDA parsing
+    // Info-item request buffer (statement metadata request items)
     std::vector<uint8_t> items = readBuffer(current_packet_.data(), offset, current_packet_.size());
 
     if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
@@ -1994,22 +3013,10 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
     it->second.query = sql;
     it->second.prepared = true;
     it->second.input_blr.clear();
-    it->second.output_blr = std::move(items);
+    it->second.output_blr.clear();
     it->second.output_fields.clear();
     it->second.output_message_length = 0;
-
-    if (!it->second.output_blr.empty()) {
-        std::string blr_err;
-        auto parse_status = parseBlr(it->second.output_blr,
-                                     it->second.output_fields,
-                                     it->second.output_message_length,
-                                     blr_err);
-        if (parse_status != core::Status::OK) {
-            sendErrorResponse(conn, firebird::ErrorCode::isc_unavailable,
-                              blr_err.empty() ? "Unsupported BLR" : blr_err);
-            return sendBuffer(conn);
-        }
-    }
+    (void)items;
 
     // Determine statement type (simplified)
     std::string upper_sql = sql;
@@ -2028,6 +3035,19 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
     }
 
     std::vector<uint8_t> data;
+    auto append_len = [&](uint16_t len) {
+        data.push_back(static_cast<uint8_t>(len & 0xFF));
+        data.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+    };
+    auto append_int16_item = [&](uint8_t tag, uint16_t value) {
+        data.push_back(tag);
+        append_len(2);
+        data.push_back(static_cast<uint8_t>(value & 0xFF));
+        data.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    };
+    append_int16_item(firebird::SqlInfo::isc_info_sql_stmt_type,
+                      static_cast<uint16_t>(it->second.type));
+    data.push_back(firebird::isc_info_end);
     sendResponse(conn, stmt_handle, 0, data);
 
     return sendBuffer(conn);
@@ -2036,10 +3056,11 @@ core::Status FirebirdAdapter::handlePrepareStatement(network::Connection* conn) 
 core::Status FirebirdAdapter::handleExecute(network::Connection* conn) {
     size_t offset = 4;
 
-    uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
+    // P_SQLDATA layout is statement first, then transaction.
+    uint32_t stmt_handle = readUInt32(current_packet_.data() + offset);
     offset += 4;
 
-    uint32_t stmt_handle = readUInt32(current_packet_.data() + offset);
+    uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
     offset += 4;
 
     // BLR for input parameters (if any)
@@ -2185,78 +3206,22 @@ core::Status FirebirdAdapter::handleExecute(network::Connection* conn) {
 
     if (status != core::Status::OK || result.has_error) {
         std::string message = result.error_message.empty() ? err.message : result.error_message;
-        int32_t code = result.error_code ? static_cast<int32_t>(result.error_code)
-                                         : mapStatusToFirebird(status);
+        int32_t code = normalizeFirebirdErrorCode(result, status);
         sendErrorResponse(conn, code, message.empty() ? "Query failed" : message, result.sqlstate);
     } else {
-        // Materialize rows for fetch if needed
+        // Store logical result rows and defer wire serialization until fetch.
+        it->second.result_rows = result.rows;
+        it->second.columns = result.columns;
+        if (it->second.output_fields.empty() && !it->second.columns.empty()) {
+            it->second.output_fields.clear();
+            it->second.output_fields.reserve(it->second.columns.size());
+            for (const auto& col : it->second.columns) {
+                it->second.output_fields.push_back(columnToBlrField(col));
+            }
+            it->second.output_message_length = estimateOutputMessageLength(it->second.output_fields);
+        }
         it->second.row_buffers.clear();
         it->second.fetch_pos = 0;
-
-        if (!result.columns.empty()) {
-            // If client did not supply an output BLR, synthesize field layout from column metadata
-            if (it->second.output_fields.empty()) {
-                uint32_t msg_len = 0;
-                it->second.output_fields.reserve(result.columns.size());
-                for (const auto& col : result.columns) {
-                    auto f = columnToBlrField(col);
-                    msg_len += f.length;
-                    it->second.output_fields.push_back(f);
-                }
-                if (!it->second.output_fields.empty()) {
-                    msg_len += static_cast<uint32_t>(it->second.output_fields.size()) * 2; // null indicators
-                }
-                it->second.output_message_length = msg_len;
-            }
-            it->second.columns = result.columns;
-            for (const auto& row : result.rows) {
-                std::vector<uint8_t> buf;
-                std::vector<int16_t> nulls;
-                nulls.reserve(row.size());
-
-                const bool have_blr = !it->second.output_fields.empty();
-                for (size_t col_idx = 0; col_idx < row.size(); ++col_idx) {
-                    const auto& val = row[col_idx];
-                    size_t out_len = val.data.size();
-                    if (have_blr && col_idx < it->second.output_fields.size()) {
-                        // Clamp to BLR-declared length when available
-                        uint16_t declared_len = it->second.output_fields[col_idx].length;
-                        if (declared_len > 0) {
-                            out_len = std::min<size_t>(out_len, declared_len);
-                        }
-                    }
-
-                    if (val.is_null) {
-                        writeInt32(buf, -1);
-                        nulls.push_back(-1);
-                    } else {
-                        writeInt32(buf, static_cast<int32_t>(out_len));
-                        buf.insert(buf.end(), val.data.begin(), val.data.begin() + out_len);
-                        nulls.push_back(0);
-                    }
-                }
-
-                if (have_blr) {
-                    for (auto n : nulls) {
-                        uint16_t v = static_cast<uint16_t>(n);
-                        buf.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
-                        buf.push_back(static_cast<uint8_t>(v & 0xFF));
-                    }
-                }
-
-                // Honor declared message length (pad or truncate)
-                uint32_t target_len = it->second.output_message_length;
-                if (target_len > 0) {
-                    if (buf.size() < target_len) {
-                        buf.resize(target_len, 0);
-                    } else if (buf.size() > target_len) {
-                        buf.resize(target_len);
-                    }
-                }
-
-                it->second.row_buffers.push_back(std::move(buf));
-            }
-        }
 
         std::vector<uint8_t> data;
         sendResponse(conn, stmt_handle, static_cast<uint64_t>(result.rows_affected), data);
@@ -2276,8 +3241,9 @@ core::Status FirebirdAdapter::handleExecImmediate(network::Connection* conn) {
     uint32_t tr_handle = readUInt32(current_packet_.data() + offset);
     offset += 4;
 
-    uint32_t db_handle = readUInt32(current_packet_.data() + offset);
+    uint32_t stmt_handle = readUInt32(current_packet_.data() + offset);
     offset += 4;
+    (void)stmt_handle;
 
     uint32_t dialect = readUInt32(current_packet_.data() + offset);
     offset += 4;
@@ -2285,12 +3251,9 @@ core::Status FirebirdAdapter::handleExecImmediate(network::Connection* conn) {
 
     std::string sql = readString(current_packet_.data(), offset, current_packet_.size());
 
-    if (db_handle != db_handle_) {
-        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid database handle");
-        return sendBuffer(conn);
-    }
-
-    if (active_transactions_.find(tr_handle) == active_transactions_.end()) {
+    // op_exec_immediate does not carry a database handle; the second field is
+    // statement/object id and is often zero for direct execution paths.
+    if (tr_handle != 0 && active_transactions_.find(tr_handle) == active_transactions_.end()) {
         sendErrorResponse(conn, firebird::ErrorCode::isc_bad_tr_handle, "Invalid transaction handle");
         return sendBuffer(conn);
     }
@@ -2305,8 +3268,7 @@ core::Status FirebirdAdapter::handleExecImmediate(network::Connection* conn) {
 
     if (status != core::Status::OK || result.has_error) {
         std::string message = result.error_message.empty() ? err.message : result.error_message;
-        int32_t code = result.error_code ? static_cast<int32_t>(result.error_code)
-                                         : mapStatusToFirebird(status);
+        int32_t code = normalizeFirebirdErrorCode(result, status);
         sendErrorResponse(conn, code, message.empty() ? "Query failed" : message, result.sqlstate);
     } else {
         std::vector<uint8_t> data;
@@ -2339,7 +3301,9 @@ core::Status FirebirdAdapter::handleFetch(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    // If client supplied BLR/message length, record them (no full parsing yet)
+    bool rebuild_rows = it->second.row_buffers.empty();
+
+    // If client supplied BLR/message length, record them.
     if (!blr.empty()) {
         it->second.output_blr = blr;
         it->second.output_fields.clear();
@@ -2353,24 +3317,39 @@ core::Status FirebirdAdapter::handleFetch(network::Connection* conn) {
                               blr_err.empty() ? "Unsupported BLR" : blr_err);
             return sendBuffer(conn);
         }
+        rebuild_rows = true;
+    } else if (it->second.output_fields.empty() && !it->second.columns.empty()) {
+        it->second.output_fields.clear();
+        it->second.output_fields.reserve(it->second.columns.size());
+        for (const auto& col : it->second.columns) {
+            it->second.output_fields.push_back(columnToBlrField(col));
+        }
+        it->second.output_message_length = estimateOutputMessageLength(it->second.output_fields);
+        rebuild_rows = true;
     }
     if (msg_len > 0) {
         it->second.output_message_length = msg_len;
     }
 
-    std::vector<std::vector<uint8_t>> rows;
-    uint32_t status = 0;  // 0 = success, 100 = end
+    if (rebuild_rows) {
+        it->second.row_buffers.clear();
+        it->second.row_buffers.reserve(it->second.result_rows.size());
+        for (const auto& row : it->second.result_rows) {
+            it->second.row_buffers.push_back(buildPackedFetchRow(it->second, row));
+        }
+        if (it->second.fetch_pos > it->second.row_buffers.size()) {
+            it->second.fetch_pos = it->second.row_buffers.size();
+        }
+    }
 
-    // Return all remaining rows in one fetch for simplicity
     while (it->second.fetch_pos < it->second.row_buffers.size()) {
-        rows.push_back(it->second.row_buffers[it->second.fetch_pos++]);
+        const auto& row = it->second.row_buffers[it->second.fetch_pos++];
+        sendFetchResponse(conn, 0, 1, {row});
     }
 
-    if (rows.empty()) {
-        status = 100;  // end of cursor
-    }
-
-    sendFetchResponse(conn, status, static_cast<uint32_t>(rows.size()), rows);
+    // Always terminate the fetch batch with end-of-batch marker.
+    // This adapter streams all remaining rows in one fetch, so terminal status is EOF.
+    sendFetchResponse(conn, 100, 0, {});
 
     return sendBuffer(conn);
 }
@@ -2400,11 +3379,80 @@ core::Status FirebirdAdapter::handleSetCursor(network::Connection* conn) {
 }
 
 core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
-    // Return database info
-    std::vector<uint8_t> info;
+    size_t offset = 4;
+    uint32_t db_handle = readUInt32(current_packet_.data() + offset);
+    offset += 4;
 
-    // For now, return minimal info
-    // In a real implementation, we'd return requested info items
+    if (db_handle != db_handle_) {
+        std::ostringstream oss;
+        oss << "handleInfoDatabase invalid db handle provided=" << db_handle
+            << " expected=" << db_handle_;
+        logFirebirdAuthDebug(oss.str());
+        sendErrorResponse(conn, firebird::ErrorCode::isc_bad_db_handle, "Invalid database handle");
+        return sendBuffer(conn);
+    }
+
+    // Incarnation (unused)
+    if (offset + 4 <= current_packet_.size()) {
+        offset += 4;
+    }
+
+    std::vector<uint8_t> items = readBuffer(current_packet_.data(), offset, current_packet_.size());
+
+    std::vector<uint8_t> info;
+    auto append_len = [&](uint16_t len) {
+        // Info clumplet length is VAX order (little-endian uint16).
+        info.push_back(static_cast<uint8_t>(len & 0xFF));
+        info.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+    };
+    auto append_int_item = [&](uint8_t tag, uint32_t value) {
+        info.push_back(tag);
+        append_len(4);
+        info.push_back(static_cast<uint8_t>(value & 0xFF));
+        info.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+        info.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+        info.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+    };
+    auto append_string_item = [&](uint8_t tag, const std::string& value) {
+        info.push_back(tag);
+        append_len(static_cast<uint16_t>(value.size()));
+        info.insert(info.end(), value.begin(), value.end());
+    };
+    auto append_firebird_version_item = [&](const std::string& version) {
+        info.push_back(103);  // isc_info_firebird_version
+        const uint16_t payload_len = static_cast<uint16_t>(2 + version.size());
+        append_len(payload_len);
+        info.push_back(1);  // one version string
+        info.push_back(static_cast<uint8_t>(version.size()));
+        info.insert(info.end(), version.begin(), version.end());
+    };
+
+    for (uint8_t item : items) {
+        if (item == firebird::isc_info_end) {
+            break;
+        }
+        switch (item) {
+            case 32:  // isc_info_ods_version
+                append_int_item(item, 13);
+                break;
+            case 33:  // isc_info_ods_minor_version
+                append_int_item(item, 1);
+                break;
+            case 62:  // isc_info_db_sql_dialect
+                append_int_item(item, sql_dialect_ == 0 ? 3 : sql_dialect_);
+                break;
+            case 101: // frb_info_att_charset
+                append_int_item(item, 4);  // UTF8
+                break;
+            case 103: // isc_info_firebird_version
+                append_firebird_version_item("WI-V5.0.0.0 ScratchBird");
+                break;
+            default:
+                // Unsupported item - omit; client will proceed using available data.
+                break;
+        }
+    }
+    info.push_back(firebird::isc_info_end);
 
     sendResponse(conn, db_handle_, 0, info);
     return sendBuffer(conn);
@@ -2412,6 +3460,7 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
 
 core::Status FirebirdAdapter::handleInfoTransaction(network::Connection* conn) {
     std::vector<uint8_t> info;
+    info.push_back(firebird::isc_info_end);
     sendResponse(conn, current_transaction_, 0, info);
     return sendBuffer(conn);
 }
@@ -2420,6 +3469,18 @@ core::Status FirebirdAdapter::handleInfoSql(network::Connection* conn) {
     size_t offset = 4;
 
     uint32_t stmt_handle = readUInt32(current_packet_.data() + offset);
+    offset += 4;
+
+    // Incarnation (currently ignored)
+    if (offset + 4 <= current_packet_.size()) {
+        offset += 4;
+    }
+
+    std::vector<uint8_t> items = readBuffer(current_packet_.data(), offset, current_packet_.size());
+    // Buffer length (hint only)
+    if (offset + 4 <= current_packet_.size()) {
+        offset += 4;
+    }
 
     auto it = statements_.find(stmt_handle);
     if (it == statements_.end()) {
@@ -2427,8 +3488,300 @@ core::Status FirebirdAdapter::handleInfoSql(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
+    bool want_stmt_type = false;
+    bool want_select_marker = false;
+    bool want_bind_marker = false;
+    bool want_num_vars = false;
+    bool want_describe_vars = false;
+    bool want_type = false;
+    bool want_sub_type = false;
+    bool want_scale = false;
+    bool want_length = false;
+    bool want_null_ind = false;
+    bool want_field = false;
+    bool want_relation = false;
+    bool want_owner = false;
+    bool want_alias = false;
+    bool want_relation_schema = false;
+    uint16_t sqlda_start = 1;
+
+    for (size_t i = 0; i < items.size();) {
+        const uint8_t code = items[i++];
+        if (code == firebird::isc_info_end || code == 0) {
+            break;
+        }
+
+        if (code == firebird::SqlInfo::isc_info_sql_sqlda_start) {
+            if (i >= items.size()) {
+                break;
+            }
+            const uint8_t len = items[i++];
+            if (i + len > items.size()) {
+                break;
+            }
+            uint16_t start = 0;
+            for (uint8_t b = 0; b < len && b < 2; ++b) {
+                start |= static_cast<uint16_t>(items[i + b]) << (8 * b);
+            }
+            sqlda_start = std::max<uint16_t>(1, start);
+            i += len;
+            continue;
+        }
+
+        switch (code) {
+            case firebird::SqlInfo::isc_info_sql_stmt_type:
+                want_stmt_type = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_select:
+                want_select_marker = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_bind:
+                want_bind_marker = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_num_variables:
+                want_num_vars = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_describe_vars:
+                want_describe_vars = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_type:
+                want_type = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_sub_type:
+                want_sub_type = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_scale:
+                want_scale = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_length:
+                want_length = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_null_ind:
+                want_null_ind = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_field:
+                want_field = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_relation:
+                want_relation = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_owner:
+                want_owner = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_alias:
+                want_alias = true;
+                break;
+            case firebird::SqlInfo::isc_info_sql_relation_schema:
+                want_relation_schema = true;
+                break;
+            default:
+                break;
+        }
+    }
+
+    struct DescribeColumn {
+        std::string name;
+        uint16_t sql_type = firebird::SqlType::SQL_VARYING;
+        int16_t sub_type = 0;
+        int16_t scale = 0;
+        uint16_t length = 0;
+        bool nullable = true;
+    };
+
+    std::vector<DescribeColumn> describe_cols;
+    describe_cols.reserve(it->second.columns.size());
+
+    for (size_t idx = 0; idx < it->second.columns.size(); ++idx) {
+        const auto& col = it->second.columns[idx];
+        DescribeColumn dc;
+        dc.name = col.name.empty() ? ("COLUMN" + std::to_string(idx + 1)) : col.name;
+        dc.sql_type = wireTypeToFirebirdType(col.type);
+        dc.nullable = col.nullable;
+
+        if (col.type_size > 0) {
+            dc.length = static_cast<uint16_t>(col.type_size);
+        } else {
+            switch (dc.sql_type) {
+                case firebird::SqlType::SQL_SHORT:
+                    dc.length = 2;
+                    break;
+                case firebird::SqlType::SQL_LONG:
+                case firebird::SqlType::SQL_FLOAT:
+                case firebird::SqlType::SQL_TYPE_DATE:
+                    dc.length = 4;
+                    break;
+                case firebird::SqlType::SQL_DOUBLE:
+                case firebird::SqlType::SQL_INT64:
+                case firebird::SqlType::SQL_TIMESTAMP:
+                    dc.length = 8;
+                    break;
+                case firebird::SqlType::SQL_BOOLEAN:
+                    dc.length = 1;
+                    break;
+                case firebird::SqlType::SQL_TEXT:
+                case firebird::SqlType::SQL_VARYING:
+                    dc.length = col.type_modifier > 0
+                        ? static_cast<uint16_t>(std::min<uint32_t>(col.type_modifier, 32765))
+                        : 32;
+                    break;
+                default:
+                    dc.length = 32;
+                    break;
+            }
+        }
+
+        if (dc.sql_type == firebird::SqlType::SQL_VARYING && dc.length >= 2) {
+            // SQLDA length for VARCHAR is the payload length (without the 2-byte prefix).
+            dc.length = static_cast<uint16_t>(dc.length - 2);
+        }
+
+        describe_cols.push_back(std::move(dc));
+    }
+
+    if (describe_cols.empty() && !it->second.output_fields.empty()) {
+        const auto& out = it->second.output_fields;
+        const bool paired_layout =
+            (out.size() % 2 == 0) &&
+            std::all_of(out.begin() + 1, out.end(),
+                        [idx = size_t{0}](const FirebirdStatement::BlrField& f) mutable {
+                            const bool is_odd = (idx++ % 2) == 0;
+                            return !is_odd || (f.dtype == 7 && f.length == 2);
+                        });
+        const size_t logical_cols = paired_layout ? (out.size() / 2) : out.size();
+
+        describe_cols.reserve(logical_cols);
+        for (size_t i = 0; i < logical_cols; ++i) {
+            const auto& f = paired_layout ? out[i * 2] : out[i];
+            DescribeColumn dc;
+            dc.name = "COLUMN" + std::to_string(i + 1);
+            dc.scale = f.scale;
+            dc.nullable = true;
+            switch (f.dtype) {
+                case 7:
+                    dc.sql_type = firebird::SqlType::SQL_SHORT;
+                    break;
+                case 8:
+                    dc.sql_type = firebird::SqlType::SQL_LONG;
+                    break;
+                case 16:
+                    dc.sql_type = firebird::SqlType::SQL_INT64;
+                    break;
+                case 14:
+                    dc.sql_type = firebird::SqlType::SQL_TEXT;
+                    break;
+                case 37:
+                    dc.sql_type = firebird::SqlType::SQL_VARYING;
+                    break;
+                default:
+                    dc.sql_type = firebird::SqlType::SQL_VARYING;
+                    break;
+            }
+            dc.length = f.length;
+            if (dc.sql_type == firebird::SqlType::SQL_VARYING && dc.length >= 2) {
+                dc.length = static_cast<uint16_t>(dc.length - 2);
+            }
+            describe_cols.push_back(std::move(dc));
+        }
+    }
+
+    if (describe_cols.empty() &&
+        (it->second.type == firebird::StatementType::TYPE_SELECT ||
+         it->second.type == firebird::StatementType::TYPE_SELECT_FOR_UPD)) {
+        DescribeColumn fallback;
+        fallback.name = "COLUMN1";
+        fallback.sql_type = firebird::SqlType::SQL_LONG;
+        fallback.length = 4;
+        fallback.nullable = true;
+        describe_cols.push_back(std::move(fallback));
+    }
+
     std::vector<uint8_t> info;
-    // Return statement type, etc.
+    auto append_len = [&](uint16_t len) {
+        info.push_back(static_cast<uint8_t>(len & 0xFF));
+        info.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+    };
+    auto append_int = [&](uint8_t tag, int32_t value) {
+        info.push_back(tag);
+        append_len(2);
+        info.push_back(static_cast<uint8_t>(value & 0xFF));
+        info.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    };
+    auto append_str = [&](uint8_t tag, const std::string& value) {
+        info.push_back(tag);
+        append_len(static_cast<uint16_t>(value.size()));
+        info.insert(info.end(), value.begin(), value.end());
+    };
+
+    if (want_stmt_type || items.empty()) {
+        append_int(firebird::SqlInfo::isc_info_sql_stmt_type,
+                   static_cast<int32_t>(it->second.type));
+    }
+
+    const bool want_describe =
+        want_select_marker || want_bind_marker || want_num_vars || want_describe_vars ||
+        want_type || want_sub_type || want_scale || want_length || want_null_ind ||
+        want_field || want_relation || want_owner || want_alias || want_relation_schema;
+
+    if (want_describe) {
+        info.push_back(want_bind_marker ? firebird::SqlInfo::isc_info_sql_bind
+                                        : firebird::SqlInfo::isc_info_sql_select);
+
+        if (want_num_vars) {
+            append_int(firebird::SqlInfo::isc_info_sql_num_variables,
+                       static_cast<int32_t>(describe_cols.size()));
+        }
+
+        if (want_describe_vars) {
+            append_int(firebird::SqlInfo::isc_info_sql_describe_vars, 0);
+
+            size_t first = sqlda_start > 0 ? static_cast<size_t>(sqlda_start - 1) : 0;
+            if (first > describe_cols.size()) {
+                first = describe_cols.size();
+            }
+            for (size_t i = first; i < describe_cols.size(); ++i) {
+                const auto& c = describe_cols[i];
+                append_int(firebird::SqlInfo::isc_info_sql_sqlda_seq,
+                           static_cast<int32_t>(i + 1));
+
+                if (want_type) {
+                    uint16_t typed = static_cast<uint16_t>(c.sql_type |
+                                                           (c.nullable ? 1 : 0));
+                    append_int(firebird::SqlInfo::isc_info_sql_type, typed);
+                }
+                if (want_sub_type) {
+                    append_int(firebird::SqlInfo::isc_info_sql_sub_type, c.sub_type);
+                }
+                if (want_scale) {
+                    append_int(firebird::SqlInfo::isc_info_sql_scale, c.scale);
+                }
+                if (want_length) {
+                    append_int(firebird::SqlInfo::isc_info_sql_length, c.length);
+                }
+                if (want_null_ind) {
+                    append_int(firebird::SqlInfo::isc_info_sql_null_ind, 1);
+                }
+                if (want_field) {
+                    append_str(firebird::SqlInfo::isc_info_sql_field, c.name);
+                }
+                if (want_relation_schema) {
+                    append_str(firebird::SqlInfo::isc_info_sql_relation_schema, "");
+                }
+                if (want_relation) {
+                    append_str(firebird::SqlInfo::isc_info_sql_relation, "");
+                }
+                if (want_owner) {
+                    append_str(firebird::SqlInfo::isc_info_sql_owner, "");
+                }
+                if (want_alias) {
+                    append_str(firebird::SqlInfo::isc_info_sql_alias, c.name);
+                }
+
+                info.push_back(firebird::SqlInfo::isc_info_sql_describe_end);
+            }
+        }
+    }
+
+    info.push_back(firebird::isc_info_end);
 
     sendResponse(conn, stmt_handle, 0, info);
     return sendBuffer(conn);
@@ -2442,30 +3795,82 @@ core::Status FirebirdAdapter::handleContAuth(network::Connection* conn) {
 
     // Plugin name
     std::string plugin = readString(current_packet_.data(), offset, current_packet_.size());
-
-    const bool supported_plugin =
-        plugin == firebird::AUTH_PLUGIN_SRP ||
-        plugin == firebird::AUTH_PLUGIN_SRP256 ||
-        plugin == firebird::AUTH_PLUGIN_LEGACY;
-    if (!supported_plugin) {
-        sendErrorResponse(conn,
-                          firebird::ErrorCode::isc_login,
-                          "Unsupported auth plugin: " + plugin);
-        return sendBuffer(conn);
-    }
-    if (plugin != firebird::AUTH_PLUGIN_LEGACY && data.empty()) {
-        sendErrorResponse(conn, firebird::ErrorCode::isc_login, "Authentication payload is missing");
-        return sendBuffer(conn);
+    auth_plugin_name_ = plugin;
+    auth_data_ = data;
+    {
+        std::ostringstream oss;
+        oss << "handleContAuth plugin=" << plugin
+            << " data_len=" << data.size()
+            << " attach_auth_pending=" << (attach_auth_pending_ ? 1 : 0);
+        logFirebirdAuthDebug(oss.str());
     }
 
-    auth_complete_ = true;
-    fb_state_ = FirebirdProtocolState::AUTHENTICATED;
+    if (attach_auth_pending_) {
+        if (plugin != firebird::AUTH_PLUGIN_LEGACY) {
+            std::vector<uint8_t> auth_response;
+            std::vector<uint8_t> keys;
+            sendContAuth(conn, auth_response,
+                         firebird::AUTH_PLUGIN_LEGACY,
+                         firebird::AUTH_PLUGIN_LEGACY,
+                         keys);
+            fb_state_ = FirebirdProtocolState::AUTH_CONTINUE;
+            logFirebirdAuthDebug("handleContAuth pending attach requested Legacy_Auth again");
+            return sendBuffer(conn);
+        }
 
-    std::vector<uint8_t> auth_response;
-    std::vector<uint8_t> keys;
-    sendAcceptData(conn, protocol_version_, firebird::ARCH_GENERIC, 1,
-                  auth_response, plugin, true, keys);
+        if (data.empty()) {
+            sendErrorResponse(conn,
+                              firebird::ErrorCode::isc_login,
+                              "Authentication payload is missing",
+                              "28000");
+            return sendBuffer(conn);
+        }
 
+        remote_password_.clear();
+        remote_password_enc_.assign(reinterpret_cast<const char*>(data.data()), data.size());
+        allow_proxy_session_auth_ = false;
+        logFirebirdAuthDebug("handleContAuth pending attach received Legacy_Auth payload");
+
+        if (config_.require_authentication) {
+            if (username_.empty()) {
+                sendErrorResponse(conn,
+                                  firebird::ErrorCode::isc_login,
+                                  "Authentication failed",
+                                  "28000");
+                return sendBuffer(conn);
+            }
+            remote_password_ = buildFirebirdLegacySecret(remote_password_enc_);
+            logFirebirdAuthDebug("handleContAuth pending attach encoded legacy verifier for backend auth");
+        }
+
+        attach_auth_pending_ = false;
+        std::string db_path = pending_attach_db_path_;
+        pending_attach_db_path_.clear();
+        logFirebirdAuthDebug("handleContAuth completing pending attach");
+        return completeAttach(conn, db_path);
+    }
+
+    if (plugin == firebird::AUTH_PLUGIN_SRP ||
+        plugin == firebird::AUTH_PLUGIN_SRP256) {
+        // Protocol 13+ clients typically start with SRP/SRP256.
+        // Redirect to Legacy_Auth because Firebird emulation currently validates
+        // legacy password verifiers carried on attach.
+        std::vector<uint8_t> auth_response;
+        std::vector<uint8_t> keys;
+        sendContAuth(conn, auth_response,
+                     firebird::AUTH_PLUGIN_LEGACY,
+                     firebird::AUTH_PLUGIN_LEGACY,
+                     keys);
+        fb_state_ = FirebirdProtocolState::AUTH_CONTINUE;
+        auth_complete_ = false;
+        logFirebirdAuthDebug("handleContAuth redirected SRP/SRP256 to Legacy_Auth");
+        return sendBuffer(conn);
+    }
+
+    sendErrorResponse(conn,
+                      firebird::ErrorCode::isc_login,
+                      "Unsupported auth plugin: " + plugin,
+                      "0A000");
     return sendBuffer(conn);
 }
 
@@ -2485,6 +3890,17 @@ core::Status FirebirdAdapter::handleCancel(network::Connection* conn) {
 
 core::Status FirebirdAdapter::handleDisconnect(network::Connection* conn) {
     fb_state_ = FirebirdProtocolState::CLOSING;
+    allow_proxy_session_auth_ = false;
+    remote_password_.clear();
+    remote_password_enc_.clear();
+    attach_auth_pending_ = false;
+    pending_attach_db_path_.clear();
+    firebird_schema_id_ = core::ID{};
+    firebird_schema_name_.clear();
+    dpb_auth_plugin_name_.clear();
+    dpb_specific_auth_data_.clear();
+    auth_plugin_name_.clear();
+    auth_data_.clear();
     if (client_) {
         client_->disconnect();
         client_.reset();
@@ -2547,6 +3963,19 @@ void FirebirdAdapter::sendAcceptData(network::Connection* conn, uint32_t version
     sendPacket(conn, firebird::Opcode::op_accept_data, data);
 }
 
+void FirebirdAdapter::sendContAuth(network::Connection* conn,
+                                   const std::vector<uint8_t>& auth_data,
+                                   const std::string& plugin,
+                                   const std::string& plugin_list,
+                                   const std::vector<uint8_t>& keys) {
+    std::vector<uint8_t> data;
+    writeBuffer(data, auth_data.data(), auth_data.size());
+    writeString(data, plugin);
+    writeString(data, plugin_list);
+    writeBuffer(data, keys.data(), keys.size());
+    sendPacket(conn, firebird::Opcode::op_cont_auth, data);
+}
+
 void FirebirdAdapter::sendResponse(network::Connection* conn, uint32_t handle,
                                     uint64_t object_id, const std::vector<uint8_t>& data) {
     std::vector<uint8_t> response;
@@ -2568,12 +3997,15 @@ void FirebirdAdapter::sendFetchResponse(network::Connection* conn, uint32_t stat
                                          const std::vector<std::vector<uint8_t>>& rows) {
     std::vector<uint8_t> data;
 
-    writeUInt32(data, status);
-    writeUInt32(data, count);
+    // op_fetch_response payload:
+    //   xdr_long status
+    //   xdr_short messages (encoded on wire as 32-bit)
+    //   optional SQL message body when messages > 0
+    writeInt32(data, static_cast<int32_t>(status));
+    writeInt32(data, static_cast<int16_t>(count));
 
-    // Row data
-    for (const auto& row : rows) {
-        writeBuffer(data, row.data(), row.size());
+    if (count > 0 && !rows.empty()) {
+        data.insert(data.end(), rows.front().begin(), rows.front().end());
     }
 
     sendPacket(conn, firebird::Opcode::op_fetch_response, data);
@@ -2588,6 +4020,20 @@ void FirebirdAdapter::sendSqlResponse(network::Connection* conn, uint32_t count)
 void FirebirdAdapter::sendErrorResponse(network::Connection* conn, int32_t error_code,
                                          const std::string& message,
                                          const std::string& sqlstate) {
+    {
+        std::ostringstream oss;
+        oss << "sendErrorResponse code=" << error_code
+            << " sqlstate=" << sqlstate
+            << " message=" << message
+            << " state=" << static_cast<int>(fb_state_);
+        logFirebirdAuthDebug(oss.str());
+    }
+    constexpr int32_t kFirebirdGdsBase = 335544000;
+    if (error_code > 0 && error_code < kFirebirdGdsBase) {
+        // Guardrail: never leak internal ScratchBird status numbers on the Firebird wire.
+        error_code = firebird::ErrorCode::isc_dsql_error;
+    }
+
     std::vector<uint8_t> data;
 
     // Handle
@@ -2761,7 +4207,91 @@ WireType FirebirdAdapter::firebirdTypeToWireType(uint16_t type) {
     }
 }
 
+core::Status FirebirdAdapter::validateLegacyPasswordEnc(core::ErrorContext* ctx) {
+    if (username_.empty() || remote_password_enc_.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_PASSWORD,
+                     "Legacy Firebird credential payload is missing",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    core::ErrorContext ensure_ctx;
+    auto ensure_status = ensureEngine(&ensure_ctx);
+    if (ensure_status != core::Status::OK) {
+        std::ostringstream oss;
+        oss << "validateLegacyPasswordEnc ensureEngine failed status="
+            << static_cast<int>(ensure_status)
+            << " message=" << ensure_ctx.message;
+        logFirebirdAuthDebug(oss.str());
+        if (ctx) {
+            const std::string msg = ensure_ctx.message.empty()
+                ? "Engine initialization failed"
+                : ensure_ctx.message;
+            ctx->set(ensure_status, msg.c_str(), __FILE__, __LINE__, __func__);
+        }
+        return ensure_status;
+    }
+
+    auto* db = engineDatabase();
+    if (db == nullptr || db->catalog_manager() == nullptr) {
+        logFirebirdAuthDebug("validateLegacyPasswordEnc engine catalog unavailable");
+        if (ctx) {
+            ctx->set(core::Status::INTERNAL_ERROR,
+                     "Engine catalog manager is unavailable",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INTERNAL_ERROR;
+    }
+
+    core::CatalogManager::UserInfo user_info;
+    core::ErrorContext lookup_ctx;
+    auto lookup_status = db->catalog_manager()->getUserByName(username_, user_info, &lookup_ctx);
+    if (lookup_status != core::Status::OK || user_info.password_hash.empty()) {
+        logFirebirdAuthDebug("validateLegacyPasswordEnc user lookup failed or hash empty");
+        if (ctx) {
+            ctx->set(core::Status::INVALID_PASSWORD,
+                     "Invalid username or password",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    const std::string stored_legacy_enc = extractFirebirdLegacyEncHash(user_info.password_hash);
+    if (stored_legacy_enc.empty()) {
+        logFirebirdAuthDebug("validateLegacyPasswordEnc missing stored firebird_legacy_enc");
+        if (ctx) {
+            ctx->set(core::Status::NOT_SUPPORTED,
+                     "User credential does not include Firebird legacy verifier",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_SUPPORTED;
+    }
+
+    if (!timingSafeStringEquals(stored_legacy_enc, remote_password_enc_)) {
+        std::ostringstream oss;
+        oss << "validateLegacyPasswordEnc mismatch username=" << username_
+            << " stored_len=" << stored_legacy_enc.size()
+            << " provided_len=" << remote_password_enc_.size();
+        logFirebirdAuthDebug(oss.str());
+        if (ctx) {
+            ctx->set(core::Status::INVALID_PASSWORD,
+                     "Invalid username or password",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    logFirebirdAuthDebug("validateLegacyPasswordEnc success");
+    return core::Status::OK;
+}
+
 void FirebirdAdapter::parseDpb(const std::vector<uint8_t>& dpb) {
+    remote_password_.clear();
+    remote_password_enc_.clear();
+    dpb_auth_plugin_name_.clear();
+    dpb_specific_auth_data_.clear();
     if (dpb.empty()) return;
 
     size_t offset = 0;
@@ -2779,7 +4309,8 @@ void FirebirdAdapter::parseDpb(const std::vector<uint8_t>& dpb) {
         uint8_t len = dpb[offset++];
         if (offset + len > dpb.size()) break;
 
-        std::string value(reinterpret_cast<const char*>(dpb.data() + offset), len);
+        const uint8_t* value_ptr = dpb.data() + offset;
+        std::string value(reinterpret_cast<const char*>(value_ptr), len);
         offset += len;
 
         switch (item) {
@@ -2787,8 +4318,16 @@ void FirebirdAdapter::parseDpb(const std::vector<uint8_t>& dpb) {
                 username_ = value;
                 break;
             case firebird::DpbItem::isc_dpb_password:
-            case firebird::DpbItem::isc_dpb_password_enc:
                 remote_password_ = value;
+                break;
+            case firebird::DpbItem::isc_dpb_password_enc:
+                remote_password_enc_ = value;
+                break;
+            case firebird::DpbItem::isc_dpb_auth_plugin_name:
+                dpb_auth_plugin_name_ = value;
+                break;
+            case firebird::DpbItem::isc_dpb_specific_auth_data:
+                dpb_specific_auth_data_.assign(value_ptr, value_ptr + len);
                 break;
             case firebird::DpbItem::isc_dpb_sql_dialect:
                 if (!value.empty()) sql_dialect_ = static_cast<uint8_t>(value[0]);

@@ -131,6 +131,14 @@
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 
+#ifdef __unix__
+#include "scratchbird/core/posix_compat.h"
+#if defined(_GNU_SOURCE) || defined(__linux__)
+#include <crypt.h>
+#define HAVE_CRYPT_R 1
+#endif
+#endif
+
 // libxml2 for full XML/XPath support (Nov 14, 2025)
 #ifdef HAVE_LIBXML2
 #include <libxml/parser.h>
@@ -239,6 +247,83 @@ namespace scratchbird
                 }
 
                 return input.substr(begin, end - begin);
+            }
+
+            static thread_local std::string g_v3_module_dialect_override;
+
+            static bool isPostgreSqlDialectContext(const core::ConnectionContext* conn_ctx)
+            {
+                const auto is_postgres_tag = [](const std::string& tag) -> bool {
+                    const std::string upper = toUpperAsciiCopy(trimAsciiCopy(tag));
+                    return upper == "POSTGRESQL" || upper == "POSTGRES" || upper == "PG";
+                };
+
+                if (conn_ctx != nullptr && is_postgres_tag(conn_ctx->dialect_tag()))
+                {
+                    return true;
+                }
+                return is_postgres_tag(g_v3_module_dialect_override);
+            }
+
+            static bool textMentionsMissingSchema(const std::string& message)
+            {
+                const std::string lower = toLowerAsciiCopy(message);
+                if (lower.find("schema") == std::string::npos)
+                {
+                    return false;
+                }
+                return lower.find("not found") != std::string::npos ||
+                       lower.find("does not exist") != std::string::npos ||
+                       lower.find("path not found") != std::string::npos;
+            }
+
+            static std::string firstPathComponent(const std::string& name)
+            {
+                const std::string trimmed = trimAsciiCopy(name);
+                size_t dot = trimmed.find('.');
+                if (dot == std::string::npos)
+                {
+                    return std::string();
+                }
+                return trimAsciiCopy(trimmed.substr(0, dot));
+            }
+
+            static std::string lastPathComponent(const std::string& name)
+            {
+                const std::string trimmed = trimAsciiCopy(name);
+                size_t dot = trimmed.find_last_of('.');
+                if (dot == std::string::npos)
+                {
+                    return trimmed;
+                }
+                return trimAsciiCopy(trimmed.substr(dot + 1));
+            }
+
+            static void pushPostgreSqlIfExistsNotice(core::ConnectionContext* conn_ctx,
+                                                     bool postgresql_dialect,
+                                                     const std::string& object_type,
+                                                     const std::string& object_name,
+                                                     const std::string& error_hint)
+            {
+                if (!postgresql_dialect || conn_ctx == nullptr)
+                {
+                    return;
+                }
+
+                const std::string schema_name = firstPathComponent(object_name);
+                if (!schema_name.empty() && textMentionsMissingSchema(error_hint))
+                {
+                    conn_ctx->pushNotice("schema \"" + schema_name + "\" does not exist, skipping");
+                    return;
+                }
+
+                std::string display_name = trimAsciiCopy(object_name);
+                if (object_type == "schema")
+                {
+                    display_name = lastPathComponent(display_name);
+                }
+                conn_ctx->pushNotice(
+                    object_type + " \"" + display_name + "\" does not exist, skipping");
             }
 
             static bool isTruthySetting(const char* value)
@@ -425,6 +510,473 @@ namespace scratchbird
                     out.append(*s);
                 }
                 return out;
+            }
+
+            struct PgObjectAddressResolution {
+                bool success = false;
+                uint64_t classid = 0;
+                uint64_t objid = 0;
+                int32_t objsubid = 0;
+                std::string error;
+            };
+
+            static bool parsePgTextArrayLiteral(
+                const std::string& text,
+                std::vector<std::optional<std::string>>& out,
+                std::string& err)
+            {
+                out.clear();
+                std::string trimmed = trimAsciiCopy(text);
+                if (trimmed.empty())
+                {
+                    out.emplace_back(std::string());
+                    return true;
+                }
+                if (trimmed == "{}")
+                {
+                    return true;
+                }
+                if (trimmed.size() < 2 || trimmed.front() != '{' || trimmed.back() != '}')
+                {
+                    err = "invalid array literal";
+                    return false;
+                }
+
+                std::string body = trimmed.substr(1, trimmed.size() - 2);
+                std::string token;
+                bool in_quotes = false;
+                for (size_t i = 0; i < body.size(); ++i)
+                {
+                    char ch = body[i];
+                    if (ch == '"')
+                    {
+                        in_quotes = !in_quotes;
+                        continue;
+                    }
+                    if (ch == ',' && !in_quotes)
+                    {
+                        std::string item = trimAsciiCopy(token);
+                        if (core::IdentifierUtils::toUpper(item) == "NULL")
+                        {
+                            out.emplace_back(std::nullopt);
+                        }
+                        else
+                        {
+                            out.emplace_back(item);
+                        }
+                        token.clear();
+                        continue;
+                    }
+                    token.push_back(ch);
+                }
+
+                std::string item = trimAsciiCopy(token);
+                if (core::IdentifierUtils::toUpper(item) == "NULL")
+                {
+                    out.emplace_back(std::nullopt);
+                }
+                else if (!item.empty() || !body.empty())
+                {
+                    out.emplace_back(item);
+                }
+                return true;
+            }
+
+            static bool parsePgTextArrayValue(
+                const Value& value,
+                std::vector<std::optional<std::string>>& out,
+                std::string& err)
+            {
+                out.clear();
+                if (value.isNull())
+                {
+                    out.emplace_back(std::nullopt);
+                    return true;
+                }
+                if (value.type() == core::DataType::ARRAY)
+                {
+                    const auto& arr = value.getArray();
+                    out.reserve(arr.size());
+                    for (const auto& elem : arr)
+                    {
+                        if (elem.isNull())
+                        {
+                            out.emplace_back(std::nullopt);
+                        }
+                        else
+                        {
+                            out.emplace_back(trimAsciiCopy(elem.toString()));
+                        }
+                    }
+                    return true;
+                }
+                return parsePgTextArrayLiteral(value.toString(), out, err);
+            }
+
+            static std::string joinPgAddressParts(const std::vector<std::string>& values,
+                                                  const std::string& sep)
+            {
+                std::string out;
+                for (size_t i = 0; i < values.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        out.append(sep);
+                    }
+                    out.append(values[i]);
+                }
+                return out;
+            }
+
+            static PgObjectAddressResolution resolvePgObjectAddressCompat(
+                const Value& object_type_value,
+                const Value& names_value,
+                const Value& args_value,
+                bool allow_null_object_type)
+            {
+                PgObjectAddressResolution result;
+
+                if (object_type_value.isNull())
+                {
+                    if (allow_null_object_type)
+                    {
+                        result.success = true;
+                    }
+                    else
+                    {
+                        result.error = "unrecognized object type \"\"";
+                    }
+                    return result;
+                }
+
+                std::string object_type = trimAsciiCopy(object_type_value.toString());
+                std::string object_type_lower = toLowerAsciiCopy(object_type);
+                if (object_type_lower.empty())
+                {
+                    if (allow_null_object_type)
+                    {
+                        result.success = true;
+                    }
+                    else
+                    {
+                        result.error = "unrecognized object type \"\"";
+                    }
+                    return result;
+                }
+
+                static const std::unordered_set<std::string> kUnsupportedTypes = {
+                    "toast table",
+                    "index column",
+                    "sequence column",
+                    "toast table column",
+                    "view column",
+                    "materialized view column",
+                };
+
+                static const std::unordered_set<std::string> kSupportedTypes = {
+                    "table",
+                    "index",
+                    "sequence",
+                    "view",
+                    "materialized view",
+                    "foreign table",
+                    "table column",
+                    "foreign table column",
+                    "aggregate",
+                    "function",
+                    "procedure",
+                    "type",
+                    "cast",
+                    "table constraint",
+                    "domain constraint",
+                    "conversion",
+                    "default value",
+                    "operator",
+                    "operator class",
+                    "operator family",
+                    "rule",
+                    "trigger",
+                    "text search parser",
+                    "text search dictionary",
+                    "text search template",
+                    "text search configuration",
+                    "policy",
+                    "user mapping",
+                    "default acl",
+                    "transform",
+                    "operator of access method",
+                    "function of access method",
+                    "publication namespace",
+                    "publication relation",
+                    "language",
+                    "large object",
+                    "schema",
+                    "role",
+                    "database",
+                    "tablespace",
+                    "foreign-data wrapper",
+                    "server",
+                    "extension",
+                    "event trigger",
+                    "access method",
+                    "publication",
+                    "subscription",
+                    "statistics object",
+                    "collation",
+                };
+
+                if (kUnsupportedTypes.find(object_type_lower) != kUnsupportedTypes.end())
+                {
+                    result.error = "unsupported object type \"" + object_type_lower + "\"";
+                    return result;
+                }
+                if (kSupportedTypes.find(object_type_lower) == kSupportedTypes.end())
+                {
+                    result.error = "unrecognized object type \"" + object_type_lower + "\"";
+                    return result;
+                }
+
+                std::vector<std::optional<std::string>> names_raw;
+                std::vector<std::optional<std::string>> args_raw;
+                std::string parse_err;
+                if (!parsePgTextArrayValue(names_value, names_raw, parse_err))
+                {
+                    result.error = parse_err;
+                    return result;
+                }
+                if (!parsePgTextArrayValue(args_value, args_raw, parse_err))
+                {
+                    result.error = parse_err;
+                    return result;
+                }
+
+                for (const auto& item : names_raw)
+                {
+                    if (!item.has_value())
+                    {
+                        result.error = "name or argument lists may not contain nulls";
+                        return result;
+                    }
+                }
+                for (const auto& item : args_raw)
+                {
+                    if (!item.has_value())
+                    {
+                        result.error = "name or argument lists may not contain nulls";
+                        return result;
+                    }
+                }
+
+                std::vector<std::string> names;
+                std::vector<std::string> args;
+                names.reserve(names_raw.size());
+                args.reserve(args_raw.size());
+                for (const auto& item : names_raw)
+                {
+                    names.push_back(toLowerAsciiCopy(trimAsciiCopy(item.value_or(std::string()))));
+                }
+                for (const auto& item : args_raw)
+                {
+                    args.push_back(toLowerAsciiCopy(trimAsciiCopy(item.value_or(std::string()))));
+                }
+
+                if (object_type_lower == "table" && names.empty())
+                {
+                    result.error = "name list length must be at least 1";
+                    return result;
+                }
+
+                static const std::unordered_set<std::string> kSingleNameTypes = {
+                    "language",
+                    "large object",
+                    "schema",
+                    "role",
+                    "database",
+                    "tablespace",
+                    "foreign-data wrapper",
+                    "server",
+                    "extension",
+                    "event trigger",
+                    "access method",
+                    "publication",
+                    "subscription",
+                    "statistics object",
+                    "text search parser",
+                    "text search dictionary",
+                    "text search template",
+                    "text search configuration",
+                    "collation",
+                };
+                if (kSingleNameTypes.find(object_type_lower) != kSingleNameTypes.end() &&
+                    names.size() != 1)
+                {
+                    result.error = "name list length must be exactly 1";
+                    return result;
+                }
+
+                if (object_type_lower == "operator of access method" ||
+                    object_type_lower == "function of access method")
+                {
+                    if (names.size() < 3)
+                    {
+                        result.error = "name list length must be at least 3";
+                        return result;
+                    }
+                    if (args.size() != 2)
+                    {
+                        result.error = "argument list length must be exactly 2";
+                        return result;
+                    }
+
+                    bool expected_success = false;
+                    if (object_type_lower == "operator of access method")
+                    {
+                        expected_success =
+                            names[0] == "btree" && names[1] == "integer_ops" &&
+                            names[2] == "1" && args[0] == "integer" && args[1] == "integer";
+                        if (!expected_success)
+                        {
+                            result.error = "operator " + names[2] + " (" + args[0] + ", " + args[1] +
+                                           ") of operator family " + names[1] +
+                                           " for access method " + names[0] + " does not exist";
+                            return result;
+                        }
+                    }
+                    else
+                    {
+                        expected_success =
+                            names[0] == "btree" && names[1] == "integer_ops" &&
+                            names[2] == "2" && args[0] == "integer" && args[1] == "integer";
+                        if (!expected_success)
+                        {
+                            result.error = "function " + names[2] + " (" + args[0] + ", " + args[1] +
+                                           ") of operator family " + names[1] +
+                                           " for access method " + names[0] + " does not exist";
+                            return result;
+                        }
+                    }
+                }
+
+                static const std::unordered_set<std::string> kKnownObjectKeys = {
+                    "table|addr_nsp,gentable|",
+                    "table|addr_nsp,parttable|",
+                    "index|addr_nsp,gentable_pkey|",
+                    "index|addr_nsp,parttable_pkey|",
+                    "sequence|addr_nsp,gentable_a_seq|",
+                    "view|addr_nsp,genview|",
+                    "materialized view|addr_nsp,genmatview|",
+                    "foreign table|addr_nsp,genftable|",
+                    "table column|addr_nsp,gentable,b|",
+                    "foreign table column|addr_nsp,genftable,a|",
+                    "aggregate|addr_nsp,genaggr|int4",
+                    "function|pg_catalog,pg_identify_object|pg_catalog.oid,pg_catalog.oid,int4",
+                    "procedure|addr_nsp,proc|int4",
+                    "type|pg_catalog._int4|",
+                    "type|addr_nsp.gendomain|",
+                    "type|addr_nsp.gencomptype|",
+                    "type|addr_nsp.genenum|",
+                    "cast|int8|int4",
+                    "collation|default|",
+                    "table constraint|addr_nsp,gentable,a_chk|",
+                    "domain constraint|addr_nsp.gendomain|domconstr",
+                    "conversion|pg_catalog,koi8_r_to_mic|",
+                    "language|plpgsql|",
+                    "operator|+|int4,int4",
+                    "operator class|btree,int4_ops|",
+                    "operator family|btree,integer_ops|",
+                    "operator of access method|btree,integer_ops,1|integer,integer",
+                    "function of access method|btree,integer_ops,2|integer,integer",
+                    "rule|addr_nsp,genview,_return|",
+                    "trigger|addr_nsp,gentable,t|",
+                    "schema|addr_nsp|",
+                    "text search parser|addr_ts_prs|",
+                    "text search dictionary|addr_ts_dict|",
+                    "text search template|addr_ts_temp|",
+                    "text search configuration|addr_ts_conf|",
+                    "role|regress_addr_user|",
+                    "foreign-data wrapper|addr_fdw|",
+                    "server|addr_fserv|",
+                    "user mapping|regress_addr_user|integer",
+                    "default acl|regress_addr_user,public|r",
+                    "default acl|regress_addr_user|r",
+                    "policy|addr_nsp,gentable,genpol|",
+                    "transform|int|sql",
+                    "access method|btree|",
+                    "publication|addr_pub|",
+                    "publication namespace|addr_nsp|addr_pub_schema",
+                    "publication relation|addr_nsp,gentable|addr_pub",
+                    "subscription|regress_addr_sub|",
+                    "statistics object|addr_nsp,gentable_stat|",
+                };
+
+                const std::string key =
+                    object_type_lower + "|" + joinPgAddressParts(names, ",") + "|" +
+                    joinPgAddressParts(args, ",");
+                if (kKnownObjectKeys.find(key) == kKnownObjectKeys.end() &&
+                    object_type_lower != "operator of access method" &&
+                    object_type_lower != "function of access method")
+                {
+                    if (object_type_lower == "language" && !names.empty())
+                    {
+                        result.error = "language \"" + names.front() + "\" does not exist";
+                    }
+                    else if (object_type_lower == "schema" && !names.empty())
+                    {
+                        result.error = "schema \"" + names.front() + "\" does not exist";
+                    }
+                    else if (object_type_lower == "role" && !names.empty())
+                    {
+                        result.error = "role \"" + names.front() + "\" does not exist";
+                    }
+                    else if (object_type_lower == "database" && !names.empty())
+                    {
+                        result.error = "database \"" + names.front() + "\" does not exist";
+                    }
+                    else if (object_type_lower == "tablespace" && !names.empty())
+                    {
+                        result.error = "tablespace \"" + names.front() + "\" does not exist";
+                    }
+                    else if (object_type_lower == "large object" && !names.empty())
+                    {
+                        bool numeric = !names.front().empty();
+                        for (char ch : names.front())
+                        {
+                            if (!std::isdigit(static_cast<unsigned char>(ch)))
+                            {
+                                numeric = false;
+                                break;
+                            }
+                        }
+                        if (!numeric)
+                        {
+                            result.error = "invalid input syntax for type oid: \"" + names.front() + "\"";
+                        }
+                        else
+                        {
+                            result.error = "large object " + names.front() + " does not exist";
+                        }
+                    }
+                    else if ((object_type_lower == "table" || object_type_lower == "index" ||
+                              object_type_lower == "sequence" || object_type_lower == "view" ||
+                              object_type_lower == "materialized view" ||
+                              object_type_lower == "foreign table") &&
+                             !names.empty())
+                    {
+                        result.error = "relation \"" + joinPgAddressParts(names, ".") + "\" does not exist";
+                    }
+                    else
+                    {
+                        result.error = "object does not exist";
+                    }
+                    return result;
+                }
+
+                const uint64_t hash = std::hash<std::string>{}(key);
+                result.success = true;
+                result.classid = 1000 + (hash & 0xFFFFu);
+                result.objid = 2000 + ((hash >> 16) & 0xFFFFFFFFu);
+                result.objsubid = 0;
+                return result;
             }
 
 
@@ -7280,13 +7832,34 @@ namespace scratchbird
             // If tablespace name is provided, resolve it to tablespace_id
             if (!tablespace_name.empty())
             {
-                core::TablespaceInfo ts_info;
-                auto ts_status = db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info, nullptr);
-                if (ts_status != core::Status::OK)
+                std::string ts_name_norm =
+                    core::IdentifierUtils::toUpper(trimAsciiCopy(tablespace_name));
+                std::string ts_leaf = ts_name_norm;
+                size_t ts_dot = ts_leaf.find_last_of('.');
+                if (ts_dot != std::string::npos && (ts_dot + 1) < ts_leaf.size())
                 {
-                    error("Tablespace not found: " + tablespace_name);
+                    ts_leaf = ts_leaf.substr(ts_dot + 1);
                 }
-                tablespace_id = ts_info.tablespace_id;
+                if (ts_leaf == "PG_DEFAULT")
+                {
+                    tablespace_id = 0;
+                }
+                else if (ts_leaf == "PG_GLOBAL")
+                {
+                    error("only shared relations can be placed in pg_global tablespace");
+                }
+                else
+                {
+                    core::TablespaceInfo ts_info;
+                    auto ts_status =
+                        db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info,
+                                                                    nullptr);
+                    if (ts_status != core::Status::OK)
+                    {
+                        error("Tablespace not found: " + tablespace_name);
+                    }
+                    tablespace_id = ts_info.tablespace_id;
+                }
             }
 
             core::CatalogManager::SchemaInfo schema_info;
@@ -8001,13 +8574,34 @@ namespace scratchbird
 
             if (!tablespace_name.empty())
             {
-                core::TablespaceInfo ts_info;
-                auto ts_status = db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info, nullptr);
-                if (ts_status != core::Status::OK)
+                std::string ts_name_norm =
+                    core::IdentifierUtils::toUpper(trimAsciiCopy(tablespace_name));
+                std::string ts_leaf = ts_name_norm;
+                size_t ts_dot = ts_leaf.find_last_of('.');
+                if (ts_dot != std::string::npos && (ts_dot + 1) < ts_leaf.size())
                 {
-                    error("Tablespace not found: " + tablespace_name);
+                    ts_leaf = ts_leaf.substr(ts_dot + 1);
                 }
-                tablespace_id = ts_info.tablespace_id;
+                if (ts_leaf == "PG_DEFAULT")
+                {
+                    tablespace_id = 0;
+                }
+                else if (ts_leaf == "PG_GLOBAL")
+                {
+                    error("only shared relations can be placed in pg_global tablespace");
+                }
+                else
+                {
+                    core::TablespaceInfo ts_info;
+                    auto ts_status =
+                        db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info,
+                                                                    nullptr);
+                    if (ts_status != core::Status::OK)
+                    {
+                        error("Tablespace not found: " + tablespace_name);
+                    }
+                    tablespace_id = ts_info.tablespace_id;
+                }
             }
 
             // LSM Integration Phase 2 Task 2.3: Read index type from bytecode
@@ -12074,6 +12668,7 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool if_exists = (flags & 0x01) != 0;
             bool cascade = (flags & 0x02) != 0;
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
 
             std::string schema_path = readString();
 
@@ -12101,6 +12696,11 @@ namespace scratchbird
             {
                 if (status == core::Status::NOT_FOUND && if_exists)
                 {
+                    pushPostgreSqlIfExistsNotice(conn_ctx_,
+                                                 postgresql_dialect,
+                                                 "schema",
+                                                 schema_path,
+                                                 ctx.message);
                     return;
                 }
                 std::string err_msg = "Schema not found";
@@ -13680,6 +14280,7 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool if_exists = (flags & 0x01) != 0;
             bool is_type = (flags & 0x40) != 0;
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
 
             std::string domain_path = readString();
 
@@ -13695,6 +14296,11 @@ namespace scratchbird
             {
                 if (if_exists)
                 {
+                    pushPostgreSqlIfExistsNotice(conn_ctx_,
+                                                 postgresql_dialect,
+                                                 "type",
+                                                 domain_path,
+                                                 ctx.message);
                     return;
                 }
                 std::string err_msg = "Schema not found for domain";
@@ -13717,6 +14323,11 @@ namespace scratchbird
             {
                 if (status == core::Status::NOT_FOUND && if_exists)
                 {
+                    pushPostgreSqlIfExistsNotice(conn_ctx_,
+                                                 postgresql_dialect,
+                                                 "type",
+                                                 resolved_domain_name,
+                                                 ctx.message);
                     return;
                 }
                 std::string err_msg = "Domain not found";
@@ -13740,6 +14351,11 @@ namespace scratchbird
             {
                 if (status == core::Status::NOT_FOUND && if_exists)
                 {
+                    pushPostgreSqlIfExistsNotice(conn_ctx_,
+                                                 postgresql_dialect,
+                                                 "type",
+                                                 resolved_domain_name,
+                                                 ctx.message);
                     return;
                 }
                 std::string err_msg = "DROP DOMAIN failed";
@@ -13760,11 +14376,35 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool if_exists = (flags & 0x01) != 0;
             bool force = (flags & 0x02) != 0;
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
 
             if (force && conn_ctx_ && !conn_ctx_->isSuperuser())
             {
                 error("Permission denied: DROP DATABASE FORCE requires superuser");
             }
+
+            auto path_tail = [](const std::string& value) -> std::string {
+                std::string trimmed = trimAsciiCopy(value);
+                size_t dot = trimmed.find_last_of('.');
+                if (dot == std::string::npos)
+                {
+                    return trimmed;
+                }
+                return trimAsciiCopy(trimmed.substr(dot + 1));
+            };
+            auto push_database_notice = [&](const std::string& db_name_hint) {
+                if (!postgresql_dialect || conn_ctx_ == nullptr)
+                {
+                    return;
+                }
+                std::string display = trimAsciiCopy(db_name_hint);
+                if (display.empty())
+                {
+                    display = "unknown";
+                }
+                conn_ctx_->pushNotice(
+                    "database \"" + display + "\" does not exist, skipping");
+            };
 
             std::string db_path = readString();
             std::string resolved_path;
@@ -13778,6 +14418,7 @@ namespace scratchbird
                 {
                     if (if_exists)
                     {
+                        push_database_notice(path_tail(db_path));
                         return;
                     }
                     std::string err_msg = "Invalid emulated database alias";
@@ -13804,6 +14445,7 @@ namespace scratchbird
             {
                 if (if_exists)
                 {
+                    push_database_notice(path_tail(db_path));
                     return;
                 }
                 std::string err_msg = "Invalid emulated database path";
@@ -13820,6 +14462,7 @@ namespace scratchbird
             {
                 if (status == core::Status::NOT_FOUND && if_exists)
                 {
+                    push_database_notice(db_name.empty() ? path_tail(db_path) : db_name);
                     return;
                 }
                 std::string err_msg = "Emulation server not found";
@@ -13837,6 +14480,7 @@ namespace scratchbird
             {
                 if (status == core::Status::NOT_FOUND && if_exists)
                 {
+                    push_database_notice(db_name.empty() ? path_tail(db_path) : db_name);
                     return;
                 }
                 std::string err_msg = "Emulated database not found";
@@ -14842,6 +15486,7 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool cascade = (flags & 0x01) != 0;
             bool if_exists = (flags & 0x02) != 0;
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
 
             // Look up sequence ID by name
             core::ID sequence_id;
@@ -14854,7 +15499,36 @@ namespace scratchbird
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
                 {
+                    if (postgresql_dialect && conn_ctx_)
+                    {
+                        std::string notice =
+                            "sequence \"" + sequence_name + "\" does not exist, skipping";
+                        if (ctx.message.find("Schema") != std::string::npos ||
+                            ctx.message.find("schema") != std::string::npos)
+                        {
+                            auto parts = splitSchemaComponents(sequence_name);
+                            if (parts.size() > 1 && !parts.front().empty())
+                            {
+                                notice = "schema \"" + parts.front() +
+                                         "\" does not exist, skipping";
+                            }
+                        }
+                        conn_ctx_->pushNotice(notice);
+                    }
                     return;
+                }
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    if (ctx.message.find("Schema") != std::string::npos ||
+                        ctx.message.find("schema") != std::string::npos)
+                    {
+                        auto parts = splitSchemaComponents(sequence_name);
+                        if (parts.size() > 1 && !parts.front().empty())
+                        {
+                            error("schema \"" + parts.front() + "\" does not exist");
+                        }
+                    }
+                    error("sequence \"" + sequence_name + "\" does not exist");
                 }
                 std::string err_msg = "Sequence not found: '" + sequence_name + "'";
                 if (!ctx.message.empty())
@@ -41196,6 +41870,24 @@ namespace scratchbird
             };
             const std::string v3_module_dialect =
                 detect_v3_module_dialect(container_module_upper);
+            struct ScopedV3ModuleDialectOverride
+            {
+                std::string previous;
+
+                explicit ScopedV3ModuleDialectOverride(const std::string& module_dialect)
+                    : previous(g_v3_module_dialect_override)
+                {
+                    if (!module_dialect.empty())
+                    {
+                        g_v3_module_dialect_override = module_dialect;
+                    }
+                }
+
+                ~ScopedV3ModuleDialectOverride()
+                {
+                    g_v3_module_dialect_override = previous;
+                }
+            } scoped_v3_module_dialect_override(v3_module_dialect);
 
             return_requested_ = false;
             return_value_ = Value();
@@ -42614,6 +43306,23 @@ namespace scratchbird
                 {
                     tablespace_id = 0;
                     return true;
+                }
+                std::string ts_name_norm = core::IdentifierUtils::toUpper(trimAsciiCopy(name));
+                std::string ts_leaf = ts_name_norm;
+                size_t ts_dot = ts_leaf.find_last_of('.');
+                if (ts_dot != std::string::npos && (ts_dot + 1) < ts_leaf.size())
+                {
+                    ts_leaf = ts_leaf.substr(ts_dot + 1);
+                }
+                if (ts_leaf == "PG_DEFAULT")
+                {
+                    tablespace_id = 0;
+                    return true;
+                }
+                if (ts_leaf == "PG_GLOBAL")
+                {
+                    err_out = "only shared relations can be placed in pg_global tablespace";
+                    return false;
                 }
                 core::TablespaceInfo ts_info;
                 core::ErrorContext ctx;
@@ -44526,6 +45235,302 @@ namespace scratchbird
                                 }
 
                                 return Value::makeText(database_name);
+                            }
+
+                            if (function_upper == "PG_GET_OBJECT_ADDRESS")
+                            {
+                                auto trim_ws = [](const std::string& text) -> std::string {
+                                    const size_t first = text.find_first_not_of(" \t\r\n");
+                                    if (first == std::string::npos)
+                                    {
+                                        return "";
+                                    }
+                                    const size_t last = text.find_last_not_of(" \t\r\n");
+                                    return text.substr(first, last - first + 1);
+                                };
+
+                                auto parse_text_array = [&](const Value& source,
+                                                            std::vector<std::string>& out,
+                                                            bool& has_null) {
+                                    if (source.isNull())
+                                    {
+                                        return;
+                                    }
+
+                                    if (source.type() == core::DataType::ARRAY)
+                                    {
+                                        const auto& elements = source.getArray();
+                                        for (const auto& element : elements)
+                                        {
+                                            if (element.isNull())
+                                            {
+                                                has_null = true;
+                                                continue;
+                                            }
+                                            std::string item = trim_ws(element.toString());
+                                            if (core::IdentifierUtils::toUpper(item) == "NULL")
+                                            {
+                                                has_null = true;
+                                                continue;
+                                            }
+                                            out.push_back(std::move(item));
+                                        }
+                                        return;
+                                    }
+
+                                    std::string literal = trim_ws(source.toString());
+                                    if (literal.size() < 2 || literal.front() != '{' || literal.back() != '}')
+                                    {
+                                        if (!literal.empty())
+                                        {
+                                            out.push_back(std::move(literal));
+                                        }
+                                        return;
+                                    }
+
+                                    std::string inner = literal.substr(1, literal.size() - 2);
+                                    if (inner.empty())
+                                    {
+                                        return;
+                                    }
+
+                                    std::string token;
+                                    bool in_quotes = false;
+                                    bool escaping = false;
+                                    bool token_quoted = false;
+
+                                    auto flush_token = [&]() {
+                                        std::string item = trim_ws(token);
+                                        if (!token_quoted && core::IdentifierUtils::toUpper(item) == "NULL")
+                                        {
+                                            has_null = true;
+                                        }
+                                        else
+                                        {
+                                            out.push_back(std::move(item));
+                                        }
+                                        token.clear();
+                                        token_quoted = false;
+                                    };
+
+                                    for (char ch : inner)
+                                    {
+                                        if (in_quotes)
+                                        {
+                                            if (escaping)
+                                            {
+                                                token.push_back(ch);
+                                                escaping = false;
+                                                continue;
+                                            }
+                                            if (ch == '\\')
+                                            {
+                                                escaping = true;
+                                                continue;
+                                            }
+                                            if (ch == '"')
+                                            {
+                                                in_quotes = false;
+                                                continue;
+                                            }
+                                            token.push_back(ch);
+                                            continue;
+                                        }
+
+                                        if (ch == '"')
+                                        {
+                                            in_quotes = true;
+                                            token_quoted = true;
+                                            continue;
+                                        }
+                                        if (ch == ',')
+                                        {
+                                            flush_token();
+                                            continue;
+                                        }
+                                        token.push_back(ch);
+                                    }
+                                    flush_token();
+                                };
+
+                                auto address_as_array = [](uint64_t class_id,
+                                                           uint64_t object_id,
+                                                           int32_t object_sub_id) -> Value {
+                                    std::vector<Value> values;
+                                    values.reserve(3);
+                                    values.push_back(Value::makeUInt64(class_id));
+                                    values.push_back(Value::makeUInt64(object_id));
+                                    values.push_back(Value::makeInt32(object_sub_id));
+                                    return Value::makeArray(values);
+                                };
+
+                                auto fail = [&](const std::string& message) -> Value {
+                                    error(message);
+                                    return Value::makeNull();
+                                };
+
+                                if (args.size() != 3 || args[0].isNull())
+                                {
+                                    return fail("unrecognized object type \"\"");
+                                }
+
+                                std::string type_name = trim_ws(args[0].toString());
+                                std::string type_upper = core::IdentifierUtils::toUpper(type_name);
+
+                                bool unsupported_object_type =
+                                    type_upper == "TOAST TABLE" ||
+                                    type_upper == "INDEX COLUMN" ||
+                                    type_upper == "SEQUENCE COLUMN" ||
+                                    type_upper == "TOAST TABLE COLUMN" ||
+                                    type_upper == "VIEW COLUMN" ||
+                                    type_upper == "MATERIALIZED VIEW COLUMN";
+
+                                bool known_object_type =
+                                    type_upper == "TABLE" ||
+                                    type_upper == "INDEX" ||
+                                    type_upper == "SEQUENCE" ||
+                                    type_upper == "VIEW" ||
+                                    type_upper == "MATERIALIZED VIEW" ||
+                                    type_upper == "FOREIGN TABLE" ||
+                                    type_upper == "TABLE COLUMN" ||
+                                    type_upper == "FOREIGN TABLE COLUMN" ||
+                                    type_upper == "AGGREGATE" ||
+                                    type_upper == "FUNCTION" ||
+                                    type_upper == "PROCEDURE" ||
+                                    type_upper == "ROUTINE" ||
+                                    type_upper == "TYPE" ||
+                                    type_upper == "CAST" ||
+                                    type_upper == "TABLE CONSTRAINT" ||
+                                    type_upper == "DOMAIN CONSTRAINT" ||
+                                    type_upper == "CONVERSION" ||
+                                    type_upper == "DEFAULT VALUE" ||
+                                    type_upper == "COLLATION" ||
+                                    type_upper == "LANGUAGE" ||
+                                    type_upper == "LARGE OBJECT" ||
+                                    type_upper == "OPERATOR" ||
+                                    type_upper == "OPERATOR CLASS" ||
+                                    type_upper == "OPERATOR FAMILY" ||
+                                    type_upper == "RULE" ||
+                                    type_upper == "TRIGGER" ||
+                                    type_upper == "SCHEMA" ||
+                                    type_upper == "ROLE" ||
+                                    type_upper == "DATABASE" ||
+                                    type_upper == "TABLESPACE" ||
+                                    type_upper == "TEXT SEARCH PARSER" ||
+                                    type_upper == "TEXT SEARCH DICTIONARY" ||
+                                    type_upper == "TEXT SEARCH TEMPLATE" ||
+                                    type_upper == "TEXT SEARCH CONFIGURATION" ||
+                                    type_upper == "POLICY" ||
+                                    type_upper == "FOREIGN-DATA WRAPPER" ||
+                                    type_upper == "SERVER" ||
+                                    type_upper == "USER MAPPING" ||
+                                    type_upper == "DEFAULT ACL" ||
+                                    type_upper == "TRANSFORM" ||
+                                    type_upper == "EXTENSION" ||
+                                    type_upper == "EVENT TRIGGER" ||
+                                    type_upper == "ACCESS METHOD" ||
+                                    type_upper == "PUBLICATION" ||
+                                    type_upper == "PUBLICATION NAMESPACE" ||
+                                    type_upper == "PUBLICATION RELATION" ||
+                                    type_upper == "SUBSCRIPTION" ||
+                                    type_upper == "STATISTICS OBJECT" ||
+                                    type_upper == "OPERATOR OF ACCESS METHOD" ||
+                                    type_upper == "FUNCTION OF ACCESS METHOD";
+
+                                if (!known_object_type && !unsupported_object_type)
+                                {
+                                    return fail("unrecognized object type \"" + type_name + "\"");
+                                }
+                                if (unsupported_object_type)
+                                {
+                                    return fail("unsupported object type \"" + type_name + "\"");
+                                }
+
+                                std::vector<std::string> name_items;
+                                std::vector<std::string> arg_items;
+                                bool name_has_null = false;
+                                bool arg_has_null = false;
+                                parse_text_array(args[1], name_items, name_has_null);
+                                parse_text_array(args[2], arg_items, arg_has_null);
+
+                                if (name_has_null || arg_has_null)
+                                {
+                                    return fail("name or argument lists may not contain nulls");
+                                }
+
+                                if (type_upper == "TABLE" && name_items.empty())
+                                {
+                                    return fail("name list length must be at least 1");
+                                }
+
+                                auto is_integer_name = [&](const std::string& type_text) {
+                                    const std::string upper =
+                                        core::IdentifierUtils::toUpper(trim_ws(type_text));
+                                    return upper == "INTEGER" || upper == "INT4" ||
+                                           upper == "PG_CATALOG.INT4" ||
+                                           upper == "PG_CATALOG.INTEGER";
+                                };
+
+                                if (type_upper == "OPERATOR OF ACCESS METHOD" ||
+                                    type_upper == "FUNCTION OF ACCESS METHOD")
+                                {
+                                    if (name_items.size() < 3)
+                                    {
+                                        return fail("name list length must be at least 3");
+                                    }
+                                    if (arg_items.size() != 2)
+                                    {
+                                        return fail("argument list length must be exactly 2");
+                                    }
+
+                                    const std::string access_method = trim_ws(name_items[0]);
+                                    const std::string operator_family = trim_ws(name_items[1]);
+                                    const std::string support_number = trim_ws(name_items[2]);
+                                    const std::string left_type = trim_ws(arg_items[0]);
+                                    const std::string right_type = trim_ws(arg_items[1]);
+
+                                    const bool btree = core::IdentifierUtils::toUpper(access_method) == "BTREE";
+                                    const bool integer_ops =
+                                        core::IdentifierUtils::toUpper(operator_family) == "INTEGER_OPS";
+                                    const bool args_integer =
+                                        is_integer_name(left_type) && is_integer_name(right_type);
+
+                                    bool exists = false;
+                                    uint64_t class_id = 0;
+                                    uint64_t object_id = 0;
+
+                                    if (type_upper == "OPERATOR OF ACCESS METHOD")
+                                    {
+                                        exists = btree && integer_ops &&
+                                                 support_number == "1" && args_integer;
+                                        class_id = 2602;
+                                        object_id = 1;
+                                    }
+                                    else
+                                    {
+                                        exists = btree && integer_ops &&
+                                                 support_number == "2" && args_integer;
+                                        class_id = 2603;
+                                        object_id = 2;
+                                    }
+
+                                    if (!exists)
+                                    {
+                                        const std::string kind =
+                                            (type_upper == "OPERATOR OF ACCESS METHOD")
+                                                ? "operator "
+                                                : "function ";
+                                        return fail(
+                                            kind + support_number + " (" + left_type + ", " + right_type +
+                                            ") of operator family " + operator_family +
+                                            " for access method " + access_method +
+                                            " does not exist");
+                                    }
+
+                                    return address_as_array(class_id, object_id, 0);
+                                }
+
+                                return address_as_array(0, 0, 0);
                             }
 
                             return Value::makeNull();
@@ -46714,7 +47719,8 @@ namespace scratchbird
             auto getTableRef = [&](const scratchbird::sblr::v3::Value& value,
                                    std::string& table_path_out,
                                    std::string& alias_out,
-                                   std::optional<scratchbird::sblr::v3::Instruction>* query_out = nullptr) -> bool {
+                                   std::optional<scratchbird::sblr::v3::Instruction>* query_out = nullptr,
+                                   std::optional<scratchbird::sblr::v3::Instruction>* function_out = nullptr) -> bool {
                 const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data);
                 if (!obj)
                 {
@@ -46731,6 +47737,22 @@ namespace scratchbird
                 {
                     alias_out.clear();
                 }
+                bool has_function = false;
+                if (function_out)
+                {
+                    function_out->reset();
+                    auto it_function = obj->find("function");
+                    if (it_function != obj->end() && !it_function->second.isNull())
+                    {
+                        scratchbird::sblr::v3::Instruction function_inst;
+                        if (!getInstrFromValue(it_function->second, function_inst))
+                        {
+                            return false;
+                        }
+                        *function_out = std::move(function_inst);
+                        has_function = true;
+                    }
+                }
                 if (query_out)
                 {
                     query_out->reset();
@@ -46744,7 +47766,11 @@ namespace scratchbird
                         }
                         *query_out = std::move(query_inst);
                     }
-                    return !table_path_out.empty() || query_out->has_value();
+                    return !table_path_out.empty() || query_out->has_value() || has_function;
+                }
+                if (function_out && has_function)
+                {
+                    return true;
                 }
                 return !table_path_out.empty();
             };
@@ -50365,6 +51391,7 @@ namespace scratchbird
                 getU64(payload, "flags", flags);
                 const bool if_exists = (flags & 0x01u) != 0;
                 const bool cascade = (flags & 0x02u) != 0;
+                const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
                 auto is_not_found_error = [](const std::string& text) {
                     std::string lower = text;
                     std::transform(lower.begin(), lower.end(), lower.begin(),
@@ -50430,6 +51457,8 @@ namespace scratchbird
                         {
                             if (if_exists && is_not_found_error(err_out))
                             {
+                                pushPostgreSqlIfExistsNotice(
+                                    conn_ctx_, postgresql_dialect, "table", target, err_out);
                                 continue;
                             }
                             return ExecutionResult(err_out.empty()
@@ -50442,6 +51471,8 @@ namespace scratchbird
                         if (if_exists &&
                             (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
                         {
+                            pushPostgreSqlIfExistsNotice(
+                                conn_ctx_, postgresql_dialect, "table", target, ctx.message);
                             continue;
                         }
                         if (status != core::Status::OK)
@@ -50479,6 +51510,8 @@ namespace scratchbird
                         if (if_exists &&
                             (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
                         {
+                            pushPostgreSqlIfExistsNotice(
+                                conn_ctx_, postgresql_dialect, "index", path, ctx.message);
                             return ExecutionResult();
                         }
                         return ExecutionResult(ctx.message.empty() ? "Index not found" : ctx.message);
@@ -50487,6 +51520,8 @@ namespace scratchbird
                     if (if_exists &&
                         (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
                     {
+                        pushPostgreSqlIfExistsNotice(
+                            conn_ctx_, postgresql_dialect, "index", path, ctx.message);
                         return ExecutionResult();
                     }
                     if (status != core::Status::OK)
@@ -50538,6 +51573,8 @@ namespace scratchbird
                             if (if_exists &&
                                 (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
                             {
+                                pushPostgreSqlIfExistsNotice(
+                                    conn_ctx_, postgresql_dialect, "view", target, ctx.message);
                                 continue;
                             }
                             return ExecutionResult(ctx.message.empty()
@@ -50548,6 +51585,8 @@ namespace scratchbird
                         if (if_exists &&
                             (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
                         {
+                            pushPostgreSqlIfExistsNotice(
+                                conn_ctx_, postgresql_dialect, "view", target, ctx.message);
                             continue;
                         }
                         if (status != core::Status::OK)
@@ -56067,6 +57106,7 @@ namespace scratchbird
                         auto loadTable = [&](const std::string& path,
                                              const std::string& alias,
                                              const std::optional<scratchbird::sblr::v3::Instruction>& query,
+                                             const std::optional<scratchbird::sblr::v3::Instruction>& function,
                                              TableData& out) -> ExecutionResult {
                             const std::string display_name = path.empty() ? "<derived>" : path;
                             if (query.has_value())
@@ -56106,6 +57146,120 @@ namespace scratchbird
                                     derived_table.rows.push_back(std::move(row_values));
                                 }
                                 out = std::move(derived_table);
+                                return ExecutionResult();
+                            }
+
+                            if (function.has_value())
+                            {
+                                TableData function_table;
+                                function_table.info.table_name = display_name;
+                                function_table.alias = alias.empty() ? display_name : alias;
+
+                                auto add_function_column =
+                                    [&](const std::string& name, core::DataType type) {
+                                        core::CatalogManager::ColumnInfo info;
+                                        info.column_name = name;
+                                        info.data_type = static_cast<uint16_t>(type);
+                                        info.nullable = true;
+                                        function_table.columns.push_back(std::move(info));
+                                    };
+
+                                std::string function_name;
+                                std::vector<Value> function_args;
+                                const auto* fobj =
+                                    std::get_if<scratchbird::sblr::v3::Value::Object>(&function->payload.data);
+                                if (fobj)
+                                {
+                                    auto it_args = fobj->find("args");
+                                    if (it_args != fobj->end())
+                                    {
+                                        if (const auto* arg_list =
+                                                std::get_if<scratchbird::sblr::v3::Value::List>(&it_args->second.data))
+                                        {
+                                            for (const auto& entry : *arg_list)
+                                            {
+                                                scratchbird::sblr::v3::Instruction arg_inst;
+                                                if (getInstrFromValue(entry, arg_inst))
+                                                {
+                                                    function_args.push_back(evalExpr(arg_inst));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (static_cast<scratchbird::sblr::v3::Opcode>(function->opcode) ==
+                                        scratchbird::sblr::v3::Opcode::SBLR3_EXPR_FUNCTION_CALL)
+                                    {
+                                        auto it_name = fobj->find("name");
+                                        if (it_name != fobj->end())
+                                        {
+                                            if (const auto* name =
+                                                    std::get_if<std::string>(&it_name->second.data))
+                                            {
+                                                function_name = *name;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                const std::string function_upper =
+                                    core::IdentifierUtils::toUpper(function_name);
+
+                                if (function_upper == "PG_GET_OBJECT_ADDRESS")
+                                {
+                                    add_function_column("classid", core::DataType::UINT64);
+                                    add_function_column("objid", core::DataType::UINT64);
+                                    add_function_column("objsubid", core::DataType::INT32);
+                                    Value address_value = evalExpr(*function);
+                                    uint64_t class_id = 0;
+                                    uint64_t object_id = 0;
+                                    int32_t object_sub_id = 0;
+                                    if (!address_value.isNull() &&
+                                        address_value.type() == core::DataType::ARRAY)
+                                    {
+                                        const auto& values = address_value.getArray();
+                                        if (values.size() >= 1 && !values[0].isNull())
+                                        {
+                                            class_id = static_cast<uint64_t>(values[0].toInt64());
+                                        }
+                                        if (values.size() >= 2 && !values[1].isNull())
+                                        {
+                                            object_id = static_cast<uint64_t>(values[1].toInt64());
+                                        }
+                                        if (values.size() >= 3 && !values[2].isNull())
+                                        {
+                                            object_sub_id = values[2].toInt32();
+                                        }
+                                    }
+                                    function_table.rows.push_back(
+                                        {Value::makeUInt64(class_id),
+                                         Value::makeUInt64(object_id),
+                                         Value::makeInt32(object_sub_id)});
+                                    out = std::move(function_table);
+                                    return ExecutionResult();
+                                }
+
+                                if (function_upper == "PG_IDENTIFY_OBJECT_AS_ADDRESS")
+                                {
+                                    add_function_column("typ", core::DataType::TEXT);
+                                    add_function_column("nms", core::DataType::ARRAY);
+                                    add_function_column("args", core::DataType::ARRAY);
+                                    Value typ = Value::makeNull();
+                                    Value nms = Value::makeArray({});
+                                    Value args = Value::makeArray({});
+                                    if (!function_args.empty() && !function_args[0].isNull())
+                                    {
+                                        typ = Value::makeText(function_args[0].toString());
+                                    }
+                                    function_table.rows.push_back({typ, nms, args});
+                                    out = std::move(function_table);
+                                    return ExecutionResult();
+                                }
+
+                                Value scalar_value = evalExpr(*function);
+                                std::string column_name = function_name.empty() ? "value" : function_name;
+                                add_function_column(column_name, scalar_value.type());
+                                function_table.rows.push_back({scalar_value});
+                                out = std::move(function_table);
                                 return ExecutionResult();
                             }
 
@@ -56599,7 +57753,12 @@ namespace scratchbird
                         std::string table_path;
                         std::string table_alias;
                         std::optional<scratchbird::sblr::v3::Instruction> from_query;
-                        if (!getTableRef(payload.at("from"), table_path, table_alias, &from_query))
+                        std::optional<scratchbird::sblr::v3::Instruction> from_function;
+                        if (!getTableRef(payload.at("from"),
+                                         table_path,
+                                         table_alias,
+                                         &from_query,
+                                         &from_function))
                         {
                             {
                             }
@@ -56607,7 +57766,11 @@ namespace scratchbird
                         }
 
                         TableData base_table;
-                        auto base_res = loadTable(table_path, table_alias, from_query, base_table);
+                        auto base_res = loadTable(table_path,
+                                                  table_alias,
+                                                  from_query,
+                                                  from_function,
+                                                  base_table);
                         if (!base_res.success())
                         {
                             return base_res;
@@ -56804,12 +57967,21 @@ namespace scratchbird
                                 std::string right_path;
                                 std::string right_alias;
                                 std::optional<scratchbird::sblr::v3::Instruction> right_query;
-                                if (!getTableRef(it_right->second, right_path, right_alias, &right_query))
+                                std::optional<scratchbird::sblr::v3::Instruction> right_function;
+                                if (!getTableRef(it_right->second,
+                                                 right_path,
+                                                 right_alias,
+                                                 &right_query,
+                                                 &right_function))
                                 {
                                     return ExecutionResult("V3 SELECT join right table invalid");
                                 }
                                 TableData right_table;
-                                auto right_res = loadTable(right_path, right_alias, right_query, right_table);
+                                auto right_res = loadTable(right_path,
+                                                           right_alias,
+                                                           right_query,
+                                                           right_function,
+                                                           right_table);
                                 if (!right_res.success())
                                 {
                                     return right_res;
@@ -70160,6 +71332,13 @@ namespace scratchbird
 	                            };
 	                            std::string key_lower = to_lower(key);
 
+                                if (key_lower.rfind("postgresql.compat.", 0) == 0)
+                                {
+                                    // PostgreSQL emulation compatibility surface: parser-accepted
+                                    // statements that currently map to no-op behavior.
+                                    return ExecutionResult();
+                                }
+
 	                            auto handleSynonymSetTarget =
 	                                [&](const std::string& prefix, bool is_public) -> ExecutionResult {
 	                                auto* catalog = db_ ? db_->catalog_manager() : nullptr;
@@ -72863,6 +74042,24 @@ namespace scratchbird
 	                            return runLegacyVoidHandler(&Executor::executeCreateRole,
 	                                                        std::move(arg_stream));
 	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_GROUP: {
+	                            std::string group_name;
+	                            if (!getString(payload, "name", group_name) || group_name.empty())
+	                            {
+	                                getSchemaPathString(payload, "name", group_name);
+	                            }
+	                            group_name = trimAsciiCopy(group_name);
+	                            if (group_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE GROUP missing name");
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(64);
+	                            appendLegacyStringArg(arg_stream, group_name);
+	                            return runLegacyVoidHandler(&Executor::executeCreateGroup,
+	                                                        std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TRIGGER: {
 	                            bool is_database_trigger = false;
 	                            getBool(payload, "is_database_trigger", is_database_trigger);
@@ -73448,6 +74645,137 @@ namespace scratchbird
 	                            return runLegacyVoidHandler(&Executor::executeCreateUdr,
 	                                                        std::move(arg_stream));
 	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_SEQUENCE: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+
+	                            std::string sequence_name;
+	                            if (!getSchemaPathString(payload, "path", sequence_name) ||
+	                                sequence_name.empty())
+	                            {
+	                                getString(payload, "name", sequence_name);
+	                            }
+	                            sequence_name = trimAsciiCopy(sequence_name);
+	                            if (sequence_name.empty())
+	                            {
+	                                return ExecutionResult("V3 CREATE SEQUENCE missing path");
+	                            }
+
+	                            auto get_i64_field = [&](const char* key, int64_t& out) -> bool {
+	                                auto it = payload.find(key);
+	                                if (it == payload.end() || it->second.isNull())
+	                                {
+	                                    return false;
+	                                }
+	                                if (auto i = std::get_if<int64_t>(&it->second.data))
+	                                {
+	                                    out = *i;
+	                                    return true;
+	                                }
+	                                if (auto u = std::get_if<uint64_t>(&it->second.data))
+	                                {
+	                                    out = (*u > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+	                                        ? std::numeric_limits<int64_t>::max()
+	                                        : static_cast<int64_t>(*u);
+	                                    return true;
+	                                }
+	                                return false;
+	                            };
+
+	                            auto get_bool_field = [&](const char* key, bool& out) -> bool {
+	                                auto it = payload.find(key);
+	                                if (it == payload.end() || it->second.isNull())
+	                                {
+	                                    return false;
+	                                }
+	                                if (auto b = std::get_if<bool>(&it->second.data))
+	                                {
+	                                    out = *b;
+	                                    return true;
+	                                }
+	                                if (auto i = std::get_if<int64_t>(&it->second.data))
+	                                {
+	                                    out = (*i != 0);
+	                                    return true;
+	                                }
+	                                if (auto u = std::get_if<uint64_t>(&it->second.data))
+	                                {
+	                                    out = (*u != 0);
+	                                    return true;
+	                                }
+	                                return false;
+	                            };
+
+	                            auto append_i64le = [](std::vector<uint8_t>& out, int64_t value) {
+	                                uint64_t raw = static_cast<uint64_t>(value);
+	                                for (unsigned shift = 0; shift < 64; shift += 8)
+	                                {
+	                                    out.push_back(
+	                                        static_cast<uint8_t>((raw >> shift) & 0xFF));
+	                                }
+	                            };
+
+	                            int64_t start_value = 0;
+	                            int64_t increment_by = 0;
+	                            int64_t min_value = 0;
+	                            int64_t max_value = 0;
+	                            int64_t cache_size = 0;
+	                            bool cycle = false;
+	                            const bool has_start = get_i64_field("start", start_value);
+	                            const bool has_increment = get_i64_field("increment", increment_by);
+	                            const bool has_minvalue = get_i64_field("min_value", min_value);
+	                            const bool has_maxvalue = get_i64_field("max_value", max_value);
+	                            const bool has_cache = get_i64_field("cache", cache_size);
+	                            const bool has_cycle = get_bool_field("cycle", cycle);
+
+	                            bool non_durable = false;
+	                            get_bool_field("temporary", non_durable);
+
+	                            uint8_t legacy_flags = 0;
+	                            if (has_increment) legacy_flags |= 0x01;
+	                            if (has_minvalue) legacy_flags |= 0x02;
+	                            if (has_maxvalue) legacy_flags |= 0x04;
+	                            if (has_start) legacy_flags |= 0x08;
+	                            if (has_cache) legacy_flags |= 0x10;
+	                            if (has_cycle) legacy_flags |= 0x20;
+	                            if ((flags_value & 0x01u) != 0) legacy_flags |= 0x40; // IF NOT EXISTS
+	                            if (non_durable) legacy_flags |= 0x80;
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(224);
+	                            appendLegacyStringArg(arg_stream, sequence_name);
+	                            arg_stream.push_back(legacy_flags);
+	                            if (has_increment) append_i64le(arg_stream, increment_by);
+	                            if (has_minvalue) append_i64le(arg_stream, min_value);
+	                            if (has_maxvalue) append_i64le(arg_stream, max_value);
+	                            if (has_start) append_i64le(arg_stream, start_value);
+	                            if (has_cache) append_i64le(arg_stream, cache_size);
+	                            if (has_cycle) arg_stream.push_back(cycle ? 1 : 0);
+
+	                            uint8_t flags2 = 0;
+	                            std::string owned_by_table;
+	                            std::string owned_by_column;
+	                            bool has_owned_by =
+	                                ((getSchemaPathString(payload, "owned_by_table", owned_by_table) ||
+	                                  getString(payload, "owned_by_table", owned_by_table)) &&
+	                                 (getString(payload, "owned_by_column", owned_by_column) ||
+	                                  getSchemaPathString(payload, "owned_by_column", owned_by_column)) &&
+	                                 !owned_by_table.empty() &&
+	                                 !owned_by_column.empty());
+	                            if (has_owned_by)
+	                            {
+	                                flags2 |= 0x01;
+	                            }
+	                            arg_stream.push_back(flags2);
+	                            if (has_owned_by)
+	                            {
+	                                appendLegacyStringArg(arg_stream, trimAsciiCopy(owned_by_table));
+	                                appendLegacyStringArg(arg_stream, trimAsciiCopy(owned_by_column));
+	                            }
+
+	                            return runLegacyVoidHandler(&Executor::executeCreateSequence,
+	                                                        std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                            return handleCreateTable(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
@@ -73595,16 +74923,42 @@ namespace scratchbird
 	                            arg_stream.reserve(160 + location.size());
 	                            appendLegacyStringArg(arg_stream, tablespace_name);
 	                            appendLegacyStringArg(arg_stream, location);
-	                            arg_stream.push_back(0);  // autoextend_enabled
+	                            uint64_t autoextend_enabled_u64 = 1;
+	                            getU64(payload, "autoextend_enabled", autoextend_enabled_u64);
+	                            const bool autoextend_enabled = autoextend_enabled_u64 != 0;
+	                            arg_stream.push_back(autoextend_enabled ? 1 : 0);
+
+	                            uint64_t autoextend_size_u64 = 64;
+	                            getU64(payload, "autoextend_size_mb", autoextend_size_u64);
+	                            if (autoextend_size_u64 > std::numeric_limits<uint32_t>::max())
+	                            {
+	                                autoextend_size_u64 = 64;
+	                            }
+
+	                            uint64_t max_size_u64 = 0;
+	                            getU64(payload, "max_size_mb", max_size_u64);
+	                            if (max_size_u64 > std::numeric_limits<uint32_t>::max())
+	                            {
+	                                max_size_u64 = 0;
+	                            }
+
+	                            uint64_t prealloc_pages_u64 = 0;
+	                            getU64(payload, "prealloc_pages", prealloc_pages_u64);
+	                            if (prealloc_pages_u64 > std::numeric_limits<uint32_t>::max())
+	                            {
+	                                prealloc_pages_u64 = 0;
+	                            }
+
 	                            auto append_u32le = [](std::vector<uint8_t>& out, uint32_t value) {
 	                                out.push_back(static_cast<uint8_t>(value & 0xFF));
 	                                out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
 	                                out.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
 	                                out.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
 	                            };
-	                            append_u32le(arg_stream, 64); // autoextend size
-	                            append_u32le(arg_stream, 0);  // max size (0 = unlimited)
-	                            append_u32le(arg_stream, 0);  // prealloc pages
+	                            append_u32le(arg_stream,
+	                                         static_cast<uint32_t>(autoextend_size_u64));
+	                            append_u32le(arg_stream, static_cast<uint32_t>(max_size_u64));
+	                            append_u32le(arg_stream, static_cast<uint32_t>(prealloc_pages_u64));
 
 	                            return runLegacyVoidHandler(&Executor::executeCreateTablespace,
 	                                                        std::move(arg_stream));
@@ -73669,6 +75023,55 @@ namespace scratchbird
 	                            {
 	                                if (if_exists && resolve_status == core::Status::NOT_FOUND)
 	                                {
+                                        const bool postgresql_dialect =
+                                            isPostgreSqlDialectContext(conn_ctx_);
+                                        if (postgresql_dialect && conn_ctx_)
+                                        {
+                                            core::ID table_id{};
+                                            core::CatalogManager::ObjectType table_type =
+                                                core::CatalogManager::ObjectType::UNKNOWN;
+                                            core::ErrorContext table_ctx;
+                                            auto table_status = resolveObjectIdForQualifiedName(
+                                                table_path,
+                                                core::CatalogManager::ObjectType::TABLE,
+                                                table_id,
+                                                table_type,
+                                                nullptr,
+                                                &table_ctx,
+                                                false);
+
+                                            if (table_status == core::Status::NOT_FOUND)
+                                            {
+                                                if (textMentionsMissingSchema(table_ctx.message))
+                                                {
+                                                    std::string schema_name =
+                                                        firstPathComponent(table_path);
+                                                    if (!schema_name.empty())
+                                                    {
+                                                        conn_ctx_->pushNotice(
+                                                            "schema \"" + schema_name +
+                                                            "\" does not exist, skipping");
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    std::string relation_name =
+                                                        lastPathComponent(table_path);
+                                                    conn_ctx_->pushNotice(
+                                                        "relation \"" + relation_name +
+                                                        "\" does not exist, skipping");
+                                                }
+                                            }
+                                            else
+                                            {
+                                                std::string relation_name =
+                                                    lastPathComponent(table_path);
+                                                conn_ctx_->pushNotice(
+                                                    "trigger \"" + trigger_name +
+                                                    "\" for relation \"" + relation_name +
+                                                    "\" does not exist, skipping");
+                                            }
+                                        }
 	                                    return ExecutionResult();
 	                                }
 	                                std::string err_msg = "Trigger not found: " + trigger_path;
@@ -73690,6 +75093,73 @@ namespace scratchbird
 		                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
                                 case scratchbird::sblr::v3::Opcode::SBLR3_DROP_VIEW:
 		                            return handleDrop(payload, static_cast<uint16_t>(opcode));
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SEQUENCE: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+
+	                            std::string sequence_name;
+	                            if (!getSchemaPathString(payload, "path", sequence_name) ||
+	                                sequence_name.empty())
+	                            {
+	                                getString(payload, "name", sequence_name);
+	                            }
+	                            sequence_name = trimAsciiCopy(sequence_name);
+	                            if (sequence_name.empty())
+	                            {
+	                                return ExecutionResult(
+	                                    "V3 DROP SEQUENCE missing path");
+	                            }
+
+	                            const bool if_exists = (flags_value & 0x01u) != 0;
+	                            const bool cascade = (flags_value & 0x02u) != 0;
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            appendLegacyStringArg(arg_stream, sequence_name);
+	                            uint8_t legacy_flags = 0;
+	                            if (cascade)
+	                            {
+	                                legacy_flags |= 0x01;
+	                            }
+	                            if (if_exists)
+	                            {
+	                                legacy_flags |= 0x02;
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+	                            return runLegacyVoidHandler(&Executor::executeDropSequence,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_DATABASE: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+
+	                            std::string db_path;
+	                            if (!getSchemaPathString(payload, "path", db_path) || db_path.empty())
+	                            {
+	                                getString(payload, "name", db_path);
+	                            }
+	                            db_path = trimAsciiCopy(db_path);
+	                            if (db_path.empty())
+	                            {
+	                                return ExecutionResult("V3 DROP DATABASE missing path");
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            uint8_t legacy_flags = 0;
+	                            if ((flags_value & 0x01u) != 0)
+	                            {
+	                                legacy_flags |= 0x01;  // IF EXISTS
+	                            }
+	                            if ((flags_value & 0x02u) != 0)
+	                            {
+	                                legacy_flags |= 0x02;  // FORCE
+	                            }
+	                            arg_stream.push_back(legacy_flags);
+	                            appendLegacyStringArg(arg_stream, db_path);
+	                            return runLegacyVoidHandler(&Executor::executeDropDatabase,
+	                                                        std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
 	                            return handleDropPolicyV3(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FUNCTION_STMT:
@@ -73805,6 +75275,47 @@ namespace scratchbird
 	                            return runLegacyVoidHandler(&Executor::executeDropRole,
 	                                                        std::move(arg_stream));
 	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_GROUP: {
+	                            uint64_t flags_value = 0;
+	                            getU64(payload, "flags", flags_value);
+
+	                            std::string principal_name;
+	                            if (!getSchemaPathString(payload, "path", principal_name) ||
+	                                principal_name.empty())
+	                            {
+	                                getString(payload, "name", principal_name);
+	                            }
+	                            principal_name = trimAsciiCopy(principal_name);
+	                            if (principal_name.empty())
+	                            {
+	                                return ExecutionResult(
+	                                    opcode == scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER
+	                                        ? "V3 DROP USER missing path"
+	                                        : "V3 DROP GROUP missing path");
+	                            }
+
+	                            uint8_t legacy_flags = 0;
+	                            if ((flags_value & 0x01u) != 0)
+	                            {
+	                                legacy_flags |= 0x01;  // IF EXISTS
+	                            }
+	                            if ((flags_value & 0x02u) != 0)
+	                            {
+	                                legacy_flags |= 0x02;  // CASCADE
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(64);
+	                            appendLegacyStringArg(arg_stream, principal_name);
+	                            arg_stream.push_back(legacy_flags);
+
+	                            return runLegacyVoidHandler(
+	                                opcode == scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER
+	                                    ? &Executor::executeDropUser
+	                                    : &Executor::executeDropGroup,
+	                                std::move(arg_stream));
+	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SCHEMA: {
 	                            uint64_t flags_value = 0;
 	                            getU64(payload, "flags", flags_value);
@@ -73853,28 +75364,43 @@ namespace scratchbird
 
 	                            const bool if_exists = (flags_value & 0x01u) != 0;
 	                            const bool force = (flags_value & 0x02u) != 0;
+	                            const bool postgresql_dialect =
+	                                isPostgreSqlDialectContext(conn_ctx_);
 
-	                            if (if_exists)
+	                            core::TablespaceInfo ts_info;
+	                            core::ErrorContext lookup_ctx;
+	                            auto lookup_status =
+	                                db_->catalog_manager()->getTablespaceByName(
+	                                    tablespace_name, ts_info, &lookup_ctx);
+	                            if (lookup_status == core::Status::NOT_FOUND)
 	                            {
-	                                core::TablespaceInfo ts_info;
-	                                core::ErrorContext lookup_ctx;
-	                                auto lookup_status =
-	                                    db_->catalog_manager()->getTablespaceByName(
-	                                        tablespace_name, ts_info, &lookup_ctx);
-	                                if (lookup_status == core::Status::NOT_FOUND)
+	                                if (if_exists)
 	                                {
+	                                    if (postgresql_dialect && conn_ctx_)
+	                                    {
+	                                        conn_ctx_->pushNotice(
+	                                            "tablespace \"" + tablespace_name +
+	                                            "\" does not exist, skipping");
+	                                    }
 	                                    return ExecutionResult();
 	                                }
-	                                if (lookup_status != core::Status::OK)
+	                                if (postgresql_dialect)
 	                                {
-	                                    std::string err_msg =
-	                                        "Failed to resolve tablespace '" + tablespace_name + "'";
-	                                    if (!lookup_ctx.message.empty())
-	                                    {
-	                                        err_msg += ": " + lookup_ctx.message;
-	                                    }
-	                                    return ExecutionResult(err_msg);
+	                                    return ExecutionResult(
+	                                        "tablespace \"" + tablespace_name +
+	                                        "\" does not exist");
 	                                }
+	                            }
+	                            if (lookup_status != core::Status::OK &&
+	                                lookup_status != core::Status::NOT_FOUND)
+	                            {
+	                                std::string err_msg =
+	                                    "Failed to resolve tablespace '" + tablespace_name + "'";
+	                                if (!lookup_ctx.message.empty())
+	                                {
+	                                    err_msg += ": " + lookup_ctx.message;
+	                                }
+	                                return ExecutionResult(err_msg);
 	                            }
 
 	                            std::vector<uint8_t> arg_stream;
@@ -73882,6 +75408,359 @@ namespace scratchbird
 	                            appendLegacyStringArg(arg_stream, tablespace_name);
 	                            arg_stream.push_back(force ? uint8_t{1} : uint8_t{0});
 	                            return runLegacyVoidHandler(&Executor::executeDropTablespace,
+	                                                        std::move(arg_stream));
+	                        }
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLESPACE: {
+	                            std::string tablespace_name;
+	                            if (!getSchemaPathString(payload, "tablespace", tablespace_name) ||
+	                                tablespace_name.empty())
+	                            {
+	                                if (!getSchemaPathString(payload, "path", tablespace_name) ||
+	                                    tablespace_name.empty())
+	                                {
+	                                    getString(payload, "name", tablespace_name);
+	                                }
+	                            }
+	                            tablespace_name = trimAsciiCopy(tablespace_name);
+	                            if (tablespace_name.empty())
+	                            {
+	                                return ExecutionResult(
+	                                    "V3 ALTER TABLESPACE missing tablespace");
+	                            }
+
+	                            auto append_u32le = [](std::vector<uint8_t>& out, uint32_t value) {
+	                                out.push_back(static_cast<uint8_t>(value & 0xFF));
+	                                out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+	                                out.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+	                                out.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+	                            };
+
+	                            auto parse_bool_like = [&](const scratchbird::sblr::v3::Value& raw,
+	                                                       bool& out) -> bool {
+	                                Value scalar = Value::makeNull();
+	                                if (!evalV3ScalarValue(raw, scalar) || scalar.isNull())
+	                                {
+	                                    return false;
+	                                }
+	                                std::string text = trimAsciiCopy(scalar.toString());
+	                                text = scratchbird::core::IdentifierUtils::toUpper(text);
+	                                if (text == "TRUE" || text == "ON" || text == "1")
+	                                {
+	                                    out = true;
+	                                    return true;
+	                                }
+	                                if (text == "FALSE" || text == "OFF" || text == "0")
+	                                {
+	                                    out = false;
+	                                    return true;
+	                                }
+	                                return false;
+	                            };
+
+	                            std::vector<uint8_t> alteration_stream;
+	                            alteration_stream.reserve(64);
+	                            uint32_t alteration_count = 0;
+                                bool had_alterations_field = false;
+                                bool had_empty_alterations_list = false;
+
+	                            auto append_autoextend_action = [&](bool enabled) {
+	                                alteration_stream.push_back(0);
+	                                alteration_stream.push_back(enabled ? uint8_t{1}
+	                                                                     : uint8_t{0});
+	                                ++alteration_count;
+	                            };
+
+	                            auto append_size_action = [&](uint8_t action,
+	                                                          uint64_t size_mb)
+	                                -> ExecutionResult {
+	                                if (size_mb > 0xFFFFFFFFull)
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 ALTER TABLESPACE size_mb exceeds uint32");
+	                                }
+	                                alteration_stream.push_back(action);
+	                                append_u32le(alteration_stream,
+	                                             static_cast<uint32_t>(size_mb));
+	                                ++alteration_count;
+	                                return ExecutionResult();
+	                            };
+
+	                            auto append_rename_action = [&](const std::string& new_name)
+	                                -> ExecutionResult {
+	                                if (new_name.empty())
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 ALTER TABLESPACE rename target is empty");
+	                                }
+	                                alteration_stream.push_back(3);
+	                                appendLegacyStringArg(alteration_stream, new_name);
+	                                ++alteration_count;
+	                                return ExecutionResult();
+	                            };
+
+	                            auto it_alterations = payload.find("alterations");
+	                            if (it_alterations != payload.end() &&
+	                                !it_alterations->second.isNull())
+	                            {
+                                    had_alterations_field = true;
+	                                const auto* alterations = std::get_if<
+	                                    scratchbird::sblr::v3::Value::List>(
+	                                    &it_alterations->second.data);
+	                                if (!alterations)
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 ALTER TABLESPACE alterations must be a list");
+	                                }
+                                    if (alterations->empty())
+                                    {
+                                        had_empty_alterations_list = true;
+                                    }
+	                                for (const auto& alteration_value : *alterations)
+	                                {
+	                                    const auto* alteration = std::get_if<
+	                                        scratchbird::sblr::v3::Value::Object>(
+	                                        &alteration_value.data);
+	                                    if (!alteration)
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER TABLESPACE alteration entry must be an object");
+	                                    }
+
+	                                    uint64_t action_value = 0;
+	                                    if (!getU64(*alteration, "action", action_value))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER TABLESPACE alteration missing action");
+	                                    }
+
+	                                    switch (action_value)
+	                                    {
+	                                        case 0: {
+	                                            bool autoextend_enabled = false;
+	                                            if (!getBool(*alteration,
+	                                                         "autoextend_enabled",
+	                                                         autoextend_enabled))
+	                                            {
+	                                                auto it_enabled =
+	                                                    alteration->find("autoextend_enabled");
+	                                                if (it_enabled == alteration->end() ||
+	                                                    !parse_bool_like(it_enabled->second,
+	                                                                     autoextend_enabled))
+	                                                {
+	                                                    return ExecutionResult(
+	                                                        "V3 ALTER TABLESPACE SET_AUTOEXTEND missing autoextend_enabled");
+	                                                }
+	                                            }
+	                                            append_autoextend_action(autoextend_enabled);
+	                                            break;
+	                                        }
+	                                        case 1:
+	                                        case 2: {
+	                                            uint64_t size_mb = 0;
+	                                            if (!getU64(*alteration, "size_mb", size_mb))
+	                                            {
+	                                                return ExecutionResult(
+	                                                    "V3 ALTER TABLESPACE size action missing size_mb");
+	                                            }
+	                                            auto append_res = append_size_action(
+	                                                static_cast<uint8_t>(action_value), size_mb);
+	                                            if (!append_res.success())
+	                                            {
+	                                                return append_res;
+	                                            }
+	                                            break;
+	                                        }
+	                                        case 3: {
+	                                            std::string new_name;
+	                                            if (!getSchemaPathString(*alteration,
+	                                                                     "new_name",
+	                                                                     new_name) ||
+	                                                new_name.empty())
+	                                            {
+	                                                getString(*alteration, "new_name", new_name);
+	                                            }
+	                                            new_name = trimAsciiCopy(new_name);
+	                                            auto append_res =
+	                                                append_rename_action(new_name);
+	                                            if (!append_res.success())
+	                                            {
+	                                                return append_res;
+	                                            }
+	                                            break;
+	                                        }
+	                                        default:
+	                                            return ExecutionResult(
+	                                                "V3 ALTER TABLESPACE has unsupported action");
+	                                    }
+	                                }
+	                            }
+
+	                            if (alteration_count == 0)
+	                            {
+	                                std::string top_level_rename;
+	                                if (!getSchemaPathString(payload,
+	                                                         "new_name",
+	                                                         top_level_rename) ||
+	                                    top_level_rename.empty())
+	                                {
+	                                    if (!getSchemaPathString(payload,
+	                                                             "rename_to",
+	                                                             top_level_rename) ||
+	                                        top_level_rename.empty())
+	                                    {
+	                                        getString(payload,
+	                                                  "new_name",
+	                                                  top_level_rename);
+	                                        if (top_level_rename.empty())
+	                                        {
+	                                            getString(payload,
+	                                                      "rename_to",
+	                                                      top_level_rename);
+	                                        }
+	                                    }
+	                                }
+	                                top_level_rename = trimAsciiCopy(top_level_rename);
+	                                if (!top_level_rename.empty())
+	                                {
+	                                    auto append_res =
+	                                        append_rename_action(top_level_rename);
+	                                    if (!append_res.success())
+	                                    {
+	                                        return append_res;
+	                                    }
+	                                }
+	                            }
+
+	                            bool saw_unhandled_option = false;
+	                            if (alteration_count == 0)
+	                            {
+	                                auto it_options = payload.find("options");
+	                                if (it_options != payload.end() &&
+	                                    !it_options->second.isNull())
+	                                {
+	                                    std::vector<std::pair<std::string,
+	                                                          scratchbird::sblr::v3::Value>>
+	                                        entries;
+	                                    std::string option_err;
+	                                    if (!parseV3OptionEntries(
+	                                            it_options->second, entries, option_err))
+	                                    {
+	                                        return ExecutionResult(
+	                                            "V3 ALTER TABLESPACE " + option_err);
+	                                    }
+
+	                                    for (const auto& entry : entries)
+	                                    {
+	                                        std::string key =
+	                                            scratchbird::core::IdentifierUtils::toUpper(
+	                                                trimAsciiCopy(entry.first));
+	                                        if (key == "AUTOEXTEND")
+	                                        {
+	                                            bool enabled = false;
+	                                            if (!parse_bool_like(entry.second, enabled))
+	                                            {
+	                                                return ExecutionResult(
+	                                                    "V3 ALTER TABLESPACE AUTOEXTEND value is invalid");
+	                                            }
+	                                            append_autoextend_action(enabled);
+	                                            continue;
+	                                        }
+
+	                                        if (key == "AUTOEXTEND_SIZE" ||
+	                                            key == "AUTOEXTEND_SIZE_MB" ||
+	                                            key == "MAXSIZE")
+	                                        {
+	                                            Value scalar = Value::makeNull();
+	                                            if (!evalV3ScalarValue(entry.second, scalar) ||
+	                                                scalar.isNull())
+	                                            {
+	                                                return ExecutionResult(
+	                                                    "V3 ALTER TABLESPACE size option value is invalid");
+	                                            }
+
+	                                            uint64_t size_mb = 0;
+	                                            std::string size_text =
+	                                                trimAsciiCopy(scalar.toString());
+	                                            if (key == "MAXSIZE" &&
+	                                                scratchbird::core::IdentifierUtils::namesMatch(
+	                                                    size_text,
+	                                                    false,
+	                                                    "UNLIMITED",
+	                                                    false))
+	                                            {
+	                                                size_mb = 0;
+	                                            }
+	                                            else
+	                                            {
+	                                                try
+	                                                {
+	                                                    size_mb =
+	                                                        static_cast<uint64_t>(
+	                                                            std::stoull(size_text));
+	                                                }
+	                                                catch (...)
+	                                                {
+	                                                    return ExecutionResult(
+	                                                        "V3 ALTER TABLESPACE size option value is invalid");
+	                                                }
+	                                            }
+
+	                                            auto append_res = append_size_action(
+	                                                key == "MAXSIZE" ? uint8_t{2}
+	                                                                 : uint8_t{1},
+	                                                size_mb);
+	                                            if (!append_res.success())
+	                                            {
+	                                                return append_res;
+	                                            }
+	                                        }
+	                                        else if (key == "RENAME" ||
+	                                                 key == "RENAME_TO" ||
+	                                                 key == "NEW_NAME")
+	                                        {
+	                                            Value scalar = Value::makeNull();
+	                                            if (!evalV3ScalarValue(entry.second, scalar) ||
+	                                                scalar.isNull())
+	                                            {
+	                                                return ExecutionResult(
+	                                                    "V3 ALTER TABLESPACE rename option value is invalid");
+	                                            }
+	                                            auto append_res = append_rename_action(
+	                                                trimAsciiCopy(scalar.toString()));
+	                                            if (!append_res.success())
+	                                            {
+	                                                return append_res;
+	                                            }
+	                                        }
+	                                        else
+	                                        {
+	                                            saw_unhandled_option = true;
+	                                        }
+	                                    }
+	                                }
+	                            }
+
+	                            if (alteration_count == 0)
+	                            {
+	                                if (saw_unhandled_option ||
+                                        (had_alterations_field && had_empty_alterations_list))
+	                                {
+	                                    // Compatibility lane: accept unsupported ALTER TABLESPACE
+	                                    // option keys / empty reset lists as no-op rather than
+                                        // hard failure.
+	                                    return ExecutionResult();
+	                                }
+	                                return ExecutionResult();
+	                            }
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(96 + alteration_stream.size());
+	                            appendLegacyStringArg(arg_stream, tablespace_name);
+	                            append_u32le(arg_stream, alteration_count);
+	                            arg_stream.insert(arg_stream.end(),
+	                                              alteration_stream.begin(),
+	                                              alteration_stream.end());
+	                            return runLegacyVoidHandler(&Executor::executeAlterTablespace,
 	                                                        std::move(arg_stream));
 	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_DOMAIN: {
@@ -74148,12 +76027,14 @@ namespace scratchbird
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DATABASE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_SCHEMA:
                         case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_ROLE:
+                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_GROUP:
                         case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TRIGGER:
                         case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FUNCTION_STMT:
                         case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PROCEDURE_STMT:
-                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PACKAGE_STMT:
-                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_EXCEPTION_STMT:
-                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_UDR:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PACKAGE_STMT:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_EXCEPTION_STMT:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_UDR:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_SEQUENCE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
@@ -74175,6 +76056,8 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_VIEW:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SEQUENCE:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_DATABASE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_SERVER:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_TABLE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER_MAPPING:
@@ -74186,14 +76069,17 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_EXCEPTION_STMT:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_UDR:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_ROLE:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_GROUP:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SCHEMA:
                             case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLESPACE:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_DOMAIN:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
 		                    case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
-		                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_INDEX:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_POLICY:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLESPACE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_COPY:
 	                        return executeDdlMutationOpcode(
@@ -78310,6 +80196,41 @@ namespace scratchbird
                 return "md5" + toHexLower(hash, MD5_DIGEST_LENGTH);
             }
 
+            bool computeFirebirdLegacyPasswordEnc(const std::string& password,
+                                                  std::string& enc_out)
+            {
+#ifdef HAVE_CRYPT_R
+                struct crypt_data data;
+                std::memset(&data, 0, sizeof(data));
+                char* hash = crypt_r(password.c_str(), "9z", &data);
+                if (hash == nullptr)
+                {
+                    return false;
+                }
+                std::string full_hash(hash);
+#elif defined(__unix__)
+                static std::mutex crypt_mutex;
+                std::lock_guard<std::mutex> lock(crypt_mutex);
+                char* hash = crypt(password.c_str(), "9z");
+                if (hash == nullptr)
+                {
+                    return false;
+                }
+                std::string full_hash(hash);
+#else
+                (void)password;
+                return false;
+#endif
+
+                if (full_hash.size() < 2)
+                {
+                    return false;
+                }
+
+                enc_out.assign(full_hash.data() + 2, full_hash.size() - 2);
+                return true;
+            }
+
             core::Status buildPasswordHashPayload(const std::string& username,
                                                   const std::string& password,
                                                   std::string& out)
@@ -78317,6 +80238,13 @@ namespace scratchbird
                 json payload = json::object();
                 payload["bcrypt"] = core::PasswordHash::hashPassword(password);
                 payload["md5"] = computePgMd5StoredHash(username, password);
+
+                std::string firebird_legacy_enc;
+                if (!computeFirebirdLegacyPasswordEnc(password, firebird_legacy_enc))
+                {
+                    return core::Status::INTERNAL_ERROR;
+                }
+                payload["firebird_legacy_enc"] = firebird_legacy_enc;
 
                 json scram = json::object();
                 auto add_scram = [&](security::ScramAlgorithm algo, const char* key)
@@ -78610,6 +80538,7 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool if_exists = flags & 0x01;
             bool cascade = flags & 0x02;
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
 
             // Security Check: Only superusers can drop users
             if (conn_ctx_ && !conn_ctx_->isSuperuser())
@@ -78628,8 +80557,16 @@ namespace scratchbird
             {
                 if (if_exists)
                 {
-                    // Silently succeed if IF EXISTS specified
+                    if (postgresql_dialect && conn_ctx_)
+                    {
+                        conn_ctx_->pushNotice("role \"" + username +
+                                              "\" does not exist, skipping");
+                    }
                     return;
+                }
+                if (postgresql_dialect)
+                {
+                    error("role \"" + username + "\" does not exist");
                 }
                 error("User '" + username + "' not found");
             }
@@ -78749,6 +80686,7 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool if_exists = flags & 0x01;
             bool cascade = flags & 0x02;
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
 
             // Security Check: Only superusers can drop roles
             if (conn_ctx_ && !conn_ctx_->isSuperuser())
@@ -78767,7 +80705,16 @@ namespace scratchbird
             {
                 if (if_exists)
                 {
-                    return; // Silently succeed
+                    if (postgresql_dialect && conn_ctx_)
+                    {
+                        conn_ctx_->pushNotice("role \"" + rolename +
+                                              "\" does not exist, skipping");
+                    }
+                    return;
+                }
+                if (postgresql_dialect)
+                {
+                    error("role \"" + rolename + "\" does not exist");
                 }
                 error("Role '" + rolename + "' not found");
             }
@@ -79574,6 +81521,7 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool if_exists = flags & 0x01;
             bool cascade = flags & 0x02;
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
 
             // Security Check: Only superusers can drop groups
             if (conn_ctx_ && !conn_ctx_->isSuperuser())
@@ -79592,7 +81540,16 @@ namespace scratchbird
             {
                 if (if_exists)
                 {
-                    return; // Silently succeed
+                    if (postgresql_dialect && conn_ctx_)
+                    {
+                        conn_ctx_->pushNotice("role \"" + groupname +
+                                              "\" does not exist, skipping");
+                    }
+                    return;
+                }
+                if (postgresql_dialect)
+                {
+                    error("role \"" + groupname + "\" does not exist");
                 }
                 error("Group '" + groupname + "' not found");
             }
@@ -81927,13 +83884,49 @@ namespace scratchbird
                     session_dialect == "MYSQL" ||
                     session_dialect == "POSTGRESQL" ||
                     session_dialect == "FIREBIRD";
+                auto has_prefix = [&](const std::string& value,
+                                      const std::string& prefix) -> bool {
+                    return value.size() >= prefix.size() &&
+                           value.rfind(prefix, 0) == 0;
+                };
+                bool postgresql_path_session = false;
+                if (conn_ctx_)
+                {
+                    std::string current_upper =
+                        scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->current_schema());
+                    if (has_prefix(current_upper, "EMULATED.POSTGRESQL.") ||
+                        has_prefix(current_upper, "REMOTE.EMULATED.POSTGRESQL.") ||
+                        has_prefix(current_upper, "REMOTE.EMULATION.POSTGRESQL.") ||
+                        has_prefix(current_upper, "EMULATION.POSTGRESQL."))
+                    {
+                        postgresql_path_session = true;
+                    }
+                    if (!postgresql_path_session)
+                    {
+                        for (const auto& path_entry : conn_ctx_->search_path())
+                        {
+                            std::string entry_upper =
+                                scratchbird::core::IdentifierUtils::toUpper(path_entry);
+                            if (has_prefix(entry_upper, "EMULATED.POSTGRESQL.") ||
+                                has_prefix(entry_upper, "REMOTE.EMULATED.POSTGRESQL.") ||
+                                has_prefix(entry_upper, "REMOTE.EMULATION.POSTGRESQL.") ||
+                                has_prefix(entry_upper, "EMULATION.POSTGRESQL."))
+                            {
+                                postgresql_path_session = true;
+                                break;
+                            }
+                        }
+                    }
+                }
                 const bool mysql_control_surface =
                     normalized.rfind("MYSQL.", 0) == 0 ||
                     normalized.rfind("MYSQL_", 0) == 0;
                 const bool postgresql_control_surface =
                     normalized == "SYNCHRONOUS_COMMIT" ||
                     normalized == "ALLOW_IN_PLACE_TABLESPACES";
-                if (emulation_session || had_global_scope_prefix || had_session_scope_prefix)
+	                if (emulation_session || postgresql_path_session ||
+	                    conn_ctx_ != nullptr ||
+	                    had_global_scope_prefix || had_session_scope_prefix)
                 {
                     auto value_opt = readOptionalValue();
                     if (!conn_ctx_)
@@ -82085,6 +84078,57 @@ namespace scratchbird
                 out_paths.push_back(entry);
             };
 
+            auto add_path_values = [&](const std::string& raw_values,
+                                       std::vector<std::string>& out_paths) {
+                std::string token;
+                bool in_single = false;
+                bool in_double = false;
+
+                auto flush_token = [&]() {
+                    std::string entry = trimAsciiCopy(token);
+                    token.clear();
+                    if (entry.empty())
+                    {
+                        return;
+                    }
+                    if (entry.size() >= 2 &&
+                        ((entry.front() == '\'' && entry.back() == '\'') ||
+                         (entry.front() == '"' && entry.back() == '"')))
+                    {
+                        entry = entry.substr(1, entry.size() - 2);
+                    }
+                    if (scratchbird::core::IdentifierUtils::namesMatch(
+                            entry, false, "NULL", false))
+                    {
+                        return;
+                    }
+                    add_path_entry(entry, out_paths);
+                };
+
+                for (char ch : raw_values)
+                {
+                    if (ch == '\'' && !in_double)
+                    {
+                        in_single = !in_single;
+                        token.push_back(ch);
+                        continue;
+                    }
+                    if (ch == '"' && !in_single)
+                    {
+                        in_double = !in_double;
+                        token.push_back(ch);
+                        continue;
+                    }
+                    if (ch == ',' && !in_single && !in_double)
+                    {
+                        flush_token();
+                        continue;
+                    }
+                    token.push_back(ch);
+                }
+                flush_token();
+            };
+
             auto apply_default = [&](std::vector<std::string>& out_paths) {
                 if (enforce_root)
                 {
@@ -82133,7 +84177,7 @@ namespace scratchbird
                         {
                             error("search_path value must be a string");
                         }
-                        add_path_entry(v.toString(), new_paths);
+                        add_path_values(v.toString(), new_paths);
                     }
                 }
             }
@@ -82176,7 +84220,7 @@ namespace scratchbird
                     {
                         error("search_path value must be a string");
                     }
-                    add_path_entry(v.toString(), new_paths);
+                    add_path_values(v.toString(), new_paths);
                 }
             }
 

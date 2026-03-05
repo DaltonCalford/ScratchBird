@@ -14,6 +14,7 @@ Status: Deferred to next pass (no current implementation proof in this revision)
 
 ## Tasks
 
+- [Authentication Plugins (Detailed)](authentication_plugins/README.md)
 - [Enable Authentication Baseline](01_enable_authentication_baseline.md)
 - [Configure Row-Level Security](02_configure_row_level_security.md)
 - [Configure Column-Level Security](03_configure_column_level_security.md)

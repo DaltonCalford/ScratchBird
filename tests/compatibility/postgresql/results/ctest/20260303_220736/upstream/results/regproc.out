@@ -1,0 +1,570 @@
+--
+-- regproc
+--
+/* If objects exist, return oids */
+CREATE ROLE regress_regrole_test;
+-- without schemaname
+SELECT regoper('||/');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regoperator('+(int4,int4)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regproc('now');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regprocedure('abs(numeric)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regclass('pg_class');
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT regtype('int4');
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT regcollation('"POSIX"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regoper('||/');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regoperator('+(int4,int4)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regproc('now');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regprocedure('abs(numeric)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regclass('pg_class');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regtype('int4');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regcollation('"POSIX"');
+ expr1 
+-------
+ 
+(1 row)
+
+-- with schemaname
+SELECT regoper('pg_catalog.||/');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regoperator('pg_catalog.+(int4,int4)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regproc('pg_catalog.now');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regprocedure('pg_catalog.abs(numeric)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regclass('pg_catalog.pg_class');
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT regtype('pg_catalog.int4');
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT regcollation('pg_catalog."POSIX"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regoper('pg_catalog.||/');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regproc('pg_catalog.now');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regprocedure('pg_catalog.abs(numeric)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regclass('pg_catalog.pg_class');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regtype('pg_catalog.int4');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regcollation('pg_catalog."POSIX"');
+ expr1 
+-------
+ 
+(1 row)
+
+-- schemaname not applicable
+SELECT regrole('regress_regrole_test');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regrole('"regress_regrole_test"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regnamespace('pg_catalog');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regnamespace('"pg_catalog"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regdatabase('template1');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regdatabase('"template1"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regrole('regress_regrole_test');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regrole('"regress_regrole_test"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regnamespace('pg_catalog');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regnamespace('"pg_catalog"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regdatabase('template1');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT to_regdatabase('"template1"');
+ expr1 
+-------
+ 
+(1 row)
+
+-- special "single dash" case
+SELECT regproc('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT regprocedure('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT regclass('-')::oid;
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT regcollation('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT regtype('-')::oid;
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT regconfig('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT regdictionary('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT regrole('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT regnamespace('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT regdatabase('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT to_regproc('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT to_regprocedure('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT to_regclass('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT to_regcollation('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT to_regtype('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT to_regrole('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT to_regnamespace('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+SELECT to_regdatabase('-')::oid;
+ expr1 
+-------
+      
+(1 row)
+
+-- constant cannot be used here
+CREATE TABLE regrole_test (rolid OID DEFAULT 'regress_regrole_test'::regrole);
+CREATE TABLE regdatabase_test (datid OID DEFAULT 'template1'::regdatabase);
+/* If objects don't exist, raise errors. */
+DROP ROLE regress_regrole_test;
+-- without schemaname
+SELECT regoper('||//');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regoperator('++(int4,int4)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regproc('know');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regprocedure('absinthe(numeric)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regclass('pg_classes');
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT regtype('int3');
+ERROR:  Parse error at line 1, column 8: Expected expression
+-- with schemaname
+SELECT regoper('ng_catalog.||/');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regoperator('ng_catalog.+(int4,int4)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regproc('ng_catalog.now');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regprocedure('ng_catalog.abs(numeric)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regclass('ng_catalog.pg_class');
+ERROR:  Parse error at line 1, column 8: Expected expression
+SELECT regtype('ng_catalog.int4');
+ERROR:  Parse error at line 1, column 8: Expected expression
+\set VERBOSITY sqlstate \\ -- error message is encoding-dependent
+SELECT regcollation('ng_catalog."POSIX"');
+ expr1 
+-------
+ 
+(1 row)
+
+\set VERBOSITY default
+-- schemaname not applicable
+SELECT regrole('regress_regrole_test');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regrole('"regress_regrole_test"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regrole('Nonexistent');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regrole('"Nonexistent"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regrole('foo.bar');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regnamespace('Nonexistent');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regnamespace('"Nonexistent"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regnamespace('foo.bar');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regdatabase('Nonexistent');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regdatabase('"Nonexistent"');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT regdatabase('foo.bar');
+ERROR:  Failed to receive response
+/* If objects don't exist, return NULL with no error. */
+-- without schemaname
+SELECT to_regoper('||//');
+ERROR:  Failed to send query
+SELECT to_regoperator('++(int4,int4)');
+ERROR:  Failed to send query
+SELECT to_regproc('know');
+ERROR:  Failed to send query
+SELECT to_regprocedure('absinthe(numeric)');
+ERROR:  Failed to send query
+SELECT to_regclass('pg_classes');
+ERROR:  Failed to send query
+SELECT to_regtype('int3');
+ERROR:  Failed to send query
+SELECT to_regcollation('notacollation');
+ERROR:  Failed to send query
+-- with schemaname
+SELECT to_regoper('ng_catalog.||/');
+ERROR:  Failed to send query
+SELECT to_regoperator('ng_catalog.+(int4,int4)');
+ERROR:  Failed to send query
+SELECT to_regproc('ng_catalog.now');
+ERROR:  Failed to send query
+SELECT to_regprocedure('ng_catalog.abs(numeric)');
+ERROR:  Failed to send query
+SELECT to_regclass('ng_catalog.pg_class');
+ERROR:  Failed to send query
+SELECT to_regtype('ng_catalog.int4');
+ERROR:  Failed to send query
+SELECT to_regcollation('ng_catalog."POSIX"');
+ERROR:  Failed to send query
+-- schemaname not applicable
+SELECT to_regrole('regress_regrole_test');
+ERROR:  Failed to send query
+SELECT to_regrole('"regress_regrole_test"');
+ERROR:  Failed to send query
+SELECT to_regrole('foo.bar');
+ERROR:  Failed to send query
+SELECT to_regrole('Nonexistent');
+ERROR:  Failed to send query
+SELECT to_regrole('"Nonexistent"');
+ERROR:  Failed to send query
+SELECT to_regrole('foo.bar');
+ERROR:  Failed to send query
+SELECT to_regnamespace('Nonexistent');
+ERROR:  Failed to send query
+SELECT to_regnamespace('"Nonexistent"');
+ERROR:  Failed to send query
+SELECT to_regnamespace('foo.bar');
+ERROR:  Failed to send query
+SELECT to_regdatabase('Nonexistent');
+ERROR:  Failed to send query
+SELECT to_regdatabase('"Nonexistent"');
+ERROR:  Failed to send query
+SELECT to_regdatabase('foo.bar');
+ERROR:  Failed to send query
+-- Test to_regtypemod
+SELECT to_regtypemod('text');
+ERROR:  Failed to send query
+SELECT to_regtypemod('timestamp(4)');
+ERROR:  Failed to send query
+SELECT to_regtypemod('no_such_type(4)');
+ERROR:  Failed to send query
+SELECT format_type(to_regtype('varchar(32)'), to_regtypemod('varchar(32)'));
+ERROR:  Failed to send query
+SELECT format_type(to_regtype('bit'), to_regtypemod('bit'));
+ERROR:  Failed to send query
+SELECT format_type(to_regtype('"bit"'), to_regtypemod('"bit"'));
+ERROR:  Failed to send query
+-- Test soft-error API
+SELECT * FROM pg_input_error_info('ng_catalog.pg_class', 'regclass');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT pg_input_is_valid('ng_catalog."POSIX"', 'regcollation');
+ERROR:  Failed to send query
+SELECT * FROM pg_input_error_info('no_such_config', 'regconfig');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('no_such_dictionary', 'regdictionary');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('Nonexistent', 'regnamespace');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('ng_catalog.||/', 'regoper');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('-', 'regoper');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('ng_catalog.+(int4,int4)', 'regoperator');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('-', 'regoperator');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('ng_catalog.now', 'regproc');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('ng_catalog.abs(numeric)', 'regprocedure');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('ng_catalog.abs(numeric', 'regprocedure');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('regress_regrole_test', 'regrole');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('no_such_type', 'regtype');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('Nonexistent', 'regdatabase');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+-- Some cases that should be soft errors, but are not yet
+SELECT * FROM pg_input_error_info('incorrect type name syntax', 'regtype');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('numeric(1,2,3)', 'regtype');  -- bogus typmod
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('way.too.many.names', 'regtype');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+SELECT * FROM pg_input_error_info('no_such_catalog.schema.name', 'regtype');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement

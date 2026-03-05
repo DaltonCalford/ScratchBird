@@ -786,6 +786,14 @@ Statement* Parser::parseStatementInternal() {
         errorCode("PRS_0505", "VACUUM is not supported in v3; use SWEEP DATABASE");
         return nullptr;
     }
+    if (matchContextual("CHECKPOINT")) {
+        return parseAdminControlSurface("CHECKPOINT");
+    }
+    if (matchContextual("WAIT")) {
+        errorCode("PRS_0505",
+                  "Top-level WAIT is not supported in v3; use transaction WAIT/NO WAIT controls");
+        return nullptr;
+    }
     if (matchContextual("REFRESH")) {
         return parseRefreshCubeControl();
     }
@@ -4994,9 +5002,11 @@ Statement* Parser::parseAlterTablespace() {
         if (matchContextual("AUTOEXTEND")) {
             TablespaceAlteration alt;
             alt.action = TablespaceAlterAction::SET_AUTOEXTEND;
-            if (matchContextual("ON") || matchContextual("TRUE")) {
+            if (match(TokenType::KW_ON) || match(TokenType::KW_TRUE) ||
+                matchContextual("ON") || matchContextual("TRUE")) {
                 alt.autoextend_enabled = true;
-            } else if (matchContextual("OFF") || matchContextual("FALSE")) {
+            } else if (match(TokenType::KW_FALSE) || matchContextual("OFF") ||
+                       matchContextual("FALSE")) {
                 alt.autoextend_enabled = false;
             } else {
                 error("Expected ON or OFF after AUTOEXTEND");
@@ -6702,6 +6712,46 @@ Statement* Parser::parseAlterExtension() {
     return stmt;
 }
 
+Statement* Parser::parseAlterPublication() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId publication_name = expectIdentifier("Expected publication name");
+    std::string publication = std::string(stringPool().get(publication_name));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "ALTER PUBLICATION requires action clause");
+    }
+
+    stmt->name = stringPool().intern("replication.publication.alter." + publication);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterSubscription() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId subscription_name = expectIdentifier("Expected subscription name");
+    std::string subscription = std::string(stringPool().get(subscription_name));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "ALTER SUBSCRIPTION requires action clause");
+    }
+
+    stmt->name = stringPool().intern("replication.subscription.alter." + subscription);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 Statement* Parser::parseAlterReplicationChannel() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<AlterSystemStmt>();
@@ -6939,6 +6989,12 @@ Statement* Parser::parseAlter() {
     }
     if (matchContextual("EXTENSION")) {
         return parseAlterExtension();
+    }
+    if (matchContextual("PUBLICATION")) {
+        return parseAlterPublication();
+    }
+    if (matchContextual("SUBSCRIPTION")) {
+        return parseAlterSubscription();
     }
     if (matchContextual("REPLICATION")) {
         if (!matchContextual("CHANNEL")) {
@@ -16429,6 +16485,9 @@ Statement* Parser::parseAdminControlSurface(const char* command_keyword) {
     } else if (keyword == "VALIDATE") {
         matchContextual("DATABASE");
         key = "admin.validate";
+    } else if (keyword == "CHECKPOINT") {
+        matchContextual("DATABASE");
+        key = "admin.checkpoint";
     } else {
         errorCode("PRS_0505", "Unsupported admin control command");
         stmt->span = makeSpan(start);

@@ -1,0 +1,143 @@
+--
+-- VARCHAR
+--
+--
+-- Build a table for testing
+-- (This temporarily hides the table created in test_setup.sql)
+--
+CREATE TEMP TABLE VARCHAR_TBL(f1 varchar(1));
+INSERT INTO VARCHAR_TBL (f1) VALUES ('a');
+INSERT INTO VARCHAR_TBL (f1) VALUES ('A');
+-- any of the following three input formats are acceptable
+INSERT INTO VARCHAR_TBL (f1) VALUES ('1');
+INSERT INTO VARCHAR_TBL (f1) VALUES (2);
+INSERT INTO VARCHAR_TBL (f1) VALUES ('3');
+-- zero-length char
+INSERT INTO VARCHAR_TBL (f1) VALUES ('');
+-- try varchar's of greater than 1 length
+INSERT INTO VARCHAR_TBL (f1) VALUES ('cd');
+INSERT INTO VARCHAR_TBL (f1) VALUES ('c     ');
+SELECT * FROM VARCHAR_TBL;
+    f1    
+----------
+ a
+ ab
+ abcd
+ abcd    
+ a
+ A
+ 1
+ 2
+ 3
+ 
+ cd
+ c     
+(12 rows)
+
+SELECT c.*
+   FROM VARCHAR_TBL c
+   WHERE c.f1 <> 'a';
+    f1    
+----------
+ ab
+ abcd
+ abcd    
+ 1
+ 2
+ 3
+ 
+ cd
+ c     
+(9 rows)
+
+SELECT c.*
+   FROM VARCHAR_TBL c
+   WHERE c.f1 = 'a';
+ f1 
+----
+ a
+ a
+ A
+(3 rows)
+
+SELECT c.*
+   FROM VARCHAR_TBL c
+   WHERE c.f1 < 'a';
+ f1 
+----
+ 1
+ 2
+ 3
+ 
+(4 rows)
+
+SELECT c.*
+   FROM VARCHAR_TBL c
+   WHERE c.f1 <= 'a';
+ f1 
+----
+ a
+ a
+ A
+ 1
+ 2
+ 3
+ 
+(7 rows)
+
+SELECT c.*
+   FROM VARCHAR_TBL c
+   WHERE c.f1 > 'a';
+    f1    
+----------
+ ab
+ abcd
+ abcd    
+ cd
+ c     
+(5 rows)
+
+SELECT c.*
+   FROM VARCHAR_TBL c
+   WHERE c.f1 >= 'a';
+    f1    
+----------
+ a
+ ab
+ abcd
+ abcd    
+ a
+ A
+ cd
+ c     
+(8 rows)
+
+DROP TABLE VARCHAR_TBL;
+--
+-- Now test longer arrays of char
+--
+-- This varchar_tbl was already created and filled in test_setup.sql.
+-- Here we just try to insert bad values.
+--
+INSERT INTO VARCHAR_TBL (f1) VALUES ('abcde');
+SELECT * FROM VARCHAR_TBL;
+  f1   
+-------
+ abcde
+(1 row)
+
+-- Also try it with non-error-throwing API
+SELECT pg_input_is_valid('abcd  ', 'varchar(4)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT pg_input_is_valid('abcde', 'varchar(4)');
+ expr1 
+-------
+ 
+(1 row)
+
+SELECT * FROM pg_input_error_info('abcde', 'varchar(4)');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement

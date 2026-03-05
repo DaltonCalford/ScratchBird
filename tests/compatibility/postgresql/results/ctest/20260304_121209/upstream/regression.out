@@ -1,0 +1,9 @@
+# using postmaster on 127.0.0.1, port 16432
+not ok 1     - drop_if_exists                           3227 ms
+not ok 2     - object_address                            710 ms
+not ok 3     - guc                                      4659 ms
+not ok 4     - tablespace                               3810 ms
+1..4
+# 4 of 4 tests failed.
+# The differences that caused some tests to fail can be viewed in the file "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_121209/upstream/regression.diffs".
+# A copy of the test summary that you see above is saved in the file "/home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/results/ctest/20260304_121209/upstream/regression.out".

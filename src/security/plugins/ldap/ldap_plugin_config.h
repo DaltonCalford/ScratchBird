@@ -20,12 +20,18 @@ enum class LdapPluginConfigStatus : uint8_t {
     INVALID_VALUE,
 };
 
+enum class LdapRuntimeProfile : uint8_t {
+    PRODUCTION = 0,
+    TEST = 1,
+};
+
 struct LdapPluginConfig {
     std::string ldap_uri;
     std::string bind_dn_template;
     std::string group_role_map;
     uint32_t connect_timeout_ms = 3000;
     bool require_starttls = true;
+    LdapRuntimeProfile runtime_profile = LdapRuntimeProfile::PRODUCTION;
     std::vector<std::string> allowed_ldap_endpoints;
 };
 

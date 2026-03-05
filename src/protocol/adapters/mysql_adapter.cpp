@@ -608,9 +608,16 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     if (username_.empty()) {
         client_config_.username = "BOOTSTRAP";
         client_config_.password.clear();
+        client_config_.preferred_auth_methods.clear();
     } else {
         client_config_.username = username_;
         client_config_.password = remote_password_;
+        client_config_.preferred_auth_methods = {
+            AuthMethod::PASSWORD,
+            AuthMethod::SCRAM_SHA_256,
+            AuthMethod::SCRAM_SHA_512,
+            AuthMethod::MD5
+        };
     }
 
     client_ = std::make_unique<client::Connection>();

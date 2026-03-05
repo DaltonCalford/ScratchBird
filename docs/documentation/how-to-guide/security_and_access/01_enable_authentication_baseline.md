@@ -14,6 +14,10 @@ Status: Deferred to next pass (no current implementation proof in this revision)
 
 Describe the practical outcome and when to use this procedure.
 
+## Related Guides
+
+- [Authentication Plugins (Detailed)](./authentication_plugins/README.md)
+
 ## Prerequisites
 
 - List required binaries, permissions, environment variables, and baseline system state.

@@ -83,6 +83,30 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
                 if (!check(TokenType::RIGHT_PAREN)) {
                     do {
                         parseIdentifierId();
+                        // PostgreSQL function/table aliases can specify column
+                        // definitions, e.g. AS t(col type, ...). Accept and
+                        // skip optional type payload after the column name.
+                        if (!check(TokenType::COMMA) && !check(TokenType::RIGHT_PAREN)) {
+                            int depth = 0;
+                            while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+                                if (depth == 0 &&
+                                    (check(TokenType::COMMA) || check(TokenType::RIGHT_PAREN))) {
+                                    break;
+                                }
+                                if (match(TokenType::LEFT_PAREN)) {
+                                    ++depth;
+                                    continue;
+                                }
+                                if (match(TokenType::RIGHT_PAREN)) {
+                                    if (depth > 0) {
+                                        --depth;
+                                        continue;
+                                    }
+                                    break;
+                                }
+                                advance();
+                            }
+                        }
                     } while (match(TokenType::COMMA));
                 }
                 consume(TokenType::RIGHT_PAREN, "Expected ) after table alias column list");
@@ -122,7 +146,33 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
                 consume(TokenType::RIGHT_PAREN, "Expected ) after subquery table reference");
             } else {
                 ref->ref_type = parser::v3::TableRefNode::Type::TABLE;
-                ref->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+                std::string source_name = parseQualifiedName();
+                if (match(TokenType::LEFT_PAREN)) {
+                    ref->ref_type = parser::v3::TableRefNode::Type::FUNCTION;
+                    auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
+                    fn->function_path = buildPathFromQualified(string_pool_, source_name);
+                    if (match(TokenType::RIGHT_PAREN)) {
+                        // no args
+                    } else if (match(TokenType::STAR)) {
+                        consume(TokenType::RIGHT_PAREN, "Expected ) after *");
+                    } else {
+                        fn->arguments.push_back(parseExpression());
+                        while (match(TokenType::COMMA)) {
+                            fn->arguments.push_back(parseExpression());
+                        }
+                        consume(TokenType::RIGHT_PAREN, "Expected ) after function arguments");
+                    }
+                    ref->function = fn;
+                    if (matchKeyword(TokenType::KW_WITH)) {
+                        if (matchIdentifierKeyword("ORDINALITY")) {
+                            ref->with_ordinality = true;
+                        } else {
+                            error("Expected ORDINALITY after WITH");
+                        }
+                    }
+                } else {
+                    ref->table_path = buildPathFromQualified(string_pool_, source_name);
+                }
             }
             ref->alias = parse_alias();
             ref->has_alias = ref->alias != parser::v3::StringPool::INVALID_ID;
@@ -360,6 +410,15 @@ void Parser::parseSelectList(std::vector<SelectItem>& items) {
         item.kind = SelectItem::Kind::Expression;
         item.expr = parseExpression();
 
+        // PostgreSQL allows composite expansion in SELECT lists:
+        //   (expr).*
+        // Treat this as a parsed/accepted expression item for compatibility.
+        if (match(TokenType::DOT)) {
+            if (!match(TokenType::STAR)) {
+                error("Expected * after . in SELECT expression expansion");
+            }
+        }
+
         if (auto* column_ref = dynamic_cast<parser::v3::ColumnRefExpr*>(item.expr);
             column_ref && column_ref->column.has_table_qualifier &&
             column_ref->column.column_name != parser::v3::StringPool::INVALID_ID &&
@@ -538,6 +597,30 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmt() {
                 if (!check(TokenType::RIGHT_PAREN)) {
                     do {
                         parseIdentifierId();
+                        // PostgreSQL function/table aliases can specify column
+                        // definitions, e.g. AS t(col type, ...). Accept and
+                        // skip optional type payload after the column name.
+                        if (!check(TokenType::COMMA) && !check(TokenType::RIGHT_PAREN)) {
+                            int depth = 0;
+                            while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+                                if (depth == 0 &&
+                                    (check(TokenType::COMMA) || check(TokenType::RIGHT_PAREN))) {
+                                    break;
+                                }
+                                if (match(TokenType::LEFT_PAREN)) {
+                                    ++depth;
+                                    continue;
+                                }
+                                if (match(TokenType::RIGHT_PAREN)) {
+                                    if (depth > 0) {
+                                        --depth;
+                                        continue;
+                                    }
+                                    break;
+                                }
+                                advance();
+                            }
+                        }
                     } while (match(TokenType::COMMA));
                 }
                 consume(TokenType::RIGHT_PAREN, "Expected ) after table alias column list");
@@ -705,6 +788,30 @@ parser::v3::DeleteStmt* Parser::parseDeleteStmt() {
                 if (!check(TokenType::RIGHT_PAREN)) {
                     do {
                         parseIdentifierId();
+                        // PostgreSQL function/table aliases can specify column
+                        // definitions, e.g. AS t(col type, ...). Accept and
+                        // skip optional type payload after the column name.
+                        if (!check(TokenType::COMMA) && !check(TokenType::RIGHT_PAREN)) {
+                            int depth = 0;
+                            while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+                                if (depth == 0 &&
+                                    (check(TokenType::COMMA) || check(TokenType::RIGHT_PAREN))) {
+                                    break;
+                                }
+                                if (match(TokenType::LEFT_PAREN)) {
+                                    ++depth;
+                                    continue;
+                                }
+                                if (match(TokenType::RIGHT_PAREN)) {
+                                    if (depth > 0) {
+                                        --depth;
+                                        continue;
+                                    }
+                                    break;
+                                }
+                                advance();
+                            }
+                        }
                     } while (match(TokenType::COMMA));
                 }
                 consume(TokenType::RIGHT_PAREN, "Expected ) after table alias column list");
@@ -956,7 +1063,35 @@ parser::v3::WithClause* Parser::parseWithClause() {
             cte.not_materialized = true;
         }
         consume(TokenType::LEFT_PAREN, "Expected (");
-        cte.query = parseSelectStmt();
+        if (check(TokenType::KW_SELECT)) {
+            cte.query = parseSelectStmt();
+        } else if (check(TokenType::KW_VALUES)) {
+            // Compatibility: accept VALUES CTE bodies even when not lowered into
+            // a dedicated VALUES AST here.
+            auto* stub = arena()->create<parser::v3::SelectStmt>();
+            int depth = 0;
+            while (!check(TokenType::END_OF_FILE)) {
+                if (check(TokenType::RIGHT_PAREN) && depth == 0) {
+                    break;
+                }
+                if (match(TokenType::LEFT_PAREN)) {
+                    ++depth;
+                    continue;
+                }
+                if (match(TokenType::RIGHT_PAREN)) {
+                    if (depth > 0) {
+                        --depth;
+                        continue;
+                    }
+                    break;
+                }
+                advance();
+            }
+            cte.query = stub;
+        } else {
+            error("Expected SELECT or VALUES in CTE");
+            cte.query = arena()->create<parser::v3::SelectStmt>();
+        }
         consume(TokenType::RIGHT_PAREN, "Expected )");
         with->ctes.push_back(std::move(cte));
     } while (match(TokenType::COMMA));

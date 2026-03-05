@@ -1468,9 +1468,9 @@ bool applyConfigFile(ListenerConfig& config) {
             config.health_check_interval_ms = static_cast<uint32_t>(
                 server->getInt("health_check_interval_ms", config.health_check_interval_ms));
         }
-        if (config.engine_endpoint.empty() && server->has("database")) {
+        if (server->has("database")) {
             auto db_path = server->getString("database", "");
-            if (!db_path.empty()) {
+            if (config.engine_endpoint.empty() && !db_path.empty()) {
                 config.engine_endpoint = scratchbird::server::getIPCPath(db_path,
                                                                          scratchbird::server::IPCMethod::AUTO);
             }

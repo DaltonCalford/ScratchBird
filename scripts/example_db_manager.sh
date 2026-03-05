@@ -17,6 +17,7 @@ PID_FILE=""
 TOKEN_FILE=""
 SERVER_LOG=""
 BOOTSTRAP_LOG=""
+POST_BOOTSTRAP_LOG=""
 SEED_MARKER=""
 EXAMPLE_BUNDLE_MARKER=""
 EXAMPLE_BUNDLE_LOG=""
@@ -39,20 +40,32 @@ DID_IMPORT_BUNDLE="0"
 BOOTSTRAP_USER="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_USER:-bootstrap_admin}"
 BOOTSTRAP_TOKEN="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_TOKEN:-SbExampleBootstrap_2026!}"
 
-ADMIN_USER="${SCRATCHBIRD_EXAMPLE_ADMIN_USER:-sb_admin}"
-ADMIN_PASSWORD="${SCRATCHBIRD_EXAMPLE_ADMIN_PASSWORD:-SbAdmin_Compat1!}"
+ADMIN_USER="${SCRATCHBIRD_EXAMPLE_ADMIN_USER:-SysArch}"
+ADMIN_PASSWORD="${SCRATCHBIRD_EXAMPLE_ADMIN_PASSWORD:-replaceme}"
 
-PG_USER="${SCRATCHBIRD_EXAMPLE_PG_USER:-pg_admin}"
-PG_PASSWORD="${SCRATCHBIRD_EXAMPLE_PG_PASSWORD:-PgAdmin_Compat1!}"
+PG_USER="${SCRATCHBIRD_EXAMPLE_PG_USER:-postgres}"
+PG_PASSWORD="${SCRATCHBIRD_EXAMPLE_PG_PASSWORD:-postgres}"
 PG_DB="${SCRATCHBIRD_EXAMPLE_PG_DB:-regression}"
 
 MYSQL_USER="${SCRATCHBIRD_EXAMPLE_MY_USER:-root}"
-MYSQL_PASSWORD="${SCRATCHBIRD_EXAMPLE_MY_PASSWORD:-RootCompat_1!}"
+MYSQL_PASSWORD="${SCRATCHBIRD_EXAMPLE_MY_PASSWORD:-root}"
 MYSQL_DB="${SCRATCHBIRD_EXAMPLE_MY_DB:-compat_mysql}"
 
 FB_USER="${SCRATCHBIRD_EXAMPLE_FB_USER:-SYSDBA}"
-FB_PASSWORD="${SCRATCHBIRD_EXAMPLE_FB_PASSWORD:-SysDbaCompat_1!}"
+FB_PASSWORD="${SCRATCHBIRD_EXAMPLE_FB_PASSWORD:-masterkey}"
 FB_DB="${SCRATCHBIRD_EXAMPLE_FB_DB:-compat_firebird}"
+
+COMPAT_CANONICAL_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_CANONICAL_USER:-public_user}"
+COMPAT_CANONICAL_USERID="${SCRATCHBIRD_EXAMPLE_COMPAT_CANONICAL_USERID:-u_public_user}"
+COMPAT_NATIVE_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_NATIVE_USER:-sb_public}"
+COMPAT_NATIVE_PASSWORD="${SCRATCHBIRD_EXAMPLE_COMPAT_NATIVE_PASSWORD:-sb_public}"
+COMPAT_PG_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_PG_USER:-pg_public}"
+COMPAT_PG_PASSWORD="${SCRATCHBIRD_EXAMPLE_COMPAT_PG_PASSWORD:-pg_public}"
+COMPAT_MY_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_MY_USER:-my_public}"
+COMPAT_MY_PASSWORD="${SCRATCHBIRD_EXAMPLE_COMPAT_MY_PASSWORD:-my_public}"
+COMPAT_FB_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_FB_USER:-fb_public}"
+COMPAT_FB_PASSWORD="${SCRATCHBIRD_EXAMPLE_COMPAT_FB_PASSWORD:-fb_public}"
+COMPAT_FB_EXTERNAL_ALIAS="${SCRATCHBIRD_EXAMPLE_COMPAT_FB_EXTERNAL_ALIAS:-public.user}"
 
 MAIN_DB="${SCRATCHBIRD_EXAMPLE_MAIN_DB:-main}"
 AUTH_METHODS="${SCRATCHBIRD_EXAMPLE_AUTH_METHODS:-password}"
@@ -63,6 +76,7 @@ RUN_AS_USER="${SCRATCHBIRD_EXAMPLE_RUN_AS_USER:-$(id -un)}"
 RUN_AS_GROUP="${SCRATCHBIRD_EXAMPLE_RUN_AS_GROUP:-$(id -gn)}"
 
 BOOTSTRAP_SQL="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL:-${REPO_ROOT}/tests/compatibility/scratchbird/example_sql/00_bootstrap_seed.sql}"
+POST_BOOTSTRAP_SQL="${SCRATCHBIRD_EXAMPLE_POST_BOOTSTRAP_SQL:-${REPO_ROOT}/tests/compatibility/scratchbird/example_sql/01_post_bootstrap_seed.sql}"
 EXAMPLE_BUNDLE_ROOT="${SCRATCHBIRD_EXAMPLE_BUNDLE_ROOT:-${WORKSPACE_ROOT}/local_work/findings/example_script_bundle_2}"
 EXAMPLE_BUNDLE_IMPORTER="${SCRATCHBIRD_EXAMPLE_BUNDLE_IMPORTER:-${REPO_ROOT}/scripts/emulation/import_example_bundle.py}"
 
@@ -95,9 +109,11 @@ Environment:
   SCRATCHBIRD_SB_SERVER              Override sb_server binary
   SCRATCHBIRD_SB_ISQL                Override sb_isql binary
   SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL  Override bootstrap/seed SQL script path
+  SCRATCHBIRD_EXAMPLE_POST_BOOTSTRAP_SQL  Override post-bootstrap SQL script path
   SCRATCHBIRD_EXAMPLE_AUTH_METHODS   Auth methods list (default password)
   SCRATCHBIRD_EXAMPLE_AUTH_PASSWORD_HASH Password hash algorithm (default argon2id)
   SCRATCHBIRD_EXAMPLE_ALLOW_SUPERUSER_REMOTE Allow remote superuser auth (default true)
+  SCRATCHBIRD_EXAMPLE_COMPAT_*       Override default cross-engine identity profile aliases/passwords
   SCRATCHBIRD_EXAMPLE_BUNDLE_ROOT    Bundle root (default ../local_work/findings/example_script_bundle_2)
   SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE  Run bundle importer during setup (default 1)
   SCRATCHBIRD_EXAMPLE_IMPORT_TIMEOUT_SEC  Per-script timeout (default 90)
@@ -186,6 +202,7 @@ set_mode_paths() {
     TOKEN_FILE="${EXAMPLE_ROOT}/bootstrap.token"
     SERVER_LOG="${LOG_DIR}/sb_server.log"
     BOOTSTRAP_LOG="${LOG_DIR}/bootstrap_seed.out"
+    POST_BOOTSTRAP_LOG="${LOG_DIR}/post_bootstrap_seed.out"
     SEED_MARKER="${EXAMPLE_ROOT}/.seeded"
     EXAMPLE_BUNDLE_MARKER="${EXAMPLE_ROOT}/.example_bundle_seeded"
     EXAMPLE_BUNDLE_LOG="${LOG_DIR}/example_bundle_import.out"
@@ -389,6 +406,95 @@ run_bootstrap_seed() {
         tail -n 200 "${BOOTSTRAP_LOG}" >&2 || true
         die "bootstrap/seed SQL failed"
     fi
+}
+
+run_post_bootstrap_seed() {
+    [[ -x "${ISQL_BIN}" ]] || die "sb_isql binary missing: ${ISQL_BIN}"
+    [[ -f "${POST_BOOTSTRAP_SQL}" ]] || die "post-bootstrap SQL not found: ${POST_BOOTSTRAP_SQL}"
+
+    : > "${POST_BOOTSTRAP_LOG}"
+    if ! "${ISQL_BIN}" "${MAIN_DB}" \
+        --mode=local-ipc \
+        --ipc-method=tcp \
+        -H "${BIND_HOST}" \
+        -p "${NATIVE_PORT}" \
+        -U "${ADMIN_USER}" \
+        -P "${ADMIN_PASSWORD}" \
+        -b \
+        -f "${POST_BOOTSTRAP_SQL}" \
+        -o "${POST_BOOTSTRAP_LOG}" \
+        -q; then
+        tail -n 200 "${POST_BOOTSTRAP_LOG}" >&2 || true
+        die "post-bootstrap SQL failed"
+    fi
+}
+
+run_admin_sql() {
+    local sql_text="$1"
+    local suppress_error_output="${2:-0}"
+    local err_file
+    err_file="$(mktemp)"
+    if ! "${ISQL_BIN}" "${MAIN_DB}" \
+        --mode=local-ipc \
+        --ipc-method=tcp \
+        -H "${BIND_HOST}" \
+        -p "${NATIVE_PORT}" \
+        -U "${ADMIN_USER}" \
+        -P "${ADMIN_PASSWORD}" \
+        -c "${sql_text}" \
+        -q > /dev/null 2> "${err_file}"; then
+        if [[ "${suppress_error_output}" != "1" ]]; then
+            cat "${err_file}" >&2 || true
+        fi
+        rm -f "${err_file}"
+        return 1
+    fi
+    rm -f "${err_file}"
+    return 0
+}
+
+ensure_seed_user() {
+    local username="$1"
+    local password="$2"
+    local superuser="$3"
+    local escaped_password="${password//\'/\'\'}"
+    local create_sql="CREATE USER ${username} WITH PASSWORD '${escaped_password}'"
+    local alter_sql="ALTER USER ${username} WITH PASSWORD '${escaped_password}'"
+    if [[ "${superuser}" == "1" ]]; then
+        create_sql="${create_sql} SUPERUSER"
+        alter_sql="${alter_sql} SUPERUSER"
+    fi
+    create_sql="${create_sql};"
+    alter_sql="${alter_sql};"
+
+    if run_admin_sql "${create_sql}" 1; then
+        return 0
+    fi
+
+    if run_admin_sql "${alter_sql}"; then
+        return 0
+    fi
+
+    die "failed to provision user ${username}"
+}
+
+ensure_default_engine_users() {
+    # Driver CLI file-mode parsing can silently skip later CREATE USER entries.
+    # Execute idempotent per-user statements to make auth fixtures deterministic.
+    ensure_seed_user "${ADMIN_USER}" "${ADMIN_PASSWORD}" 1
+    ensure_seed_user "${PG_USER}" "${PG_PASSWORD}" 1
+    ensure_seed_user "${MYSQL_USER}" "${MYSQL_PASSWORD}" 1
+    ensure_seed_user "${FB_USER}" "${FB_PASSWORD}" 1
+    ensure_seed_user "${COMPAT_NATIVE_USER}" "${COMPAT_NATIVE_PASSWORD}" 0
+    ensure_seed_user "${COMPAT_PG_USER}" "${COMPAT_PG_PASSWORD}" 0
+    ensure_seed_user "${COMPAT_MY_USER}" "${COMPAT_MY_PASSWORD}" 0
+    ensure_seed_user "${COMPAT_FB_USER}" "${COMPAT_FB_PASSWORD}" 0
+}
+
+run_seed_pipeline() {
+    run_bootstrap_seed
+    run_post_bootstrap_seed
+    ensure_default_engine_users
     touch "${SEED_MARKER}"
 }
 
@@ -465,6 +571,26 @@ export SCRATCHBIRD_PG_ISQL='${PG_ISQL_BIN}'
 export SCRATCHBIRD_MY_ISQL='${MY_ISQL_BIN}'
 export SCRATCHBIRD_FB_ISQL='${FB_ISQL_BIN}'
 
+export SCRATCHBIRD_EXAMPLE_COMPAT_CANONICAL_USER='${COMPAT_CANONICAL_USER}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_CANONICAL_USERID='${COMPAT_CANONICAL_USERID}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_NATIVE_USER='${COMPAT_NATIVE_USER}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_NATIVE_PASSWORD='${COMPAT_NATIVE_PASSWORD}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_NATIVE_AUTH_METHOD='password'
+export SCRATCHBIRD_EXAMPLE_COMPAT_PG_USER='${COMPAT_PG_USER}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_PG_PASSWORD='${COMPAT_PG_PASSWORD}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_MY_USER='${COMPAT_MY_USER}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_MY_PASSWORD='${COMPAT_MY_PASSWORD}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_FB_USER='${COMPAT_FB_USER}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_FB_PASSWORD='${COMPAT_FB_PASSWORD}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_FB_EXTERNAL_ALIAS='${COMPAT_FB_EXTERNAL_ALIAS}'
+export SCRATCHBIRD_EXAMPLE_COMPAT_PG_AUTH_METHOD='scram_sha_256'
+export SCRATCHBIRD_EXAMPLE_COMPAT_MY_AUTH_METHOD='password'
+export SCRATCHBIRD_EXAMPLE_COMPAT_FB_AUTH_METHOD='password'
+export SCRATCHBIRD_EXAMPLE_COMPAT_NATIVE_PASSWORD_POLICY='native_v3_strict'
+export SCRATCHBIRD_EXAMPLE_COMPAT_PG_PASSWORD_POLICY='pg_emulated_default'
+export SCRATCHBIRD_EXAMPLE_COMPAT_MY_PASSWORD_POLICY='mysql_emulated_default'
+export SCRATCHBIRD_EXAMPLE_COMPAT_FB_PASSWORD_POLICY='firebird_emulated_default'
+
 export SCRATCHBIRD_NATIVE_HOST='${BIND_HOST}'
 export SCRATCHBIRD_NATIVE_PORT='${NATIVE_PORT}'
 export SCRATCHBIRD_NATIVE_DB='${MAIN_DB}'
@@ -499,6 +625,35 @@ EOF
   "mode": "${MODE}",
   "root": "${EXAMPLE_ROOT}",
   "example_bundle_summary": "${PROFILE_DIR}/example_bundle/SUMMARY.json",
+  "compat_identity_profile": {
+    "canonical_userid": "${COMPAT_CANONICAL_USERID}",
+    "canonical_user": "${COMPAT_CANONICAL_USER}",
+    "native": {
+      "user": "${COMPAT_NATIVE_USER}",
+      "password": "${COMPAT_NATIVE_PASSWORD}",
+      "auth_method": "password",
+      "password_policy": "native_v3_strict"
+    },
+    "postgresql": {
+      "user": "${COMPAT_PG_USER}",
+      "password": "${COMPAT_PG_PASSWORD}",
+      "auth_method": "scram_sha_256",
+      "password_policy": "pg_emulated_default"
+    },
+    "mysql": {
+      "user": "${COMPAT_MY_USER}",
+      "password": "${COMPAT_MY_PASSWORD}",
+      "auth_method": "password",
+      "password_policy": "mysql_emulated_default"
+    },
+    "firebird": {
+      "user": "${COMPAT_FB_USER}",
+      "external_alias": "${COMPAT_FB_EXTERNAL_ALIAS}",
+      "password": "${COMPAT_FB_PASSWORD}",
+      "auth_method": "password",
+      "password_policy": "firebird_emulated_default"
+    }
+  },
   "clients": {
     "sb_isql": "${ISQL_BIN}",
     "sb_pg_isql": "${PG_ISQL_BIN}",
@@ -555,6 +710,7 @@ print_status() {
     log "postgres=${BIND_HOST}:${PG_PORT} user=${PG_USER} db=${PG_DB}"
     log "mysql=${BIND_HOST}:${MYSQL_PORT} user=${MYSQL_USER} db=${MYSQL_DB}"
     log "firebird=${BIND_HOST}:${FB_PORT} user=${FB_USER} db=${FB_DB}"
+    log "compat_identity=${COMPAT_CANONICAL_USERID}:${COMPAT_CANONICAL_USER} pg=${COMPAT_PG_USER} my=${COMPAT_MY_USER} fb=${COMPAT_FB_USER} (ext=${COMPAT_FB_EXTERNAL_ALIAS})"
     log "profiles=${PROFILE_DIR}"
 }
 
@@ -569,7 +725,7 @@ dynamic_setup() {
     write_token
     write_config
     start_server
-    run_bootstrap_seed
+    run_seed_pipeline
     write_connection_profiles
     run_example_bundle_import
     if [[ "${DID_IMPORT_BUNDLE}" == "1" ]]; then
@@ -611,7 +767,7 @@ static_up() {
 
     start_server
     if [[ ! -f "${SEED_MARKER}" ]]; then
-        run_bootstrap_seed
+        run_seed_pipeline
     fi
     write_connection_profiles
     if [[ ! -f "${EXAMPLE_BUNDLE_MARKER}" ]]; then
@@ -641,7 +797,7 @@ static_refresh() {
     write_token
     write_config
     start_server
-    run_bootstrap_seed
+    run_seed_pipeline
     write_connection_profiles
     run_example_bundle_import
     if [[ "${DID_IMPORT_BUNDLE}" == "1" ]]; then

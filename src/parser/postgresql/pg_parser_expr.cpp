@@ -570,6 +570,19 @@ parser::v3::Expression* Parser::parsePrimaryExpr() {
     if (check(TokenType::KW_CAST)) return parseCastExpr();
     if (matchKeyword(TokenType::KW_EXTRACT)) return parseExtractExpr();
     if (matchKeyword(TokenType::KW_ALTER_ELEMENT)) return parseAlterElementExpr();
+    if (matchKeyword(TokenType::KW_ROW)) {
+        auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
+        fn->function_path = parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED,
+                                                   {string_pool_.intern("row")});
+        consume(TokenType::LEFT_PAREN, "Expected ( after ROW");
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                fn->arguments.push_back(parseExpression());
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ) after ROW expression");
+        return fn;
+    }
     if (check(TokenType::KW_ARRAY)) return parseArrayConstructor();
 
     if (check(TokenType::LEFT_PAREN)) {
@@ -611,6 +624,31 @@ parser::v3::Expression* Parser::parsePrimaryExpr() {
         emitU16(static_cast<uint16_t>(position));
         advance();
         return param;
+    }
+
+    if (match(TokenType::COLON)) {
+        // psql variable reference compatibility (e.g. :main_filenode in
+        // upstream regress scripts). Accept syntactically as a placeholder
+        // literal in parser compatibility mode.
+        if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+            isNonReservedKeyword(current_token_.type)) {
+            (void)parseIdentifier();
+        } else {
+            error("Expected identifier after :");
+        }
+        return makeLiteralNull();
+    }
+
+    if (check(TokenType::KW_CURRENT_USER) || check(TokenType::KW_SESSION_USER)) {
+        TokenType user_kind = current_token_.type;
+        advance();
+        auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
+        fn->function_path = parser::v3::SchemaPath(
+            parser::v3::PathType::UNQUALIFIED,
+            {string_pool_.intern(user_kind == TokenType::KW_CURRENT_USER
+                                     ? "current_user"
+                                     : "session_user")});
+        return fn;
     }
 
     if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||

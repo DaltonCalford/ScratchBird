@@ -155,7 +155,7 @@ def run_sql_file(
         host = str(connect.get("host", "127.0.0.1"))
         port = str(connect.get("port", "16092"))
         database = str(connect.get("database", "main"))
-        user = str(connect.get("user", "sb_admin"))
+        user = str(connect.get("user", "SysArch"))
         password = str(connect.get("password", ""))
         mode = str(connect.get("mode", "local-ipc"))
         ipc_method = str(connect.get("ipc_method", "tcp"))

@@ -5,6 +5,7 @@
 
 #include "pam_plugin_config.h"
 
+#include <algorithm>
 #include <cctype>
 #include <sstream>
 
@@ -33,6 +34,22 @@ bool parseUInt32(const std::string& value, uint32_t& out) {
     } catch (...) {
         return false;
     }
+}
+
+bool parseRuntimeProfile(std::string value, PamRuntimeProfile& out) {
+    value = trimAscii(std::move(value));
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (value == "production" || value == "prod") {
+        out = PamRuntimeProfile::PRODUCTION;
+        return true;
+    }
+    if (value == "test") {
+        out = PamRuntimeProfile::TEST;
+        return true;
+    }
+    return false;
 }
 
 std::vector<std::string> splitCsv(const std::string& value) {
@@ -73,6 +90,13 @@ PamPluginConfigStatus loadPamPluginConfig(const std::map<std::string, std::strin
     if (timeout_it != values.end() &&
         !parseUInt32(timeout_it->second, out.conversation_timeout_ms)) {
         set_error("conversation_timeout_ms must be numeric");
+        return PamPluginConfigStatus::INVALID_VALUE;
+    }
+
+    auto profile_it = values.find("runtime_profile");
+    if (profile_it != values.end() &&
+        !parseRuntimeProfile(profile_it->second, out.runtime_profile)) {
+        set_error("runtime_profile must be one of: production, test");
         return PamPluginConfigStatus::INVALID_VALUE;
     }
 

@@ -29701,6 +29701,44 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     owned_constraints = dedupeOwned(owned_constraints);
     owned_sequences = dedupeOwned(owned_sequences);
 
+    auto pruneStaleOwnedDependency = [&](const DependencyInfo& dep,
+                                         const char* object_kind,
+                                         Status stale_status) -> bool {
+        if (stale_status != Status::NOT_FOUND)
+        {
+            return false;
+        }
+
+        if (dep.dependency_id != ID{})
+        {
+            Status dep_status = deleteDependencyInternal(dep.dependency_id, ctx);
+            if (dep_status != Status::OK &&
+                dep_status != Status::NOT_FOUND &&
+                dep_status != Status::INVALID_ARGUMENT)
+            {
+                LOG_ERROR(CATALOG, "Failed to prune stale %s dependency edge during table drop",
+                          object_kind);
+                return false;
+            }
+        }
+
+        clearDependenciesForInternal(dep.dependent_object_id, ctx);
+        LOG_INFO(CATALOG, "Ignoring stale owned %s while dropping table", object_kind);
+        return true;
+    };
+
+    auto pruneStaleOwnedObjectById = [&](const ID& object_id,
+                                         const char* object_kind,
+                                         Status stale_status) -> bool {
+        if (stale_status != Status::NOT_FOUND)
+        {
+            return false;
+        }
+        clearDependenciesForInternal(object_id, ctx);
+        LOG_INFO(CATALOG, "Ignoring stale owned %s while dropping table", object_kind);
+        return true;
+    };
+
     // Drop in proper order: triggers first, then indexes, then constraints
     Status status;
     for (const auto& dep : owned_triggers) {
@@ -29712,6 +29750,10 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
             status = dropTriggerInternal(trig_info.trigger_name, ctx);
         }
         if (status != Status::OK) {
+            if (pruneStaleOwnedDependency(dep, "trigger", status))
+            {
+                continue;
+            }
             LOG_ERROR(CATALOG, "Failed to drop trigger during table drop");
             return status;
         }
@@ -29720,6 +29762,10 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     for (const auto& dep : owned_indexes) {
         status = dropIndexInternal(dep.dependent_object_id, ctx);
         if (status != Status::OK) {
+            if (pruneStaleOwnedDependency(dep, "index", status))
+            {
+                continue;
+            }
             LOG_ERROR(CATALOG, "Failed to drop index during table drop");
             return status;
         }
@@ -29730,6 +29776,10 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         // Use internal version that assumes locks already held
         status = dropConstraintInternal(dep.dependent_object_id, ctx);
         if (status != Status::OK) {
+            if (pruneStaleOwnedDependency(dep, "constraint", status))
+            {
+                continue;
+            }
             LOG_ERROR(CATALOG, "Failed to drop constraint during table drop");
             return status;
         }
@@ -29761,6 +29811,10 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
         // Use internal version that assumes locks already held
         status = dropSequenceInternal(dep.dependent_object_id, ctx);
         if (status != Status::OK) {
+            if (pruneStaleOwnedDependency(dep, "sequence", status))
+            {
+                continue;
+            }
             LOG_ERROR(CATALOG, "Failed to drop sequence during table drop");
             return status;
         }
@@ -29832,6 +29886,10 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
             status = dropSequenceInternal(seq_id, ctx);
             if (status != Status::OK)
             {
+                if (pruneStaleOwnedObjectById(seq_id, "sequence", status))
+                {
+                    continue;
+                }
                 LOG_ERROR(CATALOG, "Failed to drop owned sequence during table drop");
                 return status;
             }
@@ -29893,13 +29951,21 @@ Status CatalogManager::dropTable(const ID &table_id, bool cascade, ErrorContext 
     status = deleteTableRecord(table_id, ctx);
     if (status != Status::OK)
     {
-        return status;
+        if (status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+        LOG_INFO(CATALOG, "Table record missing on disk during drop; completing cache cleanup");
     }
 
     status = updateTablespaceCounts(table_info.tablespace_id, -1, 0, ctx);
     if (status != Status::OK)
     {
-        return status;
+        if (status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+        LOG_INFO(CATALOG, "Tablespace metadata missing during table drop; continuing cleanup");
     }
 
     // 8. Clear dependencies (remove this table from dependency graph)

@@ -1031,6 +1031,37 @@ core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
         connection_ctx_->clearNotices();
     }
 
+    struct DialectTagExecutionScope {
+        core::ConnectionContext* conn_ctx = nullptr;
+        std::string previous_tag;
+        bool active = false;
+
+        DialectTagExecutionScope(core::ConnectionContext* ctx, network::ProtocolType protocol_type)
+            : conn_ctx(ctx) {
+            if (conn_ctx == nullptr) {
+                return;
+            }
+
+            const char* protocol_tag = dialectTagForProtocol(protocol_type);
+            if (protocol_tag == nullptr || protocol_tag[0] == '\0') {
+                return;
+            }
+
+            previous_tag = conn_ctx->dialect_tag();
+            const std::string previous_upper = toUpperAscii(trimAscii(previous_tag));
+            if (previous_upper.empty() || previous_upper == "SCRATCHBIRD") {
+                conn_ctx->set_dialect_tag(protocol_tag);
+                active = true;
+            }
+        }
+
+        ~DialectTagExecutionScope() {
+            if (active && conn_ctx != nullptr) {
+                conn_ctx->set_dialect_tag(previous_tag);
+            }
+        }
+    } dialect_scope(connection_ctx_.get(), getProtocolType());
+
     auto exec_result = executor_->execute(bytecode);
     if (!exec_result.success()) {
         result.has_error = true;

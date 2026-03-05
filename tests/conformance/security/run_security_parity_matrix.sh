@@ -122,7 +122,7 @@ run_default_lane() {
         "${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_pg_isql")" || return 2
       local pg_host="${SCRATCHBIRD_PG_HOST:-127.0.0.1}"
       local pg_port="${SCRATCHBIRD_PG_PORT:-5432}"
-      local pg_user="${SCRATCHBIRD_PG_USER:-pg_admin}"
+      local pg_user="${SCRATCHBIRD_PG_USER:-postgres}"
       local pg_db="${SCRATCHBIRD_PG_OWNER_DB:-${SCRATCHBIRD_PG_DB:-main}}"
       {
         cat "${REPO_DIR}/tests/compatibility/postgresql/tests_conformance/security_rls_parity.sql"

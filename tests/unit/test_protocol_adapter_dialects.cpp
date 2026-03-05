@@ -15,9 +15,12 @@
 #include "scratchbird/protocol/adapters/native_adapter.h"
 #include "scratchbird/protocol/sbwp_protocol.h"
 #include "scratchbird/parser/v3_compiler.h"
+#include "scratchbird/network/socket.h"
 
 #include <filesystem>
 #include <cctype>
+#include <sys/socket.h>
+#include <unistd.h>
 
 using namespace scratchbird;
 using namespace scratchbird::protocol;
@@ -243,6 +246,65 @@ int32_t readPgAuthenticationType(const std::vector<uint8_t>& stream) {
     return -1;
 }
 
+struct PgErrorResponseFields {
+    bool found = false;
+    std::string sqlstate;
+    std::string message;
+};
+
+PgErrorResponseFields readFirstPgErrorResponse(const std::vector<uint8_t>& stream) {
+    PgErrorResponseFields fields;
+    size_t offset = 0;
+    while (offset + 5 <= stream.size()) {
+        const char msg_type = static_cast<char>(stream[offset]);
+        const uint32_t msg_len =
+            (static_cast<uint32_t>(stream[offset + 1]) << 24) |
+            (static_cast<uint32_t>(stream[offset + 2]) << 16) |
+            (static_cast<uint32_t>(stream[offset + 3]) << 8) |
+            static_cast<uint32_t>(stream[offset + 4]);
+        if (msg_len < 4) {
+            break;
+        }
+        const size_t frame_len = 1 + static_cast<size_t>(msg_len);
+        if (offset + frame_len > stream.size()) {
+            break;
+        }
+        if (msg_type != pg::BackendMsg::ERROR_RESPONSE) {
+            offset += frame_len;
+            continue;
+        }
+
+        fields.found = true;
+        size_t payload = offset + 5;
+        const size_t payload_end = offset + frame_len;
+        while (payload < payload_end) {
+            const char field_code = static_cast<char>(stream[payload++]);
+            if (field_code == '\0') {
+                break;
+            }
+
+            const size_t value_start = payload;
+            while (payload < payload_end && stream[payload] != '\0') {
+                ++payload;
+            }
+            if (payload >= payload_end) {
+                break;
+            }
+            const std::string value(reinterpret_cast<const char*>(stream.data() + value_start),
+                                    payload - value_start);
+            ++payload;  // consume trailing NUL
+
+            if (field_code == pg::ErrorField::CODE) {
+                fields.sqlstate = value;
+            } else if (field_code == pg::ErrorField::MESSAGE) {
+                fields.message = value;
+            }
+        }
+        return fields;
+    }
+    return fields;
+}
+
 core::Status sendPgFrontendPacket(AdapterHarness<PostgresqlAdapter>& adapter,
                                   network::Connection* conn,
                                   uint8_t type,
@@ -255,6 +317,20 @@ core::Status sendPgFrontendPacket(AdapterHarness<PostgresqlAdapter>& adapter,
         return parse_status;
     }
     return adapter.processIncomingPacket(conn);
+}
+
+bool readExactFd(int fd, void* buffer, size_t size) {
+    uint8_t* out = static_cast<uint8_t*>(buffer);
+    size_t remaining = size;
+    while (remaining > 0) {
+        const ssize_t n = ::recv(fd, out, remaining, MSG_WAITALL);
+        if (n <= 0) {
+            return false;
+        }
+        out += static_cast<size_t>(n);
+        remaining -= static_cast<size_t>(n);
+    }
+    return true;
 }
 
 std::vector<uint8_t> buildPgParsePayload(const std::string& statement_name,
@@ -335,6 +411,30 @@ std::vector<uint8_t> buildFirebirdConnectBodyForPolicyTest() {
     return body;
 }
 
+void appendFbXdrBuffer(std::vector<uint8_t>& out, const std::vector<uint8_t>& value) {
+    writeFbU32BE(out, static_cast<uint32_t>(value.size()));
+    out.insert(out.end(), value.begin(), value.end());
+    while (out.size() % 4 != 0) {
+        out.push_back(0);
+    }
+}
+
+void appendFbXdrString(std::vector<uint8_t>& out, const std::string& value) {
+    writeFbU32BE(out, static_cast<uint32_t>(value.size()));
+    out.insert(out.end(), value.begin(), value.end());
+    while (out.size() % 4 != 0) {
+        out.push_back(0);
+    }
+}
+
+std::vector<uint8_t> buildFirebirdContAuthBody(const std::vector<uint8_t>& auth_data,
+                                               const std::string& plugin) {
+    std::vector<uint8_t> body;
+    appendFbXdrBuffer(body, auth_data);
+    appendFbXdrString(body, plugin);
+    return body;
+}
+
 uint32_t readFbU32BE(const std::vector<uint8_t>& data, size_t offset = 0) {
     if (offset + 4 > data.size()) {
         return 0;
@@ -343,6 +443,90 @@ uint32_t readFbU32BE(const std::vector<uint8_t>& data, size_t offset = 0) {
            (static_cast<uint32_t>(data[offset + 1]) << 16) |
            (static_cast<uint32_t>(data[offset + 2]) << 8) |
             static_cast<uint32_t>(data[offset + 3]);
+}
+
+std::string readFbXdrString(const std::vector<uint8_t>& data, size_t& offset) {
+    if (offset + 4 > data.size()) {
+        return {};
+    }
+    const uint32_t len = readFbU32BE(data, offset);
+    offset += 4;
+    if (offset + len > data.size()) {
+        return {};
+    }
+    std::string out(reinterpret_cast<const char*>(data.data() + offset), len);
+    offset += len;
+    const size_t padding = (4 - (len % 4)) % 4;
+    if (offset + padding > data.size()) {
+        return {};
+    }
+    offset += padding;
+    return out;
+}
+
+struct FirebirdErrorFields {
+    bool has_error = false;
+    int32_t gds_code = 0;
+    std::string sqlstate;
+};
+
+FirebirdErrorFields parseFirebirdErrorFields(const std::vector<uint8_t>& packet) {
+    FirebirdErrorFields fields;
+    if (packet.size() < 28 || readFbU32BE(packet) != firebird::Opcode::op_response) {
+        return fields;
+    }
+
+    size_t offset = 4;   // opcode
+    offset += 4;         // handle
+    offset += 8;         // object id
+    if (offset + 4 > packet.size()) {
+        return fields;
+    }
+
+    const uint32_t data_len = readFbU32BE(packet, offset);
+    offset += 4 + data_len;
+    const size_t data_padding = (4 - (data_len % 4)) % 4;
+    if (offset + data_padding > packet.size()) {
+        return fields;
+    }
+    offset += data_padding;
+
+    if (offset + 8 > packet.size()) {
+        return fields;
+    }
+    const uint32_t arg_type = readFbU32BE(packet, offset);
+    offset += 4;
+    if (arg_type != static_cast<uint32_t>(firebird::ErrorCode::isc_arg_gds)) {
+        return fields;
+    }
+    fields.gds_code = static_cast<int32_t>(readFbU32BE(packet, offset));
+    offset += 4;
+    fields.has_error = true;
+
+    while (offset + 4 <= packet.size()) {
+        const uint32_t token = readFbU32BE(packet, offset);
+        offset += 4;
+        if (token == static_cast<uint32_t>(firebird::ErrorCode::isc_arg_end)) {
+            break;
+        }
+        if (token == static_cast<uint32_t>(firebird::ErrorCode::isc_arg_sql_state) ||
+            token == static_cast<uint32_t>(firebird::ErrorCode::isc_arg_string) ||
+            token == static_cast<uint32_t>(firebird::ErrorCode::isc_arg_cstring) ||
+            token == static_cast<uint32_t>(firebird::ErrorCode::isc_arg_interpreted)) {
+            std::string value = readFbXdrString(packet, offset);
+            if (token == static_cast<uint32_t>(firebird::ErrorCode::isc_arg_sql_state)) {
+                fields.sqlstate = value;
+            }
+            continue;
+        }
+        if (offset + 4 <= packet.size()) {
+            offset += 4;
+        } else {
+            break;
+        }
+    }
+
+    return fields;
 }
 } // namespace
 
@@ -523,6 +707,12 @@ TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsUnsupportedConfiguredAuth
     const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
     ASSERT_FALSE(message_types.empty());
     EXPECT_EQ(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
+
+    const auto error_fields = readFirstPgErrorResponse(conn.getWriteBuffer());
+    ASSERT_TRUE(error_fields.found);
+    EXPECT_EQ(error_fields.sqlstate, "0A000");
+    EXPECT_NE(error_fields.message.find("not supported by PostgreSQL emulation policy"),
+              std::string::npos);
 }
 
 TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsPeerConfiguredMethodAtStartup) {
@@ -546,6 +736,12 @@ TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsPeerConfiguredMethodAtSta
     const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
     ASSERT_FALSE(message_types.empty());
     EXPECT_EQ(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
+
+    const auto error_fields = readFirstPgErrorResponse(conn.getWriteBuffer());
+    ASSERT_TRUE(error_fields.found);
+    EXPECT_EQ(error_fields.sqlstate, "0A000");
+    EXPECT_NE(error_fields.message.find("not supported by PostgreSQL emulation policy"),
+              std::string::npos);
 }
 
 TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyAllowsMd5ConfiguredMethodAtStartup) {
@@ -617,6 +813,11 @@ TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsUnsupportedSaslMechanismD
     const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
     ASSERT_FALSE(message_types.empty());
     EXPECT_EQ(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
+
+    const auto error_fields = readFirstPgErrorResponse(conn.getWriteBuffer());
+    ASSERT_TRUE(error_fields.found);
+    EXPECT_EQ(error_fields.sqlstate, "0A000");
+    EXPECT_NE(error_fields.message.find("Unsupported SASL mechanism"), std::string::npos);
 }
 
 TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsScramPlusChannelBindingDeterministically) {
@@ -649,6 +850,49 @@ TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyRejectsScramPlusChannelBindingDe
     const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
     ASSERT_FALSE(message_types.empty());
     EXPECT_EQ(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
+
+    const auto error_fields = readFirstPgErrorResponse(conn.getWriteBuffer());
+    ASSERT_TRUE(error_fields.found);
+    EXPECT_EQ(error_fields.sqlstate, "0A000");
+    EXPECT_NE(error_fields.message.find("SCRAM-PLUS channel binding is not supported"),
+              std::string::npos);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyGssEncNegotiatedDisableIsDeterministic) {
+    cleanupDb("test_pg_policy_gssenc_negotiated_disable.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_policy_gssenc_negotiated_disable.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::MD5;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    int fd_pair[2] = {-1, -1};
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, fd_pair), 0);
+    auto server_socket = network::Socket::fromFd(fd_pair[0], network::AddressFamily::UNIX);
+    ASSERT_NE(server_socket, nullptr);
+    network::Connection conn(std::move(server_socket), 121);
+
+    std::vector<uint8_t> gssenc_request;
+    writePgInt32(gssenc_request, 8);
+    writePgInt32(gssenc_request, static_cast<uint32_t>(pg::GSSENC_REQUEST));
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), gssenc_request.begin(), gssenc_request.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+    uint8_t gss_response = 0;
+    ASSERT_TRUE(readExactFd(fd_pair[1], &gss_response, 1));
+    EXPECT_EQ(static_cast<char>(gss_response), 'N');
+
+    conn.clearWriteBuffer();
+    const auto startup_packet = buildPgStartupMessage("policy_user", "policy_db");
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+    EXPECT_EQ(readPgAuthenticationType(conn.getWriteBuffer()), pg::AuthType::MD5_PASSWORD);
+
+    ::close(fd_pair[1]);
 }
 
 TEST(ProtocolAdapterDialectsC1, PostgreSQLParameterStatusKeys) {
@@ -1413,4 +1657,78 @@ TEST(ProtocolAdapterDialectsFirebird, FirebirdPolicyAllowsScram512ConfiguredMeth
     const auto& out = conn.getWriteBuffer();
     ASSERT_GE(out.size(), 4u);
     EXPECT_EQ(readFbU32BE(out), firebird::Opcode::op_accept_data);
+}
+
+TEST(ProtocolAdapterDialectsFirebird, FirebirdPolicyRejectsLegacyAuthPluginDeterministically) {
+    cleanupDb("test_fb_policy_reject_legacy_auth_plugin.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_fb_policy_reject_legacy_auth_plugin.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::PASSWORD;
+
+    AdapterHarness<FirebirdAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 122);
+
+    auto& read_buffer = conn.getReadBuffer();
+    const auto connect_packet = buildFirebirdPacket(firebird::Opcode::op_connect,
+                                                    buildFirebirdConnectBodyForPolicyTest());
+    read_buffer.insert(read_buffer.end(), connect_packet.begin(), connect_packet.end());
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+    ASSERT_GE(conn.getWriteBuffer().size(), 4u);
+    ASSERT_EQ(readFbU32BE(conn.getWriteBuffer()), firebird::Opcode::op_accept_data);
+
+    conn.clearWriteBuffer();
+    const auto cont_auth_packet = buildFirebirdPacket(
+        firebird::Opcode::op_cont_auth,
+        buildFirebirdContAuthBody({0x01, 0x02, 0x03, 0x04}, firebird::AUTH_PLUGIN_LEGACY));
+    read_buffer.insert(read_buffer.end(), cont_auth_packet.begin(), cont_auth_packet.end());
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto& out = conn.getWriteBuffer();
+    ASSERT_GE(out.size(), 4u);
+    EXPECT_EQ(readFbU32BE(out), firebird::Opcode::op_response);
+    const auto err = parseFirebirdErrorFields(out);
+    ASSERT_TRUE(err.has_error);
+    EXPECT_EQ(err.gds_code, firebird::ErrorCode::isc_login);
+    EXPECT_EQ(err.sqlstate, "0A000");
+}
+
+TEST(ProtocolAdapterDialectsFirebird, FirebirdPolicyRejectsWinSspiPluginDeterministically) {
+    cleanupDb("test_fb_policy_reject_win_sspi_auth_plugin.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_fb_policy_reject_win_sspi_auth_plugin.sbdb").string();
+    cfg.require_authentication = true;
+    cfg.auth_method = AuthMethod::PASSWORD;
+
+    AdapterHarness<FirebirdAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 123);
+
+    auto& read_buffer = conn.getReadBuffer();
+    const auto connect_packet = buildFirebirdPacket(firebird::Opcode::op_connect,
+                                                    buildFirebirdConnectBodyForPolicyTest());
+    read_buffer.insert(read_buffer.end(), connect_packet.begin(), connect_packet.end());
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+    ASSERT_GE(conn.getWriteBuffer().size(), 4u);
+    ASSERT_EQ(readFbU32BE(conn.getWriteBuffer()), firebird::Opcode::op_accept_data);
+
+    conn.clearWriteBuffer();
+    const auto cont_auth_packet = buildFirebirdPacket(
+        firebird::Opcode::op_cont_auth,
+        buildFirebirdContAuthBody({0x05, 0x06, 0x07, 0x08}, "Win_Sspi"));
+    read_buffer.insert(read_buffer.end(), cont_auth_packet.begin(), cont_auth_packet.end());
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto& out = conn.getWriteBuffer();
+    ASSERT_GE(out.size(), 4u);
+    EXPECT_EQ(readFbU32BE(out), firebird::Opcode::op_response);
+    const auto err = parseFirebirdErrorFields(out);
+    ASSERT_TRUE(err.has_error);
+    EXPECT_EQ(err.gds_code, firebird::ErrorCode::isc_login);
+    EXPECT_EQ(err.sqlstate, "0A000");
 }

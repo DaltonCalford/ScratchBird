@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -83,8 +84,22 @@ public:
 
     bool hasPlugin(const std::string& plugin_id) const;
     bool isMethodAvailable(const std::string& method_id) const;
+    bool isRuntimeMethodAvailable(const std::string& method_id) const;
     bool resolveMethodIdForAuthType(AuthType auth_type, std::string& method_id_out) const;
     bool isAuthTypeAvailable(AuthType auth_type) const;
+
+    core::Status beginAuth(const std::string& method_id,
+                           const sb_auth_connection_ctx_v1& conn_ctx,
+                           const std::vector<uint8_t>& client_payload,
+                           sb_auth_exchange_t* inout_exchange,
+                           sb_auth_step_result_v1* out_result,
+                           core::ErrorContext* ctx = nullptr);
+    core::Status continueAuth(const std::string& method_id,
+                              sb_auth_exchange_t exchange,
+                              const std::vector<uint8_t>& client_payload,
+                              sb_auth_step_result_v1* out_result,
+                              core::ErrorContext* ctx = nullptr);
+    void abortAuth(const std::string& method_id, sb_auth_exchange_t exchange);
 
     const std::vector<AuthPluginInfo>& loadedPlugins() const { return loaded_plugins_; }
     const std::vector<AuthPluginAdmissionIssue>& admissionIssues() const { return admission_issues_; }
@@ -137,9 +152,11 @@ private:
 
     std::unordered_map<std::string, PolicyRule> allowed_plugins_;
     std::unordered_map<std::string, std::string> method_to_plugin_;
+    std::unordered_map<std::string, std::size_t> runtime_method_index_;
     std::unordered_map<std::string, std::size_t> plugin_index_;
     std::vector<std::string> trusted_signer_kids_;
     std::vector<RuntimePlugin> runtime_plugins_;
+    mutable std::mutex runtime_mutex_;
 };
 
 }  // namespace security

@@ -108,6 +108,37 @@ std::filesystem::path repoRoot() {
     return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path();
 }
 
+const char* sharedLibraryExtension() {
+#if defined(_WIN32)
+    return ".dll";
+#elif defined(__APPLE__)
+    return ".dylib";
+#else
+    return ".so";
+#endif
+}
+
+std::filesystem::path detectRuntimePluginRoot() {
+    const std::filesystem::path required_module =
+        std::filesystem::path("scratchbird.auth.trust_reject") /
+        ("libscratchbird_auth_trust_reject" + std::string(sharedLibraryExtension()));
+
+    const std::vector<std::filesystem::path> candidates = {
+        repoRoot() / "build" / "auth_plugins",
+        std::filesystem::current_path() / "auth_plugins",
+        std::filesystem::current_path().parent_path() / "auth_plugins",
+        std::filesystem::current_path().parent_path().parent_path() / "auth_plugins"
+    };
+
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate / required_module)) {
+            return candidate;
+        }
+    }
+
+    return {};
+}
+
 class ScopedTempDir {
 public:
     ScopedTempDir() {
@@ -280,4 +311,47 @@ TEST(AuthManagerPluginRegistryTest, FailsStartupWhenRequiredPluginMissing) {
     scratchbird::core::ErrorContext ctx;
     EXPECT_EQ(manager.initialize(config, &ctx), Status::NOT_FOUND);
     EXPECT_NE(ctx.message.find("required plugin"), std::string::npos);
+}
+
+TEST(AuthManagerPluginRegistryTest, UsesRuntimeDispatchWhenModulesAvailable) {
+    const std::filesystem::path plugin_root = detectRuntimePluginRoot();
+    if (plugin_root.empty()) {
+        GTEST_SKIP() << "Auth runtime plugin modules are not available for this build tree";
+    }
+
+    AuthManager manager;
+    AuthManagerConfig config;
+    config.hba_enabled = false;
+    config.rate_limit_enabled = false;
+    config.audit_enabled = false;
+    config.log_connections = false;
+    config.auth_plugin_registry_enabled = true;
+    config.allow_legacy_auth_fallback = false;
+    config.default_auth_type = AuthType::REJECT;
+    config.auth_plugin_root = plugin_root.string();
+    config.auth_plugin_truststore_path =
+        (repoRoot() / "etc" / "auth" / "auth_plugin_truststore.jwks.json.example").string();
+    config.auth_plugin_policy_path =
+        (repoRoot() / "etc" / "auth" / "auth_plugins.policy.json.example").string();
+
+    scratchbird::core::ErrorContext init_ctx;
+    ASSERT_EQ(manager.initialize(config, &init_ctx), Status::OK) << init_ctx.message;
+    ASSERT_NE(manager.authPluginManager(), nullptr);
+    EXPECT_TRUE(manager.authPluginManager()->isRuntimeMethodAvailable("scratchbird.auth.reject"));
+
+    scratchbird::security::AuthContext auth_ctx;
+    scratchbird::security::ConnectionInfo conn;
+    conn.protocol = "native";
+    conn.database_name = "sb";
+    conn.client_address = "127.0.0.1";
+    auth_ctx.setConnectionInfo(conn);
+    auth_ctx.setUsername("alice");
+
+    scratchbird::security::AuthResult result = manager.startAuthentication(auth_ctx);
+    EXPECT_EQ(result.state, scratchbird::security::AuthState::FAILURE);
+    EXPECT_EQ(result.failure_reason, scratchbird::security::AuthFailReason::INVALID_CREDENTIALS);
+    EXPECT_NE(result.failure_message.find("AUTH_TRUST_REJECT_FORCED_DENY"), std::string::npos);
+    EXPECT_EQ(auth_ctx.getSessionProperty("auth.plugin_registry"), "enabled");
+    EXPECT_EQ(auth_ctx.getSessionProperty("auth.plugin_method_id"), "scratchbird.auth.reject");
+    EXPECT_EQ(result.failure_message.find("dispatch backend missing"), std::string::npos);
 }

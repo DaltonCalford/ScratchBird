@@ -1,0 +1,82 @@
+--
+-- PG_LSN
+--
+CREATE TABLE PG_LSN_TBL (f1 pg_lsn);
+ERROR:  Domain not found
+-- Largest and smallest input
+INSERT INTO PG_LSN_TBL VALUES ('0/0');
+ERROR:  Object not found
+INSERT INTO PG_LSN_TBL VALUES ('FFFFFFFF/FFFFFFFF');
+ERROR:  Object not found
+-- Incorrect input
+INSERT INTO PG_LSN_TBL VALUES ('G/0');
+ERROR:  Failed to receive response
+INSERT INTO PG_LSN_TBL VALUES ('-1/0');
+ERROR:  Failed to send query
+INSERT INTO PG_LSN_TBL VALUES (' 0/12345678');
+ERROR:  Failed to send query
+INSERT INTO PG_LSN_TBL VALUES ('ABCD/');
+ERROR:  Failed to send query
+INSERT INTO PG_LSN_TBL VALUES ('/ABCD');
+ERROR:  Failed to send query
+-- Also try it with non-error-throwing API
+SELECT pg_input_is_valid('16AE7F7', 'pg_lsn');
+ERROR:  Failed to send query
+SELECT * FROM pg_input_error_info('16AE7F7', 'pg_lsn');
+ERROR:  Parse error at line 1, column 34: Unexpected token after statement
+-- Min/Max aggregation
+SELECT MIN(f1), MAX(f1) FROM PG_LSN_TBL;
+ERROR:  Failed to send query
+DROP TABLE PG_LSN_TBL;
+ERROR:  Failed to send query
+-- Operators
+SELECT '0/16AE7F8' = '0/16AE7F8'::pg_lsn;
+ERROR:  Failed to send query
+SELECT '0/16AE7F8'::pg_lsn != '0/16AE7F7';
+ERROR:  Failed to send query
+SELECT '0/16AE7F7' < '0/16AE7F8'::pg_lsn;
+ERROR:  Failed to send query
+SELECT '0/16AE7F8' > pg_lsn '0/16AE7F7';
+ERROR:  Parse error at line 1, column 29: Unexpected token after statement
+SELECT '0/16AE7F7'::pg_lsn - '0/16AE7F8'::pg_lsn;
+ERROR:  Failed to send query
+SELECT '0/16AE7F8'::pg_lsn - '0/16AE7F7'::pg_lsn;
+ERROR:  Failed to send query
+SELECT '0/16AE7F7'::pg_lsn + 16::numeric;
+ERROR:  Failed to send query
+SELECT 16::numeric + '0/16AE7F7'::pg_lsn;
+ERROR:  Failed to send query
+SELECT '0/16AE7F7'::pg_lsn - 16::numeric;
+ERROR:  Failed to send query
+SELECT 'FFFFFFFF/FFFFFFFE'::pg_lsn + 1::numeric;
+ERROR:  Failed to send query
+SELECT 'FFFFFFFF/FFFFFFFE'::pg_lsn + 2::numeric; -- out of range error
+ERROR:  Failed to send query
+SELECT '0/1'::pg_lsn - 1::numeric;
+ERROR:  Failed to send query
+SELECT '0/1'::pg_lsn - 2::numeric; -- out of range error
+ERROR:  Failed to send query
+SELECT '0/0'::pg_lsn + ('FFFFFFFF/FFFFFFFF'::pg_lsn - '0/0'::pg_lsn);
+ERROR:  Failed to send query
+SELECT 'FFFFFFFF/FFFFFFFF'::pg_lsn - ('FFFFFFFF/FFFFFFFF'::pg_lsn - '0/0'::pg_lsn);
+ERROR:  Failed to send query
+SELECT '0/16AE7F7'::pg_lsn + 'NaN'::numeric;
+ERROR:  Failed to send query
+SELECT '0/16AE7F7'::pg_lsn - 'NaN'::numeric;
+ERROR:  Failed to send query
+-- Check btree and hash opclasses
+EXPLAIN (COSTS OFF)
+SELECT DISTINCT (i || '/' || j)::pg_lsn f
+  FROM generate_series(1, 10) i,
+       generate_series(1, 10) j,
+       generate_series(1, 5) k
+  WHERE i <= 10 AND j > 0 AND j <= 10
+  ORDER BY f;
+ERROR:  Parse error at line 1, column 10: Expected ) after EXPLAIN options
+SELECT DISTINCT (i || '/' || j)::pg_lsn f
+  FROM generate_series(1, 10) i,
+       generate_series(1, 10) j,
+       generate_series(1, 5) k
+  WHERE i <= 10 AND j > 0 AND j <= 10
+  ORDER BY f;
+ERROR:  Parse error at line 1, column 20: Expected )

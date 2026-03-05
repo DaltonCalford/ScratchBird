@@ -20,10 +20,16 @@ enum class PamPluginConfigStatus : uint8_t {
     INVALID_VALUE,
 };
 
+enum class PamRuntimeProfile : uint8_t {
+    PRODUCTION = 0,
+    TEST = 1,
+};
+
 struct PamPluginConfig {
     std::string service_name;
     std::vector<std::string> allowed_modules;
     uint32_t conversation_timeout_ms = 2000;
+    PamRuntimeProfile runtime_profile = PamRuntimeProfile::PRODUCTION;
 };
 
 PamPluginConfigStatus loadPamPluginConfig(const std::map<std::string, std::string>& values,

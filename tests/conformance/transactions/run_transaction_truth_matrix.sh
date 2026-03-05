@@ -68,7 +68,7 @@ run_default_lane() {
         "${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_pg_isql")" || return 2
       local pg_host="${SCRATCHBIRD_PG_HOST:-127.0.0.1}"
       local pg_port="${SCRATCHBIRD_PG_PORT:-5432}"
-      local pg_user="${SCRATCHBIRD_PG_USER:-pg_admin}"
+      local pg_user="${SCRATCHBIRD_PG_USER:-postgres}"
       local pg_db="${SCRATCHBIRD_PG_OWNER_DB:-${SCRATCHBIRD_PG_DB:-main}}"
       PGPASSWORD="${SCRATCHBIRD_PG_PASSWORD:-${PGPASSWORD:-}}" \
         "${pg_bin}" -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" \

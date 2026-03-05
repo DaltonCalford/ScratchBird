@@ -169,7 +169,7 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
 
     stmt->set_type = parser::v3::SetStmt::SetType::VARIABLE;
     std::string name = parseIdentifier();
-    if (match(TokenType::DOT)) {
+    while (match(TokenType::DOT)) {
         name += ".";
         name += parseIdentifier();
     }
@@ -177,6 +177,7 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
     if (match(TokenType::EQUAL) || matchKeyword(TokenType::KW_TO)) {
         // optional
     }
+    size_t value_start_offset = current_token_.span.start.offset;
     if (matchKeyword(TokenType::KW_DEFAULT)) {
         stmt->is_default = true;
     } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
@@ -207,6 +208,27 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
     } else {
         stmt->value = parseExpression();
     }
+
+    if (check(TokenType::COMMA)) {
+        std::string_view input = lexer_.input();
+        Token last = current_token_;
+        while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+            last = current_token_;
+            advance();
+        }
+        size_t end = last.span.start.offset + last.span.length;
+        if (end > input.size()) {
+            end = input.size();
+        }
+        if (end > value_start_offset) {
+            std::string combined_value(input.substr(value_start_offset, end - value_start_offset));
+            auto* value = arena()->create<parser::v3::LiteralExpr>();
+            value->literal_type = parser::v3::LiteralType::STRING;
+            value->string_value = string_pool_.intern(combined_value);
+            stmt->value = value;
+        }
+    }
+
     std::string upper_name = name;
     std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
                    [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
@@ -534,8 +556,14 @@ parser::v3::Statement* Parser::parseShowStmtV3() {
     }
 
     stmt->show_type = parser::v3::ShowStmt::ShowType::VARIABLE;
-    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
-        stmt->name = parseIdentifierId();
+    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+        isNonReservedKeyword(current_token_.type)) {
+        std::string name = parseIdentifier();
+        while (match(TokenType::DOT)) {
+            name += ".";
+            name += parseIdentifier();
+        }
+        stmt->name = string_pool_.intern(name);
     }
     return stmt;
 }
@@ -591,7 +619,11 @@ parser::v3::Statement* Parser::parseBeginStmtV3() {
     matchKeyword(TokenType::KW_WORK) || matchKeyword(TokenType::KW_TRANSACTION);
 
     while (true) {
-        if (matchKeyword(TokenType::KW_ISOLATION)) {
+        if (matchKeyword(TokenType::KW_ON)) {
+            error("PostgreSQL does not support ON CONFLICT in BEGIN");
+        } else if (matchIdentifierKeyword("AUTOCOMMIT")) {
+            error("PostgreSQL does not support AUTOCOMMIT in BEGIN");
+        } else if (matchKeyword(TokenType::KW_ISOLATION)) {
             consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
             stmt->has_isolation_level = true;
             if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
@@ -631,16 +663,57 @@ parser::v3::Statement* Parser::parsePrepareStmtV3() {
     if (!matchKeyword(TokenType::KW_PREPARE)) {
         return nullptr;
     }
-    auto* stmt = arena()->create<parser::v3::PrepareTransactionStmt>();
     if (matchKeyword(TokenType::KW_TRANSACTION)) {
-        // ok
+        auto* stmt = arena()->create<parser::v3::PrepareTransactionStmt>();
+        if (check(TokenType::STRING_LITERAL)) {
+            stmt->gid = internFromLexer(current_token_.value.string_id);
+            advance();
+        } else {
+            stmt->gid = parseIdentifierId();
+        }
+        return stmt;
     }
+
+    // PREPARE <name> AS <statement> compatibility surface.
+    auto* stmt = arena()->create<parser::v3::ExecuteProcedureStmt>();
+    stmt->procedure_path = buildPathFromQualified(string_pool_, "pg_prepare_statement");
+
+    auto* name_arg = arena()->create<parser::v3::LiteralExpr>();
+    name_arg->literal_type = parser::v3::LiteralType::STRING;
     if (check(TokenType::STRING_LITERAL)) {
-        stmt->gid = internFromLexer(current_token_.value.string_id);
+        name_arg->string_value = internFromLexer(current_token_.value.string_id);
         advance();
     } else {
-        stmt->gid = parseIdentifierId();
+        name_arg->string_value = parseIdentifierId();
     }
+    stmt->arguments.push_back(name_arg);
+
+    if (matchKeyword(TokenType::KW_AS)) {
+        std::string sql_text;
+        if (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+            std::string_view input = lexer_.input();
+            size_t start = current_token_.span.start.offset;
+            size_t end = start;
+            Token last = current_token_;
+            while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+                last = current_token_;
+                advance();
+            }
+            end = last.span.start.offset + last.span.length;
+            if (end > input.size()) {
+                end = input.size();
+            }
+            if (end > start) {
+                sql_text = std::string(input.substr(start, end - start));
+            }
+        }
+
+        auto* sql_arg = arena()->create<parser::v3::LiteralExpr>();
+        sql_arg->literal_type = parser::v3::LiteralType::STRING;
+        sql_arg->string_value = string_pool_.intern(sql_text);
+        stmt->arguments.push_back(sql_arg);
+    }
+
     return stmt;
 }
 
@@ -747,10 +820,9 @@ parser::v3::Statement* Parser::parseRollbackStmtV3() {
     }
     matchKeyword(TokenType::KW_WORK);
     if (matchKeyword(TokenType::KW_TO)) {
-        if (matchKeyword(TokenType::KW_SAVEPOINT)) {
-            stmt->to_savepoint = true;
-            stmt->savepoint_name = parseIdentifierId();
-        }
+        stmt->to_savepoint = true;
+        matchKeyword(TokenType::KW_SAVEPOINT);
+        stmt->savepoint_name = parseIdentifierId();
     } else if (matchKeyword(TokenType::KW_AND)) {
         if (matchKeyword(TokenType::KW_CHAIN)) {
             stmt->and_chain = true;
@@ -1715,7 +1787,7 @@ parser::v3::Statement* Parser::parseGrantStmtV3() {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::TRIGGER);
             } else if (matchKeyword(TokenType::KW_EXECUTE)) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::EXECUTE);
-            } else if (matchKeyword(TokenType::KW_USAGE)) {
+            } else if (matchKeyword(TokenType::KW_USAGE) || matchIdentifierKeyword("USAGE")) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::USAGE);
             } else if (matchKeyword(TokenType::KW_CREATE)) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::CREATE);
@@ -1794,6 +1866,13 @@ parser::v3::Statement* Parser::parseGrantStmtV3() {
     } else if (matchKeyword(TokenType::KW_DATABASE)) {
         stmt->object_type = parser::v3::PrivilegeObjectType::DATABASE;
         stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+    } else if (matchKeyword(TokenType::KW_TABLESPACE)) {
+        // TABLESPACE privilege family is parsed for PostgreSQL compatibility.
+        // Route through existing database-scope privilege object typing.
+        stmt->object_type = parser::v3::PrivilegeObjectType::DATABASE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
     } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
                isNonReservedKeyword(current_token_.type)) {
         stmt->object_type = parser::v3::PrivilegeObjectType::TABLE;
@@ -1859,7 +1938,7 @@ parser::v3::Statement* Parser::parseRevokeStmtV3() {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::TRIGGER);
             } else if (matchKeyword(TokenType::KW_EXECUTE)) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::EXECUTE);
-            } else if (matchKeyword(TokenType::KW_USAGE)) {
+            } else if (matchKeyword(TokenType::KW_USAGE) || matchIdentifierKeyword("USAGE")) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::USAGE);
             } else if (matchKeyword(TokenType::KW_CREATE)) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::CREATE);
@@ -1937,6 +2016,13 @@ parser::v3::Statement* Parser::parseRevokeStmtV3() {
     } else if (matchKeyword(TokenType::KW_DATABASE)) {
         stmt->object_type = parser::v3::PrivilegeObjectType::DATABASE;
         stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+    } else if (matchKeyword(TokenType::KW_TABLESPACE)) {
+        // TABLESPACE privilege family is parsed for PostgreSQL compatibility.
+        // Route through existing database-scope privilege object typing.
+        stmt->object_type = parser::v3::PrivilegeObjectType::DATABASE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
     } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
                isNonReservedKeyword(current_token_.type)) {
         stmt->object_type = parser::v3::PrivilegeObjectType::TABLE;

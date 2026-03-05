@@ -1,0 +1,97 @@
+--
+-- NAME
+-- all inputs are silently truncated at NAMEDATALEN-1 (63) characters
+--
+-- fixed-length by reference
+SELECT name 'name string' = name 'name string' AS "True";
+ERROR:  Parse error at line 1, column 13: Unexpected token after statement
+SELECT name 'name string' = name 'name string ' AS "False";
+ERROR:  Parse error at line 1, column 13: Unexpected token after statement
+--
+--
+--
+CREATE TABLE NAME_TBL(f1 name);
+ERROR:  Domain not found
+INSERT INTO NAME_TBL(f1) VALUES ('1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQR');
+ERROR:  Object not found
+INSERT INTO NAME_TBL(f1) VALUES ('1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqr');
+ERROR:  Object not found
+INSERT INTO NAME_TBL(f1) VALUES ('asdfghjkl;');
+ERROR:  Failed to receive response
+INSERT INTO NAME_TBL(f1) VALUES ('343f%2a');
+ERROR:  Failed to send query
+INSERT INTO NAME_TBL(f1) VALUES ('d34aaasdf');
+ERROR:  Failed to send query
+INSERT INTO NAME_TBL(f1) VALUES ('');
+ERROR:  Failed to send query
+INSERT INTO NAME_TBL(f1) VALUES ('1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+ERROR:  Failed to send query
+SELECT * FROM NAME_TBL;
+ERROR:  Failed to send query
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 <> '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQR';
+ERROR:  Failed to send query
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 = '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQR';
+ERROR:  Failed to send query
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 < '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQR';
+ERROR:  Failed to send query
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 <= '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQR';
+ERROR:  Failed to send query
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 > '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQR';
+ERROR:  Failed to send query
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 >= '1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKLMNOPQR';
+ERROR:  Failed to send query
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 ~ '.*';
+ERROR:  Parse error at line 1, column 40: Unexpected token after statement
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 !~ '.*';
+ERROR:  Parse error at line 1, column 40: Unexpected token after statement
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 ~ '[0-9]';
+ERROR:  Parse error at line 1, column 40: Unexpected token after statement
+SELECT c.f1 FROM NAME_TBL c WHERE c.f1 ~ '.*asdf.*';
+ERROR:  Parse error at line 1, column 40: Unexpected token after statement
+DROP TABLE NAME_TBL;
+ERROR:  Failed to send query
+DO $$
+DECLARE r text[];
+BEGIN
+  r := parse_ident('Schemax.Tabley');
+  RAISE NOTICE '%', format('%I.%I', r[1], r[2]);
+  r := parse_ident('"SchemaX"."TableY"');
+  RAISE NOTICE '%', format('%I.%I', r[1], r[2]);
+END;
+$$;
+ERROR:  Failed to send query
+SELECT parse_ident('foo.boo');
+ERROR:  Failed to send query
+SELECT parse_ident('foo.boo[]'); -- should fail
+ERROR:  Failed to send query
+SELECT parse_ident('foo.boo[]', strict => false); -- ok
+ERROR:  Parse error at line 1, column 33: Expected expression
+-- should fail
+SELECT parse_ident(' ');
+ERROR:  Failed to send query
+SELECT parse_ident(' .aaa');
+ERROR:  Failed to send query
+SELECT parse_ident(' aaa . ');
+ERROR:  Failed to send query
+SELECT parse_ident('aaa.a%b');
+ERROR:  Failed to send query
+SELECT parse_ident(E'X\rXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX');
+ERROR:  Failed to send query
+SELECT length(a[1]), length(a[2]) from parse_ident('"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx".yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy') as a ;
+ERROR:  Parse error at line 1, column 51: Unexpected token after statement
+SELECT parse_ident(' first . "  second  " ."   third   ". "  ' || repeat('x',66) || '"');
+ERROR:  Parse error at line 1, column 64: Expected ) after function arguments
+SELECT parse_ident(' first . "  second  " ."   third   ". "  ' || repeat('x',66) || '"')::name[];
+ERROR:  Parse error at line 1, column 64: Expected ) after function arguments
+SELECT parse_ident(E'"c".X XXXX\002XXXXXX');
+ERROR:  Failed to send query
+SELECT parse_ident('1020');
+ERROR:  Failed to send query
+SELECT parse_ident('10.20');
+ERROR:  Failed to send query
+SELECT parse_ident('.');
+ERROR:  Failed to send query
+SELECT parse_ident('.1020');
+ERROR:  Failed to send query
+SELECT parse_ident('xxx.1020');
+ERROR:  Failed to send query

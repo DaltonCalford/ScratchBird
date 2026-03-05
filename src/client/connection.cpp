@@ -74,6 +74,8 @@ namespace scratchbird {
 namespace client {
 
 namespace {
+constexpr const char* kServerNoticeChannel = "sb.notice";
+
 std::string bytesToHex(const std::vector<uint8_t>& data);
 std::string formatUuidBytes(const std::vector<uint8_t>& data);
 std::string describeUnexpectedResponse(const protocol::Message& response);
@@ -801,6 +803,7 @@ class ResultSetImpl {
 public:
     std::vector<ColumnMeta> columns_;
     std::vector<std::vector<protocol::ProtocolCodec::ColumnValue>> rows_;
+    std::vector<std::string> notices_;
     int64_t current_row_ = -1;
     int64_t row_count_ = -1;
     int64_t rows_affected_ = 0;
@@ -809,6 +812,7 @@ public:
     void clear() {
         columns_.clear();
         rows_.clear();
+        notices_.clear();
         current_row_ = -1;
         row_count_ = -1;
         rows_affected_ = 0;
@@ -877,6 +881,10 @@ const std::vector<protocol::ProtocolCodec::ColumnValue>& ResultSet::getRowValues
 
 const std::string& ResultSet::getCommandTag() const {
     return impl_->command_tag_;
+}
+
+const std::vector<std::string>& ResultSet::getNotices() const {
+    return impl_->notices_;
 }
 
 bool ResultSet::next() {
@@ -2530,6 +2538,33 @@ public:
                         } else {
                             state_ = ConnectionState::CONNECTED;
                         }
+                    }
+                    break;
+                }
+                case protocol::MessageType::NOTIFICATION: {
+                    uint32_t process_id = 0;
+                    std::string channel;
+                    std::vector<uint8_t> payload;
+                    uint8_t change_type = 0;
+                    uint64_t row_id = 0;
+                    auto parse_status = protocol::ProtocolCodec::parseNotification(
+                        response,
+                        process_id,
+                        channel,
+                        payload,
+                        change_type,
+                        row_id,
+                        ctx);
+                    if (!isOk(parse_status)) {
+                        last_error_ = "Malformed NOTIFICATION payload";
+                        return parse_status;
+                    }
+                    (void)process_id;
+                    (void)change_type;
+                    (void)row_id;
+
+                    if (results && channel == kServerNoticeChannel) {
+                        results->impl_->notices_.emplace_back(payload.begin(), payload.end());
                     }
                     break;
                 }

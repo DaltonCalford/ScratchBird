@@ -61,8 +61,8 @@ namespace Opcode {
     constexpr uint32_t op_accept           = 3;
     constexpr uint32_t op_reject           = 4;
     constexpr uint32_t op_disconnect       = 6;
-    constexpr uint32_t op_accept_data      = 76;
-    constexpr uint32_t op_cond_accept      = 77;
+    constexpr uint32_t op_accept_data      = 94;
+    constexpr uint32_t op_cond_accept      = 98;
 
     // Database operations
     constexpr uint32_t op_attach           = 19;
@@ -76,16 +76,16 @@ namespace Opcode {
     constexpr uint32_t op_rollback         = 31;
     constexpr uint32_t op_commit_retaining = 50;
     constexpr uint32_t op_rollback_retaining = 86;
-    constexpr uint32_t op_prepare          = 67;
+    constexpr uint32_t op_prepare          = 32;
 
     // Statement operations
     constexpr uint32_t op_allocate_statement = 62;
     constexpr uint32_t op_prepare_statement  = 68;
     constexpr uint32_t op_execute           = 63;
-    constexpr uint32_t op_execute2          = 71;  // execute with output blr
+    constexpr uint32_t op_execute2          = 76;  // execute with output blr
     constexpr uint32_t op_exec_immediate    = 64;
-    constexpr uint32_t op_exec_immediate2   = 65;  // exec immediate with output blr
-    constexpr uint32_t op_fetch             = 66;  // fetch rows
+    constexpr uint32_t op_exec_immediate2   = 75;  // exec immediate with output blr
+    constexpr uint32_t op_fetch             = 65;  // fetch rows
     constexpr uint32_t op_free_statement    = 67;
     constexpr uint32_t op_set_cursor        = 69;
 
@@ -108,7 +108,7 @@ namespace Opcode {
 
     // Response operations
     constexpr uint32_t op_response         = 9;
-    constexpr uint32_t op_fetch_response   = 72;  // fetch response
+    constexpr uint32_t op_fetch_response   = 66;  // fetch response
     constexpr uint32_t op_sql_response     = 78;
 
     // Batch operations (Firebird 4.0+)
@@ -133,7 +133,7 @@ namespace Opcode {
     constexpr uint32_t op_event            = 52;
 
     // Authentication (Firebird 3.0+)
-    constexpr uint32_t op_cont_auth        = 79;
+    constexpr uint32_t op_cont_auth        = 92;
     constexpr uint32_t op_ping             = 93;
     constexpr uint32_t op_cancel           = 91;
 }
@@ -319,12 +319,27 @@ constexpr uint8_t isc_info_end = 1;
 
 // SQL info items
 namespace SqlInfo {
+    constexpr uint8_t isc_info_sql_select = 4;
+    constexpr uint8_t isc_info_sql_bind = 5;
+    constexpr uint8_t isc_info_sql_num_variables = 6;
+    constexpr uint8_t isc_info_sql_describe_vars = 7;
+    constexpr uint8_t isc_info_sql_describe_end = 8;
+    constexpr uint8_t isc_info_sql_sqlda_seq = 9;
+    constexpr uint8_t isc_info_sql_type = 11;
+    constexpr uint8_t isc_info_sql_sub_type = 12;
+    constexpr uint8_t isc_info_sql_scale = 13;
+    constexpr uint8_t isc_info_sql_length = 14;
+    constexpr uint8_t isc_info_sql_null_ind = 15;
+    constexpr uint8_t isc_info_sql_field = 16;
+    constexpr uint8_t isc_info_sql_relation = 17;
+    constexpr uint8_t isc_info_sql_owner = 18;
+    constexpr uint8_t isc_info_sql_alias = 19;
     constexpr uint8_t isc_info_sql_stmt_type = 21;
     constexpr uint8_t isc_info_sql_get_plan = 22;
     constexpr uint8_t isc_info_sql_records = 23;
     constexpr uint8_t isc_info_sql_batch_fetch = 24;
-    constexpr uint8_t isc_info_sql_sqlda_start = 25;
-    constexpr uint8_t isc_info_sql_sqlda_end = 26;
+    constexpr uint8_t isc_info_sql_relation_schema = 33;
+    constexpr uint8_t isc_info_sql_sqlda_start = 20;
 }
 
 // SQL statement types
@@ -378,6 +393,7 @@ struct FirebirdStatement {
     uint32_t output_message_length = 0;
     uint32_t input_message_length = 0;
     bool prepared = false;
+    std::vector<std::vector<ProtocolCodec::ColumnValue>> result_rows;  // Logical row values from execute
     std::vector<std::vector<uint8_t>> row_buffers;  // Serialized rows for fetch
     size_t fetch_pos = 0;
 };
@@ -504,6 +520,11 @@ private:
                         uint32_t type, const std::vector<uint8_t>& data,
                         const std::string& plugin, bool authenticated,
                         const std::vector<uint8_t>& keys);
+    void sendContAuth(network::Connection* conn,
+                      const std::vector<uint8_t>& auth_data,
+                      const std::string& plugin,
+                      const std::string& plugin_list,
+                      const std::vector<uint8_t>& keys);
     void sendResponse(network::Connection* conn, uint32_t handle, uint64_t object_id,
                       const std::vector<uint8_t>& data);
     void sendFetchResponse(network::Connection* conn, uint32_t status, uint32_t count,
@@ -544,6 +565,8 @@ private:
 
     // DPB/TPB parsing
     void parseDpb(const std::vector<uint8_t>& dpb);
+    core::Status validateLegacyPasswordEnc(core::ErrorContext* ctx);
+    core::Status completeAttach(network::Connection* conn, const std::string& db_path);
     std::vector<uint8_t> buildDefaultTpb();
 
     // ========================================================================
@@ -579,12 +602,19 @@ private:
     // Authentication state
     std::string auth_plugin_name_;
     std::vector<uint8_t> auth_data_;
+    std::string dpb_auth_plugin_name_;
+    std::vector<uint8_t> dpb_specific_auth_data_;
     bool auth_complete_ = false;
 
     // Client info from attach
     uint8_t sql_dialect_ = 3;
     std::string client_charset_ = "UTF8";
     std::string remote_password_;
+    std::string remote_password_enc_;
+    bool allow_proxy_session_auth_ = false;
+    bool attach_auth_pending_ = false;
+    std::string pending_attach_db_path_;
+    std::string engine_database_name_;
 
     // Remote engine client (IPC to native ScratchBird server)
     client::ConnectionConfig client_config_;
