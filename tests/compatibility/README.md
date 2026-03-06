@@ -8,7 +8,7 @@ This directory contains comprehensive SQL compatibility tests from three major d
 **Databases:** Firebird, MySQL, PostgreSQL
 **Purpose:** Validate ScratchBird's database emulation compatibility
 **Parser Core:** `v3` (canonical)
-**Source Policy:** Firebird, MySQL, and PostgreSQL suites are vendored snapshots in `tests/compatibility/*/repos/` and updated one-way into ScratchBird via `scripts/update_test_repos.sh`.
+**Source Policy:** Firebird, MySQL, and PostgreSQL suites are vendored snapshots in `tests/compatibility/*/repos/` and updated one-way into ScratchBird via `scripts/update_test_repos.sh`. Snapshot provenance is written to `tests/compatibility/SNAPSHOT_MANIFEST.md`.
 
 ## Parser Boundary (Authoritative)
 
@@ -76,9 +76,13 @@ tests/compatibility/
 │
 ├── scripts/                     # Global test scripts
 │   ├── convert_all_tests_parallel.sh    # Convert all tests
+│   ├── generate_ctest_lists.py          # Generate expanded/full ctest lists + summary
 │   ├── generate_test_manifests.py       # Generate test catalogs
 │   ├── run_required_upstream_harnesses.sh # Upstream harness launcher (plan/execute)
 │   └── update_test_repos.sh             # Refresh vendored test repositories
+│
+├── CTEST_LIST_SUMMARY.md        # Per-engine curated/expanded/full counts + runtime estimates
+├── SNAPSHOT_MANIFEST.md         # Source remotes/commits for current vendored snapshots
 │
 ├── results/                     # Test execution results
 │   └── conversion_report_*.txt          # Conversion reports
@@ -90,13 +94,44 @@ tests/compatibility/
 
 ### 1. Refresh Test Repositories (Vendored Snapshots)
 
-Refresh the latest tests from official repositories:
+Refresh the latest tests into the vendored tree:
 
 ```bash
 ./scripts/update_test_repos.sh
 ```
 
-Run from `tests/compatibility/` (or use `./tests/compatibility/scripts/update_test_repos.sh` from the repo root). The script performs shallow clones and sparse checkout to refresh the vendored snapshots.
+Run from `tests/compatibility/` (or use `./tests/compatibility/scripts/update_test_repos.sh` from the repo root).
+
+`update_test_repos.sh` supports three source modes:
+
+- `auto` (default): use local reference clones when available, otherwise clone from remotes.
+- `local`: copy from local reference clones (default root: `~/CliWork`).
+- `remote`: always clone from remotes.
+
+Examples:
+
+```bash
+# Force local reference clones from ~/CliWork
+./scripts/update_test_repos.sh --source local --local-root ~/CliWork
+
+# In local mode, fetch/pull local references first (fast-forward only when clean)
+SCRATCHBIRD_SYNC_LOCAL_REFS=1 ./scripts/update_test_repos.sh --source local
+
+# Force remote refresh
+./scripts/update_test_repos.sh --source remote
+```
+
+Every refresh writes `tests/compatibility/SNAPSHOT_MANIFEST.md` with source remotes, commits, and file counts so users can see exactly what snapshot is being run.
+
+Compatibility CTest timeout window can be increased at configure time:
+
+```bash
+cmake -S . -B build -DSCRATCHBIRD_TEST_TIMEOUT_COMPATIBILITY=43200
+```
+
+Default compatibility timeout is `21600` seconds (6h). Set `0` to fall back to integration timeout.
+Global CTest timeout default is also `21600` seconds and can be overridden with `-DSCRATCHBIRD_CTEST_TIMEOUT=<seconds>`.
+For the emulation evidence gate command-level timeout, configure `-DSCRATCHBIRD_EMULATION_GATE_COMMAND_TIMEOUT=<seconds>` (default `7200`).
 
 To skip MySQL refresh for a smaller update pass:
 
@@ -124,7 +159,19 @@ Create test catalogs:
 ./scripts/generate_test_manifests.py
 ```
 
-### 4. Run Tests (CTest)
+### 4. Generate Expanded/Full CTest Lists
+
+```bash
+./scripts/generate_ctest_lists.py
+```
+
+This writes:
+
+- `tests/compatibility/<engine>/config/ctest_list_expanded.txt`
+- `tests/compatibility/<engine>/config/ctest_list_full.txt`
+- `tests/compatibility/CTEST_LIST_SUMMARY.md`
+
+### 5. Run Tests (CTest)
 
 Once the dedicated ISQL clients are built (see [Plan 06](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)):
 
@@ -140,7 +187,19 @@ ctest -R CompatibilityMySQL --test-dir build
 
 # Upstream emulation evidence bundle (gate + wire capture)
 ctest -R CompatibilityEmulationEvidence --test-dir build
+
+# Expanded compatibility lane selection (all engines)
+SCRATCHBIRD_COMPAT_CTEST_LIST_MODE=expanded ctest -R "Compatibility(Firebird|MySQL|PostgreSQL)" --test-dir build
+
+# Full compatibility lane selection (all engines)
+SCRATCHBIRD_COMPAT_CTEST_LIST_MODE=full ctest -R "Compatibility(Firebird|MySQL|PostgreSQL)" --test-dir build
 ```
+
+You can also set per-engine modes:
+
+- `SCRATCHBIRD_FB_CTEST_LIST_MODE=curated|expanded|full`
+- `SCRATCHBIRD_MY_CTEST_LIST_MODE=curated|expanded|full`
+- `SCRATCHBIRD_PG_CTEST_LIST_MODE=curated|expanded|full`
 
 ### Unified Example Database Harness
 

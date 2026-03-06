@@ -184,6 +184,51 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaFieldContractsMatchSpecifi
     assertField(multi_model, 4, "document", FieldType::OPT);
     assertField(multi_model, 5, "options", FieldType::SCHEMA);
 
+    const SchemaDef *create_tablespace =
+        scratchbird::sblr::v3::lookupSchema("SCHEMA_DDL_CREATE_TABLESPACE");
+    ASSERT_NE(nullptr, create_tablespace);
+    ASSERT_EQ(8u, create_tablespace->fields.size());
+    assertField(create_tablespace, 0, "flags", FieldType::U64);
+    assertField(create_tablespace, 1, "path", FieldType::SCHEMA_PATH);
+    assertField(create_tablespace, 2, "name", FieldType::IDENT);
+    assertField(create_tablespace, 3, "location", FieldType::STRING);
+    assertField(create_tablespace, 4, "autoextend_enabled", FieldType::BOOL);
+    assertField(create_tablespace, 5, "autoextend_size_mb", FieldType::U32);
+    assertField(create_tablespace, 6, "max_size_mb", FieldType::U32);
+    assertField(create_tablespace, 7, "prealloc_pages", FieldType::U32);
+
+    const SchemaDef *create_index =
+        scratchbird::sblr::v3::lookupSchema("SCHEMA_DDL_CREATE_INDEX");
+    ASSERT_NE(nullptr, create_index);
+    ASSERT_EQ(9u, create_index->fields.size());
+    assertField(create_index, 7, "tablespace", FieldType::OPT);
+    assertField(create_index, 8, "options", FieldType::SCHEMA);
+
+    const SchemaDef *tablespace_alteration =
+        scratchbird::sblr::v3::lookupSchema("TABLESPACE_ALTERATION");
+    ASSERT_NE(nullptr, tablespace_alteration);
+    ASSERT_EQ(4u, tablespace_alteration->fields.size());
+    assertField(tablespace_alteration, 0, "action", FieldType::U8);
+    assertField(tablespace_alteration, 1, "autoextend_enabled", FieldType::OPT);
+    assertField(tablespace_alteration, 2, "size_mb", FieldType::OPT);
+    assertField(tablespace_alteration, 3, "new_name", FieldType::OPT);
+
+    const SchemaDef *alter_tablespace =
+        scratchbird::sblr::v3::lookupSchema("SCHEMA_DDL_ALTER_TABLESPACE");
+    ASSERT_NE(nullptr, alter_tablespace);
+    ASSERT_EQ(3u, alter_tablespace->fields.size());
+    assertField(alter_tablespace, 0, "tablespace", FieldType::SCHEMA_PATH);
+    assertField(alter_tablespace, 1, "alterations", FieldType::LIST);
+    assertField(alter_tablespace, 2, "options", FieldType::OPT);
+
+    const SchemaDef *alter_table_set_tablespace =
+        scratchbird::sblr::v3::lookupSchema("SCHEMA_DDL_ALTER_TABLE_SET_TABLESPACE");
+    ASSERT_NE(nullptr, alter_table_set_tablespace);
+    ASSERT_EQ(3u, alter_table_set_tablespace->fields.size());
+    assertField(alter_table_set_tablespace, 0, "table", FieldType::SCHEMA_PATH);
+    assertField(alter_table_set_tablespace, 1, "tablespace", FieldType::SCHEMA_PATH);
+    assertField(alter_table_set_tablespace, 2, "online", FieldType::BOOL);
+
     const SchemaDef *udr_compile =
         scratchbird::sblr::v3::lookupSchema("SCHEMA_UDR_COMPILE_DISPATCH");
     ASSERT_NE(nullptr, udr_compile);
@@ -260,6 +305,38 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaRoundTripAndEnumValidation
         static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE),
         Value::Object{{"buffer_class", Value(static_cast<uint64_t>(2))},
                       {"row_shape_ref", Value(static_cast<uint64_t>(77))}}));
+    instructions.push_back(makeInstruction(
+        static_cast<uint16_t>(Opcode::SBLR3_CREATE_TABLESPACE),
+        Value::Object{{"flags", Value(static_cast<uint64_t>(0))},
+                      {"path", Value(Value::List{Value(std::string("ts_hot"))})},
+                      {"name", Value(std::string("ts_hot"))},
+                      {"location", Value(std::string("/tmp/emu/location"))},
+                      {"autoextend_enabled", Value(true)},
+                      {"autoextend_size_mb", Value(static_cast<uint64_t>(64))},
+                      {"max_size_mb", Value(static_cast<uint64_t>(0))},
+                      {"prealloc_pages", Value(static_cast<uint64_t>(0))}}));
+    instructions.push_back(makeInstruction(
+        static_cast<uint16_t>(Opcode::SBLR3_ALTER_TABLESPACE),
+        Value::Object{
+            {"tablespace", Value(Value::List{Value(std::string("ts_hot"))})},
+            {"alterations", Value(Value::List{
+                                Value(Value::Object{
+                                    {"action", Value(static_cast<uint64_t>(0))},
+                                    {"autoextend_enabled", Value(false)}}),
+                                Value(Value::Object{
+                                    {"action", Value(static_cast<uint64_t>(1))},
+                                    {"size_mb", Value(static_cast<uint64_t>(128))}}),
+                                Value(Value::Object{
+                                    {"action", Value(static_cast<uint64_t>(3))},
+                                    {"new_name", Value(std::string("ts_cold"))}}),
+                            })},
+        }));
+    instructions.push_back(makeInstruction(
+        static_cast<uint16_t>(Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE),
+        Value::Object{{"table", Value(Value::List{Value(std::string("public")),
+                                                  Value(std::string("users"))})},
+                      {"tablespace", Value(Value::List{Value(std::string("ts_hot"))})},
+                      {"online", Value(false)}}));
     instructions.push_back(makeInstruction(
         static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
         Value::Object{{"validate_only", Value(false)},

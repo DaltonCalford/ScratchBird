@@ -171,7 +171,7 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
                         }
                     }
                 } else {
-                    ref->table_path = buildPathFromQualified(string_pool_, source_name);
+                    ref->table_path = buildResolvedTablePath(source_name);
                 }
             }
             ref->alias = parse_alias();
@@ -322,6 +322,78 @@ parser::v3::SelectStmt* Parser::parseSelectStmt() {
         }
     }
 
+    auto parse_values_as_select = [&]() -> parser::v3::SelectStmt* {
+        consumeKeyword(TokenType::KW_VALUES, "Expected VALUES after set operation");
+
+        parser::v3::SelectStmt* head = nullptr;
+        parser::v3::SelectStmt* tail = nullptr;
+        do {
+            consume(TokenType::LEFT_PAREN, "Expected ( after VALUES");
+            std::vector<parser::v3::Expression*> row_values;
+            if (!check(TokenType::RIGHT_PAREN)) {
+                do {
+                    row_values.push_back(parseExpression());
+                } while (match(TokenType::COMMA));
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ) after VALUES row");
+
+            auto* row_stmt = arena()->create<parser::v3::SelectStmt>();
+            for (auto* value_expr : row_values) {
+                auto* out_item = arena()->create<parser::v3::SelectItem>();
+                out_item->item_type = parser::v3::SelectItem::Type::EXPRESSION;
+                out_item->expr = value_expr;
+                row_stmt->items.push_back(out_item);
+            }
+
+            if (!head) {
+                head = row_stmt;
+            } else {
+                tail->set_op = parser::v3::SetOpType::UNION;
+                tail->set_op_all = true;
+                tail->set_op_right = row_stmt;
+            }
+            tail = row_stmt;
+        } while (match(TokenType::COMMA));
+
+        if (!head) {
+            head = arena()->create<parser::v3::SelectStmt>();
+        }
+        return head;
+    };
+
+    auto parse_set_operation = [&](parser::v3::SetOpType op) {
+        stmt->set_op = op;
+        stmt->set_op_all = false;
+        if (matchKeyword(TokenType::KW_ALL)) {
+            stmt->set_op_all = true;
+        } else {
+            // DISTINCT is the default for set operations; consume if explicitly present.
+            (void)matchKeyword(TokenType::KW_DISTINCT);
+        }
+
+        bool parenthesized = match(TokenType::LEFT_PAREN);
+
+        if (check(TokenType::KW_SELECT)) {
+            stmt->set_op_right = parseSelectStmt();
+        } else if (check(TokenType::KW_VALUES)) {
+            stmt->set_op_right = parse_values_as_select();
+        } else {
+            error("Expected SELECT or VALUES after set operation");
+        }
+
+        if (parenthesized) {
+            consume(TokenType::RIGHT_PAREN, "Expected ) after set operation query");
+        }
+    };
+
+    if (matchKeyword(TokenType::KW_UNION)) {
+        parse_set_operation(parser::v3::SetOpType::UNION);
+    } else if (matchKeyword(TokenType::KW_INTERSECT)) {
+        parse_set_operation(parser::v3::SetOpType::INTERSECT);
+    } else if (matchKeyword(TokenType::KW_EXCEPT)) {
+        parse_set_operation(parser::v3::SetOpType::EXCEPT);
+    }
+
     if (matchKeyword(TokenType::KW_FOR)) {
         if (matchKeyword(TokenType::KW_UPDATE)) {
             stmt->for_update = true;
@@ -452,7 +524,7 @@ parser::v3::InsertStmt* Parser::parseInsertStmt() {
     consumeKeyword(TokenType::KW_INTO, "Expected INTO");
 
     auto* stmt = arena()->create<parser::v3::InsertStmt>();
-    stmt->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+    stmt->table_path = parseResolvedTablePath();
 
     if (match(TokenType::LEFT_PAREN)) {
         do {
@@ -566,7 +638,7 @@ parser::v3::InsertStmt* Parser::parseInsertStmt() {
 parser::v3::UpdateStmt* Parser::parseUpdateStmt() {
     consumeKeyword(TokenType::KW_UPDATE, "Expected UPDATE");
     auto* stmt = arena()->create<parser::v3::UpdateStmt>();
-    stmt->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+    stmt->table_path = parseResolvedTablePath();
     if (matchKeyword(TokenType::KW_AS)) {
         stmt->alias = parseIdentifierId();
         stmt->has_alias = true;
@@ -641,7 +713,7 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmt() {
 
         auto* base = arena()->create<parser::v3::TableRefNode>();
         base->ref_type = parser::v3::TableRefNode::Type::TABLE;
-        base->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+        base->table_path = parseResolvedTablePath();
         base->alias = parse_alias();
         base->has_alias = base->alias != parser::v3::StringPool::INVALID_ID;
         stmt->from = base;
@@ -686,7 +758,7 @@ parser::v3::UpdateStmt* Parser::parseUpdateStmt() {
             join->join_type = join_type;
             auto* right = arena()->create<parser::v3::TableRefNode>();
             right->ref_type = parser::v3::TableRefNode::Type::TABLE;
-            right->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+            right->table_path = parseResolvedTablePath();
             right->alias = parse_alias();
             right->has_alias = right->alias != parser::v3::StringPool::INVALID_ID;
             join->right = right;
@@ -758,7 +830,7 @@ parser::v3::DeleteStmt* Parser::parseDeleteStmt() {
     consumeKeyword(TokenType::KW_DELETE, "Expected DELETE");
     consumeKeyword(TokenType::KW_FROM, "Expected FROM");
     auto* stmt = arena()->create<parser::v3::DeleteStmt>();
-    stmt->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+    stmt->table_path = parseResolvedTablePath();
     if (matchKeyword(TokenType::KW_AS)) {
         stmt->alias = parseIdentifierId();
         stmt->has_alias = true;
@@ -832,7 +904,7 @@ parser::v3::DeleteStmt* Parser::parseDeleteStmt() {
 
         auto* using_base = arena()->create<parser::v3::TableRefNode>();
         using_base->ref_type = parser::v3::TableRefNode::Type::TABLE;
-        using_base->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+        using_base->table_path = parseResolvedTablePath();
         using_base->alias = parse_alias();
         using_base->has_alias = using_base->alias != parser::v3::StringPool::INVALID_ID;
         stmt->using_clause = using_base;
@@ -882,7 +954,7 @@ parser::v3::MergeStmt* Parser::parseMergeStmt() {
     consumeKeyword(TokenType::KW_INTO, "Expected INTO");
 
     auto* stmt = arena()->create<parser::v3::MergeStmt>();
-    stmt->target_table = buildPathFromQualified(string_pool_, parseQualifiedName());
+    stmt->target_table = parseResolvedTablePath();
     if (matchKeyword(TokenType::KW_AS)) {
         stmt->target_alias = parseIdentifierId();
     } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
@@ -894,7 +966,7 @@ parser::v3::MergeStmt* Parser::parseMergeStmt() {
         stmt->source_query = parseSelectStmt();
         consume(TokenType::RIGHT_PAREN, "Expected ) after MERGE USING subquery");
     } else {
-        stmt->source_table = buildPathFromQualified(string_pool_, parseQualifiedName());
+        stmt->source_table = parseResolvedTablePath();
     }
     if (matchKeyword(TokenType::KW_AS)) {
         stmt->source_alias = parseIdentifierId();

@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 DRIVER_DIR="${ROOT_DIR}-driver"
+CLIWORK_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
 
 DEFAULT_ISQL="${ROOT_DIR}/build/src/sb_pg_isql"
 ISQL_FLAVOR="postgresql"
@@ -30,7 +31,23 @@ if [[ -n "${SCRATCHBIRD_PG_ISQL:-}" ]]; then
     *) ISQL_FLAVOR="postgresql" ;;
   esac
 fi
-LIST_FILE="${SCRATCHBIRD_PG_CTEST_LIST:-$PG_DIR/config/ctest_list.txt}"
+LIST_MODE="${SCRATCHBIRD_PG_CTEST_LIST_MODE:-${SCRATCHBIRD_COMPAT_CTEST_LIST_MODE:-curated}}"
+case "$LIST_MODE" in
+  curated)
+    DEFAULT_LIST_FILE="$PG_DIR/config/ctest_list.txt"
+    ;;
+  expanded)
+    DEFAULT_LIST_FILE="$PG_DIR/config/ctest_list_expanded.txt"
+    ;;
+  full)
+    DEFAULT_LIST_FILE="$PG_DIR/config/ctest_list_full.txt"
+    ;;
+  *)
+    echo "Error: invalid PostgreSQL list mode '$LIST_MODE' (expected curated|expanded|full)." >&2
+    exit 2
+    ;;
+esac
+LIST_FILE="${SCRATCHBIRD_PG_CTEST_LIST:-$DEFAULT_LIST_FILE}"
 CONVERTED_DIR="${PG_DIR}/converted"
 
 if [[ ! -x "$ISQL_BIN" ]]; then
@@ -48,7 +65,8 @@ EOF
 fi
 
 if [[ ! -f "$LIST_FILE" ]]; then
-  echo "Error: PostgreSQL CTest list not found: $LIST_FILE" >&2
+  echo "Error: PostgreSQL CTest list not found: $LIST_FILE (mode=$LIST_MODE)" >&2
+  echo "Hint: run tests/compatibility/scripts/generate_ctest_lists.py to generate expanded/full lists." >&2
   exit 1
 fi
 
@@ -115,6 +133,7 @@ write_run_manifest() {
   "parser_mode": "emulation_surface_only",
   "execution_mode": "$([[ "$USE_UPSTREAM_PG_REGRESS" == "1" ]] && echo "upstream_pg_regress" || echo "converted_sql_ctest")",
   "isql_binary": "$(json_escape "$ISQL_BIN")",
+  "ctest_list_mode": "$(json_escape "$LIST_MODE")",
   "ctest_list_file": "$(json_escape "$LIST_FILE")",
   "listed_tests": ${listed_tests},
   "status": "$(json_escape "$run_status")",
@@ -714,6 +733,36 @@ resolve_pg_regress_bin() {
     return 0
   fi
 
+  local candidate_source_roots=()
+  local regress_input_source_root=""
+  if [[ -n "$UPSTREAM_INPUT_DIR" ]]; then
+    regress_input_source_root="$(cd "${UPSTREAM_INPUT_DIR}/../../../.." 2>/dev/null && pwd || true)"
+  fi
+  if [[ -n "$regress_input_source_root" ]]; then
+    candidate_source_roots+=("$regress_input_source_root")
+  fi
+  candidate_source_roots+=(
+    "${CLIWORK_ROOT}/postgresql"
+    "${PG_DIR}/repos/postgres"
+  )
+
+  local source_root
+  local pg_regress_candidate
+  for source_root in "${candidate_source_roots[@]}"; do
+    [[ -z "$source_root" ]] && continue
+    for pg_regress_candidate in \
+      "${source_root}/build_codex/src/test/regress/pg_regress" \
+      "${source_root}/build_codex2/src/test/regress/pg_regress" \
+      "${source_root}/build/src/test/regress/pg_regress" \
+      "${source_root}/build_relwithdebinfo/src/test/regress/pg_regress" \
+      "${source_root}/build_release/src/test/regress/pg_regress"; do
+      if [[ -x "$pg_regress_candidate" ]]; then
+        printf '%s' "$pg_regress_candidate"
+        return 0
+      fi
+    done
+  done
+
   local candidates=(
     /usr/lib/postgresql/18/lib/pgxs/src/test/regress/pg_regress
     /usr/lib/postgresql/17/lib/pgxs/src/test/regress/pg_regress
@@ -748,6 +797,36 @@ resolve_psql_bindir() {
     printf '%s' "${SCRATCHBIRD_PG_PSQL_BINDIR}"
     return 0
   fi
+
+  local candidate_source_roots=()
+  local regress_input_source_root=""
+  if [[ -n "$UPSTREAM_INPUT_DIR" ]]; then
+    regress_input_source_root="$(cd "${UPSTREAM_INPUT_DIR}/../../../.." 2>/dev/null && pwd || true)"
+  fi
+  if [[ -n "$regress_input_source_root" ]]; then
+    candidate_source_roots+=("$regress_input_source_root")
+  fi
+  candidate_source_roots+=(
+    "${CLIWORK_ROOT}/postgresql"
+    "${PG_DIR}/repos/postgres"
+  )
+
+  local source_root
+  local psql_candidate
+  for source_root in "${candidate_source_roots[@]}"; do
+    [[ -z "$source_root" ]] && continue
+    for psql_candidate in \
+      "${source_root}/build_codex/src/bin/psql" \
+      "${source_root}/build_codex2/src/bin/psql" \
+      "${source_root}/build/src/bin/psql" \
+      "${source_root}/build_relwithdebinfo/src/bin/psql" \
+      "${source_root}/build_release/src/bin/psql"; do
+      if [[ -x "${psql_candidate}/psql" ]]; then
+        printf '%s' "${psql_candidate}"
+        return 0
+      fi
+    done
+  done
 
   local from_path
   from_path="$(command -v psql 2>/dev/null || true)"

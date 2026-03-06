@@ -416,6 +416,12 @@ TEST_F(PostgreSQLParserTest, ArraySubscriptEmitsExtendedOpcode) {
     EXPECT_TRUE(hasExtendedOpcode(result.bytecode(), sblr::ExtendedOpcode::EXT_ARRAY_SUBSCRIPT));
 }
 
+TEST_F(PostgreSQLParserTest, SchemaQualifiedBuiltinCastParsesInExpression) {
+    expectSuccess("SELECT pg_catalog.array_upper('{1,2}'::pg_catalog.int2[], 1)");
+    expectSuccess("SELECT '1'::pg_catalog.int2");
+    expectSuccess("SELECT '1'::pg_catalog.int4");
+}
+
 // ============================================================================
 // SELECT Statement Tests
 // ============================================================================
@@ -1008,6 +1014,18 @@ TEST_F(PostgreSQLParserTest, DropTablespaceSurfaceMapsFlags) {
         static_cast<scratchbird::parser::v3::DropTablespaceStmt*>(result.statement());
     EXPECT_TRUE(stmt->if_exists);
     EXPECT_TRUE(stmt->force);
+}
+
+TEST_F(PostgreSQLParserTest, CreateTablespaceRejectsUnknownWithParameter) {
+    expectError(
+        "CREATE TABLESPACE regress_tblspace LOCATION '/tmp/ts' "
+        "WITH (some_nonexistent_parameter = true)");
+}
+
+TEST_F(PostgreSQLParserTest, CreateTablespaceAcceptsKnownWithParameter) {
+    expectSuccess(
+        "CREATE TABLESPACE regress_tblspace LOCATION '/tmp/ts' "
+        "WITH (random_page_cost = 3.0)");
 }
 
 TEST_F(PostgreSQLParserTest, AlterTableBasic) {

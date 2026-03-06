@@ -25,6 +25,7 @@
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/security/tls_config.h"
 
+#include <array>
 #include <unordered_map>
 #include <deque>
 #include <chrono>
@@ -412,6 +413,39 @@ private:
                                      std::string& clear_password_out) const;
     core::Status authenticateRemoteUser(network::Connection* conn,
                                         const std::string& clear_password);
+    core::Status authenticateRemoteUserFromStoredMd5(network::Connection* conn,
+                                                     const std::string& stored_md5);
+    core::Status authenticateRemoteUserFromMySqlProof(network::Connection* conn,
+                                                      const std::string& plugin_name,
+                                                      const std::string& auth_response);
+    core::Status authenticateMySqlClient(network::Connection* conn,
+                                         const std::string& plugin_name,
+                                         const std::string& auth_response,
+                                         bool allow_switch);
+    core::Status performManualRemoteMd5Auth(core::ErrorContext* ctx);
+    core::Status performManualRemoteMySqlProofAuth(core::ErrorContext* ctx);
+    bool buildMySqlWireAuthProofPayload(const std::string& plugin_name,
+                                        const std::string& auth_response,
+                                        std::vector<uint8_t>& payload_out,
+                                        std::string& error_out) const;
+
+    struct StoredPasswordHashes {
+        bool user_found = false;
+        bool user_active = false;
+        bool has_pg_md5 = false;
+        std::string pg_md5;
+        bool has_mysql_native = false;
+        std::array<uint8_t, 20> mysql_native_stage2{};
+        bool has_mysql_caching_sha2 = false;
+        std::array<uint8_t, 32> mysql_caching_sha2_stage2{};
+    };
+    bool loadStoredPasswordHashes(const std::string& username,
+                                  StoredPasswordHashes& hashes_out,
+                                  std::string& error_out);
+    bool validateMySqlNativeResponse(const std::string& auth_response,
+                                     const std::array<uint8_t, 20>& stored_stage2) const;
+    bool validateCachingSha2Response(const std::string& auth_response,
+                                     const std::array<uint8_t, 32>& stored_stage2) const;
 
 protected:
     // ========================================================================
@@ -470,7 +504,10 @@ private:
     uint8_t client_charset_ = mysql::Charset::UTF8MB4_GENERAL_CI;
     std::string auth_response_;
     std::string remote_password_;
+    std::string remote_md5_hash_;
+    std::vector<uint8_t> remote_mysql_auth_payload_;
     std::string engine_database_name_;
+    std::string pending_auth_switch_plugin_;
 
     // Server capabilities
     uint32_t server_capabilities_ = 0;

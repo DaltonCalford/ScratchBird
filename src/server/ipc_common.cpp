@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -40,6 +41,41 @@
 
 namespace scratchbird {
 namespace server {
+
+namespace {
+
+#ifndef _WIN32
+std::filesystem::path resolveUserRuntimeFallback(const std::string& leaf_dir) {
+    const char* home = std::getenv("HOME");
+    if (home != nullptr && home[0] != '\0') {
+        return std::filesystem::path(home) / ".scratchbird" / leaf_dir;
+    }
+    return std::filesystem::path();
+}
+
+bool ensureWritableDirectory(std::filesystem::path& candidate) {
+    std::error_code ec;
+    std::filesystem::create_directories(candidate, ec);
+    if (!ec && ::access(candidate.c_str(), W_OK) == 0) {
+        return true;
+    }
+
+    // Daemonized launches can run from "/" where relative build/* is not writable.
+    std::filesystem::path user_fallback = resolveUserRuntimeFallback(candidate.filename().string());
+    if (user_fallback.empty()) {
+        return false;
+    }
+    ec.clear();
+    std::filesystem::create_directories(user_fallback, ec);
+    if (!ec && ::access(user_fallback.c_str(), W_OK) == 0) {
+        candidate = std::move(user_fallback);
+        return true;
+    }
+    return false;
+}
+#endif
+
+} // namespace
 
 // Forward declarations for platform-specific factory functions
 #if defined(__linux__) || defined(__APPLE__) || defined(__unix__)
@@ -139,6 +175,14 @@ std::string getIPCPath(const std::string& database_name, IPCMethod method) {
                 if (!fallback_ec) {
                     base = fallback;
                 }
+                if (fallback_ec || ::access(base.c_str(), W_OK) != 0) {
+                    std::filesystem::path user_fallback = resolveUserRuntimeFallback("ipc");
+                    std::error_code user_ec;
+                    std::filesystem::create_directories(user_fallback, user_ec);
+                    if (!user_ec && ::access(user_fallback.c_str(), W_OK) == 0) {
+                        base = user_fallback;
+                    }
+                }
             }
 #else
             if (ec) {
@@ -174,6 +218,14 @@ std::string getIPCPath(const std::string& database_name, IPCMethod method) {
                 std::filesystem::create_directories(fallback, fallback_ec);
                 if (!fallback_ec) {
                     base = fallback;
+                }
+                if (fallback_ec || ::access(base.c_str(), W_OK) != 0) {
+                    std::filesystem::path user_fallback = resolveUserRuntimeFallback("ipc");
+                    std::error_code user_ec;
+                    std::filesystem::create_directories(user_fallback, user_ec);
+                    if (!user_ec && ::access(user_fallback.c_str(), W_OK) == 0) {
+                        base = user_fallback;
+                    }
                 }
             }
 #else
@@ -213,8 +265,7 @@ std::string getPIDFilePath(const std::string& database_name) {
 #else
     // Unix: keep PID files inside the build tree (no /tmp usage per project rules)
     std::filesystem::path base = std::filesystem::path("build") / "run";
-    std::error_code ec;
-    std::filesystem::create_directories(base, ec);
+    (void)ensureWritableDirectory(base);
     auto path = base / ("scratchbird-" + safe_name + ".pid");
     return path.string();
 #endif

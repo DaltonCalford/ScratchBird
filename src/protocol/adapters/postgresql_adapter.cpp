@@ -21,6 +21,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/parser/v3_compiler.h"
+#include "scratchbird/security/parser_auth_policy.h"
 #include "scratchbird/sblr/postgresql_query_compiler.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/client/connection.h"
@@ -197,60 +198,18 @@ std::string toUpperAscii(std::string value) {
     return value;
 }
 
-std::string escapeScramUsername(const std::string& username) {
-    std::string out;
-    out.reserve(username.size());
-    for (char ch : username) {
-        if (ch == ',') {
-            out.append("=2C");
-        } else if (ch == '=') {
-            out.append("=3D");
-        } else {
-            out.push_back(ch);
-        }
-    }
-    return out;
+bool isPostgresqlSystemDatabaseName(const std::string& database_name) {
+    const std::string normalized = toUpperAscii(extractEmulatedDatabaseName(database_name));
+    return normalized == "POSTGRES" ||
+           normalized == "TEMPLATE0" ||
+           normalized == "TEMPLATE1";
 }
 
 std::string normalizePostgresqlScramClientFirst(const std::string& client_first,
                                                 const std::string& username) {
-    // libpq may send an empty SCRAM username ("n=,") and rely on startup user.
-    // Normalize that form for the internal SCRAM provider.
-    if (username.empty()) {
-        return client_first;
-    }
-
-    const size_t first_comma = client_first.find(',');
-    if (first_comma == std::string::npos) {
-        return client_first;
-    }
-    const size_t second_comma = client_first.find(',', first_comma + 1);
-    if (second_comma == std::string::npos) {
-        return client_first;
-    }
-
-    const size_t bare_pos = second_comma + 1;
-    if (bare_pos + 2 >= client_first.size() ||
-        client_first.compare(bare_pos, 2, "n=") != 0) {
-        return client_first;
-    }
-
-    const size_t nonce_tag = client_first.find(",r=", bare_pos + 2);
-    if (nonce_tag == std::string::npos) {
-        return client_first;
-    }
-
-    const bool username_is_empty = (nonce_tag == bare_pos + 2);
-    if (username_is_empty) {
-        const std::string nonce = client_first.substr(nonce_tag + 3);
-        if (nonce.empty()) {
-            return client_first;
-        }
-
-        const std::string gs2_prefix = client_first.substr(0, bare_pos);
-        return gs2_prefix + "n=" + escapeScramUsername(username) + ",r=" + nonce;
-    }
-
+    // Preserve the exact client-first-message-bare sent by libpq/psql.
+    // Rewriting "n=," to embed startup username breaks the SCRAM proof.
+    static_cast<void>(username);
     return client_first;
 }
 
@@ -540,12 +499,18 @@ core::Status PostgresqlAdapter::connectRemoteClient(core::ErrorContext* ctx) {
 
     std::string selected_database;
     if (!resolveDatabaseSelection(database_name_, selected_database)) {
-        if (ctx) {
-            ctx->set(core::Status::INVALID_AUTHORIZATION,
-                     "Database switch denied by manager binding context",
-                     __FILE__, __LINE__, __func__);
+        if (config_.enforce_bound_database &&
+            !config_.default_database.empty() &&
+            isPostgresqlSystemDatabaseName(database_name_)) {
+            selected_database = config_.default_database;
+        } else {
+            if (ctx) {
+                ctx->set(core::Status::INVALID_AUTHORIZATION,
+                         "Database switch denied by manager binding context",
+                         __FILE__, __LINE__, __func__);
+            }
+            return core::Status::INVALID_AUTHORIZATION;
         }
-        return core::Status::INVALID_AUTHORIZATION;
     }
     database_name_ = selected_database;
     client_config_.database_name = selected_database;
@@ -584,6 +549,16 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         return status;
     }
 
+    core::ErrorContext catalog_ctx;
+    core::Status catalog_status = ensurePostgresSystemCatalog(&catalog_ctx);
+    if (catalog_status != core::Status::OK && pgWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[pg_wire] ensureRemoteClient catalog bootstrap status=%d err=%s\n",
+                     static_cast<int>(catalog_status),
+                     catalog_ctx.message.c_str());
+        std::fflush(stderr);
+    }
+
     // Set search_path to the selected emulated DB schema root.
     if (!search_path_set_) {
         std::string db_name = resolveEmulatedDatabaseForSession(client_parameters_, database_name_);
@@ -613,32 +588,68 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             std::string set_path = "SET search_path TO '" + escapeLiteral(target) + "'";
             return execute_sql(set_path);
         };
+        auto execute_set_with_pg_catalog = [&](const std::string& target) -> core::Status {
+            std::string set_path = "SET search_path TO pg_catalog, '" + escapeLiteral(target) + "'";
+            return execute_sql(set_path);
+        };
         auto execute_create_database = [&](const std::string& logical_db_name) -> core::Status {
             std::string ddl = "CREATE DATABASE IF NOT EXISTS \"" + logical_db_name + "\"";
-            return execute_sql(ddl);
+            client::ResultSet rs;
+            sblr::PostgreSQLQueryCompiler compiler(engineDatabase());
+            compiler.setDefaultSchema(schema_root);
+            auto compile_result = compiler.compile(ddl);
+            if (!compile_result.success()) {
+                if (ctx && ctx->message.empty()) {
+                    const auto& errors = compile_result.errors();
+                    const std::string message = errors.empty()
+                        ? "Failed to compile PostgreSQL emulation database bootstrap DDL"
+                        : errors.front();
+                    ctx->set(core::Status::INVALID_ARGUMENT,
+                             message.c_str(),
+                             __FILE__, __LINE__, __func__);
+                }
+                return core::Status::INVALID_ARGUMENT;
+            }
+            return client_->executeBytecode(compile_result.bytecode(),
+                                            ddl,
+                                            &rs,
+                                            ctx);
         };
         auto ensure_root_and_set = [&](const std::string& target) -> core::Status {
-            core::Status status_local = execute_set(target);
+            core::Status status_local = execute_set_with_pg_catalog(target);
+            if (status_local != core::Status::OK) {
+                // Compatibility fallback if parser/runtime rejects multi-entry form.
+                status_local = execute_set(target);
+            }
             if (status_local == core::Status::OK) {
                 return status_local;
             }
 
             core::Status create_status = execute_create_database(db_name);
-            if (create_status != core::Status::OK && catalog) {
+            if (catalog) {
                 core::ID schema_id;
                 core::ErrorContext create_ctx;
-                create_status = catalog->createSchemaPath(
+                core::Status schema_status = catalog->createSchemaPath(
                     target,
                     core::CatalogManager::SchemaType::REMOTE_EMULATED,
                     schema_id,
                     &create_ctx);
+                if (create_status == core::Status::OK &&
+                    schema_status != core::Status::OK &&
+                    schema_status != core::Status::FILE_EXISTS) {
+                    create_status = schema_status;
+                }
             }
 
             if (create_status != core::Status::OK &&
                 create_status != core::Status::FILE_EXISTS) {
                 return status_local;
             }
-            return execute_set(target);
+            core::Status retry_status = execute_set_with_pg_catalog(target);
+            if (retry_status != core::Status::OK) {
+                retry_status = execute_set(target);
+            }
+            return retry_status;
         };
 
         auto set_status = ensure_root_and_set(schema_root);
@@ -653,9 +664,12 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         }
         if (set_status != core::Status::OK) {
             const std::string fallback_schema = "users.public";
-            core::Status fallback_status = execute_set(fallback_schema);
+            core::Status fallback_status = execute_set_with_pg_catalog(fallback_schema);
+            if (fallback_status != core::Status::OK) {
+                fallback_status = execute_set(fallback_schema);
+            }
             if (fallback_status == core::Status::OK) {
-                server_parameters_["search_path"] = fallback_schema;
+                server_parameters_["search_path"] = "pg_catalog, " + fallback_schema;
                 search_path_set_ = true;
                 return core::Status::OK;
             }
@@ -674,7 +688,7 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             return set_status;
         }
 
-        server_parameters_["search_path"] = schema_root;
+        server_parameters_["search_path"] = "pg_catalog, " + schema_root;
         search_path_set_ = true;
     }
 
@@ -1233,14 +1247,18 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
 
     std::string selected_database;
     if (!resolveDatabaseSelection(database_name_, selected_database)) {
-        sendErrorResponse(conn, "FATAL", "28000",
-                          "Database switch denied by manager binding context");
-        return core::Status::INVALID_AUTHORIZATION;
+        if (config_.enforce_bound_database &&
+            !config_.default_database.empty() &&
+            isPostgresqlSystemDatabaseName(database_name_)) {
+            selected_database = config_.default_database;
+        } else {
+            sendErrorResponse(conn, "FATAL", "28000",
+                              "Database switch denied by manager binding context");
+            return core::Status::INVALID_AUTHORIZATION;
+        }
     }
     database_name_ = std::move(selected_database);
-    if (!database_parameter_supplied) {
-        client_parameters_["database"] = database_name_;
-    }
+    client_parameters_["database"] = database_name_;
     client_parameters_["scratchbird.bound_database"] = database_name_;
 
     // Request authentication
@@ -1251,24 +1269,13 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
     bool policy_auth_method_supported = true;
     auto resolvePostgresqlPolicyAuthMethod = [&]() -> AuthMethod {
         AuthMethod method = config_.auth_method;
-        if (method == AuthMethod::MD5) {
-            return AuthMethod::MD5;
+        if (!scratchbird::security::parserAuthMethodSupported("postgresql", method)) {
+            policy_auth_method_supported = false;
+            return method;
         }
         if (method == AuthMethod::SCRAM_SHA_512) {
             // PostgreSQL wire policy normalizes SCRAM-512 to SCRAM-256.
             return AuthMethod::SCRAM_SHA_256;
-        }
-        if (method == AuthMethod::SCRAM_SHA_256) {
-            return AuthMethod::SCRAM_SHA_256;
-        }
-        if (method == AuthMethod::PASSWORD) {
-            return AuthMethod::PASSWORD;
-        }
-        if (method != AuthMethod::PASSWORD &&
-            method != AuthMethod::MD5 &&
-            method != AuthMethod::SCRAM_SHA_256 &&
-            method != AuthMethod::SCRAM_SHA_512) {
-            policy_auth_method_supported = false;
         }
         return method;
     };
@@ -2456,34 +2463,80 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
     pg_schema_id_ = schema_info.schema_id;
 
     auto ensure_view = [&](const std::string& name, const std::string& definition) -> core::Status {
-        core::CatalogManager::ViewInfo view_info;
-        auto s = catalog->getView(schema_info.schema_id, name, view_info, ctx);
-        if (s == core::Status::OK) {
-            return core::Status::OK;
-        }
-        if (s != core::Status::INVALID_ARGUMENT && s != core::Status::NOT_FOUND) {
-            return s;
-        }
-        return catalog->createView(schema_info.schema_id, name, definition, false,
+        // Always replace stale bootstrap placeholders so emulation metadata
+        // reflects current virtual catalog surfaces.
+        return catalog->createView(schema_info.schema_id, name, definition, true,
                                    false, false, {}, core::ID{}, ctx);
     };
 
-    // Minimal pg_catalog placeholders
-    status = ensure_view("pg_database", "SELECT NULL AS datname, NULL AS oid, NULL AS encoding, NULL AS datcollate, NULL AS datctype, NULL AS datistemplate, NULL AS datallowconn WHERE 1 = 0");
+    // Compatibility bridge views for PostgreSQL system-catalog aliases.
+    // Queries compiled against the emulated root schema are redirected here,
+    // while the backing data remains sourced from virtual pg_catalog handlers.
+    status = ensure_view("pg_database",
+                         "SELECT d.datname AS datname, d.oid AS oid, d.encoding AS encoding, "
+                         "NULL::text AS datcollate, NULL::text AS datctype, "
+                         "NULL::boolean AS datistemplate, NULL::boolean AS datallowconn "
+                         "FROM pg_catalog.pg_database d");
     if (status != core::Status::OK) return status;
-    status = ensure_view("pg_namespace", "SELECT NULL AS nspname, NULL AS oid, NULL AS nspowner WHERE 1 = 0");
+    status = ensure_view("pg_namespace",
+                         "SELECT n.nspname AS nspname, n.oid AS oid, "
+                         "n.nspowner AS nspowner, n.nspacl AS nspacl "
+                         "FROM pg_catalog.pg_namespace n");
     if (status != core::Status::OK) return status;
-    status = ensure_view("pg_class", "SELECT NULL AS relname, NULL AS oid, NULL AS relnamespace, NULL AS relkind, NULL AS relowner WHERE 1 = 0");
+    status = ensure_view("pg_class",
+                         "SELECT c.relname AS relname, c.oid AS oid, "
+                         "c.relnamespace AS relnamespace, c.relkind AS relkind, "
+                         "c.relowner AS relowner, c.reltablespace AS reltablespace, "
+                         "c.relfilenode AS relfilenode, c.reltoastrelid AS reltoastrelid, "
+                         "c.relpersistence AS relpersistence, c.relhasindex AS relhasindex, "
+                         "c.relpages AS relpages, c.reltuples AS reltuples, "
+                         "c.relnatts AS relnatts "
+                         "FROM pg_catalog.pg_class c");
     if (status != core::Status::OK) return status;
-    status = ensure_view("pg_attribute", "SELECT NULL AS attname, NULL AS attrelid, NULL AS attnum, NULL AS atttypid, NULL AS attnotnull WHERE 1 = 0");
+    status = ensure_view("pg_attribute",
+                         "SELECT a.attname AS attname, a.attrelid AS attrelid, "
+                         "a.attnum AS attnum, a.atttypid AS atttypid, "
+                         "a.attnotnull AS attnotnull, a.attisdropped AS attisdropped, "
+                         "a.atttypmod AS atttypmod "
+                         "FROM pg_catalog.pg_attribute a");
     if (status != core::Status::OK) return status;
-    status = ensure_view("pg_type", "SELECT NULL AS typname, NULL AS oid, NULL AS typnamespace, NULL AS typlen, NULL AS typtype WHERE 1 = 0");
+    status = ensure_view("pg_type",
+                         "SELECT t.typname AS typname, t.oid AS oid, "
+                         "t.typnamespace AS typnamespace, t.typlen AS typlen, "
+                         "t.typtype AS typtype FROM pg_catalog.pg_type t");
     if (status != core::Status::OK) return status;
-    status = ensure_view("pg_roles", "SELECT NULL AS rolname, NULL AS rolsuper, NULL AS rolcreaterole, NULL AS rolcreatedb, NULL AS rolinherit, NULL AS rolcanlogin, NULL AS rolreplication WHERE 1 = 0");
+    status = ensure_view("pg_am",
+                         "SELECT a.oid AS oid, a.amname AS amname, "
+                         "a.amhandler AS amhandler, a.amtype AS amtype "
+                         "FROM pg_catalog.pg_am a");
     if (status != core::Status::OK) return status;
-    status = ensure_view("pg_proc", "SELECT NULL AS proname, NULL AS pronamespace, NULL AS proowner, NULL AS prolang, NULL AS prorettype WHERE 1 = 0");
+    status = ensure_view("pg_roles",
+                         "SELECT r.rolname AS rolname, r.rolsuper AS rolsuper, "
+                         "r.rolcreaterole AS rolcreaterole, r.rolcreatedb AS rolcreatedb, "
+                         "NULL::boolean AS rolinherit, r.rolcanlogin AS rolcanlogin, "
+                         "r.rolreplication AS rolreplication "
+                         "FROM pg_catalog.pg_roles r");
     if (status != core::Status::OK) return status;
-    status = ensure_view("pg_index", "SELECT NULL AS indexrelid, NULL AS indrelid, NULL AS indkey WHERE 1 = 0");
+    status = ensure_view("pg_authid",
+                         "SELECT a.rolname AS rolname, a.rolsuper AS rolsuper, "
+                         "a.rolcreaterole AS rolcreaterole, a.rolcreatedb AS rolcreatedb, "
+                         "NULL::boolean AS rolinherit, a.rolcanlogin AS rolcanlogin, "
+                         "a.rolreplication AS rolreplication "
+                         "FROM pg_catalog.pg_authid a");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_proc",
+                         "SELECT p.proname AS proname, p.pronamespace AS pronamespace, "
+                         "p.proowner AS proowner, NULL::bigint AS prolang, "
+                         "NULL::bigint AS prorettype FROM pg_catalog.pg_proc p");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_index",
+                         "SELECT i.indexrelid AS indexrelid, i.indrelid AS indrelid, "
+                         "i.indkey AS indkey FROM pg_catalog.pg_index i");
+    if (status != core::Status::OK) return status;
+    status = ensure_view("pg_tablespace",
+                         "SELECT t.oid AS oid, t.spcname AS spcname, "
+                         "t.spcowner AS spcowner, t.spcacl AS spcacl, "
+                         "t.spcoptions AS spcoptions FROM pg_catalog.pg_tablespace t");
     if (status != core::Status::OK) return status;
 
     return core::Status::OK;
@@ -2496,20 +2549,30 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
     sblr::PostgreSQLQueryCompiler compiler(nullptr);
     std::string selected_database;
     if (!resolveDatabaseSelection(database_name_, selected_database)) {
-        error_out = "Database switch denied by manager binding context";
-        return core::Status::INVALID_AUTHORIZATION;
+        if (config_.enforce_bound_database &&
+            !config_.default_database.empty() &&
+            isPostgresqlSystemDatabaseName(database_name_)) {
+            selected_database = config_.default_database;
+        } else {
+            error_out = "Database switch denied by manager binding context";
+            return core::Status::INVALID_AUTHORIZATION;
+        }
     }
     std::string db_name = resolveEmulatedDatabaseForSession(client_parameters_, selected_database);
     if (db_name.empty()) {
         db_name = selected_database;
     }
     // Emulated PostgreSQL sessions are rooted at the selected logical database schema.
-    compiler.setDefaultSchema(db_name);
+    std::string schema_root = resolvePostgresqlSchemaPath(
+        engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
+        db_name);
+    compiler.setDefaultSchema(schema_root.empty() ? db_name : schema_root);
     if (pgWireDebugEnabled()) {
         std::fprintf(stderr,
-                     "[pg_wire] compileQuery selected_db=%s emulated_db=%s\n",
+                     "[pg_wire] compileQuery selected_db=%s emulated_db=%s schema_root=%s\n",
                      selected_database.c_str(),
-                     db_name.c_str());
+                     db_name.c_str(),
+                     schema_root.c_str());
         std::fflush(stderr);
     }
     auto result = compiler.compile(sql);

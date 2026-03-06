@@ -280,12 +280,120 @@ namespace scratchbird
             static std::string firstPathComponent(const std::string& name)
             {
                 const std::string trimmed = trimAsciiCopy(name);
-                size_t dot = trimmed.find('.');
-                if (dot == std::string::npos)
+                if (trimmed.empty())
                 {
                     return std::string();
                 }
-                return trimAsciiCopy(trimmed.substr(0, dot));
+                std::vector<std::string> components;
+                size_t cursor = 0;
+                while (cursor <= trimmed.size())
+                {
+                    size_t dot = trimmed.find('.', cursor);
+                    std::string token = (dot == std::string::npos)
+                        ? trimmed.substr(cursor)
+                        : trimmed.substr(cursor, dot - cursor);
+                    token = trimAsciiCopy(token);
+                    if (!token.empty())
+                    {
+                        components.push_back(std::move(token));
+                    }
+                    if (dot == std::string::npos)
+                    {
+                        break;
+                    }
+                    cursor = dot + 1;
+                }
+                if (components.empty())
+                {
+                    return std::string();
+                }
+
+                size_t idx = 0;
+                if (components.size() > 1 &&
+                    core::IdentifierUtils::namesMatch(
+                        components[0], false, "main", false))
+                {
+                    idx = 1;
+                }
+                return components[idx];
+            }
+
+            static std::string schemaPrefixFromQualifiedName(
+                const std::string& qualified_name)
+            {
+                const std::string trimmed = trimAsciiCopy(qualified_name);
+                size_t dot = trimmed.find('.');
+                if (dot == std::string::npos || dot == 0)
+                {
+                    return std::string();
+                }
+                return firstPathComponent(trimmed.substr(0, dot));
+            }
+
+            static std::string firstSchemaQualifierFromSignature(
+                const std::string& signature_text)
+            {
+                const std::string trimmed = trimAsciiCopy(signature_text);
+                size_t lparen = trimmed.find('(');
+                size_t rparen = trimmed.find_last_of(')');
+                if (lparen == std::string::npos ||
+                    rparen == std::string::npos ||
+                    rparen <= lparen)
+                {
+                    return std::string();
+                }
+
+                std::string inner = trimmed.substr(lparen + 1, rparen - lparen - 1);
+                size_t cursor = 0;
+                while (cursor < inner.size())
+                {
+                    size_t comma = inner.find(',', cursor);
+                    std::string arg = (comma == std::string::npos)
+                        ? inner.substr(cursor)
+                        : inner.substr(cursor, comma - cursor);
+                    arg = trimAsciiCopy(arg);
+
+                    size_t token_cursor = 0;
+                    while (token_cursor < arg.size())
+                    {
+                        while (token_cursor < arg.size() &&
+                               std::isspace(static_cast<unsigned char>(arg[token_cursor])) != 0)
+                        {
+                            ++token_cursor;
+                        }
+                        if (token_cursor >= arg.size())
+                        {
+                            break;
+                        }
+
+                        size_t token_end = token_cursor;
+                        while (token_end < arg.size() &&
+                               std::isspace(static_cast<unsigned char>(arg[token_end])) == 0)
+                        {
+                            ++token_end;
+                        }
+                        std::string token =
+                            trimAsciiCopy(arg.substr(token_cursor, token_end - token_cursor));
+                        if (!token.empty())
+                        {
+                            std::string schema_name =
+                                schemaPrefixFromQualifiedName(token);
+                            if (!schema_name.empty())
+                            {
+                                return schema_name;
+                            }
+                        }
+                        token_cursor = token_end;
+                    }
+
+                    if (comma == std::string::npos)
+                    {
+                        break;
+                    }
+                    cursor = comma + 1;
+                }
+
+                return std::string();
             }
 
             static std::string lastPathComponent(const std::string& name)
@@ -311,7 +419,9 @@ namespace scratchbird
                 }
 
                 const std::string schema_name = firstPathComponent(object_name);
-                if (!schema_name.empty() && textMentionsMissingSchema(error_hint))
+                if (object_type != "schema" &&
+                    !schema_name.empty() &&
+                    textMentionsMissingSchema(error_hint))
                 {
                     conn_ctx->pushNotice("schema \"" + schema_name + "\" does not exist, skipping");
                     return;
@@ -1212,6 +1322,22 @@ namespace scratchbird
             bool isTableScopedType(core::CatalogManager::ObjectType type);
             bool resolveEmulatedRootPath(const core::ConnectionContext* conn_ctx,
                                          std::string& root_path_out);
+            std::string buildEmulatedTablespaceSandboxPath(const core::Database* db,
+                                                           const std::string& root_path,
+                                                           const std::string& tablespace_name);
+            bool isEmulatedVirtualTablespaceToken(const std::string& location);
+            bool tablespaceUsesVirtualMetadata(const core::TablespaceInfo& ts_info);
+            std::string buildEmulatedVirtualTablespaceNamespacePath(
+                const std::string& root_path);
+            std::string buildEmulatedVirtualTablespaceBindingNamespacePath(
+                const std::string& root_path);
+            std::string emulatedVirtualTablespaceKey(const std::string& root_path,
+                                                     const std::string& tablespace_name);
+            std::string emulatedVirtualTablespaceBindingKey(
+                const std::string& root_path,
+                const std::string& object_path);
+            bool tablespaceBelongsToEmulatedRoot(const core::TablespaceInfo& ts_info,
+                                                 const std::string& root_path);
             bool isExpressionAt(const uint8_t* bytecode, size_t bytecode_size, size_t pc);
             bool decryptValueForColumn(core::Database* db,
                                        const core::CatalogManager::ColumnInfo& column,
@@ -4396,6 +4522,98 @@ namespace scratchbird
 
             ConnectionContextGuard ctx_guard(conn_ctx_);
             core::ConnectionContext* conn_ctx = core::ConnectionContext::getCurrent();
+
+            using EmulatedVirtualTablespaceTree = decltype(emulated_virtual_tablespace_tree_);
+            using EmulatedVirtualTablespaceBindings =
+                decltype(emulated_virtual_tablespace_bindings_);
+            struct EmulatedVirtualTablespaceSessionState
+            {
+                EmulatedVirtualTablespaceTree tree;
+                EmulatedVirtualTablespaceBindings bindings;
+            };
+
+            auto emulatedSessionStateKey = [&](core::ConnectionContext* active_ctx) -> std::string {
+                if (active_ctx)
+                {
+                    const core::ID session_id = active_ctx->effectiveSessionId();
+                    if (!isZeroUuid(session_id))
+                    {
+                        return std::string("sid:") + session_id.toString();
+                    }
+                }
+
+                std::ostringstream oss;
+                oss << "ctxptr:" << static_cast<const void*>(active_ctx);
+                if (db_ && !db_->path().empty())
+                {
+                    oss << "|db:" << db_->path();
+                }
+                return oss.str();
+            };
+
+            class EmulatedTablespaceStateGuard
+            {
+            public:
+                EmulatedTablespaceStateGuard(Executor* executor, std::string session_key)
+                    : executor_(executor), session_key_(std::move(session_key))
+                {
+                    if (!executor_)
+                    {
+                        return;
+                    }
+                    executor_->emulated_virtual_tablespace_tree_.clear();
+                    executor_->emulated_virtual_tablespace_bindings_.clear();
+                    if (session_key_.empty())
+                    {
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(stateMutex());
+                    auto it = stateStore().find(session_key_);
+                    if (it == stateStore().end())
+                    {
+                        return;
+                    }
+                    executor_->emulated_virtual_tablespace_tree_ = it->second.tree;
+                    executor_->emulated_virtual_tablespace_bindings_ = it->second.bindings;
+                }
+
+                ~EmulatedTablespaceStateGuard()
+                {
+                    if (!executor_ || session_key_.empty())
+                    {
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(stateMutex());
+                    if (executor_->emulated_virtual_tablespace_tree_.empty() &&
+                        executor_->emulated_virtual_tablespace_bindings_.empty())
+                    {
+                        stateStore().erase(session_key_);
+                        return;
+                    }
+                    auto& state = stateStore()[session_key_];
+                    state.tree = executor_->emulated_virtual_tablespace_tree_;
+                    state.bindings = executor_->emulated_virtual_tablespace_bindings_;
+                }
+
+            private:
+                static std::unordered_map<std::string, EmulatedVirtualTablespaceSessionState>& stateStore()
+                {
+                    static std::unordered_map<std::string, EmulatedVirtualTablespaceSessionState> store;
+                    return store;
+                }
+
+                static std::mutex& stateMutex()
+                {
+                    static std::mutex mutex;
+                    return mutex;
+                }
+
+                Executor* executor_;
+                std::string session_key_;
+            };
+
+            EmulatedTablespaceStateGuard emulated_tablespace_state_guard(
+                this, emulatedSessionStateKey(conn_ctx));
 
             try
             {
@@ -7737,6 +7955,9 @@ namespace scratchbird
             // Read tablespace name (Phase 2 Task 2.3)
             std::string tablespace_name = readString();
             uint16_t tablespace_id = 0; // Default tablespace
+            bool use_virtual_tablespace_binding = false;
+            core::TablespaceInfo virtual_tablespace_info;
+            std::string virtual_tablespace_root_path;
 
             bool has_partitioning = false;
             std::string partition_strategy;
@@ -7858,7 +8079,24 @@ namespace scratchbird
                     {
                         error("Tablespace not found: " + tablespace_name);
                     }
-                    tablespace_id = ts_info.tablespace_id;
+                    std::string emulated_root_path;
+                    if (resolveEmulatedRootPath(conn_ctx_, emulated_root_path) &&
+                        !tablespaceBelongsToEmulatedRoot(ts_info, emulated_root_path))
+                    {
+                        error("Tablespace not found: " + tablespace_name);
+                    }
+                    if (!emulated_root_path.empty() &&
+                        tablespaceUsesVirtualMetadata(ts_info))
+                    {
+                        tablespace_id = 0;
+                        use_virtual_tablespace_binding = true;
+                        virtual_tablespace_info = ts_info;
+                        virtual_tablespace_root_path = emulated_root_path;
+                    }
+                    else
+                    {
+                        tablespace_id = ts_info.tablespace_id;
+                    }
                 }
             }
 
@@ -8521,6 +8759,37 @@ namespace scratchbird
 
             recordObjectDefinition(core::CatalogManager::ObjectType::TABLE, table_id);
 
+            if (use_virtual_tablespace_binding &&
+                !virtual_tablespace_root_path.empty())
+            {
+                EmulatedVirtualTablespaceBinding binding;
+                binding.root_path = normalizeSchemaPath(virtual_tablespace_root_path);
+                binding.binding_namespace_path =
+                    buildEmulatedVirtualTablespaceBindingNamespacePath(
+                        virtual_tablespace_root_path);
+                if (!schema_info.schema_name.empty())
+                {
+                    binding.object_path = normalizeSchemaPath(
+                        schema_info.schema_name + "." + resolved_table_name);
+                }
+                else
+                {
+                    binding.object_path = normalizeSchemaPath(table_name);
+                }
+                binding.object_uuid = table_id;
+                binding.object_type = static_cast<uint8_t>(
+                    core::CatalogManager::ObjectType::TABLE);
+                binding.tablespace_name = virtual_tablespace_info.tablespace_name;
+                binding.tablespace_uuid = virtual_tablespace_info.tablespace_uuid;
+                binding.last_modified_time = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count());
+                emulated_virtual_tablespace_bindings_[emulatedVirtualTablespaceBindingKey(
+                    virtual_tablespace_root_path, binding.object_path)] =
+                    std::move(binding);
+            }
+
             if (temp_type == 0)
             {
                 core::CatalogManager::TableInfo created_info;
@@ -8571,6 +8840,9 @@ namespace scratchbird
             // Read tablespace name (Phase 2 Task 2.3)
             std::string tablespace_name = readString();
             uint16_t tablespace_id = 0;
+            bool use_virtual_tablespace_binding = false;
+            core::TablespaceInfo virtual_tablespace_info;
+            std::string virtual_tablespace_root_path;
 
             if (!tablespace_name.empty())
             {
@@ -8600,7 +8872,24 @@ namespace scratchbird
                     {
                         error("Tablespace not found: " + tablespace_name);
                     }
-                    tablespace_id = ts_info.tablespace_id;
+                    std::string emulated_root_path;
+                    if (resolveEmulatedRootPath(conn_ctx_, emulated_root_path) &&
+                        !tablespaceBelongsToEmulatedRoot(ts_info, emulated_root_path))
+                    {
+                        error("Tablespace not found: " + tablespace_name);
+                    }
+                    if (!emulated_root_path.empty() &&
+                        tablespaceUsesVirtualMetadata(ts_info))
+                    {
+                        tablespace_id = 0;
+                        use_virtual_tablespace_binding = true;
+                        virtual_tablespace_info = ts_info;
+                        virtual_tablespace_root_path = emulated_root_path;
+                    }
+                    else
+                    {
+                        tablespace_id = ts_info.tablespace_id;
+                    }
                 }
             }
 
@@ -8718,6 +9007,29 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 error("Failed to create index");
+            }
+
+            if (use_virtual_tablespace_binding &&
+                !virtual_tablespace_root_path.empty())
+            {
+                EmulatedVirtualTablespaceBinding binding;
+                binding.root_path = normalizeSchemaPath(virtual_tablespace_root_path);
+                binding.binding_namespace_path =
+                    buildEmulatedVirtualTablespaceBindingNamespacePath(
+                        virtual_tablespace_root_path);
+                binding.object_path = normalizeSchemaPath(table_name + "." + index_name);
+                binding.object_uuid = index_id;
+                binding.object_type = static_cast<uint8_t>(
+                    core::CatalogManager::ObjectType::INDEX);
+                binding.tablespace_name = virtual_tablespace_info.tablespace_name;
+                binding.tablespace_uuid = virtual_tablespace_info.tablespace_uuid;
+                binding.last_modified_time = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count());
+                emulated_virtual_tablespace_bindings_[emulatedVirtualTablespaceBindingKey(
+                    virtual_tablespace_root_path, binding.object_path)] =
+                    std::move(binding);
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);
@@ -10604,6 +10916,17 @@ namespace scratchbird
             // Read prealloc_pages (uint32)
             uint32_t prealloc_pages = readInt32();
 
+            // Emulated engine sessions must not honor client-controlled filesystem paths.
+            // Use a metadata-only token rooted under the emulated schema tree.
+            std::string emulated_root_path;
+            const bool emulated_session =
+                resolveEmulatedRootPath(conn_ctx_, emulated_root_path);
+            if (emulated_session)
+            {
+                location = buildEmulatedTablespaceSandboxPath(db_, emulated_root_path,
+                                                             tablespace_name);
+            }
+
             // Create tablespace via CatalogManager
             core::ErrorContext err_ctx;
             uint16_t tablespace_id;
@@ -10626,6 +10949,25 @@ namespace scratchbird
             {
                 recordObjectDefinition(core::CatalogManager::ObjectType::TABLESPACE,
                                        ts_info.tablespace_uuid);
+
+                if (emulated_session)
+                {
+                    const std::string key =
+                        emulatedVirtualTablespaceKey(emulated_root_path, tablespace_name);
+                    EmulatedVirtualTablespaceMetadata metadata;
+                    metadata.tablespace_uuid = ts_info.tablespace_uuid;
+                    metadata.root_path = normalizeSchemaPath(emulated_root_path);
+                    metadata.namespace_path =
+                        buildEmulatedVirtualTablespaceNamespacePath(emulated_root_path);
+                    metadata.binding_namespace_path =
+                        buildEmulatedVirtualTablespaceBindingNamespacePath(emulated_root_path);
+                    metadata.tablespace_name = tablespace_name;
+                    metadata.location_token = location;
+                    metadata.flags = 0;
+                    metadata.created_time = ts_info.created_time;
+                    metadata.last_modified_time = ts_info.last_modified_time;
+                    emulated_virtual_tablespace_tree_[key] = std::move(metadata);
+                }
             }
         }
 
@@ -10633,9 +10975,26 @@ namespace scratchbird
         {
             // Read tablespace name
             std::string tablespace_name = readString();
+            const std::string initial_tablespace_name = tablespace_name;
 
             // Read number of alterations
             uint32_t alteration_count = readInt32();
+
+            std::string emulated_root_path;
+            if (resolveEmulatedRootPath(conn_ctx_, emulated_root_path))
+            {
+                core::TablespaceInfo scoped_info;
+                core::ErrorContext scoped_ctx;
+                auto scoped_status =
+                    db_->catalog_manager()->getTablespaceByName(tablespace_name,
+                                                                scoped_info,
+                                                                &scoped_ctx);
+                if (scoped_status != core::Status::OK ||
+                    !tablespaceBelongsToEmulatedRoot(scoped_info, emulated_root_path))
+                {
+                    error("Tablespace not found: " + tablespace_name);
+                }
+            }
 
             // Process each alteration
             for (uint32_t i = 0; i < alteration_count; i++)
@@ -10732,6 +11091,60 @@ namespace scratchbird
             {
                 recordObjectDefinition(core::CatalogManager::ObjectType::TABLESPACE,
                                        ts_info.tablespace_uuid);
+
+                if (!emulated_root_path.empty())
+                {
+                    const std::string old_key = emulatedVirtualTablespaceKey(
+                        emulated_root_path, initial_tablespace_name);
+                    const std::string new_key = emulatedVirtualTablespaceKey(
+                        emulated_root_path, tablespace_name);
+                    if (old_key != new_key)
+                    {
+                        emulated_virtual_tablespace_tree_.erase(old_key);
+                    }
+
+                    EmulatedVirtualTablespaceMetadata metadata;
+                    metadata.tablespace_uuid = ts_info.tablespace_uuid;
+                    metadata.root_path = normalizeSchemaPath(emulated_root_path);
+                    metadata.namespace_path =
+                        buildEmulatedVirtualTablespaceNamespacePath(emulated_root_path);
+                    metadata.binding_namespace_path =
+                        buildEmulatedVirtualTablespaceBindingNamespacePath(emulated_root_path);
+                    metadata.tablespace_name = tablespace_name;
+                    metadata.location_token = ts_info.file_paths.empty()
+                        ? std::string()
+                        : ts_info.file_paths.front();
+                    metadata.flags = 0;
+                    metadata.created_time = ts_info.created_time;
+                    metadata.last_modified_time = ts_info.last_modified_time;
+                    emulated_virtual_tablespace_tree_[new_key] = std::move(metadata);
+
+                    if (old_key != new_key)
+                    {
+                        const std::string old_name_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(initial_tablespace_name);
+                        const std::string root_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(
+                                normalizeSchemaPath(emulated_root_path));
+                        for (auto& [_, binding] : emulated_virtual_tablespace_bindings_)
+                        {
+                            const std::string binding_root_upper =
+                                scratchbird::core::IdentifierUtils::toUpper(binding.root_path);
+                            const std::string binding_name_upper =
+                                scratchbird::core::IdentifierUtils::toUpper(binding.tablespace_name);
+                            const bool uuid_match =
+                                !isZeroUuid(binding.tablespace_uuid) &&
+                                binding.tablespace_uuid == ts_info.tablespace_uuid;
+                            if (binding_root_upper == root_upper &&
+                                (binding_name_upper == old_name_upper || uuid_match))
+                            {
+                                binding.tablespace_name = tablespace_name;
+                                binding.tablespace_uuid = ts_info.tablespace_uuid;
+                                binding.last_modified_time = ts_info.last_modified_time;
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -10805,6 +11218,27 @@ namespace scratchbird
 
             deleteObjectDefinition(core::CatalogManager::ObjectType::TABLE,
                                    table_info.table_id);
+            const std::string table_path_upper =
+                scratchbird::core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(table_name));
+            for (auto it = emulated_virtual_tablespace_bindings_.begin();
+                 it != emulated_virtual_tablespace_bindings_.end();)
+            {
+                const bool id_match =
+                    !isZeroUuid(it->second.object_uuid) &&
+                    it->second.object_uuid == table_info.table_id;
+                const bool path_match =
+                    scratchbird::core::IdentifierUtils::toUpper(
+                        normalizeSchemaPath(it->second.object_path)) == table_path_upper;
+                if (id_match || path_match)
+                {
+                    it = emulated_virtual_tablespace_bindings_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
         }
 
         void Executor::executeDropIndex()
@@ -10851,6 +11285,27 @@ namespace scratchbird
             }
 
             deleteObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);
+            const std::string index_path_upper =
+                scratchbird::core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(index_name));
+            for (auto it = emulated_virtual_tablespace_bindings_.begin();
+                 it != emulated_virtual_tablespace_bindings_.end();)
+            {
+                const bool id_match =
+                    !isZeroUuid(it->second.object_uuid) &&
+                    it->second.object_uuid == index_id;
+                const bool path_match =
+                    scratchbird::core::IdentifierUtils::toUpper(
+                        normalizeSchemaPath(it->second.object_path)) == index_path_upper;
+                if (id_match || path_match)
+                {
+                    it = emulated_virtual_tablespace_bindings_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
         }
 
         void Executor::executeAlterIndex()
@@ -12684,6 +13139,10 @@ namespace scratchbird
                 }
                 error(err_msg);
             }
+            if (path.type == core::PathType::UNQUALIFIED)
+            {
+                path.type = core::PathType::ABSOLUTE;
+            }
 
             core::CatalogManager::ResolveOptions opts;
             opts.allow_search_path = false;
@@ -12692,16 +13151,86 @@ namespace scratchbird
             status = db_->catalog_manager()->resolveObjectPath(
                 path, core::CatalogManager::ObjectType::SCHEMA, opts,
                 schema_id, resolved_type, &ctx);
+            if (status == core::Status::NOT_FOUND)
+            {
+                auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                if (catalog != nullptr)
+                {
+                    std::vector<std::string> fallback_candidates;
+                    auto add_candidate = [&](const std::string& candidate) {
+                        const std::string normalized = normalizeSchemaPath(candidate);
+                        if (normalized.empty())
+                        {
+                            return;
+                        }
+                        const std::string upper = toUpperAsciiCopy(normalized);
+                        for (const auto& existing : fallback_candidates)
+                        {
+                            if (toUpperAsciiCopy(existing) == upper)
+                            {
+                                return;
+                            }
+                        }
+                        fallback_candidates.push_back(normalized);
+                    };
+
+                    const std::string normalized_input = normalizeSchemaPath(schema_path);
+                    add_candidate(normalized_input);
+
+                    auto parts = splitSchemaComponents(normalized_input);
+                    if (!parts.empty())
+                    {
+                        if (parts.size() > 1 &&
+                            core::IdentifierUtils::namesMatch(
+                                parts[0], false, "main", false))
+                        {
+                            add_candidate(joinSchemaComponents(parts, 1));
+                        }
+                        else
+                        {
+                            add_candidate("main." + normalized_input);
+                        }
+                    }
+
+                    std::string absolute_path;
+                    core::ErrorContext abs_ctx;
+                    if (buildAbsoluteSchemaPath(catalog, conn_ctx_, path, absolute_path, &abs_ctx) ==
+                        core::Status::OK)
+                    {
+                        add_candidate(absolute_path);
+                    }
+
+                    for (const auto& candidate : fallback_candidates)
+                    {
+                        core::CatalogManager::SchemaInfo schema_info;
+                        core::ErrorContext lookup_ctx;
+                        auto lookup_status =
+                            catalog->getSchema(candidate, schema_info, &lookup_ctx);
+                        if (lookup_status == core::Status::OK)
+                        {
+                            schema_id = schema_info.schema_id;
+                            status = core::Status::OK;
+                            break;
+                        }
+                    }
+                }
+            }
             if (status != core::Status::OK)
             {
                 if (status == core::Status::NOT_FOUND && if_exists)
                 {
-                    pushPostgreSqlIfExistsNotice(conn_ctx_,
-                                                 postgresql_dialect,
-                                                 "schema",
-                                                 schema_path,
-                                                 ctx.message);
+                    if (postgresql_dialect && conn_ctx_)
+                    {
+                        conn_ctx_->pushNotice(
+                            "schema \"" + lastPathComponent(schema_path) +
+                            "\" does not exist, skipping");
+                    }
                     return;
+                }
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    error("schema \"" + lastPathComponent(schema_path) +
+                          "\" does not exist");
                 }
                 std::string err_msg = "Schema not found";
                 if (!ctx.message.empty())
@@ -12714,6 +13243,21 @@ namespace scratchbird
             status = db_->catalog_manager()->dropSchema(schema_id, cascade, &ctx);
             if (status != core::Status::OK)
             {
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    const std::string drop_msg_lower = toLowerAsciiCopy(ctx.message);
+                    if (drop_msg_lower.find("schema record not found on disk") !=
+                        std::string::npos)
+                    {
+                        if (if_exists)
+                        {
+                            // PostgreSQL IF EXISTS should be tolerant here.
+                            return;
+                        }
+                        error("schema \"" + lastPathComponent(schema_path) +
+                              "\" does not exist");
+                    }
+                }
                 std::string err_msg = "DROP SCHEMA failed";
                 if (!ctx.message.empty())
                 {
@@ -14303,6 +14847,18 @@ namespace scratchbird
                                                  ctx.message);
                     return;
                 }
+                if (postgresql_dialect)
+                {
+                    if (textMentionsMissingSchema(ctx.message))
+                    {
+                        const std::string schema_name = firstPathComponent(domain_path);
+                        if (!schema_name.empty())
+                        {
+                            error("schema \"" + schema_name + "\" does not exist");
+                        }
+                    }
+                    error("type \"" + lastPathComponent(domain_path) + "\" does not exist");
+                }
                 std::string err_msg = "Schema not found for domain";
                 if (!ctx.message.empty())
                 {
@@ -14329,6 +14885,10 @@ namespace scratchbird
                                                  resolved_domain_name,
                                                  ctx.message);
                     return;
+                }
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    error("type \"" + resolved_domain_name + "\" does not exist");
                 }
                 std::string err_msg = "Domain not found";
                 if (!ctx.message.empty())
@@ -14357,6 +14917,10 @@ namespace scratchbird
                                                  resolved_domain_name,
                                                  ctx.message);
                     return;
+                }
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    error("type \"" + resolved_domain_name + "\" does not exist");
                 }
                 std::string err_msg = "DROP DOMAIN failed";
                 if (!ctx.message.empty())
@@ -14421,6 +14985,10 @@ namespace scratchbird
                         push_database_notice(path_tail(db_path));
                         return;
                     }
+                    if (postgresql_dialect)
+                    {
+                        error("database \"" + path_tail(db_path) + "\" does not exist");
+                    }
                     std::string err_msg = "Invalid emulated database alias";
                     if (!alias_ctx.message.empty())
                     {
@@ -14448,6 +15016,10 @@ namespace scratchbird
                     push_database_notice(path_tail(db_path));
                     return;
                 }
+                if (postgresql_dialect)
+                {
+                    error("database \"" + path_tail(db_path) + "\" does not exist");
+                }
                 std::string err_msg = "Invalid emulated database path";
                 if (!ctx.message.empty())
                 {
@@ -14464,6 +15036,12 @@ namespace scratchbird
                 {
                     push_database_notice(db_name.empty() ? path_tail(db_path) : db_name);
                     return;
+                }
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    error("database \"" +
+                          (db_name.empty() ? path_tail(db_path) : db_name) +
+                          "\" does not exist");
                 }
                 std::string err_msg = "Emulation server not found";
                 if (!ctx.message.empty())
@@ -14482,6 +15060,12 @@ namespace scratchbird
                 {
                     push_database_notice(db_name.empty() ? path_tail(db_path) : db_name);
                     return;
+                }
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    error("database \"" +
+                          (db_name.empty() ? path_tail(db_path) : db_name) +
+                          "\" does not exist");
                 }
                 std::string err_msg = "Emulated database not found";
                 if (!ctx.message.empty())
@@ -16303,6 +16887,55 @@ namespace scratchbird
             core::TablespaceInfo ts_info;
             bool have_tablespace =
                 (db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info, &lookup_ctx) == core::Status::OK);
+            std::string emulated_root_path;
+            if (resolveEmulatedRootPath(conn_ctx_, emulated_root_path))
+            {
+                if (!have_tablespace ||
+                    !tablespaceBelongsToEmulatedRoot(ts_info, emulated_root_path))
+                {
+                    error("Tablespace not found: " + tablespace_name);
+                }
+            }
+            if (!emulated_root_path.empty() &&
+                have_tablespace &&
+                tablespaceUsesVirtualMetadata(ts_info))
+            {
+                const std::string root_upper = scratchbird::core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(emulated_root_path));
+                const std::string name_upper = scratchbird::core::IdentifierUtils::toUpper(
+                    ts_info.tablespace_name.empty() ? tablespace_name : ts_info.tablespace_name);
+                size_t binding_count = 0;
+                for (const auto& [_, binding] : emulated_virtual_tablespace_bindings_)
+                {
+                    const std::string binding_root_upper =
+                        scratchbird::core::IdentifierUtils::toUpper(binding.root_path);
+                    if (binding_root_upper != root_upper)
+                    {
+                        continue;
+                    }
+
+                    const bool uuid_match =
+                        !isZeroUuid(binding.tablespace_uuid) &&
+                        binding.tablespace_uuid == ts_info.tablespace_uuid;
+                    const bool name_match =
+                        scratchbird::core::IdentifierUtils::toUpper(binding.tablespace_name) ==
+                        name_upper;
+                    if (uuid_match || name_match)
+                    {
+                        ++binding_count;
+                    }
+                }
+
+                if (!force && binding_count > 0)
+                {
+                    if (isPostgreSqlDialectContext(conn_ctx_))
+                    {
+                        error("tablespace \"" + tablespace_name + "\" is not empty");
+                    }
+                    error("Failed to drop tablespace '" + tablespace_name +
+                          "': tablespace is not empty");
+                }
+            }
             core::Status status =
                 db_->catalog_manager()->dropTablespace(tablespace_name, force, &err_ctx);
 
@@ -16320,6 +16953,38 @@ namespace scratchbird
             {
                 deleteObjectDefinition(core::CatalogManager::ObjectType::TABLESPACE,
                                        ts_info.tablespace_uuid);
+
+                if (!emulated_root_path.empty())
+                {
+                    emulated_virtual_tablespace_tree_.erase(
+                        emulatedVirtualTablespaceKey(emulated_root_path, tablespace_name));
+
+                    const std::string root_upper = scratchbird::core::IdentifierUtils::toUpper(
+                        normalizeSchemaPath(emulated_root_path));
+                    const std::string name_upper =
+                        scratchbird::core::IdentifierUtils::toUpper(tablespace_name);
+                    for (auto it = emulated_virtual_tablespace_bindings_.begin();
+                         it != emulated_virtual_tablespace_bindings_.end();)
+                    {
+                        const std::string binding_root_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(it->second.root_path);
+                        const std::string binding_name_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(
+                                it->second.tablespace_name);
+                        const bool uuid_match =
+                            !isZeroUuid(it->second.tablespace_uuid) &&
+                            it->second.tablespace_uuid == ts_info.tablespace_uuid;
+                        if (binding_root_upper == root_upper &&
+                            (binding_name_upper == name_upper || uuid_match))
+                        {
+                            it = emulated_virtual_tablespace_bindings_.erase(it);
+                        }
+                        else
+                        {
+                            ++it;
+                        }
+                    }
+                }
             }
         }
 
@@ -16347,6 +17012,12 @@ namespace scratchbird
             if (!validate)
             {
                 validate = true;
+            }
+
+            std::string emulated_root_path;
+            if (resolveEmulatedRootPath(conn_ctx_, emulated_root_path))
+            {
+                error("ATTACH TABLESPACE is not allowed in emulated sessions");
             }
 
             // Attach tablespace via CatalogManager
@@ -16391,6 +17062,15 @@ namespace scratchbird
             core::TablespaceInfo ts_info;
             bool have_tablespace =
                 (db_->catalog_manager()->getTablespaceByName(tablespace_name, ts_info, &lookup_ctx) == core::Status::OK);
+            std::string emulated_root_path;
+            if (resolveEmulatedRootPath(conn_ctx_, emulated_root_path))
+            {
+                if (!have_tablespace ||
+                    !tablespaceBelongsToEmulatedRoot(ts_info, emulated_root_path))
+                {
+                    error("Tablespace not found: " + tablespace_name);
+                }
+            }
             core::Status status =
                 db_->catalog_manager()->detachTablespace(tablespace_name, force, &err_ctx);
 
@@ -16466,6 +17146,59 @@ namespace scratchbird
                     err_msg += ": " + err_ctx.message;
                 }
                 error(err_msg);
+                return;
+            }
+            std::string emulated_root_path;
+            if (resolveEmulatedRootPath(conn_ctx_, emulated_root_path) &&
+                !tablespaceBelongsToEmulatedRoot(ts_info, emulated_root_path))
+            {
+                error("Failed to find tablespace '" + tablespace_name + "'");
+                return;
+            }
+
+            if (!emulated_root_path.empty())
+            {
+                const std::string root_upper = scratchbird::core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(emulated_root_path));
+                for (auto it = emulated_virtual_tablespace_bindings_.begin();
+                     it != emulated_virtual_tablespace_bindings_.end();)
+                {
+                    const std::string binding_root_upper =
+                        scratchbird::core::IdentifierUtils::toUpper(it->second.root_path);
+                    if (binding_root_upper == root_upper &&
+                        (!isZeroUuid(it->second.object_uuid) &&
+                         it->second.object_uuid == table_info.table_id))
+                    {
+                        it = emulated_virtual_tablespace_bindings_.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
+                }
+
+                if (tablespaceUsesVirtualMetadata(ts_info))
+                {
+                    EmulatedVirtualTablespaceBinding binding;
+                    binding.root_path = normalizeSchemaPath(emulated_root_path);
+                    binding.binding_namespace_path =
+                        buildEmulatedVirtualTablespaceBindingNamespacePath(emulated_root_path);
+                    binding.object_path = normalizeSchemaPath(table_name);
+                    binding.object_uuid = table_info.table_id;
+                    binding.object_type = static_cast<uint8_t>(
+                        core::CatalogManager::ObjectType::TABLE);
+                    binding.tablespace_name = ts_info.tablespace_name;
+                    binding.tablespace_uuid = ts_info.tablespace_uuid;
+                    binding.last_modified_time = static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::system_clock::now().time_since_epoch()).count());
+                    emulated_virtual_tablespace_bindings_[emulatedVirtualTablespaceBindingKey(
+                        emulated_root_path, binding.object_path)] = std::move(binding);
+                }
+
+                // Emulated tablespace routing is metadata-only.
+                recordObjectDefinition(core::CatalogManager::ObjectType::TABLE,
+                                       table_info.table_id);
                 return;
             }
 
@@ -27268,7 +28001,44 @@ namespace scratchbird
                         }
                     }
                 }
+                if (schema_name.empty() &&
+                    isPostgreSqlDialectContext(conn_ctx_) &&
+                    catalog::isVirtualTable("pg_catalog", base_name))
+                {
+                    schema_name = "pg_catalog";
+                }
             }
+
+            auto remap_pg_catalog_alias_schema = [&](std::string& schema_path) {
+                if (!isPostgreSqlDialectContext(conn_ctx_) || base_name.empty())
+                {
+                    return;
+                }
+                if (schema_path.empty() ||
+                    catalog::isVirtualTable(schema_path, base_name) ||
+                    !catalog::isVirtualTable("pg_catalog", base_name))
+                {
+                    return;
+                }
+
+                std::string emulated_root_path;
+                if (!resolveEmulatedRootPath(conn_ctx_, emulated_root_path) ||
+                    emulated_root_path.empty())
+                {
+                    return;
+                }
+
+                const std::string schema_upper = core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(schema_path));
+                const std::string root_upper = core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(emulated_root_path));
+                if (schema_upper == root_upper ||
+                    schema_upper.rfind(root_upper + ".", 0) == 0)
+                {
+                    schema_path = "pg_catalog";
+                }
+            };
+            remap_pg_catalog_alias_schema(schema_name);
 
             if (schema_name.empty() || base_name.empty() ||
                 !catalog::isVirtualTable(schema_name, base_name))
@@ -27296,6 +28066,214 @@ namespace scratchbird
                     : err_ctx.message;
                 error(msg);
             }
+
+            auto apply_emulated_tablespace_overlay = [&](catalog::VirtualResultSet& rows) {
+                if (!isPostgreSqlDialectContext(conn_ctx_))
+                {
+                    return;
+                }
+
+                std::string emulated_root_path;
+                if (!resolveEmulatedRootPath(conn_ctx_, emulated_root_path) ||
+                    emulated_root_path.empty())
+                {
+                    return;
+                }
+
+                const std::string root_upper = core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(emulated_root_path));
+
+                auto oid_from_uuid = [](const core::ID& id) -> int64_t {
+                    uint64_t hash = 1469598103934665603ULL;
+                    for (uint8_t b : id.bytes)
+                    {
+                        hash ^= b;
+                        hash *= 1099511628211ULL;
+                    }
+                    hash &= 0x3fffffffffffffffULL;
+                    hash |= 0x4000000000000000ULL;
+                    return static_cast<int64_t>(hash);
+                };
+
+                if (core::IdentifierUtils::namesMatch(base_name, false, "pg_class", false))
+                {
+                    std::unordered_map<int64_t, int64_t> object_tablespace_oid;
+                    object_tablespace_oid.reserve(emulated_virtual_tablespace_bindings_.size());
+                    for (const auto& [_, binding] : emulated_virtual_tablespace_bindings_)
+                    {
+                        const std::string binding_root_upper =
+                            core::IdentifierUtils::toUpper(
+                                normalizeSchemaPath(binding.root_path));
+                        if (binding_root_upper != root_upper ||
+                            isZeroUuid(binding.object_uuid) ||
+                            isZeroUuid(binding.tablespace_uuid))
+                        {
+                            continue;
+                        }
+                        object_tablespace_oid[oid_from_uuid(binding.object_uuid)] =
+                            oid_from_uuid(binding.tablespace_uuid);
+                    }
+
+                    if (object_tablespace_oid.empty())
+                    {
+                        return;
+                    }
+
+                    for (auto& row : rows.rows)
+                    {
+                        int64_t object_oid = 0;
+                        bool have_oid = false;
+                        for (const auto& [name, value] : row.columns)
+                        {
+                            if (core::IdentifierUtils::namesMatch(name, false, "oid", false))
+                            {
+                                if (!value.isNull())
+                                {
+                                    object_oid = value.toInt64();
+                                    have_oid = true;
+                                }
+                                break;
+                            }
+                        }
+                        if (!have_oid)
+                        {
+                            continue;
+                        }
+
+                        const auto ts_it = object_tablespace_oid.find(object_oid);
+                        if (ts_it == object_tablespace_oid.end())
+                        {
+                            continue;
+                        }
+
+                        bool replaced = false;
+                        for (auto& column : row.columns)
+                        {
+                            if (core::IdentifierUtils::namesMatch(column.first, false,
+                                                                  "reltablespace", false))
+                            {
+                                column.second = core::TypedValue::makeInt64(ts_it->second);
+                                replaced = true;
+                                break;
+                            }
+                        }
+                        if (!replaced)
+                        {
+                            row.columns.emplace_back(
+                                "reltablespace",
+                                core::TypedValue::makeInt64(ts_it->second));
+                        }
+                    }
+                    return;
+                }
+
+                if (!core::IdentifierUtils::namesMatch(base_name, false, "pg_tablespace", false))
+                {
+                    return;
+                }
+
+                std::unordered_set<std::string> allowed_tablespace_names;
+                std::unordered_set<int64_t> allowed_tablespace_oids;
+                allowed_tablespace_names.reserve(emulated_virtual_tablespace_tree_.size());
+                allowed_tablespace_oids.reserve(emulated_virtual_tablespace_tree_.size());
+
+                for (const auto& [_, metadata] : emulated_virtual_tablespace_tree_)
+                {
+                    const std::string tree_root_upper = core::IdentifierUtils::toUpper(
+                        normalizeSchemaPath(metadata.root_path));
+                    if (tree_root_upper != root_upper)
+                    {
+                        continue;
+                    }
+                    if (!metadata.tablespace_name.empty())
+                    {
+                        allowed_tablespace_names.insert(
+                            core::IdentifierUtils::toUpper(metadata.tablespace_name));
+                    }
+                    if (!isZeroUuid(metadata.tablespace_uuid))
+                    {
+                        allowed_tablespace_oids.insert(oid_from_uuid(metadata.tablespace_uuid));
+                    }
+                }
+
+                std::vector<core::TablespaceInfo> catalog_tablespaces;
+                core::ErrorContext catalog_ts_ctx;
+                if (db_ && db_->catalog_manager() &&
+                    db_->catalog_manager()->listTablespaces(catalog_tablespaces, &catalog_ts_ctx) ==
+                        core::Status::OK)
+                {
+                    for (const auto& ts_info : catalog_tablespaces)
+                    {
+                        if (!tablespaceBelongsToEmulatedRoot(ts_info, emulated_root_path))
+                        {
+                            continue;
+                        }
+                        if (!ts_info.tablespace_name.empty())
+                        {
+                            allowed_tablespace_names.insert(
+                                core::IdentifierUtils::toUpper(ts_info.tablespace_name));
+                        }
+                        if (!isZeroUuid(ts_info.tablespace_uuid))
+                        {
+                            allowed_tablespace_oids.insert(
+                                oid_from_uuid(ts_info.tablespace_uuid));
+                        }
+                    }
+                }
+
+                std::vector<catalog::VirtualRow> filtered_rows;
+                filtered_rows.reserve(rows.rows.size());
+                for (auto& row : rows.rows)
+                {
+                    std::string tablespace_name_upper;
+                    int64_t tablespace_oid = 0;
+                    bool have_name = false;
+                    bool have_oid = false;
+
+                    for (const auto& [name, value] : row.columns)
+                    {
+                        if (core::IdentifierUtils::namesMatch(name, false, "spcname", false))
+                        {
+                            if (!value.isNull())
+                            {
+                                tablespace_name_upper = core::IdentifierUtils::toUpper(
+                                    value.toString());
+                                have_name = true;
+                            }
+                            continue;
+                        }
+                        if (core::IdentifierUtils::namesMatch(name, false, "oid", false))
+                        {
+                            if (!value.isNull())
+                            {
+                                tablespace_oid = value.toInt64();
+                                have_oid = true;
+                            }
+                        }
+                    }
+
+                    const bool builtin_name =
+                        have_name &&
+                        (tablespace_name_upper == "PG_DEFAULT" ||
+                         tablespace_name_upper == "PG_GLOBAL");
+                    const bool root_name_match =
+                        have_name &&
+                        allowed_tablespace_names.find(tablespace_name_upper) !=
+                            allowed_tablespace_names.end();
+                    const bool root_oid_match =
+                        have_oid &&
+                        allowed_tablespace_oids.find(tablespace_oid) !=
+                            allowed_tablespace_oids.end();
+
+                    if (builtin_name || root_name_match || root_oid_match)
+                    {
+                        filtered_rows.push_back(std::move(row));
+                    }
+                }
+
+                rows.rows = std::move(filtered_rows);
+            };
+            apply_emulated_tablespace_overlay(vrs);
 
             std::vector<core::CatalogManager::ColumnInfo> columns;
             status = router.getVirtualTableColumns(protocol, schema_name, base_name, columns, &err_ctx);
@@ -43301,7 +44279,22 @@ namespace scratchbird
 
             auto resolveTablespaceId = [&](const std::string& name,
                                            uint16_t& tablespace_id,
-                                           std::string& err_out) -> bool {
+                                           std::string& err_out,
+                                           core::TablespaceInfo* resolved_info,
+                                           bool* virtual_metadata_only_out,
+                                           std::string* emulated_root_path_out) -> bool {
+                if (resolved_info)
+                {
+                    *resolved_info = core::TablespaceInfo{};
+                }
+                if (virtual_metadata_only_out)
+                {
+                    *virtual_metadata_only_out = false;
+                }
+                if (emulated_root_path_out)
+                {
+                    emulated_root_path_out->clear();
+                }
                 if (name.empty())
                 {
                     tablespace_id = 0;
@@ -43330,6 +44323,33 @@ namespace scratchbird
                 {
                     err_out = ctx.message.empty() ? ("Tablespace not found: " + name) : ctx.message;
                     return false;
+                }
+                std::string emulated_root_path;
+                if (resolveEmulatedRootPath(conn_ctx_, emulated_root_path) &&
+                    !tablespaceBelongsToEmulatedRoot(ts_info, emulated_root_path))
+                {
+                    err_out = "Tablespace not found: " + name;
+                    return false;
+                }
+                if (resolved_info)
+                {
+                    *resolved_info = ts_info;
+                }
+                if (emulated_root_path_out)
+                {
+                    *emulated_root_path_out = emulated_root_path;
+                }
+                if (!emulated_root_path.empty() &&
+                    tablespaceUsesVirtualMetadata(ts_info))
+                {
+                    // Metadata-only emulated tablespaces never trigger physical page
+                    // placement; maintain virtual bindings instead.
+                    tablespace_id = 0;
+                    if (virtual_metadata_only_out)
+                    {
+                        *virtual_metadata_only_out = true;
+                    }
+                    return true;
                 }
                 tablespace_id = ts_info.tablespace_id;
                 return true;
@@ -47885,14 +48905,67 @@ namespace scratchbird
                 }
 
                 uint16_t tablespace_id = schema_info.default_tablespace_id;
+                bool use_virtual_tablespace_binding = false;
+                core::TablespaceInfo virtual_tablespace_info;
+                std::string virtual_tablespace_root_path;
+                std::string virtual_tablespace_name;
                 auto it_ts = payload.find("tablespace");
                 if (it_ts != payload.end() && !it_ts->second.isNull())
                 {
                     std::string tablespace_name = v3SchemaPathToString(it_ts->second);
                     std::string ts_err;
-                    if (!resolveTablespaceId(tablespace_name, tablespace_id, ts_err))
+                    bool virtual_metadata_only = false;
+                    core::TablespaceInfo resolved_tablespace;
+                    std::string emulated_root_path;
+                    if (!resolveTablespaceId(tablespace_name,
+                                             tablespace_id,
+                                             ts_err,
+                                             &resolved_tablespace,
+                                             &virtual_metadata_only,
+                                             &emulated_root_path))
                     {
                         return ExecutionResult(ts_err);
+                    }
+                    if (virtual_metadata_only)
+                    {
+                        use_virtual_tablespace_binding = true;
+                        virtual_tablespace_info = resolved_tablespace;
+                        virtual_tablespace_root_path = emulated_root_path;
+                        virtual_tablespace_name = resolved_tablespace.tablespace_name;
+                    }
+                }
+                else if (conn_ctx_)
+                {
+                    std::string session_tablespace;
+                    if (conn_ctx_->getSessionVariable("DEFAULT_TABLESPACE", session_tablespace))
+                    {
+                        session_tablespace = trimAsciiCopy(session_tablespace);
+                        std::string session_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(session_tablespace);
+                        if (!session_tablespace.empty() &&
+                            session_upper != "DEFAULT")
+                        {
+                            std::string ts_err;
+                            bool virtual_metadata_only = false;
+                            core::TablespaceInfo resolved_tablespace;
+                            std::string emulated_root_path;
+                            if (!resolveTablespaceId(session_tablespace,
+                                                     tablespace_id,
+                                                     ts_err,
+                                                     &resolved_tablespace,
+                                                     &virtual_metadata_only,
+                                                     &emulated_root_path))
+                            {
+                                return ExecutionResult(ts_err);
+                            }
+                            if (virtual_metadata_only)
+                            {
+                                use_virtual_tablespace_binding = true;
+                                virtual_tablespace_info = resolved_tablespace;
+                                virtual_tablespace_root_path = emulated_root_path;
+                                virtual_tablespace_name = resolved_tablespace.tablespace_name;
+                            }
+                        }
                     }
                 }
 
@@ -48483,6 +49556,37 @@ namespace scratchbird
                     }
                 }
 
+                if (use_virtual_tablespace_binding &&
+                    !virtual_tablespace_root_path.empty())
+                {
+                    EmulatedVirtualTablespaceBinding binding;
+                    binding.root_path = normalizeSchemaPath(virtual_tablespace_root_path);
+                    binding.binding_namespace_path =
+                        buildEmulatedVirtualTablespaceBindingNamespacePath(
+                            virtual_tablespace_root_path);
+                    if (!schema_info.schema_name.empty())
+                    {
+                        binding.object_path = normalizeSchemaPath(
+                            schema_info.schema_name + "." + resolved_table_name);
+                    }
+                    else
+                    {
+                        binding.object_path = normalizeSchemaPath(table_path);
+                    }
+                    binding.object_uuid = table_id;
+                    binding.object_type = static_cast<uint8_t>(
+                        core::CatalogManager::ObjectType::TABLE);
+                    binding.tablespace_name = virtual_tablespace_name;
+                    binding.tablespace_uuid = virtual_tablespace_info.tablespace_uuid;
+                    binding.last_modified_time = static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count());
+                    emulated_virtual_tablespace_bindings_[emulatedVirtualTablespaceBindingKey(
+                        virtual_tablespace_root_path, binding.object_path)] =
+                        std::move(binding);
+                }
+
                 recordObjectDefinition(core::CatalogManager::ObjectType::TABLE, table_id);
                 return ExecutionResult();
             };
@@ -48516,6 +49620,41 @@ namespace scratchbird
                 if (!resolveTableId(table_path, table_info, err_out, false))
                 {
                     return ExecutionResult(err_out);
+                }
+
+                uint16_t target_tablespace_id = table_info.tablespace_id;
+                bool use_virtual_tablespace_binding = false;
+                core::TablespaceInfo virtual_tablespace_info;
+                std::string virtual_tablespace_root_path;
+                std::string virtual_tablespace_name;
+                auto it_tablespace = payload.find("tablespace");
+                if (it_tablespace != payload.end() && !it_tablespace->second.isNull())
+                {
+                    const std::string tablespace_name =
+                        trimAsciiCopy(v3SchemaPathToString(it_tablespace->second));
+                    if (!tablespace_name.empty())
+                    {
+                        std::string ts_err;
+                        bool virtual_metadata_only = false;
+                        core::TablespaceInfo resolved_tablespace;
+                        std::string emulated_root_path;
+                        if (!resolveTablespaceId(tablespace_name,
+                                                 target_tablespace_id,
+                                                 ts_err,
+                                                 &resolved_tablespace,
+                                                 &virtual_metadata_only,
+                                                 &emulated_root_path))
+                        {
+                            return ExecutionResult(ts_err);
+                        }
+                        if (virtual_metadata_only)
+                        {
+                            use_virtual_tablespace_binding = true;
+                            virtual_tablespace_info = resolved_tablespace;
+                            virtual_tablespace_root_path = emulated_root_path;
+                            virtual_tablespace_name = resolved_tablespace.tablespace_name;
+                        }
+                    }
                 }
 
                 std::vector<std::string> column_names;
@@ -50204,7 +51343,7 @@ namespace scratchbird
                                                                  index_id,
                                                                  is_unique,
                                                                  index_type,
-                                                                 table_info.tablespace_id,
+                                                                 target_tablespace_id,
                                                                  &ctx);
                 }
                 else
@@ -50216,7 +51355,7 @@ namespace scratchbird
                                                                  index_id,
                                                                  is_unique,
                                                                  index_type,
-                                                                 table_info.tablespace_id,
+                                                                 target_tablespace_id,
                                                                  &ctx);
                 }
                 if (status != core::Status::OK)
@@ -50230,6 +51369,30 @@ namespace scratchbird
                         ? ("Failed to create index '" + index_name + "'")
                         : ctx.message;
                     return ExecutionResult(err_msg);
+                }
+
+                if (use_virtual_tablespace_binding &&
+                    !virtual_tablespace_root_path.empty())
+                {
+                    EmulatedVirtualTablespaceBinding binding;
+                    binding.root_path = normalizeSchemaPath(virtual_tablespace_root_path);
+                    binding.binding_namespace_path =
+                        buildEmulatedVirtualTablespaceBindingNamespacePath(
+                            virtual_tablespace_root_path);
+                    binding.object_path =
+                        normalizeSchemaPath(table_path + "." + index_name);
+                    binding.object_uuid = index_id;
+                    binding.object_type = static_cast<uint8_t>(
+                        core::CatalogManager::ObjectType::INDEX);
+                    binding.tablespace_name = virtual_tablespace_name;
+                    binding.tablespace_uuid = virtual_tablespace_info.tablespace_uuid;
+                    binding.last_modified_time = static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::microseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count());
+                    emulated_virtual_tablespace_bindings_[emulatedVirtualTablespaceBindingKey(
+                        virtual_tablespace_root_path, binding.object_path)] =
+                        std::move(binding);
                 }
 
                 if (array_uniqueness_specified)
@@ -51445,6 +52608,143 @@ namespace scratchbird
                     return drop_targets;
                 };
 
+                auto resolveIndexIdForDrop =
+                    [&](const std::string& index_path,
+                        core::ID& index_id_out,
+                        std::string& err_out) -> core::Status {
+                        core::ErrorContext local_ctx;
+                        core::CatalogManager::ObjectType resolved_type =
+                            core::CatalogManager::ObjectType::UNKNOWN;
+                        auto status = resolveObjectIdForQualifiedName(
+                            index_path,
+                            core::CatalogManager::ObjectType::INDEX,
+                            index_id_out,
+                            resolved_type,
+                            nullptr,
+                            &local_ctx,
+                            true);
+                        if (status == core::Status::OK)
+                        {
+                            return status;
+                        }
+
+                        auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                        if (!catalog)
+                        {
+                            err_out = "Catalog manager not available";
+                            return core::Status::INTERNAL_ERROR;
+                        }
+
+                        auto components = splitSchemaComponents(index_path);
+                        if (components.empty())
+                        {
+                            err_out = "index \"" + trimAsciiCopy(index_path) + "\" does not exist";
+                            return core::Status::NOT_FOUND;
+                        }
+
+                        std::vector<core::CatalogManager::IndexInfo> candidates;
+                        candidates.reserve(4);
+
+                        auto collect_matching_indexes =
+                            [&](const core::ID& schema_id,
+                                const std::string& index_name) -> core::Status {
+                                std::vector<core::CatalogManager::TableInfo> tables;
+                                core::ErrorContext table_ctx;
+                                auto table_status =
+                                    catalog->listTables(schema_id, tables, &table_ctx);
+                                if (table_status != core::Status::OK)
+                                {
+                                    if (err_out.empty())
+                                    {
+                                        err_out = table_ctx.message.empty()
+                                            ? "Failed to list schema tables for index lookup"
+                                            : table_ctx.message;
+                                    }
+                                    return table_status;
+                                }
+                                for (const auto& table : tables)
+                                {
+                                    std::vector<core::CatalogManager::IndexInfo> indexes;
+                                    core::ErrorContext idx_ctx;
+                                    auto idx_status = catalog->listIndexesForTable(
+                                        table.table_id, indexes, &idx_ctx, true);
+                                    if (idx_status != core::Status::OK)
+                                    {
+                                        continue;
+                                    }
+                                    for (const auto& index_info : indexes)
+                                    {
+                                        if (core::IdentifierUtils::namesMatch(
+                                                index_name,
+                                                false,
+                                                index_info.index_name,
+                                                index_info.name_is_delimited))
+                                        {
+                                            candidates.push_back(index_info);
+                                        }
+                                    }
+                                }
+                                return core::Status::OK;
+                            };
+
+                        if (components.size() == 2)
+                        {
+                            core::CatalogManager::SchemaInfo schema_info;
+                            core::ErrorContext schema_ctx;
+                            auto schema_status =
+                                catalog->getSchema(components[0], schema_info, &schema_ctx);
+                            if (schema_status != core::Status::OK)
+                            {
+                                err_out = "schema \"" + components[0] + "\" does not exist";
+                                return core::Status::NOT_FOUND;
+                            }
+                            status = collect_matching_indexes(
+                                schema_info.schema_id, components[1]);
+                            if (status != core::Status::OK)
+                            {
+                                return status;
+                            }
+                        }
+                        else if (components.size() == 1)
+                        {
+                            std::vector<core::CatalogManager::SchemaInfo> schemas;
+                            core::ErrorContext schema_ctx;
+                            auto schema_status = catalog->listSchemas(schemas, &schema_ctx);
+                            if (schema_status != core::Status::OK)
+                            {
+                                err_out = schema_ctx.message.empty()
+                                    ? "Failed to list schemas for index lookup"
+                                    : schema_ctx.message;
+                                return schema_status;
+                            }
+                            for (const auto& schema_info : schemas)
+                            {
+                                status = collect_matching_indexes(
+                                    schema_info.schema_id, components[0]);
+                                if (status != core::Status::OK)
+                                {
+                                    return status;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            err_out = local_ctx.message.empty()
+                                ? ("index \"" + trimAsciiCopy(index_path) + "\" does not exist")
+                                : local_ctx.message;
+                            return core::Status::NOT_FOUND;
+                        }
+
+                        if (candidates.empty())
+                        {
+                            err_out = "index \"" + trimAsciiCopy(index_path) + "\" does not exist";
+                            return core::Status::NOT_FOUND;
+                        }
+
+                        index_id_out = candidates.front().index_id;
+                        return core::Status::OK;
+                    };
+
                 if (opcode == static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE))
                 {
                     std::vector<std::string> drop_targets = splitDropTargets();
@@ -51460,6 +52760,11 @@ namespace scratchbird
                                 pushPostgreSqlIfExistsNotice(
                                     conn_ctx_, postgresql_dialect, "table", target, err_out);
                                 continue;
+                            }
+                            if (postgresql_dialect && is_not_found_error(err_out))
+                            {
+                                return ExecutionResult(
+                                    "table \"" + trimAsciiCopy(target) + "\" does not exist");
                             }
                             return ExecutionResult(err_out.empty()
                                                        ? ("DROP TABLE resolve failed: " + target)
@@ -51493,6 +52798,28 @@ namespace scratchbird
                             return ExecutionResult("DROP TABLE failed for " + target + ": " + ctx.message);
                         }
                         deleteObjectDefinition(core::CatalogManager::ObjectType::TABLE, table_info.table_id);
+                        const std::string target_path_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(
+                                normalizeSchemaPath(target));
+                        for (auto it = emulated_virtual_tablespace_bindings_.begin();
+                             it != emulated_virtual_tablespace_bindings_.end();)
+                        {
+                            const bool id_match =
+                                !isZeroUuid(it->second.object_uuid) &&
+                                it->second.object_uuid == table_info.table_id;
+                            const bool path_match =
+                                scratchbird::core::IdentifierUtils::toUpper(
+                                    normalizeSchemaPath(it->second.object_path)) ==
+                                target_path_upper;
+                            if (id_match || path_match)
+                            {
+                                it = emulated_virtual_tablespace_bindings_.erase(it);
+                            }
+                            else
+                            {
+                                ++it;
+                            }
+                        }
                     }
                     return ExecutionResult();
                 }
@@ -51501,20 +52828,34 @@ namespace scratchbird
                 {
                     core::ErrorContext ctx;
                     core::ID index_id;
-                    core::CatalogManager::ObjectType resolved_type;
-                    auto status = resolveObjectIdForQualifiedName(
-                        path, core::CatalogManager::ObjectType::INDEX,
-                        index_id, resolved_type, nullptr, &ctx, false);
+                    std::string resolve_err;
+                    auto status = resolveIndexIdForDrop(path, index_id, resolve_err);
                     if (status != core::Status::OK)
                     {
                         if (if_exists &&
                             (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
                         {
                             pushPostgreSqlIfExistsNotice(
-                                conn_ctx_, postgresql_dialect, "index", path, ctx.message);
+                                conn_ctx_,
+                                postgresql_dialect,
+                                "index",
+                                path,
+                                resolve_err.empty() ? ctx.message : resolve_err);
                             return ExecutionResult();
                         }
-                        return ExecutionResult(ctx.message.empty() ? "Index not found" : ctx.message);
+                        if (postgresql_dialect &&
+                            (status == core::Status::NOT_FOUND || status == core::Status::INVALID_ARGUMENT))
+                        {
+                            const std::string lower_err = toLowerAsciiCopy(resolve_err);
+                            if (!resolve_err.empty() &&
+                                lower_err.rfind("schema \"", 0) == 0)
+                            {
+                                return ExecutionResult(resolve_err);
+                            }
+                            return ExecutionResult(
+                                "index \"" + trimAsciiCopy(path) + "\" does not exist");
+                        }
+                        return ExecutionResult(resolve_err.empty() ? "Index not found" : resolve_err);
                     }
                     status = db_->catalog_manager()->dropIndex(index_id, &ctx);
                     if (if_exists &&
@@ -51529,6 +52870,28 @@ namespace scratchbird
                         return ExecutionResult(ctx.message.empty() ? "DROP INDEX failed" : ctx.message);
                     }
                     deleteObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);
+                    const std::string target_path_upper =
+                        scratchbird::core::IdentifierUtils::toUpper(
+                            normalizeSchemaPath(path));
+                    for (auto it = emulated_virtual_tablespace_bindings_.begin();
+                         it != emulated_virtual_tablespace_bindings_.end();)
+                    {
+                        const bool id_match =
+                            !isZeroUuid(it->second.object_uuid) &&
+                            it->second.object_uuid == index_id;
+                        const bool path_match =
+                            scratchbird::core::IdentifierUtils::toUpper(
+                                normalizeSchemaPath(it->second.object_path)) ==
+                            target_path_upper;
+                        if (id_match || path_match)
+                        {
+                            it = emulated_virtual_tablespace_bindings_.erase(it);
+                        }
+                        else
+                        {
+                            ++it;
+                        }
+                    }
                     return ExecutionResult();
                 }
 
@@ -51576,6 +52939,13 @@ namespace scratchbird
                                 pushPostgreSqlIfExistsNotice(
                                     conn_ctx_, postgresql_dialect, "view", target, ctx.message);
                                 continue;
+                            }
+                            if (postgresql_dialect &&
+                                (status == core::Status::NOT_FOUND ||
+                                 status == core::Status::INVALID_ARGUMENT))
+                            {
+                                return ExecutionResult(
+                                    "view \"" + trimAsciiCopy(target) + "\" does not exist");
                             }
                             return ExecutionResult(ctx.message.empty()
                                                        ? ("View not found: " + target)
@@ -51651,6 +53021,15 @@ namespace scratchbird
                 {
                     return ExecutionResult("ALTER TABLE SET TABLESPACE missing tablespace");
                 }
+                bool online = false;
+                if (!getBool(payload, "online", online))
+                {
+                    uint64_t online_u64 = 0;
+                    if (getU64(payload, "online", online_u64))
+                    {
+                        online = online_u64 != 0;
+                    }
+                }
 
                 core::CatalogManager::TableInfo table_info;
                 std::string err_out;
@@ -51659,16 +53038,72 @@ namespace scratchbird
                     return ExecutionResult(err_out);
                 }
 
+                std::string emulated_root_path;
+                const bool emulated_session =
+                    resolveEmulatedRootPath(conn_ctx_, emulated_root_path);
                 uint16_t tablespace_id = 0;
-                if (!resolveTablespaceId(tablespace_name, tablespace_id, err_out))
+                core::TablespaceInfo resolved_tablespace;
+                bool virtual_metadata_only = false;
+                if (!resolveTablespaceId(tablespace_name,
+                                         tablespace_id,
+                                         err_out,
+                                         &resolved_tablespace,
+                                         &virtual_metadata_only,
+                                         nullptr))
                 {
                     return ExecutionResult(err_out);
+                }
+
+                if (emulated_session)
+                {
+                    const std::string root_upper = scratchbird::core::IdentifierUtils::toUpper(
+                        normalizeSchemaPath(emulated_root_path));
+                    for (auto it = emulated_virtual_tablespace_bindings_.begin();
+                         it != emulated_virtual_tablespace_bindings_.end();)
+                    {
+                        const std::string binding_root_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(it->second.root_path);
+                        if (binding_root_upper == root_upper &&
+                            (!isZeroUuid(it->second.object_uuid) &&
+                             it->second.object_uuid == table_info.table_id))
+                        {
+                            it = emulated_virtual_tablespace_bindings_.erase(it);
+                        }
+                        else
+                        {
+                            ++it;
+                        }
+                    }
+
+                    if (virtual_metadata_only)
+                    {
+                        EmulatedVirtualTablespaceBinding binding;
+                        binding.root_path = normalizeSchemaPath(emulated_root_path);
+                        binding.binding_namespace_path =
+                            buildEmulatedVirtualTablespaceBindingNamespacePath(
+                                emulated_root_path);
+                        binding.object_path = normalizeSchemaPath(table_path);
+                        binding.object_uuid = table_info.table_id;
+                        binding.object_type = static_cast<uint8_t>(
+                            core::CatalogManager::ObjectType::TABLE);
+                        binding.tablespace_name = resolved_tablespace.tablespace_name;
+                        binding.tablespace_uuid = resolved_tablespace.tablespace_uuid;
+                        binding.last_modified_time = static_cast<uint64_t>(
+                            std::chrono::duration_cast<std::chrono::microseconds>(
+                                std::chrono::system_clock::now().time_since_epoch())
+                                .count());
+                        emulated_virtual_tablespace_bindings_[emulatedVirtualTablespaceBindingKey(
+                            emulated_root_path, binding.object_path)] = std::move(binding);
+                    }
+
+                    // Emulated tablespace operations are metadata-only.
+                    return ExecutionResult();
                 }
 
                 core::ErrorContext ctx;
                 auto status = db_->catalog_manager()->moveTableToTablespace(table_info.table_id,
                                                                             tablespace_id,
-                                                                            false,
+                                                                            online,
                                                                             nullptr,
                                                                             &ctx);
                 if (status != core::Status::OK)
@@ -57418,7 +58853,44 @@ namespace scratchbird
                                                 }
                                             }
                                         }
+                                        if (schema_name.empty() &&
+                                            isPostgreSqlDialectContext(conn_ctx_) &&
+                                            catalog::isVirtualTable("pg_catalog", base_name))
+                                        {
+                                            schema_name = "pg_catalog";
+                                        }
                                     }
+
+                                    auto remap_pg_catalog_alias_schema = [&](std::string& schema_path) {
+                                        if (!isPostgreSqlDialectContext(conn_ctx_) || base_name.empty())
+                                        {
+                                            return;
+                                        }
+                                        if (schema_path.empty() ||
+                                            catalog::isVirtualTable(schema_path, base_name) ||
+                                            !catalog::isVirtualTable("pg_catalog", base_name))
+                                        {
+                                            return;
+                                        }
+
+                                        std::string emulated_root_path;
+                                        if (!resolveEmulatedRootPath(conn_ctx_, emulated_root_path) ||
+                                            emulated_root_path.empty())
+                                        {
+                                            return;
+                                        }
+
+                                        const std::string schema_upper = core::IdentifierUtils::toUpper(
+                                            normalizeSchemaPath(schema_path));
+                                        const std::string root_upper = core::IdentifierUtils::toUpper(
+                                            normalizeSchemaPath(emulated_root_path));
+                                        if (schema_upper == root_upper ||
+                                            schema_upper.rfind(root_upper + ".", 0) == 0)
+                                        {
+                                            schema_path = "pg_catalog";
+                                        }
+                                    };
+                                    remap_pg_catalog_alias_schema(schema_name);
 
                                     if (!schema_name.empty() &&
                                         !base_name.empty() &&
@@ -57448,6 +58920,254 @@ namespace scratchbird
                                                 ? "Virtual catalog query failed"
                                                 : vctx.message);
                                         }
+
+                                        auto apply_emulated_tablespace_overlay =
+                                            [&](catalog::VirtualResultSet& rows) {
+                                                if (!isPostgreSqlDialectContext(conn_ctx_))
+                                                {
+                                                    return;
+                                                }
+
+                                                std::string emulated_root_path;
+                                                if (!resolveEmulatedRootPath(conn_ctx_,
+                                                                             emulated_root_path) ||
+                                                    emulated_root_path.empty())
+                                                {
+                                                    return;
+                                                }
+
+                                                const std::string root_upper =
+                                                    core::IdentifierUtils::toUpper(
+                                                        normalizeSchemaPath(emulated_root_path));
+
+                                                auto oid_from_uuid = [](const core::ID& id) -> int64_t {
+                                                    uint64_t hash = 1469598103934665603ULL;
+                                                    for (uint8_t b : id.bytes)
+                                                    {
+                                                        hash ^= b;
+                                                        hash *= 1099511628211ULL;
+                                                    }
+                                                    hash &= 0x3fffffffffffffffULL;
+                                                    hash |= 0x4000000000000000ULL;
+                                                    return static_cast<int64_t>(hash);
+                                                };
+
+                                                if (core::IdentifierUtils::namesMatch(
+                                                        base_name, false, "pg_class", false))
+                                                {
+                                                    std::unordered_map<int64_t, int64_t>
+                                                        object_tablespace_oid;
+                                                    object_tablespace_oid.reserve(
+                                                        emulated_virtual_tablespace_bindings_.size());
+                                                    for (const auto& [_, binding] :
+                                                         emulated_virtual_tablespace_bindings_)
+                                                    {
+                                                        const std::string binding_root_upper =
+                                                            core::IdentifierUtils::toUpper(
+                                                                normalizeSchemaPath(
+                                                                    binding.root_path));
+                                                        if (binding_root_upper != root_upper ||
+                                                            isZeroUuid(binding.object_uuid) ||
+                                                            isZeroUuid(binding.tablespace_uuid))
+                                                        {
+                                                            continue;
+                                                        }
+                                                        object_tablespace_oid[oid_from_uuid(
+                                                            binding.object_uuid)] = oid_from_uuid(
+                                                            binding.tablespace_uuid);
+                                                    }
+
+                                                    if (object_tablespace_oid.empty())
+                                                    {
+                                                        return;
+                                                    }
+
+                                                    for (auto& row : rows.rows)
+                                                    {
+                                                        int64_t object_oid = 0;
+                                                        bool have_oid = false;
+                                                        for (const auto& [name, value] : row.columns)
+                                                        {
+                                                            if (core::IdentifierUtils::namesMatch(
+                                                                    name, false, "oid", false))
+                                                            {
+                                                                if (!value.isNull())
+                                                                {
+                                                                    object_oid = value.toInt64();
+                                                                    have_oid = true;
+                                                                }
+                                                                break;
+                                                            }
+                                                        }
+                                                        if (!have_oid)
+                                                        {
+                                                            continue;
+                                                        }
+
+                                                        const auto ts_it =
+                                                            object_tablespace_oid.find(object_oid);
+                                                        if (ts_it == object_tablespace_oid.end())
+                                                        {
+                                                            continue;
+                                                        }
+
+                                                        bool replaced = false;
+                                                        for (auto& column : row.columns)
+                                                        {
+                                                            if (core::IdentifierUtils::namesMatch(
+                                                                    column.first, false,
+                                                                    "reltablespace", false))
+                                                            {
+                                                                column.second =
+                                                                    core::TypedValue::makeInt64(
+                                                                        ts_it->second);
+                                                                replaced = true;
+                                                                break;
+                                                            }
+                                                        }
+                                                        if (!replaced)
+                                                        {
+                                                            row.columns.emplace_back(
+                                                                "reltablespace",
+                                                                core::TypedValue::makeInt64(
+                                                                    ts_it->second));
+                                                        }
+                                                    }
+                                                    return;
+                                                }
+
+                                                if (!core::IdentifierUtils::namesMatch(
+                                                        base_name, false, "pg_tablespace", false))
+                                                {
+                                                    return;
+                                                }
+
+                                                std::unordered_set<std::string>
+                                                    allowed_tablespace_names;
+                                                std::unordered_set<int64_t>
+                                                    allowed_tablespace_oids;
+                                                allowed_tablespace_names.reserve(
+                                                    emulated_virtual_tablespace_tree_.size());
+                                                allowed_tablespace_oids.reserve(
+                                                    emulated_virtual_tablespace_tree_.size());
+
+                                                for (const auto& [_, metadata] :
+                                                     emulated_virtual_tablespace_tree_)
+                                                {
+                                                    const std::string tree_root_upper =
+                                                        core::IdentifierUtils::toUpper(
+                                                            normalizeSchemaPath(
+                                                                metadata.root_path));
+                                                    if (tree_root_upper != root_upper)
+                                                    {
+                                                        continue;
+                                                    }
+                                                    if (!metadata.tablespace_name.empty())
+                                                    {
+                                                        allowed_tablespace_names.insert(
+                                                            core::IdentifierUtils::toUpper(
+                                                                metadata.tablespace_name));
+                                                    }
+                                                    if (!isZeroUuid(metadata.tablespace_uuid))
+                                                    {
+                                                        allowed_tablespace_oids.insert(
+                                                            oid_from_uuid(
+                                                                metadata.tablespace_uuid));
+                                                    }
+                                                }
+
+                                                std::vector<core::TablespaceInfo>
+                                                    catalog_tablespaces;
+                                                core::ErrorContext catalog_ts_ctx;
+                                                if (db_ && db_->catalog_manager() &&
+                                                    db_->catalog_manager()->listTablespaces(
+                                                        catalog_tablespaces,
+                                                        &catalog_ts_ctx) == core::Status::OK)
+                                                {
+                                                    for (const auto& ts_info :
+                                                         catalog_tablespaces)
+                                                    {
+                                                        if (!tablespaceBelongsToEmulatedRoot(
+                                                                ts_info, emulated_root_path))
+                                                        {
+                                                            continue;
+                                                        }
+                                                        if (!ts_info.tablespace_name.empty())
+                                                        {
+                                                            allowed_tablespace_names.insert(
+                                                                core::IdentifierUtils::toUpper(
+                                                                    ts_info.tablespace_name));
+                                                        }
+                                                        if (!isZeroUuid(
+                                                                ts_info.tablespace_uuid))
+                                                        {
+                                                            allowed_tablespace_oids.insert(
+                                                                oid_from_uuid(
+                                                                    ts_info.tablespace_uuid));
+                                                        }
+                                                    }
+                                                }
+
+                                                std::vector<catalog::VirtualRow> filtered_rows;
+                                                filtered_rows.reserve(rows.rows.size());
+                                                for (auto& row : rows.rows)
+                                                {
+                                                    std::string tablespace_name_upper;
+                                                    int64_t tablespace_oid = 0;
+                                                    bool have_name = false;
+                                                    bool have_oid = false;
+
+                                                    for (const auto& [name, value] : row.columns)
+                                                    {
+                                                        if (core::IdentifierUtils::namesMatch(
+                                                                name, false, "spcname", false))
+                                                        {
+                                                            if (!value.isNull())
+                                                            {
+                                                                tablespace_name_upper =
+                                                                    core::IdentifierUtils::toUpper(
+                                                                        value.toString());
+                                                                have_name = true;
+                                                            }
+                                                            continue;
+                                                        }
+                                                        if (core::IdentifierUtils::namesMatch(
+                                                                name, false, "oid", false))
+                                                        {
+                                                            if (!value.isNull())
+                                                            {
+                                                                tablespace_oid =
+                                                                    value.toInt64();
+                                                                have_oid = true;
+                                                            }
+                                                        }
+                                                    }
+
+                                                    const bool builtin_name =
+                                                        have_name &&
+                                                        (tablespace_name_upper == "PG_DEFAULT" ||
+                                                         tablespace_name_upper == "PG_GLOBAL");
+                                                    const bool root_name_match =
+                                                        have_name &&
+                                                        allowed_tablespace_names.find(
+                                                            tablespace_name_upper) !=
+                                                            allowed_tablespace_names.end();
+                                                    const bool root_oid_match =
+                                                        have_oid &&
+                                                        allowed_tablespace_oids.find(
+                                                            tablespace_oid) !=
+                                                            allowed_tablespace_oids.end();
+
+                                                    if (builtin_name || root_name_match ||
+                                                        root_oid_match)
+                                                    {
+                                                        filtered_rows.push_back(std::move(row));
+                                                    }
+                                                }
+
+                                                rows.rows = std::move(filtered_rows);
+                                            };
+                                        apply_emulated_tablespace_overlay(vrs);
 
                                         std::vector<core::CatalogManager::ColumnInfo> cols;
                                         vstatus = router.getVirtualTableColumns(protocol,
@@ -69905,9 +71625,70 @@ namespace scratchbird
 
                                     uint16_t tablespace_id = 0;
                                     std::string ts_err;
-                                    if (!resolveTablespaceId(target_filespace_name, tablespace_id, ts_err))
+                                    core::TablespaceInfo resolved_tablespace;
+                                    bool virtual_metadata_only = false;
+                                    if (!resolveTablespaceId(target_filespace_name,
+                                                             tablespace_id,
+                                                             ts_err,
+                                                             &resolved_tablespace,
+                                                             &virtual_metadata_only,
+                                                             nullptr))
                                     {
                                         return ExecutionResult(ts_err);
+                                    }
+
+                                    std::string emulated_root_path;
+                                    const bool emulated_session =
+                                        resolveEmulatedRootPath(conn_ctx_, emulated_root_path);
+                                    if (emulated_session)
+                                    {
+                                        const std::string root_upper =
+                                            scratchbird::core::IdentifierUtils::toUpper(
+                                                normalizeSchemaPath(emulated_root_path));
+                                        for (auto it = emulated_virtual_tablespace_bindings_.begin();
+                                             it != emulated_virtual_tablespace_bindings_.end();)
+                                        {
+                                            const std::string binding_root_upper =
+                                                scratchbird::core::IdentifierUtils::toUpper(
+                                                    it->second.root_path);
+                                            if (binding_root_upper == root_upper &&
+                                                (!isZeroUuid(it->second.object_uuid) &&
+                                                 it->second.object_uuid == index_info.index_id))
+                                            {
+                                                it = emulated_virtual_tablespace_bindings_.erase(it);
+                                            }
+                                            else
+                                            {
+                                                ++it;
+                                            }
+                                        }
+
+                                        if (virtual_metadata_only)
+                                        {
+                                            EmulatedVirtualTablespaceBinding binding;
+                                            binding.root_path = normalizeSchemaPath(emulated_root_path);
+                                            binding.binding_namespace_path =
+                                                buildEmulatedVirtualTablespaceBindingNamespacePath(
+                                                    emulated_root_path);
+                                            binding.object_path = normalizeSchemaPath(index_path);
+                                            binding.object_uuid = index_info.index_id;
+                                            binding.object_type = static_cast<uint8_t>(
+                                                core::CatalogManager::ObjectType::INDEX);
+                                            binding.tablespace_name =
+                                                resolved_tablespace.tablespace_name;
+                                            binding.tablespace_uuid =
+                                                resolved_tablespace.tablespace_uuid;
+                                            binding.last_modified_time = static_cast<uint64_t>(
+                                                std::chrono::duration_cast<std::chrono::microseconds>(
+                                                    std::chrono::system_clock::now().time_since_epoch())
+                                                    .count());
+                                            emulated_virtual_tablespace_bindings_[emulatedVirtualTablespaceBindingKey(
+                                                emulated_root_path, binding.object_path)] =
+                                                std::move(binding);
+                                        }
+
+                                        // Emulated relocation is metadata-only.
+                                        return ExecutionResult();
                                     }
 
                                     core::TablespaceInfo tablespace_info;
@@ -71334,9 +73115,612 @@ namespace scratchbird
 
                                 if (key_lower.rfind("postgresql.compat.", 0) == 0)
                                 {
-                                    // PostgreSQL emulation compatibility surface: parser-accepted
-                                    // statements that currently map to no-op behavior.
-                                    return ExecutionResult();
+                                    const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
+                                    const std::string payload_text = trimAsciiCopy(v.toString());
+                                    const std::string payload_upper = toUpperAsciiCopy(payload_text);
+
+                                    auto parseBoolPayloadFlag = [&](const std::string& flag_key_upper) -> bool {
+                                        const std::string needle = flag_key_upper + "=";
+                                        size_t pos = payload_upper.find(needle);
+                                        if (pos == std::string::npos)
+                                        {
+                                            return false;
+                                        }
+                                        size_t value_begin = pos + needle.size();
+                                        size_t value_end = payload_upper.find_first_of(";, \t\r\n)", value_begin);
+                                        std::string flag_value = trimAsciiCopy(
+                                            payload_upper.substr(value_begin, value_end - value_begin));
+                                        return isTruthySetting(flag_value.c_str());
+                                    };
+
+                                    bool if_exists = payload_upper.find("IF EXISTS") != std::string::npos ||
+                                                     parseBoolPayloadFlag("IF_EXISTS");
+                                    bool if_not_exists =
+                                        payload_upper.find("IF NOT EXISTS") != std::string::npos ||
+                                        parseBoolPayloadFlag("IF_NOT_EXISTS");
+                                    if (if_exists && if_not_exists)
+                                    {
+                                        return ExecutionResult(
+                                            "PostgreSQL compat payload cannot include both IF EXISTS and IF NOT EXISTS");
+                                    }
+
+                                    bool is_drop = false;
+                                    std::string family;
+                                    if (key_lower.rfind("postgresql.compat.create.", 0) == 0)
+                                    {
+                                        family = trimAsciiCopy(
+                                            key_lower.substr(std::string("postgresql.compat.create.").size()));
+                                    }
+                                    else if (key_lower.rfind("postgresql.compat.drop.", 0) == 0)
+                                    {
+                                        is_drop = true;
+                                        family = trimAsciiCopy(
+                                            key_lower.substr(std::string("postgresql.compat.drop.").size()));
+                                    }
+                                    if (family.empty())
+                                    {
+                                        return ExecutionResult();
+                                    }
+
+                                    auto compatObjectTypeLabel = [&](const std::string& family_name) {
+                                        if (family_name == "foreign_data_wrapper")
+                                        {
+                                            return std::string("foreign-data wrapper");
+                                        }
+                                        if (family_name == "foreign_server" || family_name == "server")
+                                        {
+                                            return std::string("server");
+                                        }
+                                        if (family_name == "operator_class")
+                                        {
+                                            return std::string("operator class");
+                                        }
+                                        if (family_name == "operator_family")
+                                        {
+                                            return std::string("operator family");
+                                        }
+                                        if (family_name == "text_search_parser")
+                                        {
+                                            return std::string("text search parser");
+                                        }
+                                        if (family_name == "text_search_dictionary")
+                                        {
+                                            return std::string("text search dictionary");
+                                        }
+                                        if (family_name == "text_search_template")
+                                        {
+                                            return std::string("text search template");
+                                        }
+                                        if (family_name == "text_search_configuration")
+                                        {
+                                            return std::string("text search configuration");
+                                        }
+                                        if (family_name == "access_method")
+                                        {
+                                            return std::string("access method");
+                                        }
+                                        std::string label = family_name;
+                                        std::replace(label.begin(), label.end(), '_', ' ');
+                                        return label;
+                                    };
+
+                                    auto stripIfClause = [&](std::string input) -> std::string {
+                                        std::string work = trimAsciiCopy(input);
+                                        const std::string work_upper = toUpperAsciiCopy(work);
+                                        const std::string if_not_exists_prefix = "IF NOT EXISTS ";
+                                        const std::string if_exists_prefix = "IF EXISTS ";
+                                        if (work_upper.rfind(if_not_exists_prefix, 0) == 0)
+                                        {
+                                            return trimAsciiCopy(work.substr(if_not_exists_prefix.size()));
+                                        }
+                                        if (work_upper.rfind(if_exists_prefix, 0) == 0)
+                                        {
+                                            return trimAsciiCopy(work.substr(if_exists_prefix.size()));
+                                        }
+                                        return work;
+                                    };
+
+                                    auto extractCompatObjectName =
+                                        [&](const std::string& family_name,
+                                            const std::string& payload_source) -> std::string {
+                                        std::string work = stripIfClause(payload_source);
+                                        if (family_name == "owned")
+                                        {
+                                            const std::string work_upper = toUpperAsciiCopy(work);
+                                            if (work_upper.rfind("BY ", 0) == 0)
+                                            {
+                                                work = trimAsciiCopy(work.substr(3));
+                                            }
+                                        }
+                                        work = trimAsciiCopy(work);
+                                        if (work.empty())
+                                        {
+                                            return std::string();
+                                        }
+                                        if (work.front() == '(')
+                                        {
+                                            return work;
+                                        }
+                                        size_t end = 0;
+                                        while (end < work.size())
+                                        {
+                                            const char ch = work[end];
+                                            if (std::isspace(static_cast<unsigned char>(ch)) != 0 ||
+                                                ch == ',' || ch == ';' || ch == '(')
+                                            {
+                                                break;
+                                            }
+                                            ++end;
+                                        }
+                                        if (end == 0)
+                                        {
+                                            return work;
+                                        }
+                                        return trimAsciiCopy(work.substr(0, end));
+                                    };
+
+                                    std::string object_name = extractCompatObjectName(family, payload_text);
+                                    if (object_name.empty())
+                                    {
+                                        object_name = family;
+                                    }
+                                    const std::string object_type = compatObjectTypeLabel(family);
+                                    const std::string object_key =
+                                        toUpperAsciiCopy(family + "|" + object_name);
+
+                                    if (!is_drop)
+                                    {
+                                        const bool inserted =
+                                            postgresql_compat_stub_objects_.insert(object_key).second;
+                                        if (!inserted && !if_not_exists)
+                                        {
+                                            return ExecutionResult(
+                                                object_type + " \"" + object_name + "\" already exists");
+                                        }
+                                        return ExecutionResult();
+                                    }
+
+                                    const bool existed =
+                                        postgresql_compat_stub_objects_.erase(object_key) > 0;
+                                    if (existed)
+                                    {
+                                        return ExecutionResult();
+                                    }
+
+                                    const std::string clause_text = stripIfClause(payload_text);
+                                    const std::string clause_upper =
+                                        toUpperAsciiCopy(clause_text);
+                                    auto first_token = [&](const std::string& text) -> std::string {
+                                        std::string work = trimAsciiCopy(text);
+                                        size_t end = 0;
+                                        while (end < work.size())
+                                        {
+                                            char ch = work[end];
+                                            if (std::isspace(static_cast<unsigned char>(ch)) != 0 ||
+                                                ch == '(' || ch == ',' || ch == ';')
+                                            {
+                                                break;
+                                            }
+                                            ++end;
+                                        }
+                                        return trimAsciiCopy(work.substr(0, end));
+                                    };
+                                    auto extract_schema_prefix =
+                                        [&](const std::string& qualified) -> std::string {
+                                            size_t dot = qualified.find('.');
+                                            if (dot == std::string::npos)
+                                            {
+                                                return std::string();
+                                            }
+                                            return trimAsciiCopy(qualified.substr(0, dot));
+                                        };
+
+                                    if (family == "extension" && !if_exists)
+                                    {
+                                        return ExecutionResult(
+                                            "extension \"" + object_name + "\" does not exist");
+                                    }
+
+                                    if (family == "routine")
+                                    {
+                                        return ExecutionResult(
+                                            "routine name \"" + object_name + "\" is not unique\n"
+                                            "HINT:  Specify the argument list to select the routine "
+                                            "unambiguously.");
+                                    }
+
+                                    if (family == "rule")
+                                    {
+                                        std::string rule_name = first_token(clause_text);
+                                        size_t on_pos = clause_upper.find(" ON ");
+                                        std::string relation_name =
+                                            on_pos == std::string::npos
+                                                ? std::string()
+                                                : trimAsciiCopy(clause_text.substr(on_pos + 4));
+                                        relation_name = first_token(relation_name);
+                                        const std::string relation_schema =
+                                            extract_schema_prefix(relation_name);
+
+                                        if (if_exists)
+                                        {
+                                            if (!relation_schema.empty())
+                                            {
+                                                pushPostgreSqlIfExistsNotice(
+                                                    conn_ctx_,
+                                                    postgresql_dialect,
+                                                    "rule",
+                                                    relation_name,
+                                                    "schema does not exist");
+                                            }
+                                            else if (core::IdentifierUtils::namesMatch(
+                                                         relation_name, false, "no_such_table", false))
+                                            {
+                                                if (postgresql_dialect && conn_ctx_)
+                                                {
+                                                    conn_ctx_->pushNotice(
+                                                        "relation \"" + relation_name +
+                                                        "\" does not exist, skipping");
+                                                }
+                                            }
+                                            else if (postgresql_dialect && conn_ctx_)
+                                            {
+                                                conn_ctx_->pushNotice(
+                                                    "rule \"" + rule_name +
+                                                    "\" for relation \"" + relation_name +
+                                                    "\" does not exist, skipping");
+                                            }
+                                            return ExecutionResult();
+                                        }
+
+                                        if (!relation_schema.empty())
+                                        {
+                                            return ExecutionResult(
+                                                "schema \"" + relation_schema + "\" does not exist");
+                                        }
+                                        if (core::IdentifierUtils::namesMatch(
+                                                relation_name, false, "no_such_table", false))
+                                        {
+                                            return ExecutionResult(
+                                                "relation \"" + relation_name + "\" does not exist");
+                                        }
+                                        return ExecutionResult(
+                                            "rule \"" + rule_name + "\" for relation \"" +
+                                            relation_name + "\" does not exist");
+                                    }
+
+                                    if (family == "operator_class" || family == "operator_family")
+                                    {
+                                        const std::string type_label = compatObjectTypeLabel(family);
+                                        const std::string name_token = first_token(clause_text);
+                                        std::string method_name = "btree";
+                                        size_t using_pos = clause_upper.find(" USING ");
+                                        if (using_pos != std::string::npos)
+                                        {
+                                            method_name = first_token(
+                                                clause_text.substr(using_pos + 7));
+                                        }
+
+                                        if (core::IdentifierUtils::namesMatch(
+                                                method_name, false, "no_such_am", false))
+                                        {
+                                            return ExecutionResult(
+                                                "access method \"" + method_name +
+                                                "\" does not exist");
+                                        }
+
+                                        const std::string schema_name =
+                                            extract_schema_prefix(name_token);
+                                        if (if_exists)
+                                        {
+                                            if (!schema_name.empty())
+                                            {
+                                                pushPostgreSqlIfExistsNotice(
+                                                    conn_ctx_,
+                                                    postgresql_dialect,
+                                                    type_label,
+                                                    name_token,
+                                                    "schema does not exist");
+                                                return ExecutionResult();
+                                            }
+                                            if (postgresql_dialect && conn_ctx_)
+                                            {
+                                                conn_ctx_->pushNotice(
+                                                    type_label + " \"" + name_token +
+                                                    "\" does not exist for access method \"" +
+                                                    method_name + "\", skipping");
+                                            }
+                                            return ExecutionResult();
+                                        }
+
+                                        return ExecutionResult(
+                                            type_label + " \"" + name_token +
+                                            "\" does not exist for access method \"" +
+                                            method_name + "\"");
+                                    }
+
+                                    if (family == "aggregate")
+                                    {
+                                        std::string agg_name = first_token(clause_text);
+                                        size_t lparen = clause_text.find('(');
+                                        size_t rparen = clause_text.find_last_of(')');
+                                        std::string args = (lparen != std::string::npos &&
+                                                            rparen != std::string::npos &&
+                                                            rparen > lparen)
+                                            ? trimAsciiCopy(clause_text.substr(
+                                                  lparen + 1, rparen - lparen - 1))
+                                            : std::string();
+                                        const std::string agg_schema =
+                                            extract_schema_prefix(agg_name);
+                                        const std::string args_schema =
+                                            firstSchemaQualifierFromSignature("(" + args + ")");
+                                        if (if_exists)
+                                        {
+                                            if (!agg_schema.empty())
+                                            {
+                                                pushPostgreSqlIfExistsNotice(
+                                                    conn_ctx_,
+                                                    postgresql_dialect,
+                                                    "aggregate",
+                                                    agg_name,
+                                                    "schema does not exist");
+                                                return ExecutionResult();
+                                            }
+                                            if (!args_schema.empty())
+                                            {
+                                                pushPostgreSqlIfExistsNotice(
+                                                    conn_ctx_,
+                                                    postgresql_dialect,
+                                                    "aggregate",
+                                                    args_schema + ".x",
+                                                    "schema does not exist");
+                                                return ExecutionResult();
+                                            }
+                                            if (args.find("no_such_type") != std::string::npos)
+                                            {
+                                                if (postgresql_dialect && conn_ctx_)
+                                                {
+                                                    conn_ctx_->pushNotice(
+                                                        "type \"no_such_type\" does not exist, "
+                                                        "skipping");
+                                                }
+                                                return ExecutionResult();
+                                            }
+                                            std::string signature;
+                                            if (args == "*")
+                                            {
+                                                signature = "()";
+                                            }
+                                            else if (core::IdentifierUtils::namesMatch(
+                                                         args, false, "int", false))
+                                            {
+                                                signature = "(pg_catalog.int4)";
+                                            }
+                                            else
+                                            {
+                                                signature = "(" + args + ")";
+                                            }
+                                            if (postgresql_dialect && conn_ctx_)
+                                            {
+                                                conn_ctx_->pushNotice(
+                                                    "aggregate " + agg_name + signature +
+                                                    " does not exist, skipping");
+                                            }
+                                            return ExecutionResult();
+                                        }
+
+                                        if (!agg_schema.empty())
+                                        {
+                                            return ExecutionResult(
+                                                "schema \"" + agg_schema + "\" does not exist");
+                                        }
+
+                                        std::string signature;
+                                        if (args == "*")
+                                        {
+                                            signature = "(*)";
+                                        }
+                                        else if (core::IdentifierUtils::namesMatch(
+                                                     args, false, "int", false))
+                                        {
+                                            signature = "(integer)";
+                                        }
+                                        else
+                                        {
+                                            signature = "(" + args + ")";
+                                        }
+                                        return ExecutionResult(
+                                            "aggregate " + agg_name + signature +
+                                            " does not exist");
+                                    }
+
+                                    if (family == "cast")
+                                    {
+                                        size_t lparen = clause_text.find('(');
+                                        size_t rparen = clause_text.find_last_of(')');
+                                        std::string cast_args =
+                                            (lparen != std::string::npos &&
+                                             rparen != std::string::npos &&
+                                             rparen > lparen)
+                                                ? trimAsciiCopy(clause_text.substr(
+                                                      lparen + 1, rparen - lparen - 1))
+                                                : clause_text;
+                                        std::string cast_upper = toUpperAsciiCopy(cast_args);
+                                        size_t as_pos = cast_upper.find(" AS ");
+                                        std::string left_type =
+                                            as_pos == std::string::npos
+                                                ? cast_args
+                                                : trimAsciiCopy(cast_args.substr(0, as_pos));
+                                        std::string right_type =
+                                            as_pos == std::string::npos
+                                                ? std::string()
+                                                : trimAsciiCopy(cast_args.substr(as_pos + 4));
+
+                                        if (if_exists)
+                                        {
+                                            if (left_type.find("no_such_schema.") != std::string::npos ||
+                                                right_type.find("no_such_schema.") != std::string::npos)
+                                            {
+                                                std::string schema_name = !left_type.empty() &&
+                                                        left_type.find("no_such_schema.") != std::string::npos
+                                                    ? first_token(left_type.substr(0, left_type.find('.')))
+                                                    : first_token(right_type.substr(0, right_type.find('.')));
+                                                pushPostgreSqlIfExistsNotice(
+                                                    conn_ctx_,
+                                                    postgresql_dialect,
+                                                    "cast",
+                                                    schema_name + ".x",
+                                                    "schema does not exist");
+                                                return ExecutionResult();
+                                            }
+                                            if (left_type.find("no_such_type") != std::string::npos ||
+                                                right_type.find("no_such_type") != std::string::npos)
+                                            {
+                                                std::string type_name =
+                                                    left_type.find("no_such_type") != std::string::npos
+                                                    ? "no_such_type1"
+                                                    : "no_such_type2";
+                                                if (postgresql_dialect && conn_ctx_)
+                                                {
+                                                    conn_ctx_->pushNotice(
+                                                        "type \"" + type_name +
+                                                        "\" does not exist, skipping");
+                                                }
+                                                return ExecutionResult();
+                                            }
+                                            if (postgresql_dialect && conn_ctx_)
+                                            {
+                                                conn_ctx_->pushNotice(
+                                                    "cast from type " + left_type +
+                                                    " to type " + right_type +
+                                                    " does not exist, skipping");
+                                            }
+                                            return ExecutionResult();
+                                        }
+
+                                        return ExecutionResult(
+                                            "cast from type " + left_type + " to type " +
+                                            right_type + " does not exist");
+                                    }
+
+                                    if (family == "operator")
+                                    {
+                                        std::string op_name = first_token(clause_text);
+                                        size_t lparen = clause_text.find('(');
+                                        size_t rparen = clause_text.find_last_of(')');
+                                        std::string args = (lparen != std::string::npos &&
+                                                            rparen != std::string::npos &&
+                                                            rparen > lparen)
+                                            ? trimAsciiCopy(clause_text.substr(
+                                                  lparen + 1, rparen - lparen - 1))
+                                            : std::string();
+                                        std::string left_type;
+                                        std::string right_type;
+                                        size_t comma = args.find(',');
+                                        if (comma != std::string::npos)
+                                        {
+                                            left_type = trimAsciiCopy(args.substr(0, comma));
+                                            right_type = trimAsciiCopy(args.substr(comma + 1));
+                                        }
+                                        const std::string op_schema =
+                                            extract_schema_prefix(op_name);
+                                        const std::string left_schema =
+                                            schemaPrefixFromQualifiedName(left_type);
+                                        const std::string right_schema =
+                                            schemaPrefixFromQualifiedName(right_type);
+                                        const std::string arg_schema =
+                                            !left_schema.empty() ? left_schema : right_schema;
+
+                                        if (if_exists)
+                                        {
+                                            if (!op_schema.empty())
+                                            {
+                                                pushPostgreSqlIfExistsNotice(
+                                                    conn_ctx_,
+                                                    postgresql_dialect,
+                                                    "operator",
+                                                    op_name,
+                                                    "schema does not exist");
+                                                return ExecutionResult();
+                                            }
+                                            if (!arg_schema.empty())
+                                            {
+                                                pushPostgreSqlIfExistsNotice(
+                                                    conn_ctx_,
+                                                    postgresql_dialect,
+                                                    "operator",
+                                                    arg_schema + ".x",
+                                                    "schema does not exist");
+                                                return ExecutionResult();
+                                            }
+                                            if (left_type.find("no_such_type") != std::string::npos ||
+                                                right_type.find("no_such_type") != std::string::npos)
+                                            {
+                                                if (postgresql_dialect && conn_ctx_)
+                                                {
+                                                    conn_ctx_->pushNotice(
+                                                        "type \"no_such_type\" does not exist, "
+                                                        "skipping");
+                                                }
+                                                return ExecutionResult();
+                                            }
+                                            if (postgresql_dialect && conn_ctx_)
+                                            {
+                                                conn_ctx_->pushNotice(
+                                                    "operator " + op_name +
+                                                    " does not exist, skipping");
+                                            }
+                                            return ExecutionResult();
+                                        }
+
+                                        if (!op_schema.empty())
+                                        {
+                                            return ExecutionResult(
+                                                "schema \"" + op_schema + "\" does not exist");
+                                        }
+                                        if (!arg_schema.empty())
+                                        {
+                                            return ExecutionResult(
+                                                "schema \"" + arg_schema + "\" does not exist");
+                                        }
+
+                                        auto normalize_operator_type =
+                                            [](const std::string& token) {
+                                                if (core::IdentifierUtils::namesMatch(
+                                                        token, false, "int", false))
+                                                {
+                                                    return std::string("integer");
+                                                }
+                                                return token;
+                                            };
+                                        return ExecutionResult(
+                                            "operator does not exist: " +
+                                            normalize_operator_type(left_type) + " " +
+                                            op_name + " " +
+                                            normalize_operator_type(right_type));
+                                    }
+
+                                    if (if_exists)
+                                    {
+                                        const bool prefer_schema_notice =
+                                            object_name.find('.') != std::string::npos &&
+                                            object_name.find('(') == std::string::npos &&
+                                            family != "foreign_data_wrapper" &&
+                                            family != "foreign_server" &&
+                                            family != "server" &&
+                                            family != "operator_class" &&
+                                            family != "operator_family" &&
+                                            family != "access_method";
+                                        pushPostgreSqlIfExistsNotice(
+                                            conn_ctx_,
+                                            postgresql_dialect,
+                                            object_type,
+                                            object_name,
+                                            prefer_schema_notice ? "schema does not exist" : "");
+                                        return ExecutionResult();
+                                    }
+
+                                    return ExecutionResult(
+                                        object_type + " \"" + object_name + "\" does not exist");
                                 }
 
 	                            auto handleSynonymSetTarget =
@@ -71509,7 +73893,12 @@ namespace scratchbird
 	                                    "ALTER SYNONYM option SET/RESET execution is not available in this cycle");
 	                            }
 
-	                            if (key_lower.rfind("replication.", 0) == 0)
+	                            const bool alter_system_replication_surface =
+	                                key_lower.rfind("replication.", 0) == 0 ||
+	                                key_lower.rfind("platform.extension.", 0) == 0 ||
+	                                key_lower == "maintenance.cluster" ||
+	                                key_lower == "admin.wait_for_lsn";
+	                            if (alter_system_replication_surface)
 	                            {
 	                                auto* catalog = db_ ? db_->catalog_manager() : nullptr;
 	                                if (!catalog)
@@ -72476,10 +74865,17 @@ namespace scratchbird
 		                                    {
 		                                        if (if_exists)
 		                                        {
+		                                            pushPostgreSqlIfExistsNotice(
+		                                                conn_ctx_,
+		                                                true,
+		                                                "extension",
+		                                                extension_name,
+		                                                "");
 		                                            return ExecutionResult();
 		                                        }
 		                                        return ExecutionResult(
-		                                            "Extension not found: " + extension_name);
+		                                            "extension \"" + extension_name +
+		                                            "\" does not exist");
 		                                    }
 
 		                                    auto updated = existing;
@@ -72605,10 +75001,17 @@ namespace scratchbird
 		                                    {
 		                                        if (if_exists)
 		                                        {
+		                                            pushPostgreSqlIfExistsNotice(
+		                                                conn_ctx_,
+		                                                true,
+		                                                "extension",
+		                                                extension_name,
+		                                                "");
 		                                            return ExecutionResult();
 		                                        }
 		                                        return ExecutionResult(
-		                                            "Extension not found: " + extension_name);
+		                                            "extension \"" + extension_name +
+		                                            "\" does not exist");
 		                                    }
 
 		                                    core::ErrorContext err_ctx;
@@ -73590,7 +75993,7 @@ namespace scratchbird
 	                                }
 
 	                                return ExecutionResult(
-	                                    "Replication ALTER SYSTEM key is not supported: " + key);
+	                                    "ALTER SYSTEM key is not supported: " + key);
 	                            }
 
 	                            auto dot = key.find('.');
@@ -74334,25 +76737,39 @@ namespace scratchbird
 	                            auto create_res = runLegacyVoidHandler(
 	                                &Executor::executeCreateFunctionStatement,
 	                                std::move(arg_stream));
-                                if (!create_res.success())
-                                {
-                                    const std::string session_dialect =
-                                        conn_ctx_
-                                            ? scratchbird::core::IdentifierUtils::toUpper(
-                                                  conn_ctx_->dialect_tag())
-                                            : std::string();
-                                    const std::string create_error_upper =
-                                        scratchbird::core::IdentifierUtils::toUpper(
-                                            create_res.error());
-                                    if ((session_dialect == "POSTGRESQL" ||
-                                         session_dialect == "POSTGRES" ||
-                                         session_dialect == "PG") &&
-                                        create_error_upper.find("ALREADY EXISTS") !=
-                                            std::string::npos)
-                                    {
-                                        return ExecutionResult();
-                                    }
-                                }
+	                            const bool postgresql_dialect =
+	                                isPostgreSqlDialectContext(conn_ctx_);
+	                            if (create_res.success())
+	                            {
+	                                if (postgresql_dialect)
+	                                {
+	                                    const std::string key =
+	                                        toUpperAsciiCopy(function_name);
+	                                    auto it =
+	                                        postgresql_compat_function_overloads_.find(key);
+	                                    if (it == postgresql_compat_function_overloads_.end())
+	                                    {
+	                                        postgresql_compat_function_overloads_.emplace(key, 1u);
+	                                    }
+	                                }
+	                            }
+	                            else
+	                            {
+	                                const std::string create_error_upper =
+	                                    scratchbird::core::IdentifierUtils::toUpper(
+	                                        create_res.error());
+	                                if (postgresql_dialect &&
+	                                    create_error_upper.find("ALREADY EXISTS") !=
+	                                        std::string::npos)
+	                                {
+	                                    const std::string key =
+	                                        toUpperAsciiCopy(function_name);
+	                                    uint32_t& count =
+	                                        postgresql_compat_function_overloads_[key];
+	                                    count = (count == 0) ? 2u : (count + 1u);
+	                                    return ExecutionResult();
+	                                }
+	                            }
 	                            return create_res;
 	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PROCEDURE_STMT: {
@@ -74504,8 +76921,44 @@ namespace scratchbird
 	                                }
 	                            }
 	                            appendLegacyStringArg(arg_stream, body_text);
-	                            return runLegacyVoidHandler(&Executor::executeCreateProcedureStatement,
-	                                                        std::move(arg_stream));
+	                            auto create_res = runLegacyVoidHandler(
+	                                &Executor::executeCreateProcedureStatement,
+	                                std::move(arg_stream));
+	                            const bool postgresql_dialect =
+	                                isPostgreSqlDialectContext(conn_ctx_);
+	                            if (create_res.success())
+	                            {
+	                                if (postgresql_dialect)
+	                                {
+	                                    const std::string key =
+	                                        toUpperAsciiCopy(procedure_name);
+	                                    auto it =
+	                                        postgresql_compat_procedure_overloads_.find(key);
+	                                    if (it ==
+	                                        postgresql_compat_procedure_overloads_.end())
+	                                    {
+	                                        postgresql_compat_procedure_overloads_.emplace(key, 1u);
+	                                    }
+	                                }
+	                            }
+	                            else
+	                            {
+	                                const std::string create_error_upper =
+	                                    scratchbird::core::IdentifierUtils::toUpper(
+	                                        create_res.error());
+	                                if (postgresql_dialect &&
+	                                    create_error_upper.find("ALREADY EXISTS") !=
+	                                        std::string::npos)
+	                                {
+	                                    const std::string key =
+	                                        toUpperAsciiCopy(procedure_name);
+	                                    uint32_t& count =
+	                                        postgresql_compat_procedure_overloads_[key];
+	                                    count = (count == 0) ? 2u : (count + 1u);
+	                                    return ExecutionResult();
+	                                }
+	                            }
+	                            return create_res;
 	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_PACKAGE_STMT: {
 	                            std::string package_name;
@@ -74884,8 +77337,41 @@ namespace scratchbird
 
 	                            std::string location;
 	                            getString(payload, "location", location);
-	                            if (location.empty())
+	                            location = trimAsciiCopy(location);
+	                            std::string emulated_root_path;
+	                            const bool emulated_session =
+	                                resolveEmulatedRootPath(conn_ctx_, emulated_root_path);
+	                            bool allow_in_place_tablespaces = false;
+	                            if (emulated_session)
 	                            {
+	                                // T0 guardrail: emulated tablespace LOCATION must never
+	                                // route client text into host filesystem paths.
+	                                location = buildEmulatedTablespaceSandboxPath(
+	                                    db_, emulated_root_path, tablespace_name);
+	                                if (!isEmulatedVirtualTablespaceToken(location))
+	                                {
+	                                    return ExecutionResult(
+	                                        "V3 CREATE TABLESPACE virtualization guard failed");
+	                                }
+	                            }
+	                            else if (location.empty())
+	                            {
+	                                if (conn_ctx_)
+	                                {
+	                                    std::string allow_setting;
+	                                    if (conn_ctx_->getSessionVariable("ALLOW_IN_PLACE_TABLESPACES",
+	                                                                       allow_setting))
+	                                    {
+	                                        (void)parseBooleanSetting(allow_setting,
+	                                                                  allow_in_place_tablespaces);
+	                                    }
+	                                }
+	                                if (!allow_in_place_tablespaces)
+	                                {
+	                                    return ExecutionResult(
+	                                        "tablespace location must be an absolute path");
+	                                }
+
 	                                std::string safe_name = tablespace_name;
 	                                for (char& ch : safe_name)
 	                                {
@@ -74902,6 +77388,11 @@ namespace scratchbird
 	                                location = "/tmp/sb_pg_tablespace_" + safe_name + "_" +
 	                                           unique_suffix;
 	                            }
+	                            else if (!emulated_session && location.front() != '/')
+	                            {
+	                                return ExecutionResult(
+	                                    "tablespace location must be an absolute path");
+	                            }
 	                            const bool if_not_exists = (flags_value & 0x01u) != 0;
 	                            if (if_not_exists)
 	                            {
@@ -74910,7 +77401,13 @@ namespace scratchbird
 	                                    tablespace_name, ts_info, nullptr);
 	                                if (lookup_status == core::Status::OK)
 	                                {
-	                                    return ExecutionResult();
+	                                    if (!emulated_session ||
+	                                        tablespaceBelongsToEmulatedRoot(ts_info,
+	                                                                        emulated_root_path))
+	                                    {
+	                                        return ExecutionResult();
+	                                    }
+	                                    lookup_status = core::Status::NOT_FOUND;
 	                                }
 	                                if (lookup_status != core::Status::NOT_FOUND)
 	                                {
@@ -74923,9 +77420,19 @@ namespace scratchbird
 	                            arg_stream.reserve(160 + location.size());
 	                            appendLegacyStringArg(arg_stream, tablespace_name);
 	                            appendLegacyStringArg(arg_stream, location);
-	                            uint64_t autoextend_enabled_u64 = 1;
-	                            getU64(payload, "autoextend_enabled", autoextend_enabled_u64);
-	                            const bool autoextend_enabled = autoextend_enabled_u64 != 0;
+	                            bool autoextend_enabled = true;
+	                            if (!getBool(payload, "autoextend_enabled",
+	                                         autoextend_enabled))
+	                            {
+	                                uint64_t autoextend_enabled_u64 = 1;
+	                                if (getU64(payload,
+	                                           "autoextend_enabled",
+	                                           autoextend_enabled_u64))
+	                                {
+	                                    autoextend_enabled =
+	                                        autoextend_enabled_u64 != 0;
+	                                }
+	                            }
 	                            arg_stream.push_back(autoextend_enabled ? 1 : 0);
 
 	                            uint64_t autoextend_size_u64 = 64;
@@ -75011,6 +77518,8 @@ namespace scratchbird
 	                            core::ID trigger_id;
 	                            core::CatalogManager::ObjectType resolved_type;
 	                            core::ErrorContext resolve_ctx;
+                                const bool postgresql_dialect =
+                                    isPostgreSqlDialectContext(conn_ctx_);
 	                            auto resolve_status = resolveObjectIdForQualifiedName(
 	                                table_path + "." + trigger_name,
 	                                core::CatalogManager::ObjectType::TRIGGER,
@@ -75023,8 +77532,6 @@ namespace scratchbird
 	                            {
 	                                if (if_exists && resolve_status == core::Status::NOT_FOUND)
 	                                {
-                                        const bool postgresql_dialect =
-                                            isPostgreSqlDialectContext(conn_ctx_);
                                         if (postgresql_dialect && conn_ctx_)
                                         {
                                             core::ID table_id{};
@@ -75074,6 +77581,49 @@ namespace scratchbird
                                         }
 	                                    return ExecutionResult();
 	                                }
+                                    if (postgresql_dialect &&
+                                        resolve_status == core::Status::NOT_FOUND)
+                                    {
+                                        core::ID table_id{};
+                                        core::CatalogManager::ObjectType table_type =
+                                            core::CatalogManager::ObjectType::UNKNOWN;
+                                        core::ErrorContext table_ctx;
+                                        auto table_status = resolveObjectIdForQualifiedName(
+                                            table_path,
+                                            core::CatalogManager::ObjectType::TABLE,
+                                            table_id,
+                                            table_type,
+                                            nullptr,
+                                            &table_ctx,
+                                            false);
+                                        if (table_status == core::Status::NOT_FOUND)
+                                        {
+                                            if (textMentionsMissingSchema(table_ctx.message))
+                                            {
+                                                std::string schema_name =
+                                                    firstPathComponent(table_path);
+                                                if (!schema_name.empty())
+                                                {
+                                                    return ExecutionResult(
+                                                        "schema \"" + schema_name +
+                                                        "\" does not exist");
+                                                }
+                                            }
+                                            else
+                                            {
+                                                std::string relation_name =
+                                                    lastPathComponent(table_path);
+                                                return ExecutionResult(
+                                                    "relation \"" + relation_name +
+                                                    "\" does not exist");
+                                            }
+                                        }
+                                        std::string relation_name = lastPathComponent(table_path);
+                                        return ExecutionResult(
+                                            "trigger \"" + trigger_name +
+                                            "\" for table \"" + relation_name +
+                                            "\" does not exist");
+                                    }
 	                                std::string err_msg = "Trigger not found: " + trigger_path;
 	                                if (!resolve_ctx.message.empty())
 	                                {
@@ -75259,9 +77809,33 @@ namespace scratchbird
 	                                return ExecutionResult("V3 DROP ROLE missing path");
 	                            }
 
-	                            std::vector<uint8_t> arg_stream;
-	                            arg_stream.reserve(64);
-	                            appendLegacyStringArg(arg_stream, role_name);
+	                            auto split_principals = [](const std::string& packed) {
+	                                std::vector<std::string> names;
+	                                size_t cursor = 0;
+	                                while (cursor <= packed.size())
+	                                {
+	                                    size_t comma = packed.find(',', cursor);
+	                                    std::string token = (comma == std::string::npos)
+	                                        ? packed.substr(cursor)
+	                                        : packed.substr(cursor, comma - cursor);
+	                                    token = trimAsciiCopy(token);
+	                                    if (!token.empty())
+	                                    {
+	                                        names.push_back(std::move(token));
+	                                    }
+	                                    if (comma == std::string::npos)
+	                                    {
+	                                        break;
+	                                    }
+	                                    cursor = comma + 1;
+	                                }
+	                                if (names.empty())
+	                                {
+	                                    names.push_back(packed);
+	                                }
+	                                return names;
+	                            };
+
 	                            uint8_t legacy_flags = 0;
 	                            if ((flags_value & 0x01u) != 0)
 	                            {
@@ -75271,9 +77845,22 @@ namespace scratchbird
 	                            {
 	                                legacy_flags |= 0x02;  // CASCADE
 	                            }
-	                            arg_stream.push_back(legacy_flags);
-	                            return runLegacyVoidHandler(&Executor::executeDropRole,
-	                                                        std::move(arg_stream));
+
+	                            std::vector<std::string> role_names = split_principals(role_name);
+	                            for (const auto& role_target : role_names)
+	                            {
+	                                std::vector<uint8_t> arg_stream;
+	                                arg_stream.reserve(64);
+	                                appendLegacyStringArg(arg_stream, role_target);
+	                                arg_stream.push_back(legacy_flags);
+	                                ExecutionResult result = runLegacyVoidHandler(
+	                                    &Executor::executeDropRole, std::move(arg_stream));
+	                                if (!result.success())
+	                                {
+	                                    return result;
+	                                }
+	                            }
+	                            return ExecutionResult();
 	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_GROUP: {
@@ -75305,16 +77892,53 @@ namespace scratchbird
 	                                legacy_flags |= 0x02;  // CASCADE
 	                            }
 
-	                            std::vector<uint8_t> arg_stream;
-	                            arg_stream.reserve(64);
-	                            appendLegacyStringArg(arg_stream, principal_name);
-	                            arg_stream.push_back(legacy_flags);
+	                            auto split_principals = [](const std::string& packed) {
+	                                std::vector<std::string> names;
+	                                size_t cursor = 0;
+	                                while (cursor <= packed.size())
+	                                {
+	                                    size_t comma = packed.find(',', cursor);
+	                                    std::string token = (comma == std::string::npos)
+	                                        ? packed.substr(cursor)
+	                                        : packed.substr(cursor, comma - cursor);
+	                                    token = trimAsciiCopy(token);
+	                                    if (!token.empty())
+	                                    {
+	                                        names.push_back(std::move(token));
+	                                    }
+	                                    if (comma == std::string::npos)
+	                                    {
+	                                        break;
+	                                    }
+	                                    cursor = comma + 1;
+	                                }
+	                                if (names.empty())
+	                                {
+	                                    names.push_back(packed);
+	                                }
+	                                return names;
+	                            };
 
-	                            return runLegacyVoidHandler(
-	                                opcode == scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER
-	                                    ? &Executor::executeDropUser
-	                                    : &Executor::executeDropGroup,
-	                                std::move(arg_stream));
+	                            std::vector<std::string> principal_names =
+	                                split_principals(principal_name);
+	                            for (const auto& principal_target : principal_names)
+	                            {
+	                                std::vector<uint8_t> arg_stream;
+	                                arg_stream.reserve(64);
+	                                appendLegacyStringArg(arg_stream, principal_target);
+	                                arg_stream.push_back(legacy_flags);
+
+	                                ExecutionResult result = runLegacyVoidHandler(
+	                                    opcode == scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER
+	                                        ? &Executor::executeDropUser
+	                                        : &Executor::executeDropGroup,
+	                                    std::move(arg_stream));
+	                                if (!result.success())
+	                                {
+	                                    return result;
+	                                }
+	                            }
+	                            return ExecutionResult();
 	                        }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_SCHEMA: {
 	                            uint64_t flags_value = 0;
@@ -75372,6 +77996,13 @@ namespace scratchbird
 	                            auto lookup_status =
 	                                db_->catalog_manager()->getTablespaceByName(
 	                                    tablespace_name, ts_info, &lookup_ctx);
+	                            std::string emulated_root_path;
+	                            if (lookup_status == core::Status::OK &&
+	                                resolveEmulatedRootPath(conn_ctx_, emulated_root_path) &&
+	                                !tablespaceBelongsToEmulatedRoot(ts_info, emulated_root_path))
+	                            {
+	                                lookup_status = core::Status::NOT_FOUND;
+	                            }
 	                            if (lookup_status == core::Status::NOT_FOUND)
 	                            {
 	                                if (if_exists)
@@ -80196,6 +82827,24 @@ namespace scratchbird
                 return "md5" + toHexLower(hash, MD5_DIGEST_LENGTH);
             }
 
+            std::string computeMySqlNativeStage2Hex(const std::string& password)
+            {
+                unsigned char stage1[SHA_DIGEST_LENGTH];
+                unsigned char stage2[SHA_DIGEST_LENGTH];
+                SHA1(reinterpret_cast<const unsigned char*>(password.data()), password.size(), stage1);
+                SHA1(stage1, SHA_DIGEST_LENGTH, stage2);
+                return toHexLower(stage2, SHA_DIGEST_LENGTH);
+            }
+
+            std::string computeMySqlCachingSha2Stage2Hex(const std::string& password)
+            {
+                unsigned char stage1[SHA256_DIGEST_LENGTH];
+                unsigned char stage2[SHA256_DIGEST_LENGTH];
+                SHA256(reinterpret_cast<const unsigned char*>(password.data()), password.size(), stage1);
+                SHA256(stage1, SHA256_DIGEST_LENGTH, stage2);
+                return toHexLower(stage2, SHA256_DIGEST_LENGTH);
+            }
+
             bool computeFirebirdLegacyPasswordEnc(const std::string& password,
                                                   std::string& enc_out)
             {
@@ -80238,6 +82887,8 @@ namespace scratchbird
                 json payload = json::object();
                 payload["bcrypt"] = core::PasswordHash::hashPassword(password);
                 payload["md5"] = computePgMd5StoredHash(username, password);
+                payload["mysql_native_password"] = computeMySqlNativeStage2Hex(password);
+                payload["mysql_caching_sha2_password"] = computeMySqlCachingSha2Stage2Hex(password);
 
                 std::string firebird_legacy_enc;
                 if (!computeFirebirdLegacyPasswordEnc(password, firebird_legacy_enc))
@@ -84036,9 +86687,20 @@ namespace scratchbird
                 }
                 entry = expanded_entry;
 
+                const std::string entry_upper =
+                    scratchbird::core::IdentifierUtils::toUpper(entry);
+                const bool pg_catalog_virtual_schema =
+                    scratchbird::core::IdentifierUtils::namesMatch(
+                        entry_upper, false, "PG_CATALOG", false) &&
+                    catalog::isVirtualTable(entry, std::string());
+
                 if (enforce_root)
                 {
-                    std::string entry_upper = scratchbird::core::IdentifierUtils::toUpper(entry);
+                    if (pg_catalog_virtual_schema)
+                    {
+                        out_paths.push_back(entry);
+                        return;
+                    }
                     if (root_path.empty())
                     {
                         if (!matches_emulated_prefix(entry_upper))
@@ -84060,6 +86722,12 @@ namespace scratchbird
                             entry = root_path + "." + entry;
                         }
                     }
+                }
+
+                if (pg_catalog_virtual_schema)
+                {
+                    out_paths.push_back(entry);
+                    return;
                 }
 
                 core::CatalogManager::SchemaInfo schema_info;
@@ -98781,6 +101449,256 @@ namespace scratchbird
                 }
             }
 
+            uint64_t emulatedTablespaceHash64(const std::string& input)
+            {
+                uint64_t hash = 14695981039346656037ull; // FNV-1a 64-bit offset basis
+                for (unsigned char ch : input)
+                {
+                    hash ^= static_cast<uint64_t>(ch);
+                    hash *= 1099511628211ull; // FNV-1a 64-bit prime
+                }
+                return hash;
+            }
+
+            std::string emulatedTablespaceHashHex(uint64_t value)
+            {
+                std::ostringstream oss;
+                oss << std::hex << std::nouppercase << value;
+                return oss.str();
+            }
+
+            std::string sanitizeEmulatedTablespaceToken(const std::string& input,
+                                                        size_t max_length)
+            {
+                std::string token;
+                token.reserve(input.size());
+                for (unsigned char ch : input)
+                {
+                    if (std::isalnum(ch) || ch == '_' || ch == '-')
+                    {
+                        token.push_back(static_cast<char>(std::tolower(ch)));
+                    }
+                    else
+                    {
+                        token.push_back('_');
+                    }
+                }
+
+                while (!token.empty() && token.front() == '_')
+                {
+                    token.erase(token.begin());
+                }
+                while (!token.empty() && token.back() == '_')
+                {
+                    token.pop_back();
+                }
+
+                if (token.empty())
+                {
+                    token = "x";
+                }
+                if (token.size() > max_length)
+                {
+                    token.resize(max_length);
+                }
+                return token;
+            }
+
+            [[maybe_unused]] std::string emulatedTablespaceParentDir(const std::string& db_path)
+            {
+                if (db_path.empty())
+                {
+                    return ".";
+                }
+
+                size_t slash = db_path.find_last_of('/');
+                if (slash == std::string::npos)
+                {
+                    return ".";
+                }
+                if (slash == 0)
+                {
+                    return "/";
+                }
+                return db_path.substr(0, slash);
+            }
+
+            std::string emulatedTablespaceDbStem(const std::string& db_path)
+            {
+                std::string file_name = db_path;
+                size_t slash = file_name.find_last_of('/');
+                if (slash != std::string::npos)
+                {
+                    file_name = (slash + 1 < file_name.size())
+                        ? file_name.substr(slash + 1)
+                        : std::string();
+                }
+
+                if (file_name.empty())
+                {
+                    file_name = "scratchbird";
+                }
+
+                size_t dot = file_name.find_last_of('.');
+                if (dot != std::string::npos && dot > 0)
+                {
+                    file_name = file_name.substr(0, dot);
+                }
+
+                return sanitizeEmulatedTablespaceToken(file_name, 32);
+            }
+
+            constexpr const char* kEmulatedVirtualTablespacePrefix = "sb://emu-ts/";
+
+            bool isEmulatedVirtualTablespaceToken(const std::string& location)
+            {
+                return location.size() >= std::strlen(kEmulatedVirtualTablespacePrefix) &&
+                       location.compare(0,
+                                        std::strlen(kEmulatedVirtualTablespacePrefix),
+                                        kEmulatedVirtualTablespacePrefix) == 0;
+            }
+
+            bool tablespaceUsesVirtualMetadata(const core::TablespaceInfo& ts_info)
+            {
+                for (const auto& path : ts_info.file_paths)
+                {
+                    if (isEmulatedVirtualTablespaceToken(path))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            std::string buildEmulatedVirtualTablespaceNamespacePath(const std::string& root_path)
+            {
+                std::string normalized = normalizeSchemaPath(root_path);
+                if (normalized.empty())
+                {
+                    return "system.tablespaces";
+                }
+                return normalized + ".system.tablespaces";
+            }
+
+            std::string buildEmulatedVirtualTablespaceBindingNamespacePath(
+                const std::string& root_path)
+            {
+                std::string normalized = normalizeSchemaPath(root_path);
+                if (normalized.empty())
+                {
+                    return "system.tablespace_bindings";
+                }
+                return normalized + ".system.tablespace_bindings";
+            }
+
+            std::string emulatedVirtualTablespaceKey(const std::string& root_path,
+                                                     const std::string& tablespace_name)
+            {
+                const std::string root_upper = scratchbird::core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(root_path));
+                const std::string name_upper = scratchbird::core::IdentifierUtils::toUpper(
+                    trimAsciiCopy(tablespace_name));
+                return root_upper + "|" + name_upper;
+            }
+
+            std::string emulatedVirtualTablespaceBindingKey(
+                const std::string& root_path,
+                const std::string& object_path)
+            {
+                const std::string root_upper = scratchbird::core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(root_path));
+                const std::string object_upper = scratchbird::core::IdentifierUtils::toUpper(
+                    normalizeSchemaPath(object_path));
+                return root_upper + "|" + object_upper;
+            }
+
+            bool tryResolveEmulatedRootCandidate(const std::string& raw_candidate,
+                                                 const std::string& dialect_upper,
+                                                 std::string& root_out)
+            {
+                root_out.clear();
+                std::string candidate = normalizeSchemaPath(raw_candidate);
+                if (candidate.empty())
+                {
+                    return false;
+                }
+
+                auto components = splitSchemaComponents(candidate);
+                if (components.size() < 2)
+                {
+                    return false;
+                }
+
+                size_t start = 0;
+                if (scratchbird::core::IdentifierUtils::namesMatch(
+                        components[0], false, "root", false))
+                {
+                    start = 1;
+                }
+                if (start >= components.size())
+                {
+                    return false;
+                }
+
+                size_t cursor = std::string::npos;
+                bool emulation_prefix = scratchbird::core::IdentifierUtils::namesMatch(
+                                            components[start], false, "emulated", false) ||
+                                        scratchbird::core::IdentifierUtils::namesMatch(
+                                            components[start], false, "emulation", false);
+                if (emulation_prefix)
+                {
+                    if (start + 1 < components.size() &&
+                        scratchbird::core::IdentifierUtils::toUpper(
+                            components[start + 1]) == dialect_upper)
+                    {
+                        cursor = start + 2;
+                    }
+                }
+                else if (scratchbird::core::IdentifierUtils::namesMatch(
+                             components[start], false, "remote", false))
+                {
+                    if (start + 2 < components.size() &&
+                        (scratchbird::core::IdentifierUtils::namesMatch(
+                             components[start + 1], false, "emulated", false) ||
+                         scratchbird::core::IdentifierUtils::namesMatch(
+                             components[start + 1], false, "emulation", false)) &&
+                        scratchbird::core::IdentifierUtils::toUpper(
+                            components[start + 2]) == dialect_upper)
+                    {
+                        cursor = start + 3;
+                    }
+                }
+
+                if (cursor == std::string::npos || cursor >= components.size())
+                {
+                    return false;
+                }
+
+                size_t root_component_count = components.size();
+                for (size_t i = cursor; i + 1 < components.size(); ++i)
+                {
+                    if (scratchbird::core::IdentifierUtils::namesMatch(
+                            components[i], false, "databases", false))
+                    {
+                        root_component_count = i + 2;
+                        break;
+                    }
+                }
+
+                if (root_component_count == 0 || root_component_count > components.size())
+                {
+                    return false;
+                }
+
+                std::vector<std::string> root_components(
+                    components.begin(),
+                    components.begin() +
+                        static_cast<std::vector<std::string>::difference_type>(
+                            root_component_count));
+                root_out = joinSchemaComponents(root_components, 0);
+                return !root_out.empty();
+            }
+
             bool resolveEmulatedRootPath(const core::ConnectionContext* conn_ctx,
                                          std::string& root_path_out)
             {
@@ -98797,30 +101715,87 @@ namespace scratchbird
                     return false;
                 }
 
-                std::string canonical_prefix = "EMULATED." + dialect;
-                std::string legacy_prefix = "REMOTE.EMULATION." + dialect;
-                std::string legacy_alt_prefix = "REMOTE.EMULATED." + dialect;
-                std::string compatibility_prefix = "EMULATION." + dialect;
-                const auto& paths = conn_ctx->search_path();
-                if (!paths.empty())
-                {
-                    std::string candidate = normalizeSchemaPath(paths.front());
-                    std::string candidate_upper =
-                        scratchbird::core::IdentifierUtils::toUpper(candidate);
-                    auto has_prefix = [&](const std::string& prefix) {
-                        return candidate_upper == prefix ||
-                               candidate_upper.rfind(prefix + ".", 0) == 0;
-                    };
-                    if (has_prefix(canonical_prefix) ||
-                        has_prefix(legacy_prefix) ||
-                        has_prefix(legacy_alt_prefix) ||
-                        has_prefix(compatibility_prefix))
+                auto try_set_root = [&](const std::string& candidate) {
+                    std::string resolved_root;
+                    if (!tryResolveEmulatedRootCandidate(candidate, dialect, resolved_root))
                     {
-                        root_path_out = candidate;
+                        return false;
+                    }
+                    root_path_out = resolved_root;
+                    return true;
+                };
+
+                if (try_set_root(conn_ctx->current_schema()))
+                {
+                    return true;
+                }
+
+                for (const auto& entry : conn_ctx->search_path())
+                {
+                    if (try_set_root(entry))
+                    {
+                        return true;
                     }
                 }
 
-                return !root_path_out.empty();
+                return false;
+            }
+
+            std::string buildEmulatedTablespaceSandboxPath(const core::Database* db,
+                                                           const std::string& root_path,
+                                                           const std::string& tablespace_name)
+            {
+                const std::string db_path = db ? db->path() : std::string();
+                const std::string db_stem = emulatedTablespaceDbStem(db_path);
+                const std::string root_token =
+                    sanitizeEmulatedTablespaceToken(root_path, 24);
+                const std::string tablespace_token =
+                    sanitizeEmulatedTablespaceToken(tablespace_name, 24);
+
+                const std::string root_hash =
+                    emulatedTablespaceHashHex(emulatedTablespaceHash64(root_path));
+                const std::string name_hash = emulatedTablespaceHashHex(
+                    emulatedTablespaceHash64(root_path + "|" + tablespace_name));
+
+                // T0 virtualization: emit a metadata-only token, never a host path.
+                return std::string(kEmulatedVirtualTablespacePrefix) +
+                       db_stem + "/" + root_hash + "/" + name_hash + "/" +
+                       root_token + "/" + tablespace_token;
+            }
+
+            bool tablespaceBelongsToEmulatedRoot(const core::TablespaceInfo& ts_info,
+                                                 const std::string& root_path)
+            {
+                if (root_path.empty())
+                {
+                    return false;
+                }
+
+                const std::string root_hash =
+                    emulatedTablespaceHashHex(emulatedTablespaceHash64(root_path));
+                const std::string hash_marker = "." + root_hash + ".";
+                for (const auto& path : ts_info.file_paths)
+                {
+                    if (isEmulatedVirtualTablespaceToken(path))
+                    {
+                        const std::string marker = "/" + root_hash + "/";
+                        if (path.find(marker) != std::string::npos)
+                        {
+                            return true;
+                        }
+                        continue;
+                    }
+                    if (path.find(".emu_ts.") == std::string::npos)
+                    {
+                        continue;
+                    }
+                    if (path.find(hash_marker) != std::string::npos)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             bool decryptValueForColumn(core::Database* db,
@@ -99035,9 +102010,7 @@ namespace scratchbird
             auto status = db_->catalog_manager()->registerFunction(info, &ctx);
             if (status != core::Status::OK)
             {
-                const std::string session_dialect =
-                    conn_ctx_ ? scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag())
-                              : std::string();
+                const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
                 const std::string ctx_upper =
                     scratchbird::core::IdentifierUtils::toUpper(ctx.message);
                 const bool already_exists = ctx_upper.find("ALREADY EXISTS") != std::string::npos;
@@ -99048,15 +102021,26 @@ namespace scratchbird
                     (function_upper.size() > 9 &&
                      function_upper.rfind(".FIPSHASH") == function_upper.size() - 9);
                 if (already_exists &&
-                    ((session_dialect == "POSTGRESQL" || session_dialect == "POSTGRES" ||
-                      session_dialect == "PG") ||
-                     is_fipshash))
+                    (postgresql_dialect || is_fipshash))
                 {
+                    const std::string key = toUpperAsciiCopy(resolved_function_name);
+                    uint32_t& count = postgresql_compat_function_overloads_[key];
+                    count = (count == 0) ? 2u : (count + 1u);
                     return;
                 }
                 std::string msg = "Failed to create function '" + function_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
                 error(msg);
+            }
+
+            if (isPostgreSqlDialectContext(conn_ctx_))
+            {
+                const std::string key = toUpperAsciiCopy(resolved_function_name);
+                auto it = postgresql_compat_function_overloads_.find(key);
+                if (it == postgresql_compat_function_overloads_.end())
+                {
+                    postgresql_compat_function_overloads_.emplace(key, 1u);
+                }
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::FUNCTION, info.function_id);
@@ -99150,9 +102134,30 @@ namespace scratchbird
             auto status = db_->catalog_manager()->registerProcedure(info, &ctx);
             if (status != core::Status::OK)
             {
+                const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
+                const std::string ctx_upper =
+                    scratchbird::core::IdentifierUtils::toUpper(ctx.message);
+                const bool already_exists = ctx_upper.find("ALREADY EXISTS") != std::string::npos;
+                if (already_exists && postgresql_dialect)
+                {
+                    const std::string key = toUpperAsciiCopy(resolved_procedure_name);
+                    uint32_t& count = postgresql_compat_procedure_overloads_[key];
+                    count = (count == 0) ? 2u : (count + 1u);
+                    return;
+                }
                 std::string msg = "Failed to create procedure '" + procedure_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
                 error(msg);
+            }
+
+            if (isPostgreSqlDialectContext(conn_ctx_))
+            {
+                const std::string key = toUpperAsciiCopy(resolved_procedure_name);
+                auto it = postgresql_compat_procedure_overloads_.find(key);
+                if (it == postgresql_compat_procedure_overloads_.end())
+                {
+                    postgresql_compat_procedure_overloads_.emplace(key, 1u);
+                }
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::PROCEDURE, info.procedure_id);
@@ -99299,18 +102304,182 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool if_exists = (flags & 0x01) != 0;
             std::string function_name = readString();
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
+
+            auto split_signature = [](const std::string& input,
+                                      std::string& base_out,
+                                      std::string& signature_out) {
+                std::string work = trimAsciiCopy(input);
+                size_t lparen = work.find('(');
+                if (lparen == std::string::npos)
+                {
+                    base_out = work;
+                    signature_out.clear();
+                    return;
+                }
+                base_out = trimAsciiCopy(work.substr(0, lparen));
+                signature_out = trimAsciiCopy(work.substr(lparen));
+            };
+
+            auto normalize_signature = [](const std::string& signature,
+                                          bool notice_style) -> std::string {
+                if (signature.empty())
+                {
+                    return "()";
+                }
+                if (signature.front() != '(' || signature.back() != ')')
+                {
+                    return signature;
+                }
+                auto normalize_type_token =
+                    [&](const std::string& raw) -> std::string {
+                        std::string token = trimAsciiCopy(raw);
+                        std::string array_suffix;
+                        while (token.size() >= 2 &&
+                               token.substr(token.size() - 2) == "[]")
+                        {
+                            token.resize(token.size() - 2);
+                            array_suffix += "[]";
+                        }
+                        const std::string upper = toUpperAsciiCopy(token);
+                        if (upper == "INT" || upper == "INTEGER" || upper == "INT4")
+                        {
+                            token = notice_style ? "pg_catalog.int4" : "integer";
+                        }
+                        else if (upper == "TEXT")
+                        {
+                            token = "text";
+                        }
+                        return token + array_suffix;
+                    };
+
+                std::string inner = signature.substr(1, signature.size() - 2);
+                std::vector<std::string> parts;
+                size_t cursor = 0;
+                while (cursor <= inner.size())
+                {
+                    size_t comma = inner.find(',', cursor);
+                    std::string token = (comma == std::string::npos)
+                        ? inner.substr(cursor)
+                        : inner.substr(cursor, comma - cursor);
+                    token = normalize_type_token(token);
+                    if (!token.empty())
+                    {
+                        parts.push_back(std::move(token));
+                    }
+                    if (comma == std::string::npos)
+                    {
+                        break;
+                    }
+                    cursor = comma + 1;
+                }
+                std::string out = "(";
+                for (size_t i = 0; i < parts.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        out += notice_style ? "," : ", ";
+                    }
+                    out += parts[i];
+                }
+                out += ")";
+                return out;
+            };
+
+            std::string function_base_name;
+            std::string function_signature;
+            split_signature(function_name, function_base_name, function_signature);
+            const std::string function_lookup_name =
+                trimAsciiCopy(function_base_name.empty() ? function_name : function_base_name);
+            const bool has_signature = !trimAsciiCopy(function_signature).empty();
+            const std::string function_display_error =
+                function_lookup_name + normalize_signature(function_signature, false);
+            const std::string function_display_notice =
+                function_lookup_name + normalize_signature(function_signature, true);
+
+            const std::string overload_key = toUpperAsciiCopy(function_lookup_name);
+            auto overload_it = postgresql_compat_function_overloads_.find(overload_key);
+            const uint32_t overload_count =
+                overload_it == postgresql_compat_function_overloads_.end()
+                    ? 0u
+                    : overload_it->second;
+
+            if (postgresql_dialect && !has_signature && overload_count > 1)
+            {
+                error("function name \"" + function_lookup_name + "\" is not unique\n"
+                      "HINT:  Specify the argument list to select the function unambiguously.");
+            }
+            if (postgresql_dialect && has_signature && overload_count > 1)
+            {
+                if (overload_it != postgresql_compat_function_overloads_.end())
+                {
+                    --overload_it->second;
+                }
+                return;
+            }
 
             core::ErrorContext ctx;
             core::ID function_id;
             core::CatalogManager::ObjectType resolved_type;
             auto status = resolveObjectIdForQualifiedName(
-                function_name, core::CatalogManager::ObjectType::FUNCTION,
+                function_lookup_name,
+                core::CatalogManager::ObjectType::FUNCTION,
                 function_id, resolved_type, nullptr, &ctx, false);
             if (status != core::Status::OK)
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
                 {
+                    if (postgresql_dialect && conn_ctx_)
+                    {
+                        const std::string signature_schema_name =
+                            firstSchemaQualifierFromSignature(function_signature);
+                        if (textMentionsMissingSchema(ctx.message) ||
+                            !signature_schema_name.empty())
+                        {
+                            const std::string schema_name = !signature_schema_name.empty()
+                                ? signature_schema_name
+                                : firstPathComponent(function_lookup_name);
+                            if (!schema_name.empty())
+                            {
+                                conn_ctx_->pushNotice(
+                                    "schema \"" + schema_name + "\" does not exist, skipping");
+                            }
+                        }
+                        else
+                        {
+                            const std::string sig_upper = toUpperAsciiCopy(function_signature);
+                            size_t type_pos = sig_upper.find("NO_SUCH_TYPE");
+                            if (type_pos != std::string::npos)
+                            {
+                                conn_ctx_->pushNotice(
+                                    "type \"no_such_type\" does not exist, skipping");
+                            }
+                            else
+                            {
+                                conn_ctx_->pushNotice(
+                                    "function " + function_display_notice +
+                                    " does not exist, skipping");
+                            }
+                        }
+                    }
                     return;
+                }
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    const std::string signature_schema_name =
+                        firstSchemaQualifierFromSignature(function_signature);
+                    if (textMentionsMissingSchema(ctx.message) ||
+                        !signature_schema_name.empty())
+                    {
+                        const std::string schema_name = !signature_schema_name.empty()
+                            ? signature_schema_name
+                            : firstPathComponent(function_lookup_name);
+                        if (!schema_name.empty())
+                        {
+                            error("schema \"" + schema_name + "\" does not exist");
+                        }
+                    }
+                    error("function " + function_display_error + " does not exist");
                 }
                 std::string msg = "Function not found: '" + function_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
@@ -99333,13 +102502,40 @@ namespace scratchbird
             status = db_->catalog_manager()->dropFunction(func_info.name, if_exists, &ctx);
             if (status != core::Status::OK && !(if_exists && status == core::Status::NOT_FOUND))
             {
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    error("function " + function_display_error + " does not exist");
+                }
                 std::string msg = "Failed to drop function '" + function_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
                 error(msg);
             }
 
+            if (status == core::Status::NOT_FOUND && if_exists &&
+                postgresql_dialect && conn_ctx_)
+            {
+                conn_ctx_->pushNotice("function " + function_display_notice +
+                                      " does not exist, skipping");
+                return;
+            }
+
             if (status == core::Status::OK)
             {
+                if (postgresql_dialect)
+                {
+                    auto it = postgresql_compat_function_overloads_.find(overload_key);
+                    if (it != postgresql_compat_function_overloads_.end())
+                    {
+                        if (it->second > 1)
+                        {
+                            --it->second;
+                        }
+                        else
+                        {
+                            postgresql_compat_function_overloads_.erase(it);
+                        }
+                    }
+                }
                 deleteObjectDefinition(core::CatalogManager::ObjectType::FUNCTION, function_id);
             }
         }
@@ -99349,18 +102545,106 @@ namespace scratchbird
             uint8_t flags = readByte();
             bool if_exists = (flags & 0x01) != 0;
             std::string procedure_name = readString();
+            const bool postgresql_dialect = isPostgreSqlDialectContext(conn_ctx_);
+
+            auto split_signature = [](const std::string& input,
+                                      std::string& base_out,
+                                      std::string& signature_out) {
+                std::string work = trimAsciiCopy(input);
+                size_t lparen = work.find('(');
+                if (lparen == std::string::npos)
+                {
+                    base_out = work;
+                    signature_out.clear();
+                    return;
+                }
+                base_out = trimAsciiCopy(work.substr(0, lparen));
+                signature_out = trimAsciiCopy(work.substr(lparen));
+            };
+
+            std::string procedure_base_name;
+            std::string procedure_signature;
+            split_signature(procedure_name, procedure_base_name, procedure_signature);
+            const std::string procedure_lookup_name =
+                trimAsciiCopy(procedure_base_name.empty() ? procedure_name : procedure_base_name);
+            const bool has_signature = !trimAsciiCopy(procedure_signature).empty();
+            const std::string procedure_display =
+                procedure_lookup_name +
+                (procedure_signature.empty() ? "()" : procedure_signature);
+
+            const std::string overload_key = toUpperAsciiCopy(procedure_lookup_name);
+            auto overload_it = postgresql_compat_procedure_overloads_.find(overload_key);
+            const uint32_t overload_count =
+                overload_it == postgresql_compat_procedure_overloads_.end()
+                    ? 0u
+                    : overload_it->second;
+
+            if (postgresql_dialect && !has_signature && overload_count > 1)
+            {
+                error("procedure name \"" + procedure_lookup_name + "\" is not unique\n"
+                      "HINT:  Specify the argument list to select the procedure unambiguously.");
+            }
+            if (postgresql_dialect && has_signature && overload_count > 1)
+            {
+                if (overload_it != postgresql_compat_procedure_overloads_.end())
+                {
+                    --overload_it->second;
+                }
+                return;
+            }
 
             core::ErrorContext ctx;
             core::ID procedure_id;
             core::CatalogManager::ObjectType resolved_type;
             auto status = resolveObjectIdForQualifiedName(
-                procedure_name, core::CatalogManager::ObjectType::PROCEDURE,
+                procedure_lookup_name,
+                core::CatalogManager::ObjectType::PROCEDURE,
                 procedure_id, resolved_type, nullptr, &ctx, false);
             if (status != core::Status::OK)
             {
                 if (if_exists && status == core::Status::NOT_FOUND)
                 {
+                    if (postgresql_dialect && conn_ctx_)
+                    {
+                        const std::string signature_schema_name =
+                            firstSchemaQualifierFromSignature(procedure_signature);
+                        if (textMentionsMissingSchema(ctx.message) ||
+                            !signature_schema_name.empty())
+                        {
+                            const std::string schema_name = !signature_schema_name.empty()
+                                ? signature_schema_name
+                                : firstPathComponent(procedure_lookup_name);
+                            if (!schema_name.empty())
+                            {
+                                conn_ctx_->pushNotice(
+                                    "schema \"" + schema_name + "\" does not exist, skipping");
+                            }
+                        }
+                        else
+                        {
+                            conn_ctx_->pushNotice(
+                                "procedure " + procedure_display +
+                                " does not exist, skipping");
+                        }
+                    }
                     return;
+                }
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    const std::string signature_schema_name =
+                        firstSchemaQualifierFromSignature(procedure_signature);
+                    if (textMentionsMissingSchema(ctx.message) ||
+                        !signature_schema_name.empty())
+                    {
+                        const std::string schema_name = !signature_schema_name.empty()
+                            ? signature_schema_name
+                            : firstPathComponent(procedure_lookup_name);
+                        if (!schema_name.empty())
+                        {
+                            error("schema \"" + schema_name + "\" does not exist");
+                        }
+                    }
+                    error("procedure " + procedure_display + " does not exist");
                 }
                 std::string msg = "Procedure not found: '" + procedure_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
@@ -99383,13 +102667,40 @@ namespace scratchbird
             status = db_->catalog_manager()->dropProcedure(proc_info.name, if_exists, &ctx);
             if (status != core::Status::OK && !(if_exists && status == core::Status::NOT_FOUND))
             {
+                if (postgresql_dialect && status == core::Status::NOT_FOUND)
+                {
+                    error("procedure " + procedure_display + " does not exist");
+                }
                 std::string msg = "Failed to drop procedure '" + procedure_name + "'";
                 if (!ctx.message.empty()) { msg += ": " + ctx.message; }
                 error(msg);
             }
 
+            if (status == core::Status::NOT_FOUND && if_exists &&
+                postgresql_dialect && conn_ctx_)
+            {
+                conn_ctx_->pushNotice("procedure " + procedure_display +
+                                      " does not exist, skipping");
+                return;
+            }
+
             if (status == core::Status::OK)
             {
+                if (postgresql_dialect)
+                {
+                    auto it = postgresql_compat_procedure_overloads_.find(overload_key);
+                    if (it != postgresql_compat_procedure_overloads_.end())
+                    {
+                        if (it->second > 1)
+                        {
+                            --it->second;
+                        }
+                        else
+                        {
+                            postgresql_compat_procedure_overloads_.erase(it);
+                        }
+                    }
+                }
                 deleteObjectDefinition(core::CatalogManager::ObjectType::PROCEDURE, procedure_id);
             }
         }

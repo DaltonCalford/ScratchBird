@@ -26,6 +26,7 @@
 #include <openssl/hmac.h>
 #include <openssl/crypto.h>
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cctype>
 #include <chrono>
@@ -60,6 +61,10 @@ struct ParsedPasswordHashes {
     std::string bcrypt;
     std::string md5;
     std::string firebird_legacy_enc;
+    bool has_mysql_native_stage2 = false;
+    std::array<uint8_t, 20> mysql_native_stage2{};
+    bool has_mysql_caching_sha2_stage2 = false;
+    std::array<uint8_t, 32> mysql_caching_sha2_stage2{};
     ScramRecord scram256;
     ScramRecord scram512;
 };
@@ -608,6 +613,80 @@ void parseScramEntry(const Json& entry, size_t key_len, ScramRecord& out) {
     out.valid = true;
 }
 
+int hexToNibble(char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return 10 + (ch - 'a');
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return 10 + (ch - 'A');
+    }
+    return -1;
+}
+
+bool decodeHexFixed(const std::string& input, uint8_t* out, size_t out_len) {
+    if (!out || input.size() != out_len * 2) {
+        return false;
+    }
+    for (size_t i = 0; i < out_len; ++i) {
+        const int hi = hexToNibble(input[i * 2]);
+        const int lo = hexToNibble(input[i * 2 + 1]);
+        if (hi < 0 || lo < 0) {
+            return false;
+        }
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return true;
+}
+
+bool verifyMySqlNativeProof(const uint8_t* scramble20,
+                            const uint8_t* client_response20,
+                            const std::array<uint8_t, 20>& stored_stage2) {
+    if (!scramble20 || !client_response20) {
+        return false;
+    }
+    unsigned char scramble_hash[SHA_DIGEST_LENGTH];
+    SHA_CTX sha1_ctx;
+    SHA1_Init(&sha1_ctx);
+    SHA1_Update(&sha1_ctx, scramble20, 20);
+    SHA1_Update(&sha1_ctx, stored_stage2.data(), stored_stage2.size());
+    SHA1_Final(scramble_hash, &sha1_ctx);
+
+    unsigned char stage1[SHA_DIGEST_LENGTH];
+    for (size_t i = 0; i < SHA_DIGEST_LENGTH; ++i) {
+        stage1[i] = client_response20[i] ^ scramble_hash[i];
+    }
+
+    unsigned char stage2[SHA_DIGEST_LENGTH];
+    SHA1(stage1, SHA_DIGEST_LENGTH, stage2);
+    return CRYPTO_memcmp(stage2, stored_stage2.data(), SHA_DIGEST_LENGTH) == 0;
+}
+
+bool verifyMySqlCachingSha2Proof(const uint8_t* scramble20,
+                                 const uint8_t* client_response32,
+                                 const std::array<uint8_t, 32>& stored_stage2) {
+    if (!scramble20 || !client_response32) {
+        return false;
+    }
+    unsigned char scramble_hash[SHA256_DIGEST_LENGTH];
+    SHA256_CTX sha256_ctx;
+    SHA256_Init(&sha256_ctx);
+    SHA256_Update(&sha256_ctx, stored_stage2.data(), stored_stage2.size());
+    SHA256_Update(&sha256_ctx, scramble20, 20);
+    SHA256_Final(scramble_hash, &sha256_ctx);
+
+    unsigned char stage1[SHA256_DIGEST_LENGTH];
+    for (size_t i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+        stage1[i] = client_response32[i] ^ scramble_hash[i];
+    }
+
+    unsigned char stage2[SHA256_DIGEST_LENGTH];
+    SHA256(stage1, SHA256_DIGEST_LENGTH, stage2);
+    return CRYPTO_memcmp(stage2, stored_stage2.data(), SHA256_DIGEST_LENGTH) == 0;
+}
+
 ParsedPasswordHashes parsePasswordHashes(const std::string& password_hash) {
     ParsedPasswordHashes out;
     if (password_hash.empty()) {
@@ -635,6 +714,35 @@ ParsedPasswordHashes parsePasswordHashes(const std::string& password_hash) {
         if (doc.contains("firebird_legacy_enc") && doc["firebird_legacy_enc"].is_string()) {
             out.firebird_legacy_enc = doc["firebird_legacy_enc"].get<std::string>();
         }
+        auto parse_stage2_hash = [&](const char* key,
+                                     uint8_t* out_buffer,
+                                     size_t out_len,
+                                     bool& flag_out) {
+            auto it = doc.find(key);
+            if (it == doc.end() || !it->is_string()) {
+                return;
+            }
+            const std::string encoded = it->get<std::string>();
+            if (decodeHexFixed(encoded, out_buffer, out_len)) {
+                flag_out = true;
+            }
+        };
+        parse_stage2_hash("mysql_native_password",
+                          out.mysql_native_stage2.data(),
+                          out.mysql_native_stage2.size(),
+                          out.has_mysql_native_stage2);
+        parse_stage2_hash("mysql_native_sha1_2x",
+                          out.mysql_native_stage2.data(),
+                          out.mysql_native_stage2.size(),
+                          out.has_mysql_native_stage2);
+        parse_stage2_hash("mysql_caching_sha2_password",
+                          out.mysql_caching_sha2_stage2.data(),
+                          out.mysql_caching_sha2_stage2.size(),
+                          out.has_mysql_caching_sha2_stage2);
+        parse_stage2_hash("mysql_caching_sha2_2x",
+                          out.mysql_caching_sha2_stage2.data(),
+                          out.mysql_caching_sha2_stage2.size(),
+                          out.has_mysql_caching_sha2_stage2);
         if (doc.contains("scram") && doc["scram"].is_object()) {
             const auto& scram = doc["scram"];
             if (scram.contains("sha256")) {
@@ -1682,6 +1790,203 @@ AuthResult LocalAuthProvider::authenticateMd5(
     return AuthResult::SUCCESS;
 }
 
+AuthResult LocalAuthProvider::authenticateMySqlWireProof(
+    const std::string& username,
+    const std::string& plugin_name,
+    const std::vector<uint8_t>& scramble,
+    const std::vector<uint8_t>& client_response,
+    AuthUserInfo& user_info_out,
+    std::string& error_msg_out)
+{
+    recordLegacyAuthUsage("mysql_wire_proof");
+
+    const std::string plugin_upper = IdentifierUtils::toUpper(plugin_name);
+    const bool is_native = (plugin_upper == "MYSQL_NATIVE_PASSWORD");
+    const bool is_sha2 = (plugin_upper == "CACHING_SHA2_PASSWORD");
+    if (!is_native && !is_sha2) {
+        error_msg_out = "Invalid username or password";
+        return AuthResult::INVALID_CREDENTIALS;
+    }
+
+    if (scramble.size() != 20 ||
+        (is_native && client_response.size() != SHA_DIGEST_LENGTH) ||
+        (is_sha2 && client_response.size() != SHA256_DIGEST_LENGTH)) {
+        error_msg_out = "Invalid username or password";
+        return AuthResult::INVALID_CREDENTIALS;
+    }
+
+    CatalogAuthContext catalog_auth_ctx;
+    const bool has_catalog_auth_ctx =
+        resolveCatalogAuthContext(catalog_, username, authDatabaseContextPtr(), catalog_auth_ctx);
+    const AuthAttemptScope auth_scope =
+        makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::GENERAL);
+
+    if (has_catalog_auth_ctx) {
+        uint32_t remaining_minutes = 0;
+        if (isCatalogAccountLocked(catalog_, catalog_auth_ctx, auth_scope, remaining_minutes)) {
+            LOG_WARNING(GENERAL, "Login attempt for locked account: %s", username.c_str());
+
+            if (audit_logger_) {
+                AuditEvent event = AuditLogger::createLoginFailureEvent(username, "account_locked");
+                ErrorContext audit_ctx;
+                audit_logger_->logEvent(event, &audit_ctx);
+            }
+
+            if (remaining_minutes == 0) {
+                error_msg_out = "Account locked due to too many failed attempts.";
+            } else {
+                error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                               std::to_string(remaining_minutes) + " minute(s)";
+            }
+            return AuthResult::USER_LOCKED;
+        }
+    } else if (login_tracker_->isAccountLocked(username)) {
+        uint64_t remaining_ms = login_tracker_->getLockoutTimeRemaining(username);
+        uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);
+
+        LOG_WARNING(GENERAL, "Login attempt for locked account: %s (locked for %u more minutes)",
+                   username.c_str(), remaining_minutes);
+
+        if (audit_logger_) {
+            AuditEvent event = AuditLogger::createLoginFailureEvent(username, "account_locked");
+            ErrorContext audit_ctx;
+            audit_logger_->logEvent(event, &audit_ctx);
+        }
+
+        error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                       std::to_string(remaining_minutes) + " minute(s)";
+        return AuthResult::USER_LOCKED;
+    }
+
+    CatalogManager::UserInfo db_user;
+    ErrorContext ctx;
+    Status status = Status::NOT_FOUND;
+    if (has_catalog_auth_ctx &&
+        catalog_auth_ctx.account.principal_kind == CatalogManager::PrincipalKind::USER) {
+        status = catalog_->getUser(catalog_auth_ctx.account.account_id, db_user, &ctx);
+    }
+    if (status != Status::OK) {
+        status = catalog_->getUserByName(username, db_user, &ctx);
+    }
+    const bool user_exists = (status == Status::OK);
+
+    ParsedPasswordHashes parsed_hashes;
+    if (user_exists) {
+        parsed_hashes = parsePasswordHashes(db_user.password_hash);
+    }
+
+    static const std::array<uint8_t, 20> kDummyMySqlNativeStage2{};
+    static const std::array<uint8_t, 32> kDummyMySqlCachingSha2Stage2{};
+
+    const bool verifier_available = is_native
+        ? parsed_hashes.has_mysql_native_stage2
+        : parsed_hashes.has_mysql_caching_sha2_stage2;
+
+    bool proof_valid = false;
+    if (is_native) {
+        const auto& stage2 = parsed_hashes.has_mysql_native_stage2
+            ? parsed_hashes.mysql_native_stage2
+            : kDummyMySqlNativeStage2;
+        proof_valid = verifyMySqlNativeProof(
+            scramble.data(),
+            client_response.data(),
+            stage2);
+    } else {
+        const auto& stage2 = parsed_hashes.has_mysql_caching_sha2_stage2
+            ? parsed_hashes.mysql_caching_sha2_stage2
+            : kDummyMySqlCachingSha2Stage2;
+        proof_valid = verifyMySqlCachingSha2Proof(
+            scramble.data(),
+            client_response.data(),
+            stage2);
+    }
+    proof_valid = proof_valid && user_exists && verifier_available;
+
+    if (!proof_valid) {
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
+
+        if (!user_exists) {
+            LOG_WARNING(GENERAL, "Login attempt for non-existent user: %s", username.c_str());
+        } else if (!verifier_available) {
+            LOG_WARNING(GENERAL,
+                        "Login attempt for user without MySQL verifier (%s): %s",
+                        plugin_upper.c_str(),
+                        username.c_str());
+        } else if (has_catalog_auth_ctx) {
+            LOG_WARNING(GENERAL,
+                        "Invalid MySQL wire proof (%s) for user: %s",
+                        plugin_upper.c_str(),
+                        username.c_str());
+        } else {
+            LOG_WARNING(GENERAL,
+                        "Invalid MySQL wire proof (%s) for user: %s (failed attempts: %u)",
+                        plugin_upper.c_str(),
+                        username.c_str(),
+                        login_tracker_->getFailedAttemptCount(username));
+        }
+
+        if (audit_logger_) {
+            std::string reason = user_exists ? "invalid_password" : "invalid_username";
+            AuditEvent event = AuditLogger::createLoginFailureEvent(username, reason);
+            ErrorContext audit_ctx;
+            audit_logger_->logEvent(event, &audit_ctx);
+        }
+
+        error_msg_out = "Invalid username or password";
+        return AuthResult::INVALID_CREDENTIALS;
+    }
+
+    if (!db_user.is_active) {
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
+        LOG_WARNING(GENERAL, "Login attempt for disabled user: %s", username.c_str());
+        error_msg_out = "Invalid username or password";
+        return AuthResult::USER_DISABLED;
+    }
+
+    if (has_catalog_auth_ctx) {
+        clearCatalogLockoutOnSuccess(catalog_, catalog_auth_ctx, auth_scope);
+    } else {
+        login_tracker_->recordSuccessfulLogin(username);
+    }
+
+    ID authkey_id{};
+    CatalogManager::AuthKeyInfo authkey_info;
+    authkey_info.issuer = "local";
+    authkey_info.status = CatalogManager::AuthKeyStatus::ACTIVE;
+    authkey_info.usage_type = CatalogManager::AuthKeyUsage::UNLIMITED;
+    authkey_info.scope = CatalogManager::AuthKeyScope::LOGIN_SESSION;
+    Status key_status = catalog_->createAuthKey(authkey_info, authkey_id, &ctx);
+    if (key_status != Status::OK) {
+        error_msg_out = "Authentication failed";
+        return AuthResult::PROVIDER_ERROR;
+    }
+
+    user_info_out.user_id = db_user.user_id;
+    user_info_out.username = db_user.username;
+    user_info_out.display_name = db_user.username;
+    user_info_out.email = "";
+    user_info_out.external_groups.clear();
+    user_info_out.external_id = "";
+    user_info_out.is_disabled = !db_user.is_active;
+    user_info_out.is_locked = false;
+    user_info_out.is_superuser = db_user.is_superuser;
+    user_info_out.authkey_id = authkey_id;
+
+    LOG_INFO(GENERAL,
+             "Successful MySQL wire proof authentication (%s) for user: %s",
+             plugin_upper.c_str(),
+             username.c_str());
+    return AuthResult::SUCCESS;
+}
+
 AuthResult LocalAuthProvider::beginScramAuth(
     const std::string& username,
     const std::string& client_first,
@@ -1743,7 +2048,14 @@ AuthResult LocalAuthProvider::beginScramAuth(
         return AuthResult::INVALID_CREDENTIALS;
     }
 
-    if (!username.empty() && parsed.username != username) {
+    // PostgreSQL/libpq may omit authcid in SCRAM client-first ("n=,") and rely
+    // on startup username. Treat empty authcid as the negotiated username.
+    const std::string effective_username =
+        parsed.username.empty() ? username : parsed.username;
+
+    if (!username.empty() &&
+        !parsed.username.empty() &&
+        parsed.username != username) {
         if (has_catalog_auth_ctx) {
             applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
         } else {
@@ -1760,7 +2072,7 @@ AuthResult LocalAuthProvider::beginScramAuth(
 
     CatalogManager::UserInfo db_user;
     ErrorContext ctx;
-    Status status = catalog_->getUserByName(parsed.username, db_user, &ctx);
+    Status status = catalog_->getUserByName(effective_username, db_user, &ctx);
     bool user_exists = (status == Status::OK);
 
     ScramRecord record;
@@ -1786,12 +2098,12 @@ AuthResult LocalAuthProvider::beginScramAuth(
                                                    min_scram_iterations)) {
                 LOG_WARNING(GENERAL,
                             "Unable to persist weak SCRAM upgrade marker for user: %s",
-                            parsed.username.c_str());
+                            effective_username.c_str());
             }
         }
 
         if (audit_logger_) {
-            AuditEvent event = AuditLogger::createLoginFailureEvent(parsed.username,
+            AuditEvent event = AuditLogger::createLoginFailureEvent(effective_username,
                                                                     "weak_scram_iterations");
             ErrorContext audit_ctx;
             audit_logger_->logEvent(event, &audit_ctx);
@@ -1799,7 +2111,7 @@ AuthResult LocalAuthProvider::beginScramAuth(
 
         LOG_WARNING(GENERAL,
                     "SCRAM credential below policy minimum for user %s: stored=%u required=%u",
-                    parsed.username.c_str(),
+                    effective_username.c_str(),
                     record.iterations,
                     min_scram_iterations);
         error_msg_out = "Invalid username or password";
@@ -1812,7 +2124,7 @@ AuthResult LocalAuthProvider::beginScramAuth(
     std::string server_first = "r=" + full_nonce + ",s=" + salt_b64 +
                                ",i=" + std::to_string(record.iterations);
 
-    state_out.username = parsed.username;
+    state_out.username = effective_username;
     state_out.algorithm = algorithm;
     state_out.iterations = record.iterations;
     state_out.salt = record.salt;

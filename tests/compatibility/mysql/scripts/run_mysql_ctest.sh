@@ -30,7 +30,23 @@ if [[ -n "${SCRATCHBIRD_MY_ISQL:-}" ]]; then
     *) ISQL_FLAVOR="mysql" ;;
   esac
 fi
-LIST_FILE="${SCRATCHBIRD_MY_CTEST_LIST:-$MY_DIR/config/ctest_list.txt}"
+LIST_MODE="${SCRATCHBIRD_MY_CTEST_LIST_MODE:-${SCRATCHBIRD_COMPAT_CTEST_LIST_MODE:-curated}}"
+case "$LIST_MODE" in
+  curated)
+    DEFAULT_LIST_FILE="$MY_DIR/config/ctest_list.txt"
+    ;;
+  expanded)
+    DEFAULT_LIST_FILE="$MY_DIR/config/ctest_list_expanded.txt"
+    ;;
+  full)
+    DEFAULT_LIST_FILE="$MY_DIR/config/ctest_list_full.txt"
+    ;;
+  *)
+    echo "Error: invalid MySQL list mode '$LIST_MODE' (expected curated|expanded|full)." >&2
+    exit 2
+    ;;
+esac
+LIST_FILE="${SCRATCHBIRD_MY_CTEST_LIST:-$DEFAULT_LIST_FILE}"
 CONVERTED_DIR="${MY_DIR}/converted"
 
 if [[ ! -x "$ISQL_BIN" ]]; then
@@ -48,7 +64,8 @@ EOF
 fi
 
 if [[ ! -f "$LIST_FILE" ]]; then
-  echo "Error: MySQL CTest list not found: $LIST_FILE" >&2
+  echo "Error: MySQL CTest list not found: $LIST_FILE (mode=$LIST_MODE)" >&2
+  echo "Hint: run tests/compatibility/scripts/generate_ctest_lists.py to generate expanded/full lists." >&2
   exit 1
 fi
 
@@ -103,6 +120,7 @@ write_run_manifest() {
   "parser_mode": "emulation_surface_only",
   "execution_mode": "$([[ "$USE_UPSTREAM_MTR" == "1" ]] && echo "upstream_mysql_test_run" || echo "converted_sql_ctest")",
   "isql_binary": "$(json_escape "$ISQL_BIN")",
+  "ctest_list_mode": "$(json_escape "$LIST_MODE")",
   "ctest_list_file": "$(json_escape "$LIST_FILE")",
   "listed_tests": ${listed_tests},
   "status": "$(json_escape "$run_status")",

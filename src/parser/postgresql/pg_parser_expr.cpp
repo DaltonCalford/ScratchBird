@@ -249,6 +249,69 @@ parser::v3::Expression* Parser::parseLikeExpr() {
     auto* expr = parseBitwiseOrExpr();
     bool is_not = false;
     if (matchKeyword(TokenType::KW_NOT)) is_not = true;
+
+    auto parse_operator_designator = [&](parser::v3::BinaryOp& op_out) -> bool {
+        consume(TokenType::LEFT_PAREN, "Expected ( after OPERATOR");
+
+        // Optional schema qualification: OPERATOR(schema.<op>)
+        if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+            isNonReservedKeyword(current_token_.type)) {
+            parseIdentifier();
+            while (match(TokenType::DOT)) {
+                if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+                    isNonReservedKeyword(current_token_.type)) {
+                    parseIdentifier();
+                    continue;
+                }
+                break;
+            }
+        }
+
+        if (match(TokenType::TILDE)) {
+            op_out = parser::v3::BinaryOp::REGEX_MATCH;
+        } else if (match(TokenType::TILDE_STAR)) {
+            op_out = parser::v3::BinaryOp::REGEX_MATCH_CI;
+        } else if (match(TokenType::EXCLAIM_TILDE)) {
+            op_out = parser::v3::BinaryOp::REGEX_NOT_MATCH;
+        } else if (match(TokenType::EXCLAIM_TILDE_STAR)) {
+            op_out = parser::v3::BinaryOp::REGEX_NOT_MATCH_CI;
+        } else if (match(TokenType::EQUAL)) {
+            op_out = parser::v3::BinaryOp::EQ;
+        } else if (match(TokenType::NOT_EQUAL) || match(TokenType::LESS_GREATER)) {
+            op_out = parser::v3::BinaryOp::NE;
+        } else if (match(TokenType::LESS_THAN)) {
+            op_out = parser::v3::BinaryOp::LT;
+        } else if (match(TokenType::GREATER_THAN)) {
+            op_out = parser::v3::BinaryOp::GT;
+        } else if (match(TokenType::LESS_EQUAL)) {
+            op_out = parser::v3::BinaryOp::LE;
+        } else if (match(TokenType::GREATER_EQUAL)) {
+            op_out = parser::v3::BinaryOp::GE;
+        } else {
+            error("Unsupported OPERATOR() designator");
+            while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+            if (check(TokenType::RIGHT_PAREN)) {
+                advance();
+            }
+            return false;
+        }
+
+        consume(TokenType::RIGHT_PAREN, "Expected ) after OPERATOR designator");
+        return true;
+    };
+
+    if (matchIdentifierKeyword("OPERATOR")) {
+        parser::v3::BinaryOp op = parser::v3::BinaryOp::EQ;
+        if (!parse_operator_designator(op)) {
+            return expr;
+        }
+        auto* right = parseBitwiseOrExpr();
+        auto* predicate = makeBinary(op, expr, right);
+        return is_not ? makeUnary(parser::v3::UnaryOp::NOT, predicate) : predicate;
+    }
+
     if (matchKeyword(TokenType::KW_LIKE)) {
         auto* like = arena()->create<parser::v3::LikeExpr>();
         like->expr = expr;
@@ -429,7 +492,7 @@ parser::v3::Expression* Parser::parseAdditiveExpr() {
             left = makeBinary(parser::v3::BinaryOp::ADD, left, parseMultiplicativeExpr());
         } else if (match(TokenType::MINUS)) {
             left = makeBinary(parser::v3::BinaryOp::SUB, left, parseMultiplicativeExpr());
-        } else if (match(TokenType::CONCAT)) {
+        } else if (match(TokenType::CONCAT) || match(TokenType::DOUBLE_PIPE)) {
             left = makeBinary(parser::v3::BinaryOp::CONCAT, left, parseMultiplicativeExpr());
         } else {
             break;
@@ -507,6 +570,19 @@ parser::v3::Expression* Parser::parsePostfixTail(parser::v3::Expression* base) {
             fn->arguments.push_back(expr);
             fn->arguments.push_back(parsePrimaryExpr());
             expr = fn;
+        } else if (matchKeyword(TokenType::KW_COLLATE)) {
+            // PostgreSQL expression-level COLLATE is accepted for compatibility.
+            // Collation semantics are resolved by runtime defaults in this phase.
+            auto parse_collation_part = [&]() {
+                if (matchKeyword(TokenType::KW_DEFAULT)) {
+                    return;
+                }
+                parseIdentifier();
+            };
+            parse_collation_part();
+            while (match(TokenType::DOT)) {
+                parse_collation_part();
+            }
         } else {
             break;
         }
@@ -655,9 +731,6 @@ parser::v3::Expression* Parser::parsePrimaryExpr() {
         isNonReservedKeyword(current_token_.type)) {
         std::vector<std::string> parts;
         parts.push_back(parseIdentifier());
-        if (match(TokenType::LEFT_PAREN)) {
-            return parseFunctionCall(parts.front());
-        }
         while (match(TokenType::DOT)) {
             if (parts.size() >= 3) {
                 error("PostgreSQL column references support at most schema.table.column");
@@ -683,6 +756,9 @@ parser::v3::Expression* Parser::parsePrimaryExpr() {
             }
             parts.push_back(parseIdentifier());
         }
+        if (match(TokenType::LEFT_PAREN)) {
+            return parseFunctionCall(parts);
+        }
         return makeColumnRef(parts);
     }
 
@@ -703,10 +779,17 @@ parser::v3::Expression* Parser::parsePrimaryExpr() {
     return makeLiteralNull();
 }
 
-parser::v3::Expression* Parser::parseFunctionCall(const std::string& name) {
+parser::v3::Expression* Parser::parseFunctionCall(const std::vector<std::string>& name_parts) {
     auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
-    fn->function_path = parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED,
-                                               {string_pool_.intern(name)});
+    std::vector<parser::v3::StringPool::StringId> function_path;
+    function_path.reserve(name_parts.size());
+    for (const auto& part : name_parts) {
+        function_path.push_back(string_pool_.intern(part));
+    }
+    parser::v3::PathType path_type = name_parts.size() > 1
+        ? parser::v3::PathType::ABSOLUTE
+        : parser::v3::PathType::UNQUALIFIED;
+    fn->function_path = parser::v3::SchemaPath(path_type, std::move(function_path));
     if (matchKeyword(TokenType::KW_DISTINCT)) {
         fn->distinct = true;
     }

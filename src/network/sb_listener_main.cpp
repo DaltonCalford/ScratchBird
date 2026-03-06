@@ -89,6 +89,7 @@ struct ListenerConfig {
     std::string protocol = SB_LISTENER_PROTOCOL;
     std::string listener_mode = "direct";  // direct | managed
     std::string database_owner = "main";
+    std::string database_path;
     std::string bind_address = "0.0.0.0";
     uint16_t port = 0;
     std::string control_socket_dir;
@@ -915,6 +916,10 @@ private:
         args.push_back(config_.engine_endpoint);
         args.push_back("--default-database");
         args.push_back(config_.database_owner);
+        if (!config_.database_path.empty()) {
+            args.push_back("--database-path");
+            args.push_back(config_.database_path);
+        }
         args.push_back("--log-level");
         args.push_back(config_.log_level);
         if (!config_.tls_config.empty()) {
@@ -1369,6 +1374,7 @@ void printUsage(const char* program) {
               << "  --control-socket-dir <dir>  Control socket directory\n"
               << "  --engine-endpoint <path>    Engine IPC endpoint\n"
               << "  --database-owner <name>     Owning database name\n"
+              << "  --database-path <path>      Database file path for parser-side catalog access\n"
               << "  --pool-min <n>              Minimum parser pool size\n"
               << "  --pool-max <n>              Maximum parser pool size\n"
               << "  --spawn-strategy <mode>     prefork|on_demand|hybrid\n"
@@ -1470,6 +1476,9 @@ bool applyConfigFile(ListenerConfig& config) {
         }
         if (server->has("database")) {
             auto db_path = server->getString("database", "");
+            if (!db_path.empty()) {
+                config.database_path = db_path;
+            }
             if (config.engine_endpoint.empty() && !db_path.empty()) {
                 config.engine_endpoint = scratchbird::server::getIPCPath(db_path,
                                                                          scratchbird::server::IPCMethod::AUTO);
@@ -1555,6 +1564,10 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
             config.database_owner = argv[++i];
         } else if (arg.rfind("--database-owner=", 0) == 0) {
             config.database_owner = arg.substr(17);
+        } else if (arg == "--database-path" && i + 1 < argc) {
+            config.database_path = argv[++i];
+        } else if (arg.rfind("--database-path=", 0) == 0) {
+            config.database_path = arg.substr(16);
         } else if (arg == "--pool-min" && i + 1 < argc) {
             try {
                 config.pool_min = static_cast<uint32_t>(std::stoul(argv[++i]));

@@ -23,6 +23,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/security/scram_auth.h"
 #include "scratchbird/security/mfa_auth.h"
+#include "scratchbird/security/parser_auth_policy.h"
 
 #include <cstring>
 #include <cctype>
@@ -194,6 +195,13 @@ std::string toUpperAscii(std::string value) {
     return value;
 }
 
+std::string toLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
 std::string trimAscii(std::string value) {
     auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
     while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
@@ -203,6 +211,69 @@ std::string trimAscii(std::string value) {
         value.pop_back();
     }
     return value;
+}
+
+std::string canonicalizePolicyScope(std::string scope) {
+    scope = toLowerAscii(trimAscii(std::move(scope)));
+    if (scope == "postgres" || scope == "postgresql") {
+        return "postgresql";
+    }
+    if (scope == "mariadb") {
+        return "mysql";
+    }
+    if (scope == "mysql") {
+        return "mysql";
+    }
+    if (scope == "firebird") {
+        return "firebird";
+    }
+    return "native";
+}
+
+std::string extractEmulationScope(const std::string& normalized_database,
+                                  const std::string& prefix) {
+    if (normalized_database.rfind(prefix, 0) != 0) {
+        return "";
+    }
+    const size_t start = prefix.size();
+    const size_t end = normalized_database.find('.', start);
+    if (end == std::string::npos || end <= start) {
+        return "";
+    }
+    return normalized_database.substr(start, end - start);
+}
+
+std::string deriveAuthPolicyScope(const std::string& database_context) {
+    const std::string normalized = toLowerAscii(trimAscii(database_context));
+    if (normalized.empty()) {
+        return "native";
+    }
+
+    std::string scope = extractEmulationScope(normalized, "remote.emulation.");
+    if (scope.empty()) {
+        scope = extractEmulationScope(normalized, "emulation.");
+    }
+    if (scope.empty()) {
+        scope = extractEmulationScope(normalized, "emulated.");
+    }
+    if (scope.empty()) {
+        return "native";
+    }
+    return canonicalizePolicyScope(scope);
+}
+
+std::string resolveScopedEnvValue(const char* base_key, const std::string& policy_scope) {
+    const std::string scope = policy_scope.empty() ? "native" : policy_scope;
+    const std::string scoped_key = std::string(base_key) + "_" + toUpperAscii(scope);
+    if (const char* scoped_value = std::getenv(scoped_key.c_str());
+        scoped_value && scoped_value[0] != '\0') {
+        return trimAscii(scoped_value);
+    }
+    if (const char* global_value = std::getenv(base_key);
+        global_value && global_value[0] != '\0') {
+        return trimAscii(global_value);
+    }
+    return "";
 }
 
 uint64_t fnv1a64(const std::string& value, uint64_t seed) {
@@ -430,6 +501,9 @@ constexpr const char* kAuthMfaInvalidCode = "AUTH_MFA_INVALID";
 constexpr const char* kMfaPayloadPrefix = "SBMFA1";
 constexpr const char* kAuthPolicyNegotiatedCode = "AUTH_POLICY_NEGOTIATED";
 constexpr const char* kAuthRegistrySelectionMagic = "SBAPR1";
+constexpr const char* kMySqlWireAuthProofMagic = "SBMYAUTH1";
+constexpr uint8_t kMySqlWireAuthProofPluginNative = 1;
+constexpr uint8_t kMySqlWireAuthProofPluginCachingSha2 = 2;
 
 bool isTruthySetting(const char* value) {
     if (!value || value[0] == '\0') {
@@ -505,6 +579,36 @@ std::string authMethodToPluginMethodId(protocol::AuthMethod method) {
     return "";
 }
 
+bool pluginMethodIdToAuthMethod(const std::string& method_id,
+                                protocol::AuthMethod& method_out) {
+    const std::string normalized = toLowerAscii(trimAscii(method_id));
+    if (normalized == "scratchbird.auth.password_compat") {
+        method_out = protocol::AuthMethod::PASSWORD;
+        return true;
+    }
+    if (normalized == "scratchbird.auth.md5_legacy") {
+        method_out = protocol::AuthMethod::MD5;
+        return true;
+    }
+    if (normalized == "scratchbird.auth.scram_sha_256") {
+        method_out = protocol::AuthMethod::SCRAM_SHA_256;
+        return true;
+    }
+    if (normalized == "scratchbird.auth.scram_sha_512") {
+        method_out = protocol::AuthMethod::SCRAM_SHA_512;
+        return true;
+    }
+    if (normalized == "scratchbird.auth.authkey_token") {
+        method_out = protocol::AuthMethod::TOKEN;
+        return true;
+    }
+    if (normalized == "scratchbird.auth.peer_uid") {
+        method_out = protocol::AuthMethod::PEER;
+        return true;
+    }
+    return false;
+}
+
 bool isValidPluginMethodId(const std::string& method_id) {
     return !method_id.empty() && method_id.rfind("scratchbird.auth.", 0) == 0;
 }
@@ -548,11 +652,19 @@ std::vector<protocol::AuthMethodRegistryEntry> buildAuthMethodRegistryEntries(
             emitted_method_ids.end()) {
             continue;
         }
+        protocol::AuthMethod mapped_method = protocol::AuthMethod::PASSWORD;
+        if (!pluginMethodIdToAuthMethod(method_id, mapped_method)) {
+            continue;
+        }
+        if (std::find(allowed_methods.begin(), allowed_methods.end(), mapped_method) ==
+            allowed_methods.end()) {
+            continue;
+        }
         protocol::AuthMethodRegistryEntry entry;
         entry.method_slot = next_slot++;
         entry.method_id = method_id;
-        entry.has_legacy_wire_code = false;
-        entry.legacy_wire_code = 0xFFFFFFFFu;
+        entry.has_legacy_wire_code = true;
+        entry.legacy_wire_code = static_cast<uint32_t>(mapped_method);
         entries.push_back(std::move(entry));
         emitted_method_ids.push_back(method_id);
     }
@@ -574,6 +686,59 @@ bool parseAuthRegistrySelectionPayload(const std::vector<uint8_t>& payload,
                       (static_cast<uint16_t>(payload[7]) << 8);
     method_payload_out.assign(payload.begin() + 8, payload.end());
     return true;
+}
+
+struct MySqlWireAuthProofRequest {
+    std::string plugin_name;
+    std::array<uint8_t, 20> scramble{};
+    std::vector<uint8_t> response;
+};
+
+bool parseMySqlWireAuthProofPayload(const std::vector<uint8_t>& payload,
+                                    MySqlWireAuthProofRequest& out) {
+    out = MySqlWireAuthProofRequest{};
+
+    const size_t magic_len = std::strlen(kMySqlWireAuthProofMagic);
+    constexpr size_t kHeaderLen = 1 + 1 + 2; // plugin + scramble_len + response_len
+    constexpr size_t kScrambleLen = 20;
+    if (payload.size() < magic_len + kHeaderLen + kScrambleLen) {
+        return false;
+    }
+    if (std::memcmp(payload.data(), kMySqlWireAuthProofMagic, magic_len) != 0) {
+        return false;
+    }
+
+    size_t offset = magic_len;
+    const uint8_t plugin_code = payload[offset++];
+    const uint8_t scramble_len = payload[offset++];
+    const uint16_t response_len = static_cast<uint16_t>(payload[offset]) |
+                                  (static_cast<uint16_t>(payload[offset + 1]) << 8);
+    offset += 2;
+
+    if (scramble_len != kScrambleLen) {
+        return false;
+    }
+
+    if (plugin_code == kMySqlWireAuthProofPluginNative) {
+        out.plugin_name = "MYSQL_NATIVE_PASSWORD";
+    } else if (plugin_code == kMySqlWireAuthProofPluginCachingSha2) {
+        out.plugin_name = "CACHING_SHA2_PASSWORD";
+    } else {
+        return false;
+    }
+
+    const size_t expected_total = magic_len + kHeaderLen + kScrambleLen + response_len;
+    if (payload.size() != expected_total) {
+        return false;
+    }
+
+    std::memcpy(out.scramble.data(), payload.data() + offset, kScrambleLen);
+    offset += kScrambleLen;
+    out.response.assign(payload.begin() + offset, payload.end());
+
+    const size_t expected_response_len =
+        (plugin_code == kMySqlWireAuthProofPluginNative) ? 20u : 32u;
+    return out.response.size() == expected_response_len;
 }
 
 const char* authPeerModeToString(core::CatalogManager::AuthPeerMode mode) {
@@ -1193,12 +1358,14 @@ core::CatalogManager::ConnectionRuleTransportKind resolveConnectionRuleTransport
     }
 }
 
-std::string resolveConnectionRuleProfileScope() {
-    const char* env = std::getenv("SCRATCHBIRD_CONNECTION_RULE_PROFILE");
-    if (!env || env[0] == '\0') {
-        return "native";
+std::string resolveConnectionRuleProfileScope(const std::string& target_database) {
+    const std::string scope = deriveAuthPolicyScope(target_database);
+    const std::string configured =
+        resolveScopedEnvValue("SCRATCHBIRD_CONNECTION_RULE_PROFILE", scope);
+    if (!configured.empty()) {
+        return configured;
     }
-    return env;
+    return scope;
 }
 
 bool evaluateIngressConnectionRules(core::CatalogManager* catalog,
@@ -1213,7 +1380,7 @@ bool evaluateIngressConnectionRules(core::CatalogManager* catalog,
         return true;
     }
 
-    const std::string profile_scope = resolveConnectionRuleProfileScope();
+    const std::string profile_scope = resolveConnectionRuleProfileScope(target_database);
     std::vector<core::CatalogManager::ConnectionRuleCatalogInfo> rules;
     core::ErrorContext list_ctx;
     const core::Status list_status =
@@ -1300,6 +1467,7 @@ std::vector<uint8_t> generateNegotiationNonce(size_t bytes = 16) {
 
 bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
                                   const IPCConnection* connection,
+                                  const std::string& auth_database_context,
                                   std::vector<protocol::AuthMethod>& allowed_methods_out,
                                   std::vector<std::string>& allowed_method_ids_out,
                                   bool& has_required_method_out,
@@ -1325,6 +1493,9 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
     peer_mode_out = CM::AuthPeerMode::DISABLED;
     bool allow_legacy_password_fallback = false;
     bool has_catalog_policy_rows = false;
+    const std::string policy_scope = deriveAuthPolicyScope(auth_database_context);
+    const std::string parser_surface =
+        scratchbird::security::normalizeParserAuthSurface(policy_scope);
 
     if (catalog) {
         std::vector<CM::AuthPolicyCatalogInfo> policies;
@@ -1332,11 +1503,8 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
         const core::Status list_status = catalog->listAuthPolicyCatalogEntries(policies, &list_ctx);
         if (list_status == core::Status::OK && !policies.empty()) {
             has_catalog_policy_rows = true;
-            const char* policy_name_env = std::getenv("SCRATCHBIRD_AUTH_POLICY_NAME");
-            const std::string requested_policy =
-                (policy_name_env && policy_name_env[0] != '\0')
-                    ? toUpperAscii(policy_name_env)
-                    : std::string();
+            const std::string requested_policy = toUpperAscii(
+                resolveScopedEnvValue("SCRATCHBIRD_AUTH_POLICY_NAME", policy_scope));
 
             const CM::AuthPolicyCatalogInfo* selected = nullptr;
             if (!requested_policy.empty()) {
@@ -1456,20 +1624,52 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
     }
 
     allowed_methods_out = authMethodsFromMask(allowed_method_mask);
+    allowed_methods_out = scratchbird::security::orderAuthMethodsForSurface(
+        parser_surface,
+        allowed_methods_out);
+
+    std::vector<protocol::AuthMethod> surface_supported_methods;
+    surface_supported_methods.reserve(allowed_methods_out.size());
+    for (auto method : allowed_methods_out) {
+        if (!scratchbird::security::parserAuthMethodSupported(parser_surface, method)) {
+            continue;
+        }
+        if (std::find(surface_supported_methods.begin(),
+                      surface_supported_methods.end(),
+                      method) == surface_supported_methods.end()) {
+            surface_supported_methods.push_back(method);
+        }
+    }
+    allowed_methods_out.swap(surface_supported_methods);
+
     if (allowed_methods_out.empty()) {
         policy_deny_code_out = kAuthPolicyMethodDeniedCode;
         return false;
     }
+    std::vector<std::string> ordered_method_ids;
+    ordered_method_ids.reserve(allowed_method_ids_out.size() + allowed_methods_out.size());
     for (auto method : allowed_methods_out) {
-        appendUniquePluginMethodId(allowed_method_ids_out, authMethodToPluginMethodId(method));
+        appendUniquePluginMethodId(ordered_method_ids, authMethodToPluginMethodId(method));
     }
-    const char* method_ids_env = std::getenv("SCRATCHBIRD_AUTH_ALLOWED_METHOD_IDS");
-    if (method_ids_env && method_ids_env[0] != '\0') {
+    for (const auto& configured_method_id : allowed_method_ids_out) {
+        appendUniquePluginMethodId(ordered_method_ids, configured_method_id);
+    }
+    allowed_method_ids_out.swap(ordered_method_ids);
+
+    const std::string method_ids_env =
+        resolveScopedEnvValue("SCRATCHBIRD_AUTH_ALLOWED_METHOD_IDS", policy_scope);
+    if (!method_ids_env.empty()) {
         std::string token;
         std::istringstream input(method_ids_env);
         while (std::getline(input, token, ',')) {
             appendUniquePluginMethodId(allowed_method_ids_out, trimAscii(token));
         }
+    }
+
+    if (has_required_method_out &&
+        !scratchbird::security::parserAuthMethodSupported(parser_surface, required_method_out)) {
+        policy_deny_code_out = kAuthPolicyRequiredMethodCode;
+        return false;
     }
 
     if (has_required_method_out &&
@@ -2274,6 +2474,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         std::string policy_deny_code;
         if (!resolveAuthNegotiationPolicy(catalog,
                                           connection_,
+                                          auth_database_context_,
                                           auth_negotiation_allowed_methods_,
                                           auth_negotiation_allowed_method_ids_,
                                           auth_negotiation_has_required_method_,
@@ -2368,14 +2569,22 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         return send_auth_policy_error(kAuthPolicyRequiredMethodCode);
     }
 
-    // Client pinning policy inputs are currently sourced from environment for
-    // deterministic conformance coverage and mirrored into session properties.
+    // Client pinning policy inputs are sourced from scoped env settings so
+    // emulation lanes can enforce distinct auth policy gates.
+    const std::string policy_scope = deriveAuthPolicyScope(auth_database_context_);
+    const std::string required_methods_env =
+        resolveScopedEnvValue("SCRATCHBIRD_AUTH_REQUIRED_METHODS", policy_scope);
+    const std::string forbidden_methods_env =
+        resolveScopedEnvValue("SCRATCHBIRD_AUTH_FORBIDDEN_METHODS", policy_scope);
+    const std::string channel_binding_env =
+        resolveScopedEnvValue("SCRATCHBIRD_AUTH_REQUIRE_CHANNEL_BINDING", policy_scope);
+
     const std::vector<std::string> required_methods =
-        splitCsvUpper(std::getenv("SCRATCHBIRD_AUTH_REQUIRED_METHODS"));
+        splitCsvUpper(required_methods_env.c_str());
     const std::vector<std::string> forbidden_methods =
-        splitCsvUpper(std::getenv("SCRATCHBIRD_AUTH_FORBIDDEN_METHODS"));
+        splitCsvUpper(forbidden_methods_env.c_str());
     const bool require_channel_binding =
-        isTruthySetting(std::getenv("SCRATCHBIRD_AUTH_REQUIRE_CHANNEL_BINDING"));
+        isTruthySetting(channel_binding_env.c_str());
 
     const std::string method_name = toUpperAscii(authMethodToString(auth_method));
     if (!required_methods.empty() &&
@@ -2523,16 +2732,39 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         }
 
         if (auth_error.empty()) {
-            std::string password(reinterpret_cast<const char*>(auth_payload.data()),
-                                 auth_payload.size());
-            core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
+            MySqlWireAuthProofRequest mysql_proof;
+            if (parseMySqlWireAuthProofPayload(auth_payload, mysql_proof)) {
+                if (!provider) {
+                    auth_error = "Authentication failed";
+                } else {
+                    core::AuthResult auth_result = provider->authenticateMySqlWireProof(
+                        username,
+                        mysql_proof.plugin_name,
+                        std::vector<uint8_t>(mysql_proof.scramble.begin(), mysql_proof.scramble.end()),
+                        mysql_proof.response,
+                        user_info,
+                        auth_error);
 
-            if (auth_result == core::AuthResult::SUCCESS) {
-                if (auto mfa_status = issue_mfa_challenge_if_required(
-                        user_info, auth_method, {}); mfa_status.has_value()) {
-                    return *mfa_status;
+                    if (auth_result == core::AuthResult::SUCCESS) {
+                        if (auto mfa_status = issue_mfa_challenge_if_required(
+                                user_info, auth_method, {}); mfa_status.has_value()) {
+                            return *mfa_status;
+                        }
+                        return finish_auth(user_info, {});
+                    }
                 }
-                return finish_auth(user_info, {});
+            } else {
+                std::string password(reinterpret_cast<const char*>(auth_payload.data()),
+                                     auth_payload.size());
+                core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
+
+                if (auth_result == core::AuthResult::SUCCESS) {
+                    if (auto mfa_status = issue_mfa_challenge_if_required(
+                            user_info, auth_method, {}); mfa_status.has_value()) {
+                        return *mfa_status;
+                    }
+                    return finish_auth(user_info, {});
+                }
             }
         }
     } else if (auth_method == protocol::AuthMethod::MD5) {

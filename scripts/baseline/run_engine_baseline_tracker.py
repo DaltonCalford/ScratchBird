@@ -4,7 +4,7 @@ Execute ENGINE_BASELINE_COMPARISON tracker rows end-to-end.
 
 This runner:
 1. Reads tracker CSV rows and dependency graph.
-2. Executes each pending row once dependencies are resolved.
+2. Executes each pending/ready row once dependencies are resolved.
 3. Marks rows done/blocked with in-tree evidence bundles.
 4. Writes tracker updates back to the same CSV.
 """
@@ -35,6 +35,7 @@ DEFAULT_TRACKER = (
     CLIWORK_ROOT
     / "local_work/docs/planning/ENGINE_BASELINE_COMPARISON_TRACKER_2026-02-22.csv"
 )
+RUNNABLE_STATUSES = {"pending", "ready"}
 
 ENGINE_CLONES: Dict[str, Path] = {
     "duckdb": CLIWORK_ROOT / "duckdb",
@@ -966,7 +967,7 @@ def execute_tracker(
         progress = False
         pending_rows = []
         for row in rows:
-            if row.get("status", "").strip() != "pending":
+            if row.get("status", "").strip() not in RUNNABLE_STATUSES:
                 continue
             task_id = row.get("task_id", "").strip()
             if only_task_ids and task_id not in only_task_ids:
@@ -998,7 +999,7 @@ def execute_tracker(
                 continue
 
             dep_statuses = {dep: rows_by_task[dep].get("status", "").strip() for dep in deps}
-            if any(status == "pending" for status in dep_statuses.values()):
+            if any(status in RUNNABLE_STATUSES for status in dep_statuses.values()):
                 continue
             if any(status == "blocked" for status in dep_statuses.values()):
                 blocked_deps = [dep for dep, st in dep_statuses.items() if st == "blocked"]
@@ -1036,7 +1037,7 @@ def execute_tracker(
         if not progress:
             unresolved = []
             for row in rows:
-                if row.get("status", "").strip() != "pending":
+                if row.get("status", "").strip() not in RUNNABLE_STATUSES:
                     continue
                 task_id = row.get("task_id", "").strip()
                 if only_task_ids and task_id not in only_task_ids:
@@ -1049,7 +1050,7 @@ def execute_tracker(
                 )
                 break
             for row in rows:
-                if row.get("status", "").strip() == "pending":
+                if row.get("status", "").strip() in RUNNABLE_STATUSES:
                     row["status"] = "blocked"
                     row["report_issue_to_user"] = "yes"
                     primary_file, bundle_dir = make_evidence_paths(row["evidence_artifact"])
@@ -1074,8 +1075,12 @@ def execute_tracker(
     done_count = sum(1 for row in rows if row.get("status") == "done")
     blocked_count = sum(1 for row in rows if row.get("status") == "blocked")
     pending_count = sum(1 for row in rows if row.get("status") == "pending")
+    ready_count = sum(1 for row in rows if row.get("status") == "ready")
     print(
-        f"[summary] done={done_count} blocked={blocked_count} pending={pending_count} tracker={tracker_path}",
+        (
+            f"[summary] done={done_count} blocked={blocked_count} "
+            f"pending={pending_count} ready={ready_count} tracker={tracker_path}"
+        ),
         flush=True,
     )
 

@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(ScratchBird VERSION 0.0.1 LANGUAGES CXX)
+include(GNUInstallDirs)
+
+set(SCRATCHBIRD_INSTALL_RESOURCE_SUBDIR "scratchbird/resources"
+    CACHE STRING "Subdirectory under CMAKE_INSTALL_DATADIR used for ScratchBird runtime resources")
+set(SCRATCHBIRD_INSTALL_RESOURCE_DIR "${CMAKE_INSTALL_DATADIR}/${SCRATCHBIRD_INSTALL_RESOURCE_SUBDIR}")
+set(SCRATCHBIRD_INSTALL_FULL_RESOURCE_DIR
+    "${CMAKE_INSTALL_FULL_DATADIR}/${SCRATCHBIRD_INSTALL_RESOURCE_SUBDIR}")
+message(STATUS "ScratchBird resource install dir: ${SCRATCHBIRD_INSTALL_FULL_RESOURCE_DIR}")
 
 # Project in planning phase
 message(STATUS "ScratchBird Database Engine - Planning Phase")
@@ -111,15 +119,16 @@ endif()
 include(CTest)
 enable_testing()
 
-# Global test timeout - default 1 hour (3600 seconds).
-# Upgrade legacy default cache value (900s) to the new default, while preserving user overrides.
-if(DEFINED SCRATCHBIRD_CTEST_TIMEOUT AND SCRATCHBIRD_CTEST_TIMEOUT STREQUAL "900")
-    set(SCRATCHBIRD_CTEST_TIMEOUT 3600 CACHE STRING "Maximum test time (seconds) - default 1 hour" FORCE)
+# Global test timeout used by CTest when no per-test timeout is set.
+# Upgrade legacy default cache values to the current default while preserving user overrides.
+if(DEFINED SCRATCHBIRD_CTEST_TIMEOUT
+   AND (SCRATCHBIRD_CTEST_TIMEOUT STREQUAL "900" OR SCRATCHBIRD_CTEST_TIMEOUT STREQUAL "3600"))
+    set(SCRATCHBIRD_CTEST_TIMEOUT 21600 CACHE STRING "Maximum test time (seconds) - default 6 hours" FORCE)
 else()
-    set(SCRATCHBIRD_CTEST_TIMEOUT 3600 CACHE STRING "Maximum test time (seconds) - default 1 hour")
+    set(SCRATCHBIRD_CTEST_TIMEOUT 21600 CACHE STRING "Maximum test time (seconds) - default 6 hours")
 endif()
 set(CTEST_TEST_TIMEOUT ${SCRATCHBIRD_CTEST_TIMEOUT})
-message(STATUS "CTest maximum test time: ${SCRATCHBIRD_CTEST_TIMEOUT}s (1 hour)")
+message(STATUS "CTest maximum test time: ${SCRATCHBIRD_CTEST_TIMEOUT}s")
 
 # Default to parallel test runs when using the built-in test target.
 include(ProcessorCount)

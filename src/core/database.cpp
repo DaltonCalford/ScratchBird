@@ -56,6 +56,8 @@
 #include <iomanip>
 #include <sstream>
 #include <climits>
+#include <unordered_set>
+#include <cstdlib>
 #if defined(_WIN32)
     #include <io.h>
 #endif
@@ -202,6 +204,130 @@ namespace scratchbird::core
             return !out.empty();
         }
 
+        void appendResourceCandidate(const std::filesystem::path& candidate,
+                                     std::vector<std::filesystem::path>& out,
+                                     std::unordered_set<std::string>& seen)
+        {
+            if (candidate.empty())
+            {
+                return;
+            }
+            std::error_code ec;
+            std::filesystem::path normalized = std::filesystem::absolute(candidate, ec);
+            if (ec || normalized.empty())
+            {
+                normalized = candidate;
+                ec.clear();
+            }
+            normalized = normalized.lexically_normal();
+            if (!std::filesystem::exists(normalized, ec) || ec)
+            {
+                return;
+            }
+            ec.clear();
+            if (!std::filesystem::is_directory(normalized, ec) || ec)
+            {
+                return;
+            }
+            const std::string key = normalized.string();
+            if (!seen.insert(key).second)
+            {
+                return;
+            }
+            out.push_back(normalized);
+        }
+
+        std::vector<std::filesystem::path> discoverResourceRoots()
+        {
+            std::vector<std::filesystem::path> roots;
+            std::unordered_set<std::string> seen;
+
+#ifdef SCRATCHBIRD_INSTALL_RESOURCE_ROOT
+            appendResourceCandidate(std::filesystem::path(SCRATCHBIRD_INSTALL_RESOURCE_ROOT), roots, seen);
+#endif
+#ifndef _WIN32
+            {
+                std::error_code exe_ec;
+                const std::filesystem::path self_path = std::filesystem::read_symlink("/proc/self/exe", exe_ec);
+                if (!exe_ec && !self_path.empty())
+                {
+                    appendResourceCandidate(
+                        (self_path.parent_path() / ".." / "share" / "scratchbird" / "resources").lexically_normal(),
+                        roots,
+                        seen);
+                }
+            }
+#endif
+            if (const char* env_root = std::getenv("SCRATCHBIRD_RESOURCE_ROOT"))
+            {
+                appendResourceCandidate(std::filesystem::path(env_root), roots, seen);
+            }
+            if (const char* env_project_root = std::getenv("SCRATCHBIRD_PROJECT_ROOT"))
+            {
+                appendResourceCandidate(std::filesystem::path(env_project_root) / "resources",
+                                        roots, seen);
+            }
+
+            std::error_code ec;
+            std::filesystem::path current = std::filesystem::current_path(ec);
+            if (!ec && !current.empty())
+            {
+                current = current.lexically_normal();
+                while (!current.empty())
+                {
+                    appendResourceCandidate(current / "resources", roots, seen);
+                    const std::filesystem::path parent = current.parent_path();
+                    if (parent == current)
+                    {
+                        break;
+                    }
+                    current = parent;
+                }
+            }
+
+            std::filesystem::path source_path(__FILE__);
+            std::filesystem::path source_dir = source_path.parent_path();
+            if (!source_dir.empty())
+            {
+                source_dir = source_dir.lexically_normal();
+                while (!source_dir.empty())
+                {
+                    appendResourceCandidate(source_dir / "resources", roots, seen);
+                    const std::filesystem::path parent = source_dir.parent_path();
+                    if (parent == source_dir)
+                    {
+                        break;
+                    }
+                    source_dir = parent;
+                }
+            }
+
+            if (const char* home = std::getenv("HOME"))
+            {
+                appendResourceCandidate(
+                    std::filesystem::path(home) / "CliWork" / "ScratchBird" / "resources",
+                    roots, seen);
+            }
+
+            return roots;
+        }
+
+        std::filesystem::path resolveResourceEntry(const std::filesystem::path& relative)
+        {
+            const auto roots = discoverResourceRoots();
+            std::error_code ec;
+            for (const auto& root : roots)
+            {
+                std::filesystem::path candidate = (root / relative).lexically_normal();
+                if (std::filesystem::exists(candidate, ec) && !ec)
+                {
+                    return candidate;
+                }
+                ec.clear();
+            }
+            return {};
+        }
+
         Status bootstrapI18nResources(Database* db, ErrorContext* ctx)
         {
             auto* catalog = db->catalog_manager();
@@ -246,9 +372,11 @@ namespace scratchbird::core
                     return cs_status;
                 }
 
-                if (need_charsets && std::filesystem::exists("resources/charsets/charsets.json"))
+                const std::filesystem::path charsets_json =
+                    resolveResourceEntry(std::filesystem::path("charsets") / "charsets.json");
+                if (need_charsets && !charsets_json.empty())
                 {
-                    cs_status = loader.loadFromJSONFile("resources/charsets/charsets.json", ctx);
+                    cs_status = loader.loadFromJSONFile(charsets_json.string(), ctx);
                     if (cs_status != Status::OK)
                     {
                         return cs_status;
@@ -259,9 +387,11 @@ namespace scratchbird::core
                     LOG_WARNING(GENERAL, "Charset resources not found; using built-in defaults");
                 }
 
-                if (need_collations && std::filesystem::exists("resources/collations/collations.json"))
+                const std::filesystem::path collations_json =
+                    resolveResourceEntry(std::filesystem::path("collations") / "collations.json");
+                if (need_collations && !collations_json.empty())
                 {
-                    cs_status = loader.loadCollationsFromJSONFile("resources/collations/collations.json", ctx);
+                    cs_status = loader.loadCollationsFromJSONFile(collations_json.string(), ctx);
                     if (cs_status != Status::OK)
                     {
                         return cs_status;
@@ -287,9 +417,11 @@ namespace scratchbird::core
             if (need_timezones)
             {
                 std::string zoneinfo_dir;
-                if (std::filesystem::exists("resources/timezones"))
+                const std::filesystem::path timezone_dir =
+                    resolveResourceEntry(std::filesystem::path("timezones"));
+                if (!timezone_dir.empty())
                 {
-                    zoneinfo_dir = "resources/timezones";
+                    zoneinfo_dir = timezone_dir.string();
                 }
                 else if (std::filesystem::exists("/usr/share/zoneinfo"))
                 {
@@ -320,8 +452,11 @@ namespace scratchbird::core
                     }
 
                     std::string tzdata_version;
+                    const std::filesystem::path timezone_version_file =
+                        resolveResourceEntry(std::filesystem::path("timezones") / "version");
                     if (readVersionFile(zoneinfo_dir + "/version", tzdata_version) ||
-                        readVersionFile("resources/timezones/version", tzdata_version))
+                        (!timezone_version_file.empty() &&
+                         readVersionFile(timezone_version_file.string(), tzdata_version)))
                     {
                         catalog->setTimezoneVersion(tzdata_version, ctx);
                     }
@@ -333,7 +468,10 @@ namespace scratchbird::core
             }
 
             std::string resource_version;
-            if (readVersionFile("resources/i18n/version", resource_version))
+            const std::filesystem::path i18n_version_file =
+                resolveResourceEntry(std::filesystem::path("i18n") / "version");
+            if (!i18n_version_file.empty() &&
+                readVersionFile(i18n_version_file.string(), resource_version))
             {
                 std::string catalog_version;
                 Status vstatus = catalog->getI18nResourceVersion(catalog_version, ctx);

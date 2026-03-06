@@ -120,6 +120,22 @@ std::string toUpperAscii(std::string value) {
     return value;
 }
 
+std::string toLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+std::string trimAscii(const std::string& value) {
+    const auto first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return {};
+    }
+    const auto last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
 bool isTruthyEnv(const char* value) {
     if (!value || value[0] == '\0') {
         return false;
@@ -153,17 +169,167 @@ std::string decodeNativePasswordPayload(const std::vector<uint8_t>& payload) {
     return std::string(reinterpret_cast<const char*>(payload.data()), end);
 }
 
-protocol::AuthMethod mapAuthMethod(sbwp::AuthMethod method) {
+bool mapAuthMethod(sbwp::AuthMethod method, protocol::AuthMethod& method_out) {
     switch (method) {
         case sbwp::AuthMethod::Password:
-            return protocol::AuthMethod::PASSWORD;
+            method_out = protocol::AuthMethod::PASSWORD;
+            return true;
         case sbwp::AuthMethod::Md5:
-            return protocol::AuthMethod::MD5;
+            method_out = protocol::AuthMethod::MD5;
+            return true;
         case sbwp::AuthMethod::ScramSha256:
-            return protocol::AuthMethod::SCRAM_SHA_256;
+            method_out = protocol::AuthMethod::SCRAM_SHA_256;
+            return true;
         default:
-            return protocol::AuthMethod::SCRAM_SHA_256;
+            return false;
     }
+}
+
+bool containsAuthMethod(const std::vector<sbwp::AuthMethod>& methods, sbwp::AuthMethod method) {
+    return std::find(methods.begin(), methods.end(), method) != methods.end();
+}
+
+enum class StartupAuthTokenParseResult {
+    SUPPORTED,
+    UNSUPPORTED_NATIVE,
+    INVALID
+};
+
+StartupAuthTokenParseResult parseStartupAuthToken(const std::string& token,
+                                                  sbwp::AuthMethod& method_out) {
+    const std::string normalized = toLowerAscii(trimAscii(token));
+    if (normalized.empty()) {
+        return StartupAuthTokenParseResult::INVALID;
+    }
+
+    if (normalized == "scratchbird.auth.password_compat" ||
+        normalized == "password" ||
+        normalized == "cleartext" ||
+        normalized == "mysql_clear_password") {
+        method_out = sbwp::AuthMethod::Password;
+        return StartupAuthTokenParseResult::SUPPORTED;
+    }
+
+    if (normalized == "scratchbird.auth.scram_sha_256" ||
+        normalized == "scram_sha_256" ||
+        normalized == "scram-sha-256" ||
+        normalized == "scram256" ||
+        normalized == "scram") {
+        method_out = sbwp::AuthMethod::ScramSha256;
+        return StartupAuthTokenParseResult::SUPPORTED;
+    }
+
+    if (normalized.rfind("scratchbird.auth.", 0) == 0 ||
+        normalized == "md5" ||
+        normalized == "scram_sha_512" ||
+        normalized == "scram-sha-512") {
+        return StartupAuthTokenParseResult::UNSUPPORTED_NATIVE;
+    }
+
+    return StartupAuthTokenParseResult::INVALID;
+}
+
+std::vector<std::string> splitCsvTokens(const std::string& csv) {
+    std::vector<std::string> out;
+    std::istringstream stream(csv);
+    std::string token;
+    while (std::getline(stream, token, ',')) {
+        token = trimAscii(token);
+        if (!token.empty()) {
+            out.push_back(std::move(token));
+        }
+    }
+    return out;
+}
+
+bool resolveNativeStartupAuthMethod(const std::map<std::string, std::string>& params,
+                                    sbwp::AuthMethod default_method,
+                                    sbwp::AuthMethod& selected_method_out,
+                                    std::string& error_out) {
+    error_out.clear();
+    selected_method_out = default_method;
+
+    auto parse_list = [&](const char* key,
+                          std::vector<sbwp::AuthMethod>& out_methods) -> bool {
+        const auto it = params.find(key);
+        if (it == params.end() || trimAscii(it->second).empty()) {
+            return true;
+        }
+        const auto tokens = splitCsvTokens(it->second);
+        for (const auto& token : tokens) {
+            sbwp::AuthMethod parsed = sbwp::AuthMethod::Password;
+            const auto parse_result = parseStartupAuthToken(token, parsed);
+            if (parse_result == StartupAuthTokenParseResult::SUPPORTED) {
+                if (!containsAuthMethod(out_methods, parsed)) {
+                    out_methods.push_back(parsed);
+                }
+                continue;
+            }
+            if (parse_result == StartupAuthTokenParseResult::UNSUPPORTED_NATIVE) {
+                error_out = std::string("Startup auth policy token is not supported on native wire lane: ") +
+                    token;
+                return false;
+            }
+            error_out = std::string("Invalid startup auth policy token: ") + token;
+            return false;
+        }
+        return true;
+    };
+
+    const auto method_id_it = params.find("auth_method_id");
+    if (method_id_it != params.end() && !trimAscii(method_id_it->second).empty()) {
+        sbwp::AuthMethod parsed = sbwp::AuthMethod::Password;
+        const auto parse_result = parseStartupAuthToken(method_id_it->second, parsed);
+        if (parse_result == StartupAuthTokenParseResult::SUPPORTED) {
+            if (parsed != selected_method_out) {
+                error_out =
+                    "auth_method_id conflicts with core native auth policy for this engine lane";
+                return false;
+            }
+        } else if (parse_result == StartupAuthTokenParseResult::UNSUPPORTED_NATIVE) {
+            error_out = std::string("auth_method_id is not supported on native wire lane: ") +
+                trimAscii(method_id_it->second);
+            return false;
+        } else {
+            error_out = std::string("Invalid auth_method_id token: ") + trimAscii(method_id_it->second);
+            return false;
+        }
+    }
+
+    std::vector<sbwp::AuthMethod> required_methods;
+    if (!parse_list("auth_required_methods", required_methods)) {
+        return false;
+    }
+    if (!required_methods.empty() &&
+        !containsAuthMethod(required_methods, selected_method_out)) {
+        error_out = "Core native auth policy method violates auth_required_methods pinning";
+        return false;
+    }
+
+    std::vector<sbwp::AuthMethod> forbidden_methods;
+    if (!parse_list("auth_forbidden_methods", forbidden_methods)) {
+        return false;
+    }
+    for (auto required_method : required_methods) {
+        if (containsAuthMethod(forbidden_methods, required_method)) {
+            error_out = "auth_required_methods overlaps auth_forbidden_methods";
+            return false;
+        }
+    }
+    if (containsAuthMethod(forbidden_methods, selected_method_out)) {
+        error_out = "Core native auth policy method violates auth_forbidden_methods pinning";
+        return false;
+    }
+
+    const auto channel_binding_it = params.find("auth_require_channel_binding");
+    if (channel_binding_it != params.end() && isTruthyEnv(channel_binding_it->second.c_str())) {
+        if (selected_method_out != sbwp::AuthMethod::ScramSha256) {
+            error_out = "Core native auth policy does not satisfy auth_require_channel_binding";
+            return false;
+        }
+    }
+
+    return true;
 }
 
 std::string formatUuid(const uint8_t* bytes, size_t length) {
@@ -824,9 +990,21 @@ core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
         conn->setApplicationName(app_name);
     }
 
-    auth_method_ = preferPasswordAuthForNativeAdapter()
+    const sbwp::AuthMethod default_auth_method = preferPasswordAuthForNativeAdapter()
         ? sbwp::AuthMethod::Password
         : sbwp::AuthMethod::ScramSha256;
+    std::string auth_selection_error;
+    if (!resolveNativeStartupAuthMethod(params,
+                                        default_auth_method,
+                                        auth_method_,
+                                        auth_selection_error)) {
+        sendQueryError(conn, static_cast<uint32_t>(core::Status::NOT_SUPPORTED),
+                      "0A000",
+                      auth_selection_error.empty() ? "Native auth method selection failed"
+                                                   : auth_selection_error);
+        return sendBuffer(conn);
+    }
+
     auth_in_progress_ = true;
     scram_pending_ = false;
     sendAuthRequest(conn, auth_method_);
@@ -888,7 +1066,14 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    protocol::AuthMethod internal_method = mapAuthMethod(auth_method_);
+    protocol::AuthMethod internal_method = protocol::AuthMethod::SCRAM_SHA_256;
+    if (!mapAuthMethod(auth_method_, internal_method)) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::NOT_SUPPORTED),
+                       "0A000",
+                       "Unsupported native authentication method");
+        return sendBuffer(conn);
+    }
     client::Connection::AuthResponse auth_response;
     status = client_->sendAuthRequest(internal_method, payload, auth_response, &ctx);
     if (status != core::Status::OK) {
@@ -2094,7 +2279,16 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     if (!username_.empty()) {
         client_config_.username = username_;
         client_config_.password = remote_password_;
-        setPreferredAuthMethods(mapAuthMethod(auth_method_));
+        protocol::AuthMethod preferred_method = protocol::AuthMethod::SCRAM_SHA_256;
+        if (!mapAuthMethod(auth_method_, preferred_method)) {
+            if (ctx) {
+                ctx->set(core::Status::NOT_SUPPORTED,
+                         "Unsupported native authentication method",
+                         __FILE__, __LINE__, __func__);
+            }
+            return core::Status::NOT_SUPPORTED;
+        }
+        setPreferredAuthMethods(preferred_method);
     } else {
         client_config_.username = "bootstrap";
         client_config_.password.clear();

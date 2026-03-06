@@ -22,6 +22,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/posix_compat.h"
+#include "scratchbird/security/parser_auth_policy.h"
 #include "scratchbird/sblr/firebird_query_compiler.h"
 
 #include <cstring>
@@ -204,6 +205,31 @@ bool timingSafeStringEquals(const std::string& lhs, const std::string& rhs) {
         mismatch |= static_cast<unsigned char>(lhs[i] ^ rhs[i]);
     }
     return mismatch == 0;
+}
+
+void promoteAuthMethodToFront(std::vector<AuthMethod>& methods, AuthMethod method) {
+    const auto it = std::find(methods.begin(), methods.end(), method);
+    if (it == methods.end()) {
+        methods.insert(methods.begin(), method);
+        return;
+    }
+    if (it != methods.begin()) {
+        std::rotate(methods.begin(), it, it + 1);
+    }
+}
+
+std::vector<AuthMethod> firebirdInternalAuthOrder(AuthMethod preferred_method) {
+    auto methods = scratchbird::security::parserAuthMethodOrder("firebird");
+    if (methods.empty()) {
+        methods = {
+            AuthMethod::PASSWORD,
+            AuthMethod::SCRAM_SHA_256,
+            AuthMethod::SCRAM_SHA_512,
+            AuthMethod::MD5
+        };
+    }
+    promoteAuthMethodToFront(methods, preferred_method);
+    return methods;
 }
 
 std::string encodeHex(const std::string& value) {
@@ -2158,22 +2184,11 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             if (preferred_method == AuthMethod::SCRAM_SHA_512) {
                 // Firebird emulation currently routes SCRAM through SHA-256 parity.
                 preferred_method = AuthMethod::SCRAM_SHA_256;
-            } else if (preferred_method != AuthMethod::SCRAM_SHA_256 &&
-                       preferred_method != AuthMethod::PASSWORD &&
-                       preferred_method != AuthMethod::MD5) {
+            }
+            if (!scratchbird::security::parserAuthMethodSupported("firebird", preferred_method)) {
                 preferred_method = AuthMethod::PASSWORD;
             }
-            client_config_.preferred_auth_methods = {
-                preferred_method,
-                AuthMethod::SCRAM_SHA_256,
-                AuthMethod::SCRAM_SHA_512,
-                AuthMethod::PASSWORD,
-                AuthMethod::MD5
-            };
-            auto unique_end = std::unique(client_config_.preferred_auth_methods.begin(),
-                                          client_config_.preferred_auth_methods.end());
-            client_config_.preferred_auth_methods.erase(unique_end,
-                                                        client_config_.preferred_auth_methods.end());
+            client_config_.preferred_auth_methods = firebirdInternalAuthOrder(preferred_method);
         }
     } else {
         client_config_.username = "BOOTSTRAP";
@@ -2454,9 +2469,7 @@ core::Status FirebirdAdapter::handleConnect(network::Connection* conn) {
     // Firebird lane controls its own auth handshake and plugin negotiation.
     const bool firebird_require_authentication = config_.require_authentication;
     const bool firebird_policy_auth_supported =
-        (config_.auth_method == AuthMethod::SCRAM_SHA_256 ||
-         config_.auth_method == AuthMethod::SCRAM_SHA_512 ||
-         config_.auth_method == AuthMethod::PASSWORD);
+        scratchbird::security::parserAuthMethodSupported("firebird", config_.auth_method);
     const char* firebird_auth_plugin = firebird::AUTH_PLUGIN_LEGACY;
     if (firebird_require_authentication) {
         if (!firebird_policy_auth_supported) {
@@ -3418,6 +3431,11 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
         append_len(static_cast<uint16_t>(value.size()));
         info.insert(info.end(), value.begin(), value.end());
     };
+    auto append_raw_item = [&](uint8_t tag, std::initializer_list<uint8_t> payload) {
+        info.push_back(tag);
+        append_len(static_cast<uint16_t>(payload.size()));
+        info.insert(info.end(), payload.begin(), payload.end());
+    };
     auto append_firebird_version_item = [&](const std::string& version) {
         info.push_back(103);  // isc_info_firebird_version
         const uint16_t payload_len = static_cast<uint16_t>(2 + version.size());
@@ -3432,6 +3450,18 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
             break;
         }
         switch (item) {
+            case 11:  // isc_info_implementation
+                // Payload format: count(1), implementation_code(1), implementation_class(1).
+                // Use class=1 (classic legacy class bucket) and code=0 (generic/unknown).
+                append_raw_item(item, {1, 0, 1});
+                break;
+            case 12:  // isc_info_isc_version
+                append_firebird_version_item("WI-V5.0.0.0 ScratchBird");
+                break;
+            case 13:  // isc_info_base_level
+                // Historical base level value used by Firebird for modern versions.
+                append_raw_item(item, {1, 6});
+                break;
             case 32:  // isc_info_ods_version
                 append_int_item(item, 13);
                 break;
@@ -3446,6 +3476,10 @@ core::Status FirebirdAdapter::handleInfoDatabase(network::Connection* conn) {
                 break;
             case 103: // isc_info_firebird_version
                 append_firebird_version_item("WI-V5.0.0.0 ScratchBird");
+                break;
+            case 114: // fb_info_implementation
+                // Payload format: count(1), implementation_code(4), class(1), stack_depth(1).
+                append_raw_item(item, {1, 0, 0, 0, 0, 1, 0});
                 break;
             default:
                 // Unsupported item - omit; client will proceed using available data.
@@ -3803,6 +3837,15 @@ core::Status FirebirdAdapter::handleContAuth(network::Connection* conn) {
             << " data_len=" << data.size()
             << " attach_auth_pending=" << (attach_auth_pending_ ? 1 : 0);
         logFirebirdAuthDebug(oss.str());
+    }
+
+    if (!plugin.empty() &&
+        !scratchbird::security::parserWireAuthPluginAllowed("firebird", plugin)) {
+        sendErrorResponse(conn,
+                          firebird::ErrorCode::isc_login,
+                          "Unsupported auth plugin by Firebird policy: " + plugin,
+                          "0A000");
+        return sendBuffer(conn);
     }
 
     if (attach_auth_pending_) {

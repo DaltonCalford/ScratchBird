@@ -39,8 +39,17 @@ ScratchBirdServer::ScratchBirdServer(const ServerConfig& config)
 }
 
 ScratchBirdServer::~ScratchBirdServer() {
-    shutdown();
-    waitForShutdown(5000);  // Wait up to 5 seconds
+    if (state_.load() != ServerState::STOPPED) {
+        shutdown();
+        (void)waitForShutdown(5000);  // Best-effort graceful stop
+    } else {
+        // Ensure startAsync() background thread is joined on startup-failure paths.
+        (void)waitForShutdown(0);
+    }
+
+    if (accept_thread_.joinable()) {
+        accept_thread_.join();
+    }
 
     if (signal_control_) {
         (void)signal_control_->uninstall(nullptr);
@@ -162,8 +171,14 @@ core::Status ScratchBirdServer::startAsync(core::ErrorContext* ctx) {
 }
 
 void ScratchBirdServer::shutdown() {
+    if (state_.load() == ServerState::STOPPED) {
+        return;
+    }
+
     shutdown_requested_ = true;
-    state_ = ServerState::STOPPING;
+    if (state_.load() != ServerState::STOPPING) {
+        state_ = ServerState::STOPPING;
+    }
 
     // Wake up accept loop by closing listener
     if (listener_) {

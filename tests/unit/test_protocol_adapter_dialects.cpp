@@ -18,6 +18,7 @@
 #include "scratchbird/network/socket.h"
 
 #include <filesystem>
+#include <map>
 #include <cctype>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -188,6 +189,52 @@ std::vector<uint8_t> buildPgFrontendMessage(uint8_t type, const std::vector<uint
     writePgInt32(packet, static_cast<uint32_t>(4 + payload.size()));
     packet.insert(packet.end(), payload.begin(), payload.end());
     return packet;
+}
+
+std::vector<uint8_t> buildSbwpFrontendMessage(sbwp::MessageType type,
+                                              const std::vector<uint8_t>& payload,
+                                              uint32_t sequence = 1) {
+    sbwp::MessageHeader header;
+    header.type = type;
+    header.flags = 0;
+    header.length = static_cast<uint32_t>(payload.size());
+    header.sequence = sequence;
+    header.attachment_id.fill(0);
+    header.txn_id = 0;
+    return sbwp::encodeMessage(header, payload);
+}
+
+std::vector<uint8_t> buildNativeStartupPacket(
+    const std::string& user,
+    const std::string& database,
+    const std::map<std::string, std::string>& extra_params = {}) {
+    std::map<std::string, std::string> params = extra_params;
+    params["user"] = user;
+    params["database"] = database;
+    const auto payload = sbwp::buildStartupPayload(0, params);
+    return buildSbwpFrontendMessage(sbwp::MessageType::Startup, payload, 1);
+}
+
+bool decodeFirstSbwpMessage(const std::vector<uint8_t>& stream,
+                            sbwp::MessageHeader& header,
+                            std::vector<uint8_t>& payload) {
+    if (stream.size() < sbwp::kHeaderSize) {
+        return false;
+    }
+
+    std::vector<uint8_t> header_bytes(stream.begin(), stream.begin() + sbwp::kHeaderSize);
+    core::ErrorContext ctx;
+    if (sbwp::decodeHeader(header_bytes, header, &ctx) != core::Status::OK) {
+        return false;
+    }
+
+    const size_t total_size = sbwp::kHeaderSize + static_cast<size_t>(header.length);
+    if (stream.size() < total_size) {
+        return false;
+    }
+
+    payload.assign(stream.begin() + sbwp::kHeaderSize, stream.begin() + total_size);
+    return true;
 }
 
 std::vector<char> extractPgBackendMessageTypes(const std::vector<uint8_t>& stream) {
@@ -895,6 +942,31 @@ TEST(ProtocolAdapterDialectsC1, PostgreSQLPolicyGssEncNegotiatedDisableIsDetermi
     ::close(fd_pair[1]);
 }
 
+TEST(ProtocolAdapterDialectsC1, PostgreSQLBoundSessionAllowsSystemDatabaseAliasAtStartup) {
+    cleanupDb("test_pg_bound_system_db_alias.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_bound_system_db_alias.sbdb").string();
+    cfg.enforce_bound_database = true;
+    cfg.default_database = "tenant_a";
+    cfg.require_authentication = false;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 122);
+
+    const auto startup_packet = buildPgStartupMessage("policy_user", "template1");
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    EXPECT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    ASSERT_FALSE(message_types.empty());
+    EXPECT_NE(message_types.front(), pg::BackendMsg::ERROR_RESPONSE);
+    EXPECT_EQ(message_types.back(), pg::BackendMsg::READY_FOR_QUERY);
+}
+
 TEST(ProtocolAdapterDialectsC1, PostgreSQLParameterStatusKeys) {
     // C1: Verify required ParameterStatus keys are present
     cleanupDb("test_pg_params.sbdb");
@@ -1188,6 +1260,75 @@ TEST(ProtocolAdapterDialectsNative, NativeCapabilityMaskAdvertisesCanonicalProfi
     EXPECT_TRUE(scratchbird::protocol::sbwp::hasProfileFeature(feature_mask, "opensearch"));
 }
 
+TEST(ProtocolAdapterDialectsNative, NativeHandshakeAcceptsMatchingAuthMethodPin) {
+    cleanupDb("test_native_auth_pin_match.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_auth_pin_match.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 203);
+
+    const auto startup_packet = buildNativeStartupPacket(
+        "policy_user",
+        "policy_db",
+        {{"auth_method_id", "scratchbird.auth.scram_sha_256"}});
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    sbwp::MessageHeader header;
+    std::vector<uint8_t> payload;
+    ASSERT_TRUE(decodeFirstSbwpMessage(conn.getWriteBuffer(), header, payload));
+    EXPECT_EQ(header.type, sbwp::MessageType::AuthRequest);
+
+    sbwp::AuthMethod auth_method = sbwp::AuthMethod::Ok;
+    std::vector<uint8_t> auth_data;
+    core::ErrorContext ctx;
+    ASSERT_EQ(sbwp::parseAuthRequest(payload, auth_method, auth_data, &ctx), core::Status::OK)
+        << ctx.message;
+    EXPECT_EQ(auth_method, sbwp::AuthMethod::ScramSha256);
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeHandshakeRejectsConflictingAuthMethodPin) {
+    cleanupDb("test_native_auth_pin_conflict.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_auth_pin_conflict.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 204);
+
+    const auto startup_packet = buildNativeStartupPacket(
+        "policy_user",
+        "policy_db",
+        {{"auth_method_id", "scratchbird.auth.password_compat"}});
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    sbwp::MessageHeader header;
+    std::vector<uint8_t> payload;
+    ASSERT_TRUE(decodeFirstSbwpMessage(conn.getWriteBuffer(), header, payload));
+    EXPECT_EQ(header.type, sbwp::MessageType::Error);
+
+    std::string severity;
+    std::string sqlstate;
+    std::string message;
+    std::string detail;
+    std::string hint;
+    core::ErrorContext ctx;
+    ASSERT_EQ(sbwp::parseErrorMessage(payload, severity, sqlstate, message, detail, hint, &ctx),
+              core::Status::OK)
+        << ctx.message;
+    EXPECT_EQ(sqlstate, "0A000");
+    EXPECT_NE(message.find("conflicts with core native auth policy"), std::string::npos);
+}
+
 TEST(ProtocolAdapterDialectsNative, NativeCompileRejectIncludesDeterministicSqlContext) {
     cleanupDb("test_native_compile_diagnostic.sbdb");
 
@@ -1397,6 +1538,43 @@ TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserRejectsBoundDatabaseSwitch) {
     std::string message(reinterpret_cast<const char*>(response_payload.data() + 3),
                         response_payload.size() - 3);
     EXPECT_NE(message.find("Database switch denied"), std::string::npos);
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserAllowsSystemDatabaseAliasWhenBound) {
+    cleanupDb("test_mysql_change_user_bound_system_db_alias.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_change_user_bound_system_db_alias.sbdb").string();
+    cfg.enforce_bound_database = true;
+    cfg.default_database = "tenant_a";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 123);
+
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    std::vector<uint8_t> payload;
+    payload.push_back(mysql::Command::COM_CHANGE_USER);
+    payload.insert(payload.end(), {'a', 'l', 'i', 'c', 'e', '\0'});
+    payload.push_back('\0');  // empty auth response
+    payload.insert(payload.end(),
+                   {'i','n','f','o','r','m','a','t','i','o','n','_','s','c','h','e','m','a','\0'});
+
+    const auto packet = buildMySqlWirePacket(payload, 0);
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto response_payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(response_payload.size(), 2u);
+    EXPECT_NE(response_payload[0], mysql::ERR_PACKET);
+    EXPECT_EQ(response_payload[0], mysql::EOF_PACKET);
+
+    const std::string plugin_name(reinterpret_cast<const char*>(response_payload.data() + 1));
+    EXPECT_EQ(plugin_name, "mysql_clear_password");
 }
 
 TEST(ProtocolAdapterDialectsC3, MySQLComStmtPrepareReturnsPrepareOkPacket) {

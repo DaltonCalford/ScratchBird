@@ -446,7 +446,7 @@ private:
     parser::v3::Expression* parsePostfixExpr();
     parser::v3::Expression* parsePostfixTail(parser::v3::Expression* base);
     parser::v3::Expression* parsePrimaryExpr();
-    parser::v3::Expression* parseFunctionCall(const std::string& name);
+    parser::v3::Expression* parseFunctionCall(const std::vector<std::string>& name_parts);
     parser::v3::Expression* parseCaseExpr();
     parser::v3::Expression* parseCastExpr();
     parser::v3::Expression* parseExtractExpr();
@@ -461,6 +461,8 @@ private:
     parser::v3::StringPool::StringId parseIdentifierId();
     std::string parseQualifiedName();
     void resolveTableName(std::string& schema, std::string& table);
+    parser::v3::SchemaPath parseResolvedTablePath();
+    parser::v3::SchemaPath buildResolvedTablePath(const std::string& qualified_name);
     parser::v3::ASTArena* arena() { return arena_.get(); }
     bool isNonReservedKeyword(TokenType type) const;
 

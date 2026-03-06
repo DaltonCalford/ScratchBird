@@ -55,7 +55,7 @@ public:
     }
 
     bool ownsSchema(const std::string& schema_name) const override {
-        return equalsCaseInsensitive(schema_name, "pg_catalog");
+        return matchesSchemaLeaf(schema_name, "pg_catalog");
     }
 
     bool ownsTable(const std::string& schema_name,
@@ -129,6 +129,9 @@ public:
         if (equalsCaseInsensitive(table_name, "pg_database")) {
             return queryPgDatabase(results, ctx);
         }
+        if (equalsCaseInsensitive(table_name, "pg_am")) {
+            return queryPgAm(results, ctx);
+        }
         if (equalsCaseInsensitive(table_name, "pg_tablespace")) {
             return queryPgTablespace(results, ctx);
         }
@@ -152,6 +155,21 @@ public:
         }
         if (equalsCaseInsensitive(table_name, "pg_trigger")) {
             return queryPgTrigger(results, ctx);
+        }
+        if (equalsCaseInsensitive(table_name, "pg_publication")) {
+            return queryPgPublication(results, ctx);
+        }
+        if (equalsCaseInsensitive(table_name, "pg_publication_rel")) {
+            return queryPgPublicationRel(results, ctx);
+        }
+        if (equalsCaseInsensitive(table_name, "pg_publication_namespace")) {
+            return queryPgPublicationNamespace(results, ctx);
+        }
+        if (equalsCaseInsensitive(table_name, "pg_policy")) {
+            return queryPgPolicy(results, ctx);
+        }
+        if (equalsCaseInsensitive(table_name, "pg_statistic_ext")) {
+            return queryPgStatisticExt(results, ctx);
         }
         if (equalsCaseInsensitive(table_name, "pg_inherits")) {
             return queryPgInherits(results, ctx);
@@ -208,6 +226,18 @@ public:
     }
 
 private:
+    static bool matchesSchemaLeaf(const std::string& schema_name,
+                                  const std::string& expected_leaf) {
+        if (equalsCaseInsensitive(schema_name, expected_leaf)) {
+            return true;
+        }
+        size_t split = schema_name.find_last_of("./");
+        if (split == std::string::npos || split + 1 >= schema_name.size()) {
+            return false;
+        }
+        return equalsCaseInsensitive(schema_name.substr(split + 1), expected_leaf);
+    }
+
     struct ColumnDef {
         const char* name;
         DataType type;
@@ -219,6 +249,7 @@ private:
     static constexpr int64_t kPgCatalogOid = 11;
     static constexpr int64_t kInformationSchemaOid = 16660;
     static constexpr int64_t kPgDefaultTablespaceOid = 1663;
+    static constexpr int64_t kPgGlobalTablespaceOid = 1664;
     static constexpr int64_t kPgVoidOid = 2278;
 
     std::vector<std::string> table_names_;
@@ -227,8 +258,9 @@ private:
         table_names_ = {
             "pg_namespace", "pg_class", "pg_attribute", "pg_type",
             "pg_enum", "pg_constraint", "pg_index", "pg_proc",
-            "pg_trigger", "pg_authid", "pg_roles", "pg_database",
-            "pg_tablespace", "pg_settings", "pg_locks", "pg_inherits",
+            "pg_trigger", "pg_publication", "pg_publication_rel", "pg_publication_namespace",
+            "pg_policy", "pg_statistic_ext", "pg_authid", "pg_roles", "pg_database",
+            "pg_am", "pg_tablespace", "pg_settings", "pg_locks", "pg_inherits",
             "pg_stat_user_tables", "pg_stat_all_tables", "pg_stat_sys_tables",
             "pg_stat_activity"
         };
@@ -473,6 +505,8 @@ private:
             {"relkind", DataType::VARCHAR, true},
             {"relowner", DataType::INT64, true},
             {"reltablespace", DataType::INT64, true},
+            {"relfilenode", DataType::INT64, true},
+            {"reltoastrelid", DataType::INT64, true},
             {"reltuples", DataType::INT64, true},
             {"relpages", DataType::INT64, true},
             {"relnatts", DataType::INT64, true},
@@ -525,6 +559,49 @@ private:
             {"tgrelid", DataType::INT64, true},
             {"tgenabled", DataType::VARCHAR, true}
         };
+        static const ColumnDefs pg_publication_cols = {
+            {"oid", DataType::INT64, false},
+            {"pubname", DataType::VARCHAR, false},
+            {"pubowner", DataType::INT64, true},
+            {"puballtables", DataType::BOOLEAN, true},
+            {"puballsequences", DataType::BOOLEAN, true},
+            {"pubinsert", DataType::BOOLEAN, true},
+            {"pubupdate", DataType::BOOLEAN, true},
+            {"pubdelete", DataType::BOOLEAN, true},
+            {"pubtruncate", DataType::BOOLEAN, true},
+            {"pubviaroot", DataType::BOOLEAN, true},
+            {"pubgencols", DataType::VARCHAR, true}
+        };
+        static const ColumnDefs pg_publication_rel_cols = {
+            {"oid", DataType::INT64, false},
+            {"prpubid", DataType::INT64, false},
+            {"prrelid", DataType::INT64, false},
+            {"prqual", DataType::TEXT, true},
+            {"prattrs", DataType::TEXT, true}
+        };
+        static const ColumnDefs pg_publication_namespace_cols = {
+            {"oid", DataType::INT64, false},
+            {"pnpubid", DataType::INT64, false},
+            {"pnnspid", DataType::INT64, false}
+        };
+        static const ColumnDefs pg_policy_cols = {
+            {"oid", DataType::INT64, false},
+            {"polname", DataType::VARCHAR, false},
+            {"polrelid", DataType::INT64, false},
+            {"polcmd", DataType::VARCHAR, true},
+            {"polpermissive", DataType::BOOLEAN, true},
+            {"polroles", DataType::TEXT, true},
+            {"polqual", DataType::TEXT, true},
+            {"polwithcheck", DataType::TEXT, true}
+        };
+        static const ColumnDefs pg_statistic_ext_cols = {
+            {"oid", DataType::INT64, false},
+            {"stxrelid", DataType::INT64, false},
+            {"stxnamespace", DataType::INT64, false},
+            {"stxname", DataType::VARCHAR, false},
+            {"stxkind", DataType::TEXT, true},
+            {"stxstattarget", DataType::INT64, true}
+        };
         static const ColumnDefs pg_constraint_cols = {
             {"oid", DataType::INT64, false},
             {"conname", DataType::VARCHAR, false},
@@ -570,10 +647,18 @@ private:
             {"datdba", DataType::INT64, true},
             {"encoding", DataType::INT64, true}
         };
+        static const ColumnDefs pg_am_cols = {
+            {"oid", DataType::INT64, false},
+            {"amname", DataType::VARCHAR, false},
+            {"amhandler", DataType::INT64, true},
+            {"amtype", DataType::VARCHAR, true}
+        };
         static const ColumnDefs pg_tablespace_cols = {
             {"oid", DataType::INT64, false},
             {"spcname", DataType::VARCHAR, false},
-            {"spcowner", DataType::INT64, true}
+            {"spcowner", DataType::INT64, true},
+            {"spcacl", DataType::TEXT, true},
+            {"spcoptions", DataType::TEXT, true}
         };
         static const ColumnDefs pg_stat_activity_cols = {
             {"datid", DataType::INT64, true},
@@ -645,11 +730,17 @@ private:
         if (equalsCaseInsensitive(table_name, "pg_enum")) return &pg_enum_cols;
         if (equalsCaseInsensitive(table_name, "pg_proc")) return &pg_proc_cols;
         if (equalsCaseInsensitive(table_name, "pg_trigger")) return &pg_trigger_cols;
+        if (equalsCaseInsensitive(table_name, "pg_publication")) return &pg_publication_cols;
+        if (equalsCaseInsensitive(table_name, "pg_publication_rel")) return &pg_publication_rel_cols;
+        if (equalsCaseInsensitive(table_name, "pg_publication_namespace")) return &pg_publication_namespace_cols;
+        if (equalsCaseInsensitive(table_name, "pg_policy")) return &pg_policy_cols;
+        if (equalsCaseInsensitive(table_name, "pg_statistic_ext")) return &pg_statistic_ext_cols;
         if (equalsCaseInsensitive(table_name, "pg_constraint")) return &pg_constraint_cols;
         if (equalsCaseInsensitive(table_name, "pg_index")) return &pg_index_cols;
         if (equalsCaseInsensitive(table_name, "pg_roles")) return &pg_roles_cols;
         if (equalsCaseInsensitive(table_name, "pg_authid")) return &pg_authid_cols;
         if (equalsCaseInsensitive(table_name, "pg_database")) return &pg_database_cols;
+        if (equalsCaseInsensitive(table_name, "pg_am")) return &pg_am_cols;
         if (equalsCaseInsensitive(table_name, "pg_tablespace")) return &pg_tablespace_cols;
         if (equalsCaseInsensitive(table_name, "pg_stat_activity")) return &pg_stat_activity_cols;
         if (equalsCaseInsensitive(table_name, "pg_stat_user_tables")) return &pg_stat_tables_cols;
@@ -764,6 +855,8 @@ private:
                         {"relkind", TypedValue::makeVarchar(std::string(1, pgRelKind(table.table_type, false)))},
                         {"relowner", isZeroId(table.owner_id) ? TypedValue() : TypedValue::makeInt64(oidFromUuid(table.owner_id))},
                         {"reltablespace", reltablespace == 0 ? TypedValue() : TypedValue::makeInt64(reltablespace)},
+                        {"relfilenode", TypedValue::makeInt64(oidFromUuid(table.table_id))},
+                        {"reltoastrelid", TypedValue()},
                         {"reltuples", TypedValue::makeInt64(static_cast<int64_t>(table.row_count))},
                         {"relpages", TypedValue::makeInt64(0)},
                         {"relnatts", TypedValue::makeInt64(static_cast<int64_t>(table.column_count))},
@@ -789,6 +882,8 @@ private:
                             {"relkind", TypedValue::makeVarchar("i")},
                             {"relowner", isZeroId(index.owner_id) ? TypedValue() : TypedValue::makeInt64(oidFromUuid(index.owner_id))},
                             {"reltablespace", index_ts == 0 ? TypedValue() : TypedValue::makeInt64(index_ts)},
+                            {"relfilenode", TypedValue::makeInt64(oidFromUuid(index.index_id))},
+                            {"reltoastrelid", TypedValue()},
                             {"reltuples", TypedValue::makeInt64(0)},
                             {"relpages", TypedValue::makeInt64(0)},
                             {"relnatts", TypedValue::makeInt64(static_cast<int64_t>(index.column_ids.size()))},
@@ -814,6 +909,8 @@ private:
                         {"relkind", TypedValue::makeVarchar(std::string(1, view.materialized ? 'm' : 'v'))},
                         {"relowner", isZeroId(view.owner_id) ? TypedValue() : TypedValue::makeInt64(oidFromUuid(view.owner_id))},
                         {"reltablespace", TypedValue()},
+                        {"relfilenode", TypedValue()},
+                        {"reltoastrelid", TypedValue()},
                         {"reltuples", TypedValue::makeInt64(0)},
                         {"relpages", TypedValue::makeInt64(0)},
                         {"relnatts", TypedValue::makeInt64(static_cast<int64_t>(view.column_names.size()))},
@@ -838,6 +935,8 @@ private:
                         {"relkind", TypedValue::makeVarchar("S")},
                         {"relowner", isZeroId(seq.owner_id) ? TypedValue() : TypedValue::makeInt64(oidFromUuid(seq.owner_id))},
                         {"reltablespace", TypedValue()},
+                        {"relfilenode", TypedValue()},
+                        {"reltoastrelid", TypedValue()},
                         {"reltuples", TypedValue::makeInt64(0)},
                         {"relpages", TypedValue::makeInt64(0)},
                         {"relnatts", TypedValue::makeInt64(0)},
@@ -868,6 +967,8 @@ private:
                     {"relkind", TypedValue::makeVarchar("c")},
                     {"relowner", TypedValue()},
                     {"reltablespace", TypedValue()},
+                    {"relfilenode", TypedValue()},
+                    {"reltoastrelid", TypedValue()},
                     {"reltuples", TypedValue::makeInt64(0)},
                     {"relpages", TypedValue::makeInt64(0)},
                     {"relnatts", TypedValue::makeInt64(static_cast<int64_t>(domain.fields.size()))},
@@ -1394,8 +1495,39 @@ private:
         return Status::OK;
     }
 
+    Status queryPgAm(VirtualResultSet& results, ErrorContext* /* ctx */) {
+        struct AccessMethodRow {
+            int64_t oid;
+            const char* amname;
+            const char* amtype;
+        };
+        static constexpr AccessMethodRow kAccessMethods[] = {
+            {403, "btree", "i"},
+            {405, "hash", "i"},
+            {783, "gist", "i"},
+            {2742, "gin", "i"},
+            {4000, "spgist", "i"},
+            {3580, "brin", "i"},
+            {2, "heap", "t"}
+        };
+
+        for (const auto& method : kAccessMethods) {
+            VirtualRow row;
+            row.columns = {
+                {"oid", TypedValue::makeInt64(method.oid)},
+                {"amname", TypedValue::makeVarchar(method.amname)},
+                {"amhandler", TypedValue()},
+                {"amtype", TypedValue::makeVarchar(method.amtype)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+
+        return Status::OK;
+    }
+
     Status queryPgTablespace(VirtualResultSet& results, ErrorContext* ctx) {
         bool has_default = false;
+        bool has_global = false;
         if (catalog_manager_) {
             std::vector<TablespaceInfo> tablespaces;
             Status status = catalog_manager_->listTablespaces(tablespaces, ctx);
@@ -1404,11 +1536,16 @@ private:
                     if (equalsCaseInsensitive(ts.tablespace_name, "pg_default")) {
                         has_default = true;
                     }
+                    if (equalsCaseInsensitive(ts.tablespace_name, "pg_global")) {
+                        has_global = true;
+                    }
                     VirtualRow row;
                     row.columns = {
                         {"oid", TypedValue::makeInt64(oidFromUuid(ts.tablespace_uuid))},
                         {"spcname", TypedValue::makeVarchar(ts.tablespace_name)},
-                        {"spcowner", TypedValue::makeInt64(0)}
+                        {"spcowner", TypedValue::makeInt64(0)},
+                        {"spcacl", TypedValue()},
+                        {"spcoptions", TypedValue()}
                     };
                     results.rows.push_back(std::move(row));
                 }
@@ -1420,7 +1557,20 @@ private:
             row.columns = {
                 {"oid", TypedValue::makeInt64(kPgDefaultTablespaceOid)},
                 {"spcname", TypedValue::makeVarchar("pg_default")},
-                {"spcowner", TypedValue::makeInt64(0)}
+                {"spcowner", TypedValue::makeInt64(0)},
+                {"spcacl", TypedValue()},
+                {"spcoptions", TypedValue()}
+            };
+            results.rows.push_back(std::move(row));
+        }
+        if (!has_global) {
+            VirtualRow row;
+            row.columns = {
+                {"oid", TypedValue::makeInt64(kPgGlobalTablespaceOid)},
+                {"spcname", TypedValue::makeVarchar("pg_global")},
+                {"spcowner", TypedValue::makeInt64(0)},
+                {"spcacl", TypedValue()},
+                {"spcoptions", TypedValue()}
             };
             results.rows.push_back(std::move(row));
         }
@@ -1706,6 +1856,100 @@ private:
             }
         }
 
+        return Status::OK;
+    }
+
+    Status queryPgPublication(VirtualResultSet& results, ErrorContext* ctx) {
+        if (!catalog_manager_) {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::PublicationCatalogInfo> pubs;
+        Status status = catalog_manager_->listPublicationCatalogEntries(pubs, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        for (const auto& pub : pubs) {
+            VirtualRow row;
+            row.columns = {
+                {"oid", TypedValue::makeInt64(oidFromUuid(pub.publication_id))},
+                {"pubname", TypedValue::makeVarchar(pub.publication_name)},
+                {"pubowner", isZeroId(pub.owner_id) ? TypedValue()
+                                                     : TypedValue::makeInt64(oidFromUuid(pub.owner_id))},
+                {"puballtables", TypedValue::makeBool(false)},
+                {"puballsequences", TypedValue::makeBool(false)},
+                {"pubinsert", TypedValue::makeBool(pub.publish_insert)},
+                {"pubupdate", TypedValue::makeBool(pub.publish_update)},
+                {"pubdelete", TypedValue::makeBool(pub.publish_delete)},
+                {"pubtruncate", TypedValue::makeBool(pub.publish_truncate)},
+                {"pubviaroot", TypedValue::makeBool(pub.publish_via_partition_root)},
+                {"pubgencols", TypedValue::makeVarchar("n")}
+            };
+            results.rows.push_back(std::move(row));
+        }
+
+        return Status::OK;
+    }
+
+    Status queryPgPublicationRel(VirtualResultSet& results, ErrorContext* ctx) {
+        if (!catalog_manager_) {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::PublicationTableCatalogInfo> mappings;
+        Status status = catalog_manager_->listPublicationTableCatalogEntries(ID{}, mappings, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        for (const auto& mapping : mappings) {
+            VirtualRow row;
+            row.columns = {
+                {"oid", TypedValue::makeInt64(oidFromUuid(mapping.publication_table_id))},
+                {"prpubid", TypedValue::makeInt64(oidFromUuid(mapping.publication_id))},
+                {"prrelid", TypedValue::makeInt64(oidFromUuid(mapping.table_id))},
+                {"prqual", TypedValue()},
+                {"prattrs", TypedValue()}
+            };
+            results.rows.push_back(std::move(row));
+        }
+
+        return Status::OK;
+    }
+
+    Status queryPgPublicationNamespace(VirtualResultSet& results, ErrorContext* ctx) {
+        if (!catalog_manager_) {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::PublicationSchemaCatalogInfo> mappings;
+        Status status = catalog_manager_->listPublicationSchemaCatalogEntries(ID{}, mappings, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        for (const auto& mapping : mappings) {
+            VirtualRow row;
+            row.columns = {
+                {"oid", TypedValue::makeInt64(oidFromUuid(mapping.publication_schema_id))},
+                {"pnpubid", TypedValue::makeInt64(oidFromUuid(mapping.publication_id))},
+                {"pnnspid", TypedValue::makeInt64(oidFromUuid(mapping.schema_id))}
+            };
+            results.rows.push_back(std::move(row));
+        }
+
+        return Status::OK;
+    }
+
+    Status queryPgPolicy(VirtualResultSet& /* results */, ErrorContext* /* ctx */) {
+        // RLS policies are not yet surfaced via catalog manager; expose an
+        // empty relation with PostgreSQL-compatible columns for introspection.
+        return Status::OK;
+    }
+
+    Status queryPgStatisticExt(VirtualResultSet& /* results */, ErrorContext* /* ctx */) {
+        // Extended statistics catalog entries are not surfaced yet.
         return Status::OK;
     }
 

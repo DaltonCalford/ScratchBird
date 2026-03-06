@@ -480,6 +480,46 @@ namespace scratchbird
             // Catalog persistence can lag/fail in some bootstrap-heavy fixtures; this
             // keeps enforcement deterministic for the active executor session.
             std::unordered_map<core::ID, uint8_t> session_index_array_uniqueness_;
+            // Session-local stub registry for PostgreSQL compat create/drop families that
+            // are parser-authorized before full native catalog implementations exist.
+            std::unordered_set<std::string> postgresql_compat_stub_objects_;
+            // Lightweight overload tracking for PostgreSQL routine DROP parity while
+            // function/procedure catalog keys remain name-based in this cycle.
+            std::unordered_map<std::string, uint32_t> postgresql_compat_function_overloads_;
+            std::unordered_map<std::string, uint32_t> postgresql_compat_procedure_overloads_;
+
+            // T0 tablespace virtualization scaffolding: emulated engines keep a
+            // metadata-only tree rooted under <emulated_root>.system.tablespaces
+            // and object bindings under <emulated_root>.system.tablespace_bindings.
+            struct EmulatedVirtualTablespaceMetadata
+            {
+                core::ID tablespace_uuid{};
+                std::string root_path;
+                std::string namespace_path;
+                std::string binding_namespace_path;
+                std::string tablespace_name;
+                std::string location_token;
+                uint64_t created_time = 0;
+                uint64_t last_modified_time = 0;
+                uint64_t flags = 0;
+            };
+
+            struct EmulatedVirtualTablespaceBinding
+            {
+                std::string root_path;
+                std::string binding_namespace_path;
+                std::string object_path;
+                core::ID object_uuid{};
+                uint8_t object_type = 0;
+                std::string tablespace_name;
+                core::ID tablespace_uuid{};
+                uint64_t last_modified_time = 0;
+            };
+
+            std::unordered_map<std::string, EmulatedVirtualTablespaceMetadata>
+                emulated_virtual_tablespace_tree_;
+            std::unordered_map<std::string, EmulatedVirtualTablespaceBinding>
+                emulated_virtual_tablespace_bindings_;
 
             // Task 17 MGA Phase 2.2: Index maintenance statistics
             IndexMaintenanceStats index_stats_;

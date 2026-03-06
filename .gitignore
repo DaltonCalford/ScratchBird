@@ -88,7 +88,13 @@ Thumbs.db
 Testing/
 ctest-
 tests/compatibility/firebird/results/ctest/
+tests/compatibility/mysql/results/ctest/
+tests/compatibility/postgresql/results/ctest/
+tests/compatibility/scratchbird/results/ctest/
 tests/compatibility/*/runtime/
+tests/conformance/public_beta/results/*/
+tests/conformance/security/results/*/
+tests/conformance/transactions/results/*/
 
 # Gradle caches/build output
 .gradle/
@@ -110,6 +116,7 @@ __pycache__/
 *.kate-swp
 *~
 /.scratchbird-test-tmp/
+/%(NUL_DEVICE)s
 
 # Analysis and work-in-progress files in root
 /*.wip

@@ -778,14 +778,50 @@ parser::v3::Statement* Parser::parseCreateStmtV3() {
         advance();
 
         if (matchKeyword(TokenType::KW_WITH)) {
-            if (match(TokenType::LEFT_PAREN)) {
-                while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+            consume(TokenType::LEFT_PAREN, "Expected ( after WITH");
+            auto is_supported_tablespace_option = [](std::string option_name) {
+                std::transform(option_name.begin(), option_name.end(), option_name.begin(),
+                               [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+                return option_name == "random_page_cost" ||
+                       option_name == "seq_page_cost" ||
+                       option_name == "effective_io_concurrency" ||
+                       option_name == "maintenance_io_concurrency";
+            };
+
+            while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+                std::string option_name = parseIdentifier();
+                consume(TokenType::EQUAL, "Expected = after tablespace option name");
+
+                int paren_depth = 0;
+                while (!check(TokenType::END_OF_FILE)) {
+                    if (paren_depth == 0 &&
+                        (check(TokenType::COMMA) || check(TokenType::RIGHT_PAREN))) {
+                        break;
+                    }
+                    if (match(TokenType::LEFT_PAREN)) {
+                        ++paren_depth;
+                        continue;
+                    }
+                    if (match(TokenType::RIGHT_PAREN)) {
+                        if (paren_depth > 0) {
+                            --paren_depth;
+                            continue;
+                        }
+                        break;
+                    }
                     advance();
                 }
-                if (check(TokenType::RIGHT_PAREN)) {
-                    advance();
+
+                if (!is_supported_tablespace_option(option_name)) {
+                    error("unrecognized parameter \"" + option_name + "\"");
+                }
+
+                if (!match(TokenType::COMMA)) {
+                    break;
                 }
             }
+
+            consume(TokenType::RIGHT_PAREN, "Expected ) after tablespace options");
         }
 
         return stmt;
@@ -1270,7 +1306,7 @@ parser::v3::CreateTableStmt* Parser::parseCreateTableV3(bool or_replace,
         // PostgreSQL child partition form:
         //   CREATE TABLE <child> PARTITION OF <parent> FOR VALUES ...
         consumeKeyword(TokenType::KW_OF, "Expected OF after PARTITION");
-        stmt->inherits.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        stmt->inherits.push_back(parseResolvedTablePath());
 
         if (matchKeyword(TokenType::KW_FOR)) {
             (void)matchKeyword(TokenType::KW_VALUES);
@@ -1441,8 +1477,7 @@ parser::v3::CreateIndexStmt* Parser::parseCreateIndexV3(bool unique) {
     if (matchKeyword(TokenType::KW_ONLY) || matchIdentifierKeyword("ONLY")) {
         // Parsed for compatibility with partitioned index declaration forms.
     }
-    std::string table_path = parseQualifiedName();
-    stmt->table_path = buildPathFromQualified(string_pool_, table_path);
+    stmt->table_path = parseResolvedTablePath();
     if (index_name.empty()) {
         std::string base = std::string(string_pool_.get(stmt->table_path.objectName()));
         index_name = base.empty() ? std::string("index") : base + "_idx";
@@ -2868,22 +2903,43 @@ parser::v3::Statement* Parser::parseDropStmtV3() {
             return make_alter_system_stmt("postgresql.compat.drop." + family, payload);
         };
 
-    auto consume_optional_signature = [&]() {
-        if (!match(TokenType::LEFT_PAREN)) {
-            return;
+    auto capture_optional_signature = [&]() -> std::string {
+        if (!check(TokenType::LEFT_PAREN)) {
+            return {};
         }
-        int depth = 1;
-        while (depth > 0 && !check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
-            if (match(TokenType::LEFT_PAREN)) {
+
+        std::string_view input = lexer_.input();
+        size_t start = current_token_.span.start.offset;
+        Token last = current_token_;
+        int depth = 0;
+        while (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
+            if (check(TokenType::LEFT_PAREN)) {
                 ++depth;
+                last = current_token_;
+                advance();
                 continue;
             }
-            if (match(TokenType::RIGHT_PAREN)) {
+            if (check(TokenType::RIGHT_PAREN)) {
                 --depth;
+                last = current_token_;
+                advance();
+                if (depth <= 0) {
+                    break;
+                }
                 continue;
             }
+            last = current_token_;
             advance();
         }
+
+        size_t end = last.span.start.offset + last.span.length;
+        if (end > input.size()) {
+            end = input.size();
+        }
+        if (end <= start) {
+            return {};
+        }
+        return std::string(input.substr(start, end - start));
     };
 
     if (matchKeyword(TokenType::KW_TABLESPACE)) {
@@ -3274,8 +3330,12 @@ parser::v3::Statement* Parser::parseDropStmtV3() {
         }
         do {
             std::string name = parseQualifiedName();
-            consume_optional_signature();
-            stmt->functions.push_back(buildPathFromQualified(string_pool_, name));
+            std::string signature = capture_optional_signature();
+            std::string target = signature.empty() ? name : (name + signature);
+            parser::v3::SchemaPath path(
+                parser::v3::PathType::UNQUALIFIED,
+                {string_pool_.intern(target)});
+            stmt->functions.push_back(path);
         } while (match(TokenType::COMMA));
         return stmt;
     }
@@ -3288,8 +3348,12 @@ parser::v3::Statement* Parser::parseDropStmtV3() {
         }
         do {
             std::string name = parseQualifiedName();
-            consume_optional_signature();
-            stmt->procedures.push_back(buildPathFromQualified(string_pool_, name));
+            std::string signature = capture_optional_signature();
+            std::string target = signature.empty() ? name : (name + signature);
+            parser::v3::SchemaPath path(
+                parser::v3::PathType::UNQUALIFIED,
+                {string_pool_.intern(target)});
+            stmt->procedures.push_back(path);
         } while (match(TokenType::COMMA));
         return stmt;
     }
@@ -4003,14 +4067,50 @@ void Parser::parseCreateTablespace() {
     advance();
 
     if (matchKeyword(TokenType::KW_WITH)) {
-        if (match(TokenType::LEFT_PAREN)) {
-            while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+        consume(TokenType::LEFT_PAREN, "Expected ( after WITH");
+        auto is_supported_tablespace_option = [](std::string option_name) {
+            std::transform(option_name.begin(), option_name.end(), option_name.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            return option_name == "random_page_cost" ||
+                   option_name == "seq_page_cost" ||
+                   option_name == "effective_io_concurrency" ||
+                   option_name == "maintenance_io_concurrency";
+        };
+
+        while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+            std::string option_name = parseIdentifier();
+            consume(TokenType::EQUAL, "Expected = after tablespace option name");
+
+            int paren_depth = 0;
+            while (!check(TokenType::END_OF_FILE)) {
+                if (paren_depth == 0 &&
+                    (check(TokenType::COMMA) || check(TokenType::RIGHT_PAREN))) {
+                    break;
+                }
+                if (match(TokenType::LEFT_PAREN)) {
+                    ++paren_depth;
+                    continue;
+                }
+                if (match(TokenType::RIGHT_PAREN)) {
+                    if (paren_depth > 0) {
+                        --paren_depth;
+                        continue;
+                    }
+                    break;
+                }
                 advance();
             }
-            if (check(TokenType::RIGHT_PAREN)) {
-                advance();
+
+            if (!is_supported_tablespace_option(option_name)) {
+                error("unrecognized parameter \"" + option_name + "\"");
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
             }
         }
+
+        consume(TokenType::RIGHT_PAREN, "Expected ) after tablespace options");
     }
 
     emit(sblr::Opcode::CREATE_TABLESPACE);

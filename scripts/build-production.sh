@@ -64,19 +64,16 @@ echo ""
 # Optional install
 if [ "$1" == "install" ]; then
     echo "📦 Installing to $INSTALL_PREFIX..."
-    
-    # Create install directories
-    sudo mkdir -p "$INSTALL_PREFIX/bin"
-    sudo mkdir -p "$INSTALL_PREFIX/lib"
-    
-    # Install binaries
-    sudo cp bin/sb_* "$INSTALL_PREFIX/bin/" 2>/dev/null || true
-    sudo cp lib/*.so "$INSTALL_PREFIX/lib/" 2>/dev/null || true
-    
-    # Set permissions
-    sudo chmod +x "$INSTALL_PREFIX/bin/"*
-    
+
+    INSTALL_CMD=(cmake --install . --prefix "$INSTALL_PREFIX")
+    if [ "$(id -u)" -eq 0 ]; then
+        "${INSTALL_CMD[@]}"
+    else
+        sudo "${INSTALL_CMD[@]}"
+    fi
+
     echo "✅ Installed to $INSTALL_PREFIX"
+    echo "✅ Runtime resources installed to $INSTALL_PREFIX/share/scratchbird/resources"
     echo ""
     echo "Add to PATH:"
     echo "  export PATH=$INSTALL_PREFIX/bin:\$PATH"

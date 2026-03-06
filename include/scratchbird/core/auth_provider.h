@@ -182,6 +182,26 @@ public:
     }
 
     /**
+     * Authenticate using MySQL wire proof (mysql_native_password / caching_sha2_password).
+     */
+    virtual AuthResult authenticateMySqlWireProof(
+        const std::string& username,
+        const std::string& plugin_name,
+        const std::vector<uint8_t>& scramble,
+        const std::vector<uint8_t>& client_response,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out)
+    {
+        (void)username;
+        (void)plugin_name;
+        (void)scramble;
+        (void)client_response;
+        (void)user_info_out;
+        error_msg_out = "MySQL wire proof authentication not supported";
+        return AuthResult::NOT_IMPLEMENTED;
+    }
+
+    /**
      * Begin SCRAM authentication (client-first -> server-first)
      */
     virtual AuthResult beginScramAuth(
@@ -291,6 +311,14 @@ public:
         const std::string& username,
         const uint8_t salt[4],
         const std::string& client_response,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out) override;
+
+    AuthResult authenticateMySqlWireProof(
+        const std::string& username,
+        const std::string& plugin_name,
+        const std::vector<uint8_t>& scramble,
+        const std::vector<uint8_t>& client_response,
         AuthUserInfo& user_info_out,
         std::string& error_msg_out) override;
 

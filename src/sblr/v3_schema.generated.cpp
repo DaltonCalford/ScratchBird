@@ -313,6 +313,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"include", FieldType::LIST, "ident"},
         FieldDef{"predicate", FieldType::OPT, "expr"},
         FieldDef{"index_type", FieldType::OPT, "ident"},
+        FieldDef{"tablespace", FieldType::OPT, "schema_path"},
         FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
     }}},
     {"SCHEMA_DDL_CREATE_VIEW", SchemaDef{"SCHEMA_DDL_CREATE_VIEW", {
@@ -436,9 +437,14 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"check_expr", FieldType::OPT, "expr"},
     }}},
     {"SCHEMA_DDL_CREATE_TABLESPACE", SchemaDef{"SCHEMA_DDL_CREATE_TABLESPACE", {
+        FieldDef{"flags", FieldType::U64, ""},
+        FieldDef{"path", FieldType::SCHEMA_PATH, ""},
         FieldDef{"name", FieldType::IDENT, ""},
         FieldDef{"location", FieldType::STRING, ""},
-        FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
+        FieldDef{"autoextend_enabled", FieldType::BOOL, ""},
+        FieldDef{"autoextend_size_mb", FieldType::U32, ""},
+        FieldDef{"max_size_mb", FieldType::U32, ""},
+        FieldDef{"prealloc_pages", FieldType::U32, ""},
     }}},
     {"SCHEMA_DDL_CREATE_FOREIGN_SERVER", SchemaDef{"SCHEMA_DDL_CREATE_FOREIGN_SERVER", {
         FieldDef{"name", FieldType::IDENT, ""},
@@ -502,14 +508,21 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"column", FieldType::IDENT, ""},
         FieldDef{"set_not_null", FieldType::BOOL, ""},
     }}},
+    {"TABLESPACE_ALTERATION", SchemaDef{"TABLESPACE_ALTERATION", {
+        FieldDef{"action", FieldType::U8, ""},
+        FieldDef{"autoextend_enabled", FieldType::OPT, "bool"},
+        FieldDef{"size_mb", FieldType::OPT, "u32"},
+        FieldDef{"new_name", FieldType::OPT, "ident"},
+    }}},
     {"SCHEMA_DDL_ALTER_TABLESPACE", SchemaDef{"SCHEMA_DDL_ALTER_TABLESPACE", {
         FieldDef{"tablespace", FieldType::SCHEMA_PATH, ""},
-        FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
+        FieldDef{"alterations", FieldType::LIST, "TABLESPACE_ALTERATION"},
+        FieldDef{"options", FieldType::OPT, "OPTION_KV"},
     }}},
     {"SCHEMA_DDL_ALTER_TABLE_SET_TABLESPACE", SchemaDef{"SCHEMA_DDL_ALTER_TABLE_SET_TABLESPACE", {
         FieldDef{"table", FieldType::SCHEMA_PATH, ""},
         FieldDef{"tablespace", FieldType::SCHEMA_PATH, ""},
-        FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
+        FieldDef{"online", FieldType::BOOL, ""},
     }}},
     {"SCHEMA_DDL_ALTER_RENAME", SchemaDef{"SCHEMA_DDL_ALTER_RENAME", {
         FieldDef{"object_type", FieldType::U8, ""},

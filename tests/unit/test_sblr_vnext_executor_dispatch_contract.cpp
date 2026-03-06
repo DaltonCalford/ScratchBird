@@ -977,6 +977,147 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest,
+       EmulatedCreateTablespaceUsesMetadataTokenAndAvoidsFilesystemTouch)
+{
+    const std::string emulated_schema =
+        "emulated.postgresql.localhost.databases.t0db.public";
+    conn_ctx_->set_dialect_tag("postgresql");
+    conn_ctx_->set_current_schema(emulated_schema);
+    conn_ctx_->set_search_path({emulated_schema});
+
+    const std::filesystem::path client_location =
+        std::filesystem::temp_directory_path() / "sb_t0_emulated_tablespace_client_path";
+    std::error_code remove_ec;
+    std::filesystem::remove(client_location, remove_ec);
+
+    ExecutionResult create_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CREATE_TABLESPACE),
+        Value::Object{
+            {"flags", Value(static_cast<uint64_t>(0))},
+            {"path", Value(Value::List{Value(std::string("emu_ts_t0"))})},
+            {"location", Value(client_location.string())},
+            {"autoextend_enabled", Value(true)},
+            {"autoextend_size_mb", Value(static_cast<uint64_t>(64))},
+            {"max_size_mb", Value(static_cast<uint64_t>(0))},
+            {"prealloc_pages", Value(static_cast<uint64_t>(0))},
+        });
+    ASSERT_TRUE(create_result.success()) << create_result.error();
+
+    EXPECT_FALSE(std::filesystem::exists(client_location));
+
+    scratchbird::core::TablespaceInfo ts_info;
+    ErrorContext ts_ctx;
+    ASSERT_EQ(db_->catalog_manager()->getTablespaceByName("emu_ts_t0", ts_info, &ts_ctx),
+              Status::OK)
+        << ts_ctx.message;
+    ASSERT_FALSE(ts_info.file_paths.empty());
+    EXPECT_EQ(ts_info.file_paths.front().rfind("sb://emu-ts/", 0), 0u);
+
+    ExecutionResult drop_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_DROP_TABLESPACE),
+        Value::Object{
+            {"flags", Value(static_cast<uint64_t>(0))},
+            {"path", Value(Value::List{Value(std::string("emu_ts_t0"))})},
+        });
+    ASSERT_TRUE(drop_result.success()) << drop_result.error();
+
+    scratchbird::core::TablespaceInfo dropped_info;
+    EXPECT_EQ(db_->catalog_manager()->getTablespaceByName("emu_ts_t0", dropped_info, &ts_ctx),
+              Status::NOT_FOUND);
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       EmulatedDropTablespaceRejectsWhenVirtualBindingsExistUntilUnbound)
+{
+    const std::string emulated_schema =
+        "emulated.postgresql.localhost.databases.t1db.public";
+    conn_ctx_->set_dialect_tag("postgresql");
+    conn_ctx_->set_current_schema(emulated_schema);
+    conn_ctx_->set_search_path({emulated_schema});
+
+    ErrorContext ctx;
+
+    CatalogManager::ColumnInfo id_col;
+    id_col.column_name = "id";
+    id_col.ordinal = 1;
+    id_col.data_type = static_cast<uint16_t>(scratchbird::core::DataType::INT64);
+    id_col.nullable = false;
+
+    ID table_id;
+    ASSERT_EQ(db_->catalog_manager()->createTable(default_schema_id_,
+                                                  "t1_bind_tbl",
+                                                  std::vector<CatalogManager::ColumnInfo>{id_col},
+                                                  table_id,
+                                                  0,
+                                                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ExecutionResult create_ts = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CREATE_TABLESPACE),
+        Value::Object{
+            {"flags", Value(static_cast<uint64_t>(0))},
+            {"path", Value(Value::List{Value(std::string("emu_ts_t1"))})},
+            {"location", Value(std::string("/tmp/should_not_be_used"))},
+            {"autoextend_enabled", Value(true)},
+            {"autoextend_size_mb", Value(static_cast<uint64_t>(64))},
+            {"max_size_mb", Value(static_cast<uint64_t>(0))},
+            {"prealloc_pages", Value(static_cast<uint64_t>(0))},
+        });
+    ASSERT_TRUE(create_ts.success()) << create_ts.error();
+
+    scratchbird::core::TablespaceInfo ts_info;
+    ASSERT_EQ(db_->catalog_manager()->getTablespaceByName("emu_ts_t1", ts_info, &ctx), Status::OK)
+        << ctx.message;
+    bool has_virtual_location_token = false;
+    for (const auto& path : ts_info.file_paths)
+    {
+        if (path.rfind("sb://emu-ts/", 0) == 0)
+        {
+            has_virtual_location_token = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(has_virtual_location_token);
+
+    ExecutionResult bind_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE),
+        Value::Object{
+            {"table", Value(Value::List{Value(std::string("t1_bind_tbl"))})},
+            {"tablespace", Value(Value::List{Value(std::string("emu_ts_t1"))})},
+            {"online", Value(false)},
+        });
+    ASSERT_TRUE(bind_result.success()) << bind_result.error();
+
+    ExecutionResult drop_non_empty = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_DROP_TABLESPACE),
+        Value::Object{
+            {"flags", Value(static_cast<uint64_t>(0))},
+            {"path", Value(Value::List{Value(std::string("emu_ts_t1"))})},
+        });
+    ASSERT_FALSE(drop_non_empty.success());
+    EXPECT_NE(drop_non_empty.error().find("is not empty"), std::string::npos)
+        << drop_non_empty.error();
+
+    ExecutionResult unbind_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE),
+        Value::Object{
+            {"table", Value(Value::List{Value(std::string("t1_bind_tbl"))})},
+            {"tablespace", Value(Value::List{Value(std::string("pg_default"))})},
+            {"online", Value(false)},
+        });
+    ASSERT_TRUE(unbind_result.success()) << unbind_result.error();
+
+    ExecutionResult drop_after_unbind = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_DROP_TABLESPACE),
+        Value::Object{
+            {"flags", Value(static_cast<uint64_t>(0))},
+            {"path", Value(Value::List{Value(std::string("emu_ts_t1"))})},
+        });
+    ASSERT_TRUE(drop_after_unbind.success()) << drop_after_unbind.error();
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
        DropSequenceUserGroupOpcodesRouteWithoutUnknownOpcodeReject)
 {
     const std::string metric = "scratchbird_vnext_executor_events_total";

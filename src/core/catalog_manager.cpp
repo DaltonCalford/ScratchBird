@@ -145,6 +145,28 @@ std::string normalizeCatalogName(std::string value)
     return out;
 }
 
+constexpr const char* kVirtualEmulatedTablespacePrefix = "sb://emu-ts/";
+
+bool isVirtualEmulatedTablespaceLocation(const std::string& location)
+{
+    return location.size() >= std::strlen(kVirtualEmulatedTablespacePrefix) &&
+           location.compare(0,
+                            std::strlen(kVirtualEmulatedTablespacePrefix),
+                            kVirtualEmulatedTablespacePrefix) == 0;
+}
+
+bool tablespaceUsesVirtualMetadataOnly(const TablespaceInfo& info)
+{
+    for (const auto& path : info.file_paths)
+    {
+        if (isVirtualEmulatedTablespaceLocation(path))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool resolveBuiltinCharsetIdLocal(const std::string& name, uint16_t& id_out)
 {
     std::string normalized = normalizeCatalogName(name);
@@ -13989,6 +14011,13 @@ bool hasTriggerNameConflictInTable(
                         continue;
                     }
 
+                    if (tablespaceUsesVirtualMetadataOnly(tablespace_info))
+                    {
+                        // Emulated virtual tablespaces are metadata-only and intentionally
+                        // have no backing files to open during startup.
+                        continue;
+                    }
+
                     if (tablespace_info.file_paths.empty())
                     {
                         if (allow_missing_tablespaces)
@@ -16308,8 +16337,9 @@ bool hasTriggerNameConflictInTable(
             auto table_it = table_by_id.find(idx.table_id);
             if (table_it == table_by_id.end())
             {
-                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Index table not found");
-                return Status::DATA_CORRUPTED;
+                // Keep resolver rebuild resilient when stale index rows outlive table drops.
+                // Index operations already validate target table existence at execution time.
+                continue;
             }
             const auto& table = table_it->second;
             std::string schema_path;
@@ -24184,8 +24214,11 @@ bool hasTriggerNameConflictInTable(
         CollationRecord record = result.record;
         record.is_valid = 0;
 
-        // Update the record in place (Firebird MGA) using the slot index
-        return updateRecordInHeapPage<CollationRecord>(collation_defs_table_page_, result.slot_index, record, ctx);
+        // Update through the predicate-based helper so overflow-chain records are
+        // modified on the correct page.
+        auto matcher = [collation_id](const CollationRecord &rec)
+        { return rec.collation_id == collation_id && rec.is_valid; };
+        return updateRecordInHeapPage<CollationRecord>(collation_defs_table_page_, matcher, record, ctx);
     }
 
     // ============================================================================
@@ -24599,9 +24632,12 @@ bool hasTriggerNameConflictInTable(
             }
         }
 
-        // Get PageManager
+        const bool virtual_metadata_only =
+            isVirtualEmulatedTablespaceLocation(location);
+
+        // Get PageManager when a physical tablespace file must be created.
         PageManager *pm = db_->page_manager();
-        if (!pm)
+        if (!virtual_metadata_only && !pm)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
             return Status::INVALID_ARGUMENT;
@@ -24614,11 +24650,15 @@ bool hasTriggerNameConflictInTable(
         config.max_size_mb = max_size_mb;
         config.prealloc_pages = prealloc_pages;
 
-        // Create the tablespace file via PageManager
-        Status status = pm->createTablespace(new_id, tablespace_name, location, config, ctx);
-        if (status != Status::OK)
+        Status status = Status::OK;
+        if (!virtual_metadata_only)
         {
-            return status; // Error context already set
+            // Create the physical tablespace file via PageManager.
+            status = pm->createTablespace(new_id, tablespace_name, location, config, ctx);
+            if (status != Status::OK)
+            {
+                return status; // Error context already set
+            }
         }
 
         // Create TablespaceInfo
@@ -24647,7 +24687,10 @@ bool hasTriggerNameConflictInTable(
         if (status != Status::OK)
         {
             // Rollback: close and delete the tablespace file
-            pm->closeTablespace(new_id, ctx);
+            if (!virtual_metadata_only)
+            {
+                pm->closeTablespace(new_id, ctx);
+            }
             return status;
         }
 
@@ -24658,7 +24701,10 @@ bool hasTriggerNameConflictInTable(
                 return r.is_valid && r.tablespace_id == tablespace_id;
             };
             deleteRecordFromHeapPage<SBTablespaceCatalog>(tablespaces_table_page_, matcher, ctx);
-            pm->closeTablespace(new_id, ctx);
+            if (!virtual_metadata_only)
+            {
+                pm->closeTablespace(new_id, ctx);
+            }
             return status;
         }
 
@@ -24795,36 +24841,46 @@ bool hasTriggerNameConflictInTable(
             }
         }
 
-        // Get PageManager
+        const bool virtual_metadata_only = tablespaceUsesVirtualMetadataOnly(ts_info);
+
+        // Get PageManager for physical tablespaces.
         PageManager *pm = db_->page_manager();
-        if (!pm)
+        if (!virtual_metadata_only && !pm)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
             return Status::INVALID_ARGUMENT;
         }
 
-        // Close the tablespace file
-        Status status = pm->closeTablespace(ts_id, ctx);
-        if (status != Status::OK)
+        Status status = Status::OK;
+        if (!virtual_metadata_only)
         {
-            return status; // Error context already set
-        }
-
-        // Delete tablespace files from filesystem (WP-2 CAT-5)
-        for (const auto& file_path : ts_info.file_paths)
-        {
-            if (!file_path.empty())
+            // Close the tablespace file
+            status = pm->closeTablespace(ts_id, ctx);
+            if (status != Status::OK)
             {
-                std::error_code ec;
-                if (std::filesystem::exists(file_path, ec))
+                return status; // Error context already set
+            }
+
+            // Delete tablespace files from filesystem (WP-2 CAT-5)
+            for (const auto& file_path : ts_info.file_paths)
+            {
+                if (file_path.empty())
                 {
-                    std::filesystem::remove(file_path, ec);
-                    if (ec)
-                    {
-                        // Log warning but don't fail - catalog is the source of truth
-                        DEBUG_LOG_DB("Warning: Failed to delete tablespace file '"
-                                     << file_path << "': " << ec.message());
-                    }
+                    continue;
+                }
+
+                std::error_code ec;
+                if (!std::filesystem::exists(file_path, ec))
+                {
+                    continue;
+                }
+
+                std::filesystem::remove(file_path, ec);
+                if (ec)
+                {
+                    // Log warning but don't fail - catalog is the source of truth
+                    DEBUG_LOG_DB("Warning: Failed to delete tablespace file '"
+                                 << file_path << "': " << ec.message());
                 }
             }
         }
@@ -24956,7 +25012,9 @@ bool hasTriggerNameConflictInTable(
             return Status::INVALID_ARGUMENT;
         }
 
-        if (max_size_mb > 0)
+        const bool virtual_metadata_only = tablespaceUsesVirtualMetadataOnly(*ts_info);
+
+        if (max_size_mb > 0 && !virtual_metadata_only)
         {
             uint64_t current_bytes = 0;
             for (const auto& path : ts_info->file_paths)
@@ -25002,7 +25060,7 @@ bool hasTriggerNameConflictInTable(
         }
 
         // WP-2 CAT-M4: Update TablespaceHeader on disk (page 0 of tablespace file)
-        if (ts_id > 0)  // Not primary tablespace
+        if (ts_id > 0 && !virtual_metadata_only)  // Not primary tablespace
         {
             uint32_t ae_enabled = autoextend_enabled ? 1 : 0;
             uint64_t max_mb = max_size_mb;
@@ -25096,7 +25154,7 @@ bool hasTriggerNameConflictInTable(
         }
 
         // WP-2 CAT-M5: Update TablespaceHeader on disk (page 0 of tablespace file)
-        if (ts_id > 0)  // Not primary tablespace
+        if (ts_id > 0 && !tablespaceUsesVirtualMetadataOnly(*ts_info))  // Not primary tablespace
         {
             status = db_->page_manager()->updateTablespaceHeader(
                 ts_id,
@@ -25452,6 +25510,7 @@ bool hasTriggerNameConflictInTable(
         }
 
         uint16_t tablespace_id = ts_info.tablespace_id;
+        const bool virtual_metadata_only = tablespaceUsesVirtualMetadataOnly(ts_info);
 
         // ===== STEP 2: Cannot detach PRIMARY tablespace =====
 
@@ -25545,23 +25604,24 @@ bool hasTriggerNameConflictInTable(
                     migrated_tables.size());
         }
 
-        // ===== STEP 6: Flush dirty pages to disk =====
+        // ===== STEP 6/7: Flush + close physical tablespace resources =====
 
-        LOG_INFO(CATALOG, "Flushing dirty pages for tablespace '%s'", tablespace_name.c_str());
-        status = db_->buffer_pool()->flushTablespace(tablespace_id, ctx);
-        if (status != Status::OK)
+        if (!virtual_metadata_only)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to flush tablespace dirty pages");
-            return status;
-        }
+            LOG_INFO(CATALOG, "Flushing dirty pages for tablespace '%s'", tablespace_name.c_str());
+            status = db_->buffer_pool()->flushTablespace(tablespace_id, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to flush tablespace dirty pages");
+                return status;
+            }
 
-        // ===== STEP 7: Close file descriptor =====
-
-        status = db_->page_manager()->closeTablespace(tablespace_id, ctx);
-        if (status != Status::OK)
-        {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to close tablespace file descriptor");
-            return status;
+            status = db_->page_manager()->closeTablespace(tablespace_id, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to close tablespace file descriptor");
+                return status;
+            }
         }
 
         // ===== STEP 8: Remove from sb_tablespace catalog =====
@@ -26754,14 +26814,17 @@ bool hasTriggerNameConflictInTable(
             return Status::OK;
         }
 
-        // Validate target tablespace exists
-        auto ts_it = tablespace_cache_.find(target_tablespace_id);
-        if (ts_it == tablespace_cache_.end())
+        // Validate target tablespace exists (primary/default tablespace is ID 0).
+        if (target_tablespace_id != PRIMARY_TABLESPACE_ID)
         {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                            "Target tablespace not found");
-            LOG_ERROR(CATALOG, "Target tablespace %u not found", target_tablespace_id);
-            return Status::NOT_FOUND;
+            auto ts_it = tablespace_cache_.find(target_tablespace_id);
+            if (ts_it == tablespace_cache_.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                "Target tablespace not found");
+                LOG_ERROR(CATALOG, "Target tablespace %u not found", target_tablespace_id);
+                return Status::NOT_FOUND;
+            }
         }
 
         // ===== STEP 2.5: Migrate TOAST table (Phase 5 Task 5.1.3.3) =====
@@ -27212,15 +27275,21 @@ bool hasTriggerNameConflictInTable(
                 "Table '%s' catalog updated: tablespace_id changed from %u to %u",
                 table_info.table_name.c_str(), source_tablespace_id, target_tablespace_id);
 
-        Status count_status = updateTablespaceCounts(source_tablespace_id, -1, 0, ctx);
-        if (count_status != Status::OK)
+        if (source_tablespace_id != PRIMARY_TABLESPACE_ID)
         {
-            return count_status;
+            Status count_status = updateTablespaceCounts(source_tablespace_id, -1, 0, ctx);
+            if (count_status != Status::OK)
+            {
+                return count_status;
+            }
         }
-        count_status = updateTablespaceCounts(target_tablespace_id, 1, 0, ctx);
-        if (count_status != Status::OK)
+        if (target_tablespace_id != PRIMARY_TABLESPACE_ID)
         {
-            return count_status;
+            Status count_status = updateTablespaceCounts(target_tablespace_id, 1, 0, ctx);
+            if (count_status != Status::OK)
+            {
+                return count_status;
+            }
         }
 
         // ===== STEP 8: Deallocate source pages (Phase 5 Task 5.1.4) =====

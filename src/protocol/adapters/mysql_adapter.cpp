@@ -20,6 +20,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/parser/v3_compiler.h"
+#include "scratchbird/security/parser_auth_policy.h"
 #include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/client/connection.h"
@@ -37,6 +38,7 @@
 
 // For SHA1 (native password auth) and SHA256 (caching_sha2_password)
 #ifdef HAVE_OPENSSL
+#include <openssl/md5.h>
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #else
@@ -178,6 +180,112 @@ MySQLCompatMode parseMysqlCompatValue(const std::string& value) {
     }
     return MySQLCompatMode::MYSQL57;
 }
+
+bool myWireDebugEnabled() {
+    static const bool enabled = []() {
+        const char* value = std::getenv("SCRATCHBIRD_MY_DEBUG_WIRE");
+        if (!value || value[0] == '\0') {
+            return false;
+        }
+        std::string normalized(value);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return normalized != "0" &&
+               normalized != "FALSE" &&
+               normalized != "NO" &&
+               normalized != "OFF";
+    }();
+    return enabled;
+}
+
+int hexToNibble(char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return 10 + (ch - 'a');
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return 10 + (ch - 'A');
+    }
+    return -1;
+}
+
+bool decodeHexFixed(const std::string& input, uint8_t* out, size_t out_len) {
+    if (!out || input.size() != out_len * 2) {
+        return false;
+    }
+    for (size_t i = 0; i < out_len; ++i) {
+        const int hi = hexToNibble(input[i * 2]);
+        const int lo = hexToNibble(input[i * 2 + 1]);
+        if (hi < 0 || lo < 0) {
+            return false;
+        }
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return true;
+}
+
+#ifdef HAVE_OPENSSL
+std::string md5Hex(const std::string& input) {
+    unsigned char hash[MD5_DIGEST_LENGTH];
+    MD5(reinterpret_cast<const unsigned char*>(input.data()), input.size(), hash);
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string out;
+    out.resize(MD5_DIGEST_LENGTH * 2);
+    for (size_t i = 0; i < MD5_DIGEST_LENGTH; ++i) {
+        out[i * 2] = kHex[(hash[i] >> 4) & 0x0F];
+        out[i * 2 + 1] = kHex[hash[i] & 0x0F];
+    }
+    return out;
+}
+#endif
+
+bool isSupportedMySqlAuthPlugin(const std::string& plugin_upper) {
+    return plugin_upper == "MYSQL_CLEAR_PASSWORD" ||
+           plugin_upper == "MYSQL_NATIVE_PASSWORD" ||
+           plugin_upper == "CACHING_SHA2_PASSWORD";
+}
+
+bool isMySqlSystemDatabaseName(const std::string& database_name) {
+    std::string normalized = extractMySqlDatabaseName(database_name);
+    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+    return normalized == "MYSQL" ||
+           normalized == "INFORMATION_SCHEMA" ||
+           normalized == "PERFORMANCE_SCHEMA" ||
+           normalized == "SYS";
+}
+
+void promoteAuthMethodToFront(std::vector<AuthMethod>& methods,
+                              AuthMethod method) {
+    const auto it = std::find(methods.begin(), methods.end(), method);
+    if (it == methods.end()) {
+        methods.insert(methods.begin(), method);
+        return;
+    }
+    if (it != methods.begin()) {
+        std::rotate(methods.begin(), it, it + 1);
+    }
+}
+
+std::vector<AuthMethod> mysqlInternalAuthOrder(AuthMethod preferred_method) {
+    auto methods = scratchbird::security::parserAuthMethodOrder("mysql");
+    if (methods.empty()) {
+        methods = {
+            AuthMethod::PASSWORD,
+            AuthMethod::SCRAM_SHA_256,
+            AuthMethod::SCRAM_SHA_512,
+            AuthMethod::MD5
+        };
+    }
+    promoteAuthMethodToFront(methods, preferred_method);
+    return methods;
+}
+
+constexpr const char kMySqlWireAuthProofMagic[] = "SBMYAUTH1";
+constexpr uint8_t kMySqlWireAuthProofPluginNative = 1;
+constexpr uint8_t kMySqlWireAuthProofPluginCachingSha2 = 2;
 
 MySQLCompatMode resolveMysqlCompat(core::Database* db,
                                   const std::string& db_name,
@@ -547,6 +655,11 @@ void MySqlAdapter::updateServerCapabilities() {
             server_charset_ = mysql::Charset::UTF8MB4_GENERAL_CI;
             break;
     }
+
+    // COM_QUERY query-attributes framing is not implemented yet in this adapter.
+    // Advertising it causes MySQL 8.x clients to prepend attribute metadata and
+    // makes plain SQL parsing fail.
+    server_capabilities_ &= ~mysql::Capability::QUERY_ATTRIBUTES;
     
     // Add SSL capability if TLS is enabled
     if (tls_enabled_) {
@@ -580,12 +693,18 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
     std::string selected_database;
     if (!resolveDatabaseSelection(attach_request, selected_database)) {
-        if (ctx) {
-            ctx->set(core::Status::INVALID_AUTHORIZATION,
-                     "Database switch denied by manager binding context",
-                     __FILE__, __LINE__, __func__);
+        if (config_.enforce_bound_database &&
+            !config_.default_database.empty() &&
+            isMySqlSystemDatabaseName(attach_request)) {
+            selected_database = config_.default_database;
+        } else {
+            if (ctx) {
+                ctx->set(core::Status::INVALID_AUTHORIZATION,
+                         "Database switch denied by manager binding context",
+                         __FILE__, __LINE__, __func__);
+            }
+            return core::Status::INVALID_AUTHORIZATION;
         }
-        return core::Status::INVALID_AUTHORIZATION;
     }
     engine_database_name_ = selected_database;
     client_config_.database_name = selected_database;
@@ -605,19 +724,35 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.connect_client_flags = config_.connect_client_flags;
     client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
     client_config_.bound_db_uuid = config_.bound_db_uuid;
+    client_config_.manual_auth = false;
     if (username_.empty()) {
         client_config_.username = "BOOTSTRAP";
         client_config_.password.clear();
         client_config_.preferred_auth_methods.clear();
+        remote_md5_hash_.clear();
+        remote_mysql_auth_payload_.clear();
     } else {
         client_config_.username = username_;
         client_config_.password = remote_password_;
-        client_config_.preferred_auth_methods = {
-            AuthMethod::PASSWORD,
-            AuthMethod::SCRAM_SHA_256,
-            AuthMethod::SCRAM_SHA_512,
-            AuthMethod::MD5
-        };
+        if (!remote_password_.empty()) {
+            client_config_.preferred_auth_methods =
+                mysqlInternalAuthOrder(AuthMethod::PASSWORD);
+        } else if (!remote_md5_hash_.empty()) {
+            client_config_.manual_auth = true;
+            client_config_.preferred_auth_methods =
+                mysqlInternalAuthOrder(AuthMethod::MD5);
+        } else if (!remote_mysql_auth_payload_.empty()) {
+            client_config_.manual_auth = true;
+            client_config_.preferred_auth_methods =
+                mysqlInternalAuthOrder(AuthMethod::PASSWORD);
+        } else {
+            if (ctx) {
+                ctx->set(core::Status::INVALID_PASSWORD,
+                         "MySQL emulation has no credential material for internal attach",
+                         __FILE__, __LINE__, __func__);
+            }
+            return core::Status::INVALID_PASSWORD;
+        }
     }
 
     client_ = std::make_unique<client::Connection>();
@@ -625,6 +760,28 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     if (status != core::Status::OK) {
         client_.reset();
         return status;
+    }
+
+    if (client_config_.manual_auth) {
+        if (!remote_md5_hash_.empty()) {
+            status = performManualRemoteMd5Auth(ctx);
+        } else if (!remote_mysql_auth_payload_.empty()) {
+            status = performManualRemoteMySqlProofAuth(ctx);
+        } else {
+            status = core::Status::INVALID_PASSWORD;
+            if (ctx) {
+                ctx->set(core::Status::INVALID_PASSWORD,
+                         "MySQL emulation manual auth flow has no payload",
+                         __FILE__, __LINE__, __func__);
+            }
+        }
+        if (status != core::Status::OK) {
+            if (client_) {
+                client_->disconnect();
+            }
+            client_.reset();
+            return status;
+        }
     }
 
     // Emulated MySQL sessions are sandboxed under:
@@ -884,7 +1041,17 @@ core::Status MySqlAdapter::parseMessage(network::Connection* conn) {
     }
 
     // Full packet received
-    sequence_id_ = seq;
+    // Server response packet numbers start at client sequence + 1.
+    sequence_id_ = static_cast<uint8_t>(seq + 1);
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_wire] recv packet len=%u client_seq=%u next_server_seq=%u state=%d\n",
+                     static_cast<unsigned>(length),
+                     static_cast<unsigned>(seq),
+                     static_cast<unsigned>(sequence_id_),
+                     static_cast<int>(mysql_state_));
+        std::fflush(stderr);
+    }
     current_packet_.assign(buffer.begin() + 4, buffer.begin() + 4 + length);
 
     // Consume from read buffer
@@ -957,7 +1124,7 @@ core::Status MySqlAdapter::sendQueryResult(network::Connection* conn,
             sendColumnDefinition(conn, col);
         }
 
-        // EOF after columns (if client doesn't support DEPRECATE_EOF)
+        // EOF after columns (legacy clients only).
         if (!(client_capabilities_ & mysql::Capability::DEPRECATE_EOF)) {
             sendEofPacket(conn);
         }
@@ -967,12 +1134,10 @@ core::Status MySqlAdapter::sendQueryResult(network::Connection* conn,
             sendResultRow(conn, row);
         }
 
-        // Final EOF/OK
-        if (client_capabilities_ & mysql::Capability::DEPRECATE_EOF) {
-            sendOkPacket(conn, 0, 0, result.command_tag);
-        } else {
-            sendEofPacket(conn);
-        }
+        // Final row-set terminator.
+        // MySQL clients expect an EOF-class terminator here, including with
+        // CLIENT_DEPRECATE_EOF negotiation.
+        sendEofPacket(conn);
     }
 
     return core::Status::OK;
@@ -981,16 +1146,25 @@ core::Status MySqlAdapter::sendQueryResult(network::Connection* conn,
 core::Status MySqlAdapter::compileQuery(const std::string& sql,
                                         std::vector<uint8_t>& bytecode_out,
                                         std::string& error_out) {
+    core::Database* compile_db = engineDatabase();
     core::ErrorContext ctx;
-    auto status = ensureEngine(&ctx);
-    if (status != core::Status::OK) {
-        error_out = ctx.message;
-        return status;
+    if (!compile_db) {
+        // In listener/parser remote mode, the server owns the live engine handle and
+        // parser workers must not try to open the same .sbdb file directly.
+        const bool remote_listener_mode = !config_.engine_endpoint.empty();
+        if (!remote_listener_mode) {
+            auto status = ensureEngine(&ctx);
+            if (status != core::Status::OK) {
+                error_out = ctx.message;
+                return status;
+            }
+            compile_db = engineDatabase();
+        }
     }
 
     last_warnings_.clear();
 
-    sblr::MySQLQueryCompiler compiler(engineDatabase());
+    sblr::MySQLQueryCompiler compiler(compile_db);
     std::string db_name = extractMySqlDatabaseName(database_name_);
     if (db_name.empty()) {
         db_name = extractMySqlDatabaseName(config_.default_database);
@@ -999,11 +1173,11 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
         db_name = "main";
     }
     std::string default_schema = ensureMySqlSchemaPath(
-        engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
+        compile_db ? compile_db->catalog_manager() : nullptr,
         db_name,
         &ctx);
     compiler.setDefaultSchema(default_schema);
-    compiler.setCompatibilityMode(resolveMysqlCompat(engineDatabase(), db_name, &ctx));
+    compiler.setCompatibilityMode(resolveMysqlCompat(compile_db, db_name, &ctx));
     auto result = compiler.compile(sql);
     last_warnings_ = result.warnings();
     if (!result.success()) {
@@ -1364,18 +1538,29 @@ core::Status MySqlAdapter::handleHandshakeResponse(network::Connection* conn) {
     }
     std::string selected_database;
     if (!resolveDatabaseSelection(attach_request, selected_database)) {
-        sendErrorPacket(conn,
-                        mysql::ErrorCode::ACCESS_DENIED,
-                        "28000",
-                        "Database switch denied by manager binding context");
-        return core::Status::INVALID_AUTHORIZATION;
+        if (config_.enforce_bound_database &&
+            !config_.default_database.empty() &&
+            isMySqlSystemDatabaseName(attach_request)) {
+            selected_database = config_.default_database;
+        } else {
+            sendErrorPacket(conn,
+                            mysql::ErrorCode::ACCESS_DENIED,
+                            "28000",
+                            "Database switch denied by manager binding context");
+            return core::Status::INVALID_AUTHORIZATION;
+        }
     }
     engine_database_name_ = std::move(selected_database);
+
+    const std::string server_auth_plugin = auth_plugin_name_;
 
     // Auth plugin name (if PLUGIN_AUTH)
     if ((client_capabilities_ & mysql::Capability::PLUGIN_AUTH) && offset < current_packet_.size()) {
         size_t plugin_offset = 0;
         auth_plugin_name_ = readNullString(current_packet_.data() + offset, plugin_offset, current_packet_.size() - offset);
+    }
+    if (auth_plugin_name_.empty()) {
+        auth_plugin_name_ = server_auth_plugin;
     }
 
     if (username_.empty()) {
@@ -1386,40 +1571,33 @@ core::Status MySqlAdapter::handleHandshakeResponse(network::Connection* conn) {
         return core::Status::INVALID_PASSWORD;
     }
 
-    if (toUpperAscii(auth_plugin_name_) != "MYSQL_CLEAR_PASSWORD") {
-        sendAuthSwitchRequest(conn, "mysql_clear_password");
-        mysql_state_ = MySqlProtocolState::AUTH_SWITCH;
-        return sendBuffer(conn);
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_wire] handshake user=%s client_plugin=%s logical_db=%s engine_db=%s\n",
+                     username_.c_str(),
+                     auth_plugin_name_.c_str(),
+                     database_name_.c_str(),
+                     engine_database_name_.c_str());
+        std::fflush(stderr);
     }
 
-    std::string clear_password;
-    if (!decodeClearPasswordResponse(auth_response_, clear_password)) {
-        sendErrorPacket(conn,
-                        mysql::ErrorCode::ACCESS_DENIED,
-                        "28000",
-                        "Access denied for user '" + username_ + "'");
-        return core::Status::INVALID_PASSWORD;
-    }
-
-    return authenticateRemoteUser(conn, clear_password);
+    return authenticateMySqlClient(conn, auth_plugin_name_, auth_response_, true);
 }
 
 core::Status MySqlAdapter::handleAuthSwitchResponse(network::Connection* conn) {
-    std::string response(reinterpret_cast<const char*>(current_packet_.data()), current_packet_.size());
-    std::string clear_password;
-    if (!decodeClearPasswordResponse(response, clear_password)) {
-        sendErrorPacket(conn,
-                        mysql::ErrorCode::ACCESS_DENIED,
-                        "28000",
-                        "Access denied for user '" + username_ + "'");
-        return core::Status::INVALID_PASSWORD;
+    std::string response(reinterpret_cast<const char*>(current_packet_.data()),
+                         current_packet_.size());
+    std::string plugin = pending_auth_switch_plugin_;
+    if (plugin.empty()) {
+        plugin = "mysql_clear_password";
     }
-
-    return authenticateRemoteUser(conn, clear_password);
+    pending_auth_switch_plugin_.clear();
+    return authenticateMySqlClient(conn, plugin, response, false);
 }
 
 void MySqlAdapter::sendAuthSwitchRequest(network::Connection* conn,
                                          const std::string& plugin_name) {
+    pending_auth_switch_plugin_ = plugin_name;
     std::vector<uint8_t> payload;
     writeInt1(payload, mysql::EOF_PACKET);  // AuthSwitchRequest marker
     writeNullString(payload, plugin_name);
@@ -1451,6 +1629,9 @@ bool MySqlAdapter::decodeClearPasswordResponse(const std::string& response,
 core::Status MySqlAdapter::authenticateRemoteUser(network::Connection* conn,
                                                   const std::string& clear_password) {
     remote_password_ = clear_password;
+    remote_md5_hash_.clear();
+    remote_mysql_auth_payload_.clear();
+    pending_auth_switch_plugin_.clear();
     default_db_set_ = false;
     information_schema_bootstrapped_ = false;
 
@@ -1474,6 +1655,556 @@ core::Status MySqlAdapter::authenticateRemoteUser(network::Connection* conn,
     }
 
     return sendAuthResult(conn, true);
+}
+
+core::Status MySqlAdapter::authenticateRemoteUserFromStoredMd5(
+    network::Connection* conn,
+    const std::string& stored_md5) {
+    remote_password_.clear();
+    remote_md5_hash_ = stored_md5;
+    remote_mysql_auth_payload_.clear();
+    pending_auth_switch_plugin_.clear();
+    default_db_set_ = false;
+    information_schema_bootstrapped_ = false;
+
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+
+    core::ErrorContext auth_ctx;
+    const core::Status status = ensureRemoteClient(&auth_ctx);
+    if (status != core::Status::OK) {
+        std::string message = "Access denied for user '" + username_ + "'";
+        if (!auth_ctx.message.empty()) {
+            message += ": " + auth_ctx.message;
+        }
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        message);
+        return status;
+    }
+
+    return sendAuthResult(conn, true);
+}
+
+bool MySqlAdapter::buildMySqlWireAuthProofPayload(const std::string& plugin_name,
+                                                  const std::string& auth_response,
+                                                  std::vector<uint8_t>& payload_out,
+                                                  std::string& error_out) const {
+    payload_out.clear();
+    error_out.clear();
+
+    const std::string plugin_upper = toUpperAscii(plugin_name);
+    uint8_t plugin_code = 0;
+    size_t expected_len = 0;
+    if (plugin_upper == "MYSQL_NATIVE_PASSWORD") {
+        plugin_code = kMySqlWireAuthProofPluginNative;
+        expected_len = 20;
+    } else if (plugin_upper == "CACHING_SHA2_PASSWORD") {
+        plugin_code = kMySqlWireAuthProofPluginCachingSha2;
+        expected_len = 32;
+    } else {
+        error_out = "Unsupported MySQL auth plugin '" + plugin_name + "'";
+        return false;
+    }
+
+    if (auth_response.size() != expected_len) {
+        error_out = "Unexpected MySQL auth response length";
+        return false;
+    }
+
+    payload_out.insert(payload_out.end(),
+                       kMySqlWireAuthProofMagic,
+                       kMySqlWireAuthProofMagic + std::strlen(kMySqlWireAuthProofMagic));
+    payload_out.push_back(plugin_code);
+    payload_out.push_back(static_cast<uint8_t>(sizeof(auth_scramble_)));
+    payload_out.push_back(static_cast<uint8_t>(auth_response.size() & 0xFFu));
+    payload_out.push_back(static_cast<uint8_t>((auth_response.size() >> 8) & 0xFFu));
+    payload_out.insert(payload_out.end(), auth_scramble_, auth_scramble_ + sizeof(auth_scramble_));
+    payload_out.insert(payload_out.end(), auth_response.begin(), auth_response.end());
+    return true;
+}
+
+core::Status MySqlAdapter::authenticateRemoteUserFromMySqlProof(network::Connection* conn,
+                                                                const std::string& plugin_name,
+                                                                const std::string& auth_response) {
+    remote_password_.clear();
+    remote_md5_hash_.clear();
+    remote_mysql_auth_payload_.clear();
+    pending_auth_switch_plugin_.clear();
+    default_db_set_ = false;
+    information_schema_bootstrapped_ = false;
+
+    std::string build_error;
+    if (!buildMySqlWireAuthProofPayload(plugin_name,
+                                        auth_response,
+                                        remote_mysql_auth_payload_,
+                                        build_error)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        build_error.empty()
+                            ? ("Access denied for user '" + username_ + "'")
+                            : build_error);
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+
+    core::ErrorContext auth_ctx;
+    const core::Status status = ensureRemoteClient(&auth_ctx);
+    if (status != core::Status::OK) {
+        std::string message = "Access denied for user '" + username_ + "'";
+        if (!auth_ctx.message.empty()) {
+            message += ": " + auth_ctx.message;
+        }
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        message);
+        return status;
+    }
+
+    return sendAuthResult(conn, true);
+}
+
+bool MySqlAdapter::loadStoredPasswordHashes(const std::string& username,
+                                            StoredPasswordHashes& hashes_out,
+                                            std::string& error_out) {
+    hashes_out = StoredPasswordHashes{};
+    error_out.clear();
+
+    core::ErrorContext engine_ctx;
+    if (ensureEngine(&engine_ctx) != core::Status::OK) {
+        error_out = engine_ctx.message.empty()
+            ? "Authentication catalog unavailable"
+            : engine_ctx.message;
+        return false;
+    }
+
+    auto* db = engineDatabase();
+    auto* catalog = db ? db->catalog_manager() : nullptr;
+    if (!catalog) {
+        error_out = "Authentication catalog unavailable";
+        return false;
+    }
+
+    std::string resolved_username = username;
+    core::CatalogManager::PrincipalAccountCatalogInfo resolved_account{};
+    bool have_resolved_account = false;
+    std::string resolved_auth_database;
+    {
+        std::vector<std::string> auth_database_contexts;
+        auto add_auth_context = [&](const std::string& value) {
+            if (value.empty()) {
+                return;
+            }
+            for (const auto& existing : auth_database_contexts) {
+                if (equalsDatabaseName(existing, value)) {
+                    return;
+                }
+            }
+            auth_database_contexts.push_back(value);
+        };
+        add_auth_context(extractMySqlDatabaseName(database_name_));
+        add_auth_context(database_name_);
+        add_auth_context(extractMySqlDatabaseName(engine_database_name_));
+        add_auth_context(engine_database_name_);
+
+        for (const auto& auth_db_context : auth_database_contexts) {
+            core::CatalogManager::PrincipalResolutionRequest request{};
+            request.presented_principal_name = username;
+            request.has_auth_database_context = true;
+            request.auth_database_context = auth_db_context;
+
+            core::CatalogManager::PrincipalAccountCatalogInfo account;
+            core::ErrorContext resolve_ctx;
+            if (catalog->resolvePrincipalAccount(request, account, &resolve_ctx) == core::Status::OK) {
+                resolved_account = account;
+                have_resolved_account = true;
+                resolved_auth_database = auth_db_context;
+                if (!account.principal_name.empty()) {
+                    resolved_username = account.principal_name;
+                }
+                break;
+            }
+        }
+
+        if (!have_resolved_account) {
+            core::CatalogManager::PrincipalResolutionRequest request{};
+            request.presented_principal_name = username;
+
+            core::CatalogManager::PrincipalAccountCatalogInfo account;
+            core::ErrorContext resolve_ctx;
+            if (catalog->resolvePrincipalAccount(request, account, &resolve_ctx) == core::Status::OK) {
+                resolved_account = account;
+                have_resolved_account = true;
+                if (!account.principal_name.empty()) {
+                    resolved_username = account.principal_name;
+                }
+            }
+        }
+    }
+
+    core::CatalogManager::UserInfo user_info;
+    core::ErrorContext ctx;
+    core::Status lookup_status = core::Status::NOT_FOUND;
+    if (have_resolved_account &&
+        resolved_account.principal_kind == core::CatalogManager::PrincipalKind::USER) {
+        lookup_status = catalog->getUser(resolved_account.account_id, user_info, &ctx);
+        if (lookup_status == core::Status::OK && !user_info.username.empty()) {
+            resolved_username = user_info.username;
+        }
+    }
+    if (lookup_status != core::Status::OK) {
+        lookup_status = catalog->getUserByName(resolved_username, user_info, &ctx);
+    }
+    if (lookup_status != core::Status::OK) {
+        if (myWireDebugEnabled()) {
+            const std::string resolved_account_id =
+                have_resolved_account ? resolved_account.account_id.toString() : "n/a";
+            std::fprintf(stderr,
+                         "[my_wire] auth user lookup failed presented=%s resolved=%s auth_db=%s account=%s\n",
+                         username.c_str(),
+                         resolved_username.c_str(),
+                         resolved_auth_database.empty() ? "<none>" : resolved_auth_database.c_str(),
+                         resolved_account_id.c_str());
+            std::fflush(stderr);
+        }
+        error_out = "Access denied for user '" + username + "'";
+        return false;
+    }
+
+    hashes_out.user_found = true;
+    hashes_out.user_active = user_info.is_active;
+    if (!user_info.is_active) {
+        error_out = "Access denied for user '" + username + "'";
+        return false;
+    }
+
+    if (user_info.password_hash.empty()) {
+        error_out = "Access denied for user '" + username + "'";
+        return false;
+    }
+
+    try {
+        json doc = json::parse(user_info.password_hash);
+        if (!doc.is_object()) {
+            error_out = "Access denied for user '" + username + "'";
+            return false;
+        }
+
+        if (doc.contains("md5") && doc["md5"].is_string()) {
+            std::string md5 = doc["md5"].get<std::string>();
+            if (md5.size() == 35 && md5.rfind("md5", 0) == 0) {
+                hashes_out.has_pg_md5 = true;
+                hashes_out.pg_md5 = std::move(md5);
+            }
+        }
+
+        auto parse_hash = [&](const char* key,
+                              uint8_t* out,
+                              size_t out_len,
+                              bool& flag_out) {
+            auto it = doc.find(key);
+            if (it == doc.end() || !it->is_string()) {
+                return;
+            }
+            const std::string encoded = it->get<std::string>();
+            if (decodeHexFixed(encoded, out, out_len)) {
+                flag_out = true;
+            }
+        };
+
+        parse_hash("mysql_native_password",
+                   hashes_out.mysql_native_stage2.data(),
+                   hashes_out.mysql_native_stage2.size(),
+                   hashes_out.has_mysql_native);
+        parse_hash("mysql_native_sha1_2x",
+                   hashes_out.mysql_native_stage2.data(),
+                   hashes_out.mysql_native_stage2.size(),
+                   hashes_out.has_mysql_native);
+        parse_hash("mysql_caching_sha2_password",
+                   hashes_out.mysql_caching_sha2_stage2.data(),
+                   hashes_out.mysql_caching_sha2_stage2.size(),
+                   hashes_out.has_mysql_caching_sha2);
+        parse_hash("mysql_caching_sha2_2x",
+                   hashes_out.mysql_caching_sha2_stage2.data(),
+                   hashes_out.mysql_caching_sha2_stage2.size(),
+                   hashes_out.has_mysql_caching_sha2);
+    } catch (const json::exception&) {
+        error_out = "Access denied for user '" + username + "'";
+        return false;
+    }
+
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_wire] auth verifiers user=%s resolved=%s pg_md5=%d my_native=%d my_sha2=%d\n",
+                     username.c_str(),
+                     resolved_username.c_str(),
+                     hashes_out.has_pg_md5 ? 1 : 0,
+                     hashes_out.has_mysql_native ? 1 : 0,
+                     hashes_out.has_mysql_caching_sha2 ? 1 : 0);
+        std::fflush(stderr);
+    }
+
+    if (!hashes_out.has_pg_md5) {
+        error_out = "Authentication metadata missing md5 verifier for user '" + username + "'";
+        return false;
+    }
+    return true;
+}
+
+bool MySqlAdapter::validateMySqlNativeResponse(
+    const std::string& auth_response,
+    const std::array<uint8_t, 20>& stored_stage2) const {
+#ifdef HAVE_OPENSSL
+    if (auth_response.size() != SHA_DIGEST_LENGTH) {
+        return false;
+    }
+
+    unsigned char scramble_hash[SHA_DIGEST_LENGTH];
+    SHA_CTX ctx;
+    SHA1_Init(&ctx);
+    SHA1_Update(&ctx, auth_scramble_, sizeof(auth_scramble_));
+    SHA1_Update(&ctx, stored_stage2.data(), stored_stage2.size());
+    SHA1_Final(scramble_hash, &ctx);
+
+    unsigned char stage1[SHA_DIGEST_LENGTH];
+    for (size_t i = 0; i < SHA_DIGEST_LENGTH; ++i) {
+        stage1[i] = static_cast<unsigned char>(auth_response[static_cast<size_t>(i)]) ^
+                    scramble_hash[i];
+    }
+
+    unsigned char stage2[SHA_DIGEST_LENGTH];
+    SHA1(stage1, SHA_DIGEST_LENGTH, stage2);
+    return std::memcmp(stage2, stored_stage2.data(), SHA_DIGEST_LENGTH) == 0;
+#else
+    (void)auth_response;
+    (void)stored_stage2;
+    return false;
+#endif
+}
+
+bool MySqlAdapter::validateCachingSha2Response(
+    const std::string& auth_response,
+    const std::array<uint8_t, 32>& stored_stage2) const {
+#ifdef HAVE_OPENSSL
+    if (auth_response.size() != SHA256_DIGEST_LENGTH) {
+        return false;
+    }
+
+    unsigned char scramble_hash[SHA256_DIGEST_LENGTH];
+    SHA256_CTX ctx;
+    SHA256_Init(&ctx);
+    SHA256_Update(&ctx, stored_stage2.data(), stored_stage2.size());
+    SHA256_Update(&ctx, auth_scramble_, sizeof(auth_scramble_));
+    SHA256_Final(scramble_hash, &ctx);
+
+    unsigned char stage1[SHA256_DIGEST_LENGTH];
+    for (size_t i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+        stage1[i] = static_cast<unsigned char>(auth_response[static_cast<size_t>(i)]) ^
+                    scramble_hash[i];
+    }
+
+    unsigned char stage2[SHA256_DIGEST_LENGTH];
+    SHA256(stage1, SHA256_DIGEST_LENGTH, stage2);
+    return std::memcmp(stage2, stored_stage2.data(), SHA256_DIGEST_LENGTH) == 0;
+#else
+    (void)auth_response;
+    (void)stored_stage2;
+    return false;
+#endif
+}
+
+core::Status MySqlAdapter::performManualRemoteMd5Auth(core::ErrorContext* ctx) {
+    if (!client_) {
+        if (ctx) {
+            ctx->set(core::Status::CONNECTION_FAILURE,
+                     "Internal client not connected",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    if (remote_md5_hash_.size() != 35 || remote_md5_hash_.rfind("md5", 0) != 0) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_PASSWORD,
+                     "Invalid md5 verifier for internal attach",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_PASSWORD;
+    }
+
+#ifdef HAVE_OPENSSL
+    std::random_device rd;
+    uint8_t salt[4] = {
+        static_cast<uint8_t>(rd() & 0xFF),
+        static_cast<uint8_t>(rd() & 0xFF),
+        static_cast<uint8_t>(rd() & 0xFF),
+        static_cast<uint8_t>(rd() & 0xFF),
+    };
+
+    std::string input = remote_md5_hash_.substr(3);
+    input.append(reinterpret_cast<const char*>(salt), sizeof(salt));
+    const std::string response = "md5" + md5Hex(input);
+
+    std::vector<uint8_t> payload;
+    payload.insert(payload.end(), salt, salt + sizeof(salt));
+    payload.insert(payload.end(), response.begin(), response.end());
+
+    client::Connection::AuthResponse auth_response;
+    core::Status status = client_->sendAuthRequest(AuthMethod::MD5, payload, auth_response, ctx);
+    if (status != core::Status::OK) {
+        if (ctx && ctx->message.empty()) {
+            const std::string last_error = client_->getLastError();
+            if (!last_error.empty()) {
+                ctx->set(status, last_error.c_str(), __FILE__, __LINE__, __func__);
+            }
+        }
+        return status;
+    }
+
+    if (auth_response.status != AuthStatus::OK) {
+        if (ctx && ctx->message.empty()) {
+            const std::string message = auth_response.error_message.empty()
+                ? "Internal md5 authentication failed"
+                : auth_response.error_message;
+            ctx->set(core::Status::INVALID_PASSWORD,
+                     message.c_str(),
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    user_id_ = auth_response.user_id;
+    return core::Status::OK;
+#else
+    if (ctx) {
+        ctx->set(core::Status::NOT_SUPPORTED,
+                 "Internal md5 attach requires OpenSSL",
+                 __FILE__, __LINE__, __func__);
+    }
+    return core::Status::NOT_SUPPORTED;
+#endif
+}
+
+core::Status MySqlAdapter::performManualRemoteMySqlProofAuth(core::ErrorContext* ctx) {
+    if (!client_) {
+        if (ctx) {
+            ctx->set(core::Status::CONNECTION_FAILURE,
+                     "Internal client not connected",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::CONNECTION_FAILURE;
+    }
+
+    if (remote_mysql_auth_payload_.empty()) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_PASSWORD,
+                     "Missing MySQL wire proof payload for internal attach",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    client::Connection::AuthResponse auth_response;
+    core::Status status = client_->sendAuthRequest(
+        AuthMethod::PASSWORD,
+        remote_mysql_auth_payload_,
+        auth_response,
+        ctx);
+    if (status != core::Status::OK) {
+        if (ctx && ctx->message.empty()) {
+            const std::string last_error = client_->getLastError();
+            if (!last_error.empty()) {
+                ctx->set(status, last_error.c_str(), __FILE__, __LINE__, __func__);
+            }
+        }
+        return status;
+    }
+
+    if (auth_response.status != AuthStatus::OK) {
+        if (ctx && ctx->message.empty()) {
+            const std::string message = auth_response.error_message.empty()
+                ? "Internal MySQL proof authentication failed"
+                : auth_response.error_message;
+            ctx->set(core::Status::INVALID_PASSWORD,
+                     message.c_str(),
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    user_id_ = auth_response.user_id;
+    return core::Status::OK;
+}
+
+core::Status MySqlAdapter::authenticateMySqlClient(network::Connection* conn,
+                                                   const std::string& plugin_name,
+                                                   const std::string& auth_response,
+                                                   bool allow_switch) {
+    std::string plugin = plugin_name;
+    if (plugin.empty()) {
+        plugin = auth_plugin_name_;
+    }
+    if (plugin.empty()) {
+        plugin = (emulation_target_ == EmulationTarget::MYSQL_5_7 ||
+                  emulation_target_ == EmulationTarget::MARIADB_10_5)
+            ? "mysql_native_password"
+            : "caching_sha2_password";
+    }
+
+    const std::string plugin_upper = toUpperAscii(plugin);
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_wire] authenticateMySqlClient user=%s plugin=%s allow_switch=%d response_len=%zu\n",
+                     username_.c_str(),
+                     plugin.c_str(),
+                     allow_switch ? 1 : 0,
+                     auth_response.size());
+        std::fflush(stderr);
+    }
+    if (!isSupportedMySqlAuthPlugin(plugin_upper)) {
+        sendErrorPacket(conn,
+                        2059,
+                        "HY000",
+                        "Authentication plugin '" + plugin + "' is not supported");
+        return core::Status::NOT_SUPPORTED;
+    }
+
+    if (plugin_upper == "MYSQL_CLEAR_PASSWORD") {
+        std::string clear_password;
+        if (!decodeClearPasswordResponse(auth_response, clear_password)) {
+            sendErrorPacket(conn,
+                            mysql::ErrorCode::ACCESS_DENIED,
+                            "28000",
+                            "Access denied for user '" + username_ + "'");
+            return core::Status::INVALID_PASSWORD;
+        }
+        return authenticateRemoteUser(conn, clear_password);
+    }
+
+    if (plugin_upper == "MYSQL_NATIVE_PASSWORD" ||
+        plugin_upper == "CACHING_SHA2_PASSWORD") {
+        if (allow_switch && auth_response.empty()) {
+            sendAuthSwitchRequest(conn, "mysql_clear_password");
+            mysql_state_ = MySqlProtocolState::AUTH_SWITCH;
+            return sendBuffer(conn);
+        }
+        return authenticateRemoteUserFromMySqlProof(conn, plugin_upper, auth_response);
+    }
+
+    sendErrorPacket(conn,
+                    mysql::ErrorCode::ACCESS_DENIED,
+                    "28000",
+                    "Access denied for user '" + username_ + "'");
+    return core::Status::INVALID_PASSWORD;
 }
 
 // ============================================================================
@@ -1529,8 +2260,15 @@ core::Status MySqlAdapter::handleCommand(network::Connection* conn) {
     }
 
     uint8_t command = current_packet_[0];
-    resetSequence();
 
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_wire] command code=0x%02x payload_len=%zu state=%d\n",
+                     static_cast<unsigned>(command),
+                     current_packet_.size(),
+                     static_cast<int>(mysql_state_));
+        std::fflush(stderr);
+    }
     switch (command) {
         case mysql::Command::COM_QUERY:
             return handleComQuery(conn);
@@ -1584,6 +2322,42 @@ core::Status MySqlAdapter::handleComQuery(network::Connection* conn) {
 
     std::string query(reinterpret_cast<const char*>(current_packet_.data() + 1),
                       current_packet_.size() - 1);
+
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_wire] query sql=%s\n",
+                     query.c_str());
+        std::fflush(stderr);
+    }
+
+    // mysql(1) probes dollar-quote support with `select $$` and expects an
+    // error response (no resultset). Returning a rowset leaves unread data in
+    // libmysql and causes CR_COMMANDS_OUT_OF_SYNC on the next command.
+    {
+        std::string trimmed = query;
+        ltrimInPlace(trimmed);
+        while (!trimmed.empty() &&
+               std::isspace(static_cast<unsigned char>(trimmed.back()))) {
+            trimmed.pop_back();
+        }
+        if (!trimmed.empty() && trimmed.back() == ';') {
+            trimmed.pop_back();
+            while (!trimmed.empty() &&
+                   std::isspace(static_cast<unsigned char>(trimmed.back()))) {
+                trimmed.pop_back();
+            }
+        }
+
+        if (toUpperAscii(trimmed) == "SELECT $$") {
+            ResultContext probe_error;
+            probe_error.has_error = true;
+            probe_error.error_code = static_cast<uint32_t>(core::Status::UNDEFINED_COLUMN);
+            probe_error.sqlstate = "42S22";
+            probe_error.error_message = "Unknown column '$$' in 'field list'";
+            sendQueryResult(conn, probe_error);
+            return sendBuffer(conn);
+        }
+    }
 
     ResultContext show_result;
     if (handleShowQuery(query, show_result)) {
@@ -1753,6 +2527,7 @@ bool MySqlAdapter::handleShowQuery(const std::string& query, ResultContext& resu
         emit_variable("character_set_connection", "utf8mb4");
         emit_variable("character_set_results", "utf8mb4");
         emit_variable("collation_connection", "utf8mb4_general_ci");
+        emit_variable("optimizer_switch", "index_merge=on");
         emit_variable("sql_mode", "");
         emit_variable("time_zone", "SYSTEM");
         emit_variable("transaction_isolation", "READ-COMMITTED");
@@ -2034,11 +2809,17 @@ core::Status MySqlAdapter::handleComChangeUser(network::Connection* conn) {
     }
     std::string selected_engine_database;
     if (!resolveDatabaseSelection(attach_request, selected_engine_database)) {
-        sendErrorPacket(conn,
-                        mysql::ErrorCode::ACCESS_DENIED,
-                        "28000",
-                        "Database switch denied by manager binding context");
-        return sendBuffer(conn);
+        if (config_.enforce_bound_database &&
+            !config_.default_database.empty() &&
+            isMySqlSystemDatabaseName(attach_request)) {
+            selected_engine_database = config_.default_database;
+        } else {
+            sendErrorPacket(conn,
+                            mysql::ErrorCode::ACCESS_DENIED,
+                            "28000",
+                            "Database switch denied by manager binding context");
+            return sendBuffer(conn);
+        }
     }
 
     if (requested_user.empty()) {
@@ -2072,22 +2853,7 @@ core::Status MySqlAdapter::handleComChangeUser(network::Connection* conn) {
         client_.reset();
     }
 
-    if (toUpperAscii(auth_plugin_name_) != "MYSQL_CLEAR_PASSWORD") {
-        sendAuthSwitchRequest(conn, "mysql_clear_password");
-        mysql_state_ = MySqlProtocolState::AUTH_SWITCH;
-        return sendBuffer(conn);
-    }
-
-    std::string clear_password;
-    if (!decodeClearPasswordResponse(auth_response, clear_password)) {
-        sendErrorPacket(conn,
-                        mysql::ErrorCode::ACCESS_DENIED,
-                        "28000",
-                        "Access denied");
-        return sendBuffer(conn);
-    }
-
-    return authenticateRemoteUser(conn, clear_password);
+    return authenticateMySqlClient(conn, auth_plugin_name_, auth_response, true);
 }
 
 core::Status MySqlAdapter::handleComPing(network::Connection* conn) {
@@ -2393,12 +3159,22 @@ void MySqlAdapter::sendPacket(network::Connection* conn, const std::vector<uint8
     header.reserve(4);
 
     // Length (3 bytes, little-endian) + sequence byte.
+    const uint8_t seq = sequence_id_++;
     writeInt3(header, static_cast<uint32_t>(payload.size()));
-    writeInt1(header, sequence_id_++);
+    writeInt1(header, seq);
 
     writeToBuffer(conn, header.data(), header.size());
     if (!payload.empty()) {
         writeToBuffer(conn, payload.data(), payload.size());
+    }
+
+    if (myWireDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_wire] send packet len=%zu server_seq=%u first_byte=0x%02x\n",
+                     payload.size(),
+                     static_cast<unsigned>(seq),
+                     payload.empty() ? 0u : static_cast<unsigned>(payload[0]));
+        std::fflush(stderr);
     }
 }
 
@@ -2432,11 +3208,22 @@ void MySqlAdapter::sendOkPacket(network::Connection* conn, uint64_t affected_row
 void MySqlAdapter::sendEofPacket(network::Connection* conn) {
     std::vector<uint8_t> payload;
 
-    writeInt1(payload, mysql::EOF_PACKET);
-
-    if (client_capabilities_ & mysql::Capability::PROTOCOL_41) {
-        writeInt2(payload, clampWarningCount(last_warnings_.size()));  // Warnings
-        writeInt2(payload, server_status_);
+    if (client_capabilities_ & mysql::Capability::DEPRECATE_EOF) {
+        // In DEPRECATE_EOF mode the resultset terminator is an EOF-style OK
+        // packet: header 0xFE + lenenc affected_rows/insert_id + status/warnings.
+        writeInt1(payload, mysql::EOF_PACKET);
+        writeLenEncInt(payload, 0);
+        writeLenEncInt(payload, 0);
+        if (client_capabilities_ & mysql::Capability::PROTOCOL_41) {
+            writeInt2(payload, server_status_);
+            writeInt2(payload, clampWarningCount(last_warnings_.size()));  // Warnings
+        }
+    } else {
+        writeInt1(payload, mysql::EOF_PACKET);
+        if (client_capabilities_ & mysql::Capability::PROTOCOL_41) {
+            writeInt2(payload, clampWarningCount(last_warnings_.size()));  // Warnings
+            writeInt2(payload, server_status_);
+        }
     }
 
     sendPacket(conn, payload);

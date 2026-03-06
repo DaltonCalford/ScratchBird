@@ -264,6 +264,144 @@ TEST_F(IndexEmitterPayloadContractsTest, CreateIndexCarriesTypedOptionPayload) {
     EXPECT_EQ(option_value->opcode, static_cast<uint16_t>(Opcode::SBLR3_LITERAL_DOUBLE));
 }
 
+TEST_F(IndexEmitterPayloadContractsTest, CreateIndexCarriesTablespaceFieldWhenSpecified) {
+    auto bytecode = compileSql(
+        "CREATE INDEX idx_users_ts ON users (id) TABLESPACE ts_hot");
+    ASSERT_FALSE(bytecode.empty());
+
+    Instruction inst;
+    std::string decode_error;
+    ASSERT_TRUE(findInstruction(bytecode, Opcode::SBLR3_CREATE_INDEX, inst, decode_error))
+        << decode_error;
+    const auto* payload = asObject(inst.payload);
+    ASSERT_NE(payload, nullptr);
+
+    const auto* tablespace = requireListField(*payload, "tablespace");
+    ASSERT_NE(tablespace, nullptr) << "payload keys=" << objectKeys(*payload);
+    ASSERT_EQ(tablespace->size(), 1u);
+    const auto* ts_name = std::get_if<std::string>(&tablespace->front().data);
+    ASSERT_NE(ts_name, nullptr);
+    EXPECT_EQ(*ts_name, "ts_hot");
+}
+
+TEST_F(IndexEmitterPayloadContractsTest, CreateTablespaceCarriesTypedLifecyclePayload) {
+    auto bytecode = compileSql(
+        "CREATE TABLESPACE ts_hot LOCATION '/tmp/ts_hot' "
+        "AUTOEXTEND OFF AUTOEXTEND_SIZE 128 MAXSIZE 512 PREALLOC 16");
+    ASSERT_FALSE(bytecode.empty());
+
+    Instruction inst;
+    std::string decode_error;
+    ASSERT_TRUE(findInstruction(bytecode, Opcode::SBLR3_CREATE_TABLESPACE, inst, decode_error))
+        << decode_error;
+    const auto* payload = asObject(inst.payload);
+    ASSERT_NE(payload, nullptr);
+
+    const auto* path = requireListField(*payload, "path");
+    ASSERT_NE(path, nullptr) << "payload keys=" << objectKeys(*payload);
+    ASSERT_EQ(path->size(), 1u);
+
+    std::string location;
+    ASSERT_TRUE(getString(*payload, "location", location));
+    EXPECT_EQ(location, "/tmp/ts_hot");
+
+    auto autoextend_it = payload->find("autoextend_enabled");
+    ASSERT_NE(autoextend_it, payload->end());
+    const auto* autoextend_enabled = std::get_if<bool>(&autoextend_it->second.data);
+    ASSERT_NE(autoextend_enabled, nullptr);
+    EXPECT_FALSE(*autoextend_enabled);
+
+    uint64_t autoextend_size_mb = 0;
+    ASSERT_TRUE(getU64(*payload, "autoextend_size_mb", autoextend_size_mb));
+    EXPECT_EQ(autoextend_size_mb, 128u);
+
+    uint64_t max_size_mb = 0;
+    ASSERT_TRUE(getU64(*payload, "max_size_mb", max_size_mb));
+    EXPECT_EQ(max_size_mb, 512u);
+
+    uint64_t prealloc_pages = 0;
+    ASSERT_TRUE(getU64(*payload, "prealloc_pages", prealloc_pages));
+    EXPECT_EQ(prealloc_pages, 16u);
+}
+
+TEST_F(IndexEmitterPayloadContractsTest, AlterTablespaceCarriesStructuredAlterationList) {
+    auto bytecode = compileSql(
+        "ALTER TABLESPACE ts_hot AUTOEXTEND ON AUTOEXTEND_SIZE 128 "
+        "MAXSIZE UNLIMITED RENAME TO ts_cold");
+    ASSERT_FALSE(bytecode.empty());
+
+    Instruction inst;
+    std::string decode_error;
+    ASSERT_TRUE(findInstruction(bytecode, Opcode::SBLR3_ALTER_TABLESPACE, inst, decode_error))
+        << decode_error;
+    const auto* payload = asObject(inst.payload);
+    ASSERT_NE(payload, nullptr);
+
+    const auto* alterations = requireListField(*payload, "alterations");
+    ASSERT_NE(alterations, nullptr) << "payload keys=" << objectKeys(*payload);
+    ASSERT_EQ(alterations->size(), 4u);
+
+    const auto* autoextend_obj = std::get_if<Value::Object>(&(*alterations)[0].data);
+    ASSERT_NE(autoextend_obj, nullptr);
+    uint64_t action = 0;
+    ASSERT_TRUE(getU64(*autoextend_obj, "action", action));
+    EXPECT_EQ(action, static_cast<uint64_t>(scratchbird::parser::v3::TablespaceAlterAction::SET_AUTOEXTEND));
+    auto autoextend_it = autoextend_obj->find("autoextend_enabled");
+    ASSERT_NE(autoextend_it, autoextend_obj->end());
+    const auto* autoextend_enabled = std::get_if<bool>(&autoextend_it->second.data);
+    ASSERT_NE(autoextend_enabled, nullptr);
+    EXPECT_TRUE(*autoextend_enabled);
+
+    const auto* size_obj = std::get_if<Value::Object>(&(*alterations)[1].data);
+    ASSERT_NE(size_obj, nullptr);
+    ASSERT_TRUE(getU64(*size_obj, "action", action));
+    EXPECT_EQ(action, static_cast<uint64_t>(scratchbird::parser::v3::TablespaceAlterAction::SET_AUTOEXTEND_SIZE));
+    uint64_t size_mb = 0;
+    ASSERT_TRUE(getU64(*size_obj, "size_mb", size_mb));
+    EXPECT_EQ(size_mb, 128u);
+
+    const auto* max_obj = std::get_if<Value::Object>(&(*alterations)[2].data);
+    ASSERT_NE(max_obj, nullptr);
+    ASSERT_TRUE(getU64(*max_obj, "action", action));
+    EXPECT_EQ(action, static_cast<uint64_t>(scratchbird::parser::v3::TablespaceAlterAction::SET_MAXSIZE));
+    ASSERT_TRUE(getU64(*max_obj, "size_mb", size_mb));
+    EXPECT_EQ(size_mb, 0u);
+
+    const auto* rename_obj = std::get_if<Value::Object>(&(*alterations)[3].data);
+    ASSERT_NE(rename_obj, nullptr);
+    ASSERT_TRUE(getU64(*rename_obj, "action", action));
+    EXPECT_EQ(action, static_cast<uint64_t>(scratchbird::parser::v3::TablespaceAlterAction::RENAME_TO));
+    std::string new_name;
+    ASSERT_TRUE(getString(*rename_obj, "new_name", new_name));
+    EXPECT_EQ(new_name, "ts_cold");
+}
+
+TEST_F(IndexEmitterPayloadContractsTest, AlterTableSetTablespaceCarriesOnlineFlag) {
+    auto bytecode = compileSql("ALTER TABLE users SET TABLESPACE ts_hot");
+    ASSERT_FALSE(bytecode.empty());
+
+    Instruction inst;
+    std::string decode_error;
+    ASSERT_TRUE(findInstruction(bytecode,
+                                Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE,
+                                inst,
+                                decode_error))
+        << decode_error;
+    const auto* payload = asObject(inst.payload);
+    ASSERT_NE(payload, nullptr);
+
+    const auto* table = requireListField(*payload, "table");
+    ASSERT_NE(table, nullptr) << "payload keys=" << objectKeys(*payload);
+    const auto* tablespace = requireListField(*payload, "tablespace");
+    ASSERT_NE(tablespace, nullptr) << "payload keys=" << objectKeys(*payload);
+
+    auto online_it = payload->find("online");
+    ASSERT_NE(online_it, payload->end());
+    const auto* online = std::get_if<bool>(&online_it->second.data);
+    ASSERT_NE(online, nullptr);
+    EXPECT_FALSE(*online);
+}
+
 TEST_F(IndexEmitterPayloadContractsTest, AlterIndexRelocateCarriesModeAndTargetFilespace) {
     auto bytecode = compileSql(
         "ALTER INDEX users.idx_users_id RELOCATE TO FILESPACE fs_hot ONLINE "

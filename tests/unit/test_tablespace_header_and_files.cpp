@@ -164,3 +164,102 @@ TEST_F(TablespaceHeaderTest, TablespaceFileRecordsPersistAcrossRestart)
 
     std::filesystem::remove(second_path);
 }
+
+TEST_F(TablespaceHeaderTest, VirtualTablespaceLocationIsMetadataOnly)
+{
+    ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
+
+    Database db;
+    ASSERT_EQ(db.open(db_path_), Status::OK);
+
+    const std::string virtual_location =
+        "sb://emu-ts/testdb/root_hash/name_hash/root_token/ts_virtual";
+
+    ErrorContext ctx;
+    uint16_t tablespace_id = 0;
+    Status status = db.catalog_manager()->createTablespace("ts_virtual",
+                                                           virtual_location,
+                                                           true,
+                                                           1,
+                                                           0,
+                                                           2,
+                                                           tablespace_id,
+                                                           &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_GE(tablespace_id, 2);
+    EXPECT_FALSE(std::filesystem::exists(virtual_location));
+
+    TablespaceInfo info;
+    status = db.catalog_manager()->getTablespace(tablespace_id, info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    ASSERT_EQ(info.file_paths.size(), 1u);
+    EXPECT_EQ(info.file_paths.front(), virtual_location);
+}
+
+TEST_F(TablespaceHeaderTest, VirtualTablespacePersistsAcrossRestartWithoutBackingFile)
+{
+    ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
+    const std::string virtual_location =
+        "sb://emu-ts/testdb/root_hash/name_hash/root_token/ts_restart";
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path_), Status::OK);
+
+        ErrorContext ctx;
+        uint16_t tablespace_id = 0;
+        Status status = db.catalog_manager()->createTablespace("ts_restart",
+                                                               virtual_location,
+                                                               true,
+                                                               1,
+                                                               0,
+                                                               2,
+                                                               tablespace_id,
+                                                               &ctx);
+        ASSERT_EQ(status, Status::OK) << ctx.message;
+        db.close();
+    }
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path_), Status::OK);
+
+        ErrorContext ctx;
+        TablespaceInfo info;
+        Status status = db.catalog_manager()->getTablespaceByName("ts_restart", info, &ctx);
+        ASSERT_EQ(status, Status::OK) << ctx.message;
+        ASSERT_EQ(info.file_paths.size(), 1u);
+        EXPECT_EQ(info.file_paths.front(), virtual_location);
+        db.close();
+    }
+}
+
+TEST_F(TablespaceHeaderTest, DropVirtualTablespaceSucceedsWithoutFilesystemArtifact)
+{
+    ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
+
+    Database db;
+    ASSERT_EQ(db.open(db_path_), Status::OK);
+
+    const std::string virtual_location =
+        "sb://emu-ts/testdb/root_hash/name_hash/root_token/ts_drop";
+
+    ErrorContext ctx;
+    uint16_t tablespace_id = 0;
+    Status status = db.catalog_manager()->createTablespace("ts_drop",
+                                                           virtual_location,
+                                                           true,
+                                                           1,
+                                                           0,
+                                                           2,
+                                                           tablespace_id,
+                                                           &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    status = db.catalog_manager()->dropTablespace("ts_drop", false, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    TablespaceInfo info;
+    status = db.catalog_manager()->getTablespaceByName("ts_drop", info, &ctx);
+    EXPECT_EQ(status, Status::NOT_FOUND);
+}

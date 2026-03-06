@@ -68,6 +68,15 @@ bool Parser::isNonReservedKeyword(TokenType type) const {
         case TokenType::KW_ANY:
         case TokenType::KW_SOME:
         case TokenType::KW_OID:
+        case TokenType::KW_TEXT:
+        case TokenType::KW_INT2:
+        case TokenType::KW_INT4:
+        case TokenType::KW_INT8:
+        case TokenType::KW_SMALLINT:
+        case TokenType::KW_INTEGER:
+        case TokenType::KW_BIGINT:
+        case TokenType::KW_REGCLASS:
+        case TokenType::KW_REGTYPE:
             return true;
         default:
             return false;
@@ -111,6 +120,15 @@ static std::string tokenToString(TokenType type) {
         case TokenType::KW_ANY: return "any";
         case TokenType::KW_SOME: return "some";
         case TokenType::KW_OID: return "oid";
+        case TokenType::KW_TEXT: return "text";
+        case TokenType::KW_INT2: return "int2";
+        case TokenType::KW_INT4: return "int4";
+        case TokenType::KW_INT8: return "int8";
+        case TokenType::KW_SMALLINT: return "smallint";
+        case TokenType::KW_INTEGER: return "integer";
+        case TokenType::KW_BIGINT: return "bigint";
+        case TokenType::KW_REGCLASS: return "regclass";
+        case TokenType::KW_REGTYPE: return "regtype";
         default: return "";
     }
 }
@@ -848,6 +866,50 @@ std::string Parser::parseQualifiedName() {
     return name;
 }
 
+parser::v3::SchemaPath Parser::parseResolvedTablePath() {
+    return buildResolvedTablePath(parseQualifiedName());
+}
+
+parser::v3::SchemaPath Parser::buildResolvedTablePath(const std::string& qualified_name) {
+    auto append_components =
+        [&](const std::string& value,
+            std::vector<parser::v3::StringPool::StringId>& components) {
+            std::string current;
+            for (char ch : value) {
+                if (ch == '.' || ch == '/') {
+                    if (!current.empty()) {
+                        components.push_back(string_pool_.intern(current));
+                        current.clear();
+                    }
+                } else {
+                    current.push_back(ch);
+                }
+            }
+            if (!current.empty()) {
+                components.push_back(string_pool_.intern(current));
+            }
+        };
+
+    std::string schema;
+    std::string table = qualified_name;
+    const auto split = qualified_name.find_last_of('.');
+    if (split != std::string::npos) {
+        schema = qualified_name.substr(0, split);
+        table = qualified_name.substr(split + 1);
+    }
+
+    resolveTableName(schema, table);
+
+    std::vector<parser::v3::StringPool::StringId> components;
+    append_components(schema, components);
+    append_components(table, components);
+
+    parser::v3::PathType path_type = components.size() > 1
+                                         ? parser::v3::PathType::ABSOLUTE
+                                         : parser::v3::PathType::UNQUALIFIED;
+    return parser::v3::SchemaPath(path_type, std::move(components));
+}
+
 void Parser::resolveTableName(std::string& schema, std::string& table) {
     auto normalize_path = [](const std::string& path) {
         std::vector<std::string> parts;
@@ -890,6 +952,29 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
                has_prefix("remote.emulated.postgresql") ||
                has_prefix("remote.emulation.postgresql");
     };
+    auto equals_ci = [](const std::string& lhs, const std::string& rhs) {
+        if (lhs.size() != rhs.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < lhs.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+                std::tolower(static_cast<unsigned char>(rhs[i]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto last_component = [](const std::string& value) {
+        size_t split = value.find_last_of("./");
+        if (split == std::string::npos || split + 1 >= value.size()) {
+            return value;
+        }
+        return value.substr(split + 1);
+    };
+    auto is_virtual_system_schema = [&](const std::string& value) {
+        const std::string leaf = last_component(value);
+        return equals_ci(leaf, "pg_catalog") || equals_ci(leaf, "information_schema");
+    };
     const bool default_is_database_alias =
         !normalized_default.empty() &&
         ((!has_hierarchy(normalized_default) && !has_emulation_prefix(normalized_default)) ||
@@ -921,6 +1006,11 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
     {
         // In manager-bound emulation, explicit schema qualifiers are still
         // relative to the emulated database root.
+        if (is_virtual_system_schema(normalized_schema))
+        {
+            schema = normalized_schema;
+            return;
+        }
         if (!normalized_default.empty() &&
             normalized_schema != normalized_default &&
             normalized_schema.rfind(normalized_default + ".", 0) != 0)

@@ -341,9 +341,10 @@ protected:
                                     std::string* last_error_out,
                                     ErrorContext* ctx,
                                     uint16_t connect_flags = 0,
-                                    const std::array<uint8_t, 16>* bound_db_uuid = nullptr) {
+                                    const std::array<uint8_t, 16>* bound_db_uuid = nullptr,
+                                    const std::string& database_name = "auth_policy_protocol_parity") {
         ConnectionConfig config;
-        config.database_name = "auth_policy_protocol_parity";
+        config.database_name = database_name;
         config.username = "SYSARCH";
         config.password = "ScratchBirdBeta1!";
         config.preferred_auth_methods = profile.preferred_methods;
@@ -690,6 +691,145 @@ TEST_F(AuthPolicyProtocolParityTest, BoundDatabaseUuidFlagRejectsUuidMismatch) {
         << "ctx=" << ctx.message << " last_error=" << last_error;
 
     server_thread.stop();
+}
+
+TEST_F(AuthPolicyProtocolParityTest, ScopedAuthPolicyNameUsesEmulationDatabaseScope) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string native_policy = makeUniquePolicyName("NATIVE_SCOPE_POLICY");
+    const std::string postgresql_policy = makeUniquePolicyName("PG_SCOPE_POLICY");
+    ScopedEnvVar global_policy("SCRATCHBIRD_AUTH_POLICY_NAME", "");
+    ScopedEnvVar native_policy_env("SCRATCHBIRD_AUTH_POLICY_NAME_NATIVE", native_policy);
+    ScopedEnvVar pg_policy_env("SCRATCHBIRD_AUTH_POLICY_NAME_POSTGRESQL", postgresql_policy);
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     native_policy,
+                                     CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256,
+                                     CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     postgresql_policy,
+                                     CatalogManager::AUTH_POLICY_METHOD_TOKEN,
+                                     CatalogManager::ConnectionAuthMethod::TOKEN,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const ProtocolProfile profile = {
+        "postgresql", {AuthMethod::SCRAM_SHA_256, AuthMethod::PASSWORD, AuthMethod::MD5}};
+    std::string last_error;
+
+    {
+        const std::string socket_path = makeUniqueSocketPath("auth_policy_scope_profile_native");
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+        core::Status native_status = connectWithProfile(profile, socket_path, &last_error, &ctx);
+        EXPECT_EQ(native_status, core::Status::OK)
+            << "ctx=" << ctx.message << " last_error=" << last_error;
+    }
+
+    {
+        const std::string socket_path = makeUniqueSocketPath("auth_policy_scope_profile_emulated");
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+        core::Status emulated_status = connectWithProfile(
+            profile,
+            socket_path,
+            &last_error,
+            &ctx,
+            0,
+            nullptr,
+            "remote.emulation.postgresql.localhost.databases.auth_policy_protocol_parity");
+        EXPECT_NE(emulated_status, core::Status::OK);
+        EXPECT_TRUE(
+            last_error.find("TOKEN authentication requires auth_token_authkey_id") !=
+                std::string::npos ||
+            last_error.find("AUTH_POLICY_METHOD_DENIED") != std::string::npos ||
+            last_error.find("AUTH_POLICY_REQUIRED_METHOD") != std::string::npos)
+            << "ctx=" << ctx.message << " last_error=" << last_error;
+    }
+}
+
+TEST_F(AuthPolicyProtocolParityTest, ScopedAuthPinningUsesEmulationDatabaseScope) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string policy_name = makeUniquePolicyName("PINNING_SCOPE_POLICY");
+    ScopedEnvVar policy_env("SCRATCHBIRD_AUTH_POLICY_NAME", policy_name);
+    ScopedEnvVar required_global("SCRATCHBIRD_AUTH_REQUIRED_METHODS", "");
+    ScopedEnvVar required_pg("SCRATCHBIRD_AUTH_REQUIRED_METHODS_POSTGRESQL", "TOKEN");
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     policy_name,
+                                     CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256,
+                                     CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const ProtocolProfile profile = {
+        "postgresql", {AuthMethod::SCRAM_SHA_256, AuthMethod::PASSWORD, AuthMethod::MD5}};
+    std::string last_error;
+
+    {
+        const std::string socket_path = makeUniqueSocketPath("auth_policy_scope_pinning_native");
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+        core::Status native_status = connectWithProfile(profile, socket_path, &last_error, &ctx);
+        EXPECT_EQ(native_status, core::Status::OK)
+            << "ctx=" << ctx.message << " last_error=" << last_error;
+    }
+
+    {
+        const std::string socket_path = makeUniqueSocketPath("auth_policy_scope_pinning_emulated");
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+        core::Status emulated_status = connectWithProfile(
+            profile,
+            socket_path,
+            &last_error,
+            &ctx,
+            0,
+            nullptr,
+            "remote.emulation.postgresql.localhost.databases.auth_policy_protocol_parity");
+        EXPECT_NE(emulated_status, core::Status::OK);
+        EXPECT_NE(last_error.find("AUTH_CLIENT_PINNING_VIOLATION"), std::string::npos)
+            << "ctx=" << ctx.message << " last_error=" << last_error;
+    }
 }
 
 }  // namespace

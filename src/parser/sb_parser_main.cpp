@@ -38,6 +38,7 @@
 #include "scratchbird/network/socket_types.h"
 #include "scratchbird/server/config_parser.h"
 #include "scratchbird/protocol/adapters/protocol_adapter.h"
+#include "scratchbird/security/parser_auth_policy.h"
 #include "scratchbird/version.h"
 
 #ifdef _WIN32
@@ -64,6 +65,7 @@ struct ParserConfig {
     std::string control_socket;
     std::string engine_endpoint;
     std::string default_database;
+    std::string database_path;
     std::string tls_config;
     scratchbird::security::TLSConfig tls_settings;
     std::shared_ptr<scratchbird::security::TLSContext> tls_context;
@@ -118,6 +120,7 @@ void printUsage(const char* program) {
               << "  --control-socket <path>   Control-plane socket path\n"
               << "  --engine-endpoint <path>  Engine IPC endpoint\n"
               << "  --default-database <name> Bound/default database for engine attach\n"
+              << "  --database-path <path>    Database file path for parser-side catalog access\n"
               << "  --tls-config <file>       TLS configuration file\n"
               << "  --protocol-version <n>    Dialect protocol version\n"
               << "  --max-requests <n>        Max sessions before recycle (0 = unlimited)\n"
@@ -150,6 +153,10 @@ bool parseArgs(int argc, char* argv[], ParserConfig& config) {
             config.default_database = argv[++i];
         } else if (arg.rfind("--default-database=", 0) == 0) {
             config.default_database = arg.substr(19);
+        } else if (arg == "--database-path" && i + 1 < argc) {
+            config.database_path = argv[++i];
+        } else if (arg.rfind("--database-path=", 0) == 0) {
+            config.database_path = arg.substr(16);
         } else if (arg == "--tls-config" && i + 1 < argc) {
             config.tls_config = argv[++i];
         } else if (arg.rfind("--tls-config=", 0) == 0) {
@@ -573,6 +580,12 @@ uint32_t runSession(const ParserConfig& config,
     scratchbird::protocol::ProtocolAdapterConfig adapter_config;
     adapter_config.engine_endpoint = config.engine_endpoint;
     adapter_config.default_database = config.default_database;
+    adapter_config.database_path = config.database_path;
+    const auto surface_auth_order =
+        scratchbird::security::parserAuthMethodOrder(config.protocol);
+    if (!surface_auth_order.empty()) {
+        adapter_config.auth_method = surface_auth_order.front();
+    }
     const bool has_db_uuid_binding =
         info.has_binding_context && hasNonZeroBytes(info.db_uuid);
     const bool manager_bound =
@@ -665,6 +678,9 @@ int runParser(ParserConfig& config) {
               << "Engine endpoint: " << config.engine_endpoint << "\n";
     if (!config.default_database.empty()) {
         std::cout << "Default database: " << config.default_database << "\n";
+    }
+    if (!config.database_path.empty()) {
+        std::cout << "Database path: " << config.database_path << "\n";
     }
 
     if (!config.tls_config.empty()) {
