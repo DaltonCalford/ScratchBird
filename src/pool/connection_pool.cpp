@@ -9,14 +9,20 @@
  */
 /**
  * @file connection_pool.cpp
- * @brief Connection Pool Implementation
+ * @brief Auxiliary connection pooling implementation.
  *
- * Implements the connection pooling system with three modes:
+ * This file implements the standalone `scratchbird_pool` library that backs
+ * proxy/driver-style pooling experiments, statement caching, and result
+ * caching. It is not the authoritative engine runtime pool; the core engine
+ * pool lives in `src/core/connection_pool.cpp`.
+ *
+ * The implementation supports three pooling modes:
  * - Session pooling: Connections bound to client sessions
  * - Transaction pooling: Connections returned after each transaction
  * - Statement pooling: Connections returned after each statement
  *
- * Part of Phase 3.6: Connection Pooling
+ * Some transport/execution hooks remain scaffolded by design while the core
+ * runtime path continues to use the engine-local connection pool.
  */
 
 #include "scratchbird/pool/connection_pool.h"
@@ -58,7 +64,7 @@ StatementEvictionPolicy mapStatementPolicy(EvictionPolicy policy) {
  * Contains the actual connection handle and internal state.
  */
 struct PooledConnection::Impl {
-    // Connection handle (placeholder - would be actual IPC/TCP socket in full implementation)
+    // Auxiliary transport handle placeholder for the scaffolded pool layer.
     int socket_fd = -1;
     bool connected = false;
     std::string connection_string;

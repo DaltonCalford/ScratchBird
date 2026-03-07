@@ -1,0 +1,69 @@
+{
+  "format_version": 1,
+  "defaults": {
+    "scratchbird": [
+      {
+        "username": "SysArch",
+        "password": "replaceme",
+        "is_superuser": true,
+        "seed_on_database_bootstrap": true,
+        "access_intent": "admin"
+      },
+      {
+        "username": "sb_public",
+        "password": "sb_public",
+        "is_superuser": false,
+        "seed_on_database_bootstrap": false,
+        "access_intent": "public"
+      }
+    ],
+    "postgresql": [
+      {
+        "username": "postgres",
+        "password": "postgres",
+        "is_superuser": true,
+        "seed_on_database_bootstrap": false,
+        "access_intent": "admin"
+      },
+      {
+        "username": "pg_public",
+        "password": "pg_public",
+        "is_superuser": false,
+        "seed_on_database_bootstrap": false,
+        "access_intent": "public"
+      }
+    ],
+    "mysql": [
+      {
+        "username": "root",
+        "password": "root",
+        "is_superuser": true,
+        "seed_on_database_bootstrap": false,
+        "access_intent": "admin"
+      },
+      {
+        "username": "my_public",
+        "password": "my_public",
+        "is_superuser": false,
+        "seed_on_database_bootstrap": false,
+        "access_intent": "public"
+      }
+    ],
+    "firebird": [
+      {
+        "username": "SYSDBA",
+        "password": "masterkey",
+        "is_superuser": true,
+        "seed_on_database_bootstrap": false,
+        "access_intent": "admin"
+      },
+      {
+        "username": "fb_public",
+        "password": "fb_public",
+        "is_superuser": false,
+        "seed_on_database_bootstrap": false,
+        "access_intent": "public"
+      }
+    ]
+  }
+}

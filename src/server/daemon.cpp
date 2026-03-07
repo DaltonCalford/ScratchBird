@@ -10,7 +10,7 @@
 /**
  * ScratchBird Daemon Implementation
  *
- * Alpha 3 Phase 3.3: Service Mode & systemd Integration
+ * Daemon/service-process support implementation.
  */
 
 #include "scratchbird/server/daemon.h"

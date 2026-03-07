@@ -4,6 +4,10 @@
  *
  * Licensed under the Initial Developer's Public License Version 1.0
  */
+/**
+ * @file postgresql_udr.cpp
+ * @brief Outbound PostgreSQL bridge connector implementation.
+ */
 
 #include "scratchbird/udr/postgresql_udr.h"
 #include "scratchbird/udr/scram_auth.h"
@@ -24,6 +28,8 @@
 #include <fcntl.h>
 #include <openssl/ssl.h>
 #include <openssl/evp.h>
+// Remote PostgreSQL compatibility still requires the legacy md5 auth variant
+// when ScratchBird acts as an outbound client to older PostgreSQL servers.
 #include <openssl/md5.h>
 
 namespace scratchbird {

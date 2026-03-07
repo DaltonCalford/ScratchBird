@@ -73,8 +73,8 @@ protected:
         cc.ipc_method = IPCMethod::UNIX_SOCKET;
         cc.socket_path = config_.ipc_path;
         cc.auto_start_server = false;
-        cc.username = "SYSARCH";
-        cc.password = "ScratchBirdBeta1!";
+        cc.username = "SysArch";
+        cc.password = "replaceme";
         ASSERT_EQ(conn.connect(cc, &ctx_), Status::OK);
         conn.disconnect();
     }
@@ -96,7 +96,7 @@ TEST_F(FirebirdAdapterBridgeTest, ExecutesSelectOverIPC) {
     TestFirebirdAdapter adapter;
     adapter.setDatabasePath(config_.database_path);
     adapter.setEngineEndpoint(config_.ipc_path);
-    adapter.setRemoteCredentials("SYSARCH", "ScratchBirdBeta1!");
+    adapter.setRemoteCredentials("SysArch", "replaceme");
     adapter.setSharedDatabase(server_->database());
 
     QueryContext query;
@@ -126,8 +126,8 @@ TEST_F(FirebirdAdapterBridgeTest, ExposesIndexesAndConstraintsInCatalogViews) {
     cc.ipc_method = IPCMethod::UNIX_SOCKET;
     cc.socket_path = config_.ipc_path;
     cc.auto_start_server = false;
-    cc.username = "SYSARCH";
-    cc.password = "ScratchBirdBeta1!";
+        cc.username = "SysArch";
+        cc.password = "replaceme";
     ASSERT_EQ(conn.connect(cc, &ctx_), Status::OK);
 
     ASSERT_EQ(conn.execute("CREATE TABLE IF NOT EXISTS fb_meta(id INT PRIMARY KEY, code INT UNIQUE)", nullptr, &ctx_), Status::OK);
@@ -138,7 +138,7 @@ TEST_F(FirebirdAdapterBridgeTest, ExposesIndexesAndConstraintsInCatalogViews) {
     TestFirebirdAdapter adapter;
     adapter.setDatabasePath(config_.database_path);
     adapter.setEngineEndpoint(config_.ipc_path);
-    adapter.setRemoteCredentials("SYSARCH", "ScratchBirdBeta1!");
+    adapter.setRemoteCredentials("SysArch", "replaceme");
     adapter.setSharedDatabase(server_->database());
 
     // Trigger catalog bootstrap and schema switch for the emulated Firebird namespace

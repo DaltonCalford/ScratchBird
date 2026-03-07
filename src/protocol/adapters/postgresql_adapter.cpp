@@ -10,9 +10,7 @@
 /**
  * PostgreSQL Wire Protocol Adapter Implementation
  *
- * ScratchBird Network Layer - Phase 3.2
- *
- * Implements PostgreSQL v3 wire protocol.
+ * PostgreSQL-compatible front-door implementation.
  */
 
 #include "scratchbird/protocol/adapters/postgresql_adapter.h"
@@ -37,6 +35,9 @@
 #include <iomanip>
 #include <unordered_set>
 
+// PostgreSQL wire compatibility still requires the legacy MD5 exchange for
+// older clients/roles. This code is retained for interoperability, not as
+// guidance for new password policy design.
 // For MD5
 #ifdef HAVE_OPENSSL
 #include <openssl/md5.h>

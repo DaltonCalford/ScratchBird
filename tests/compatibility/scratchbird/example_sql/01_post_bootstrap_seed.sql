@@ -1,4 +1,7 @@
 -- ScratchBird example database post-bootstrap schema/data seed.
+-- Reference mirror only: scripts/example_db_manager.sh now renders runtime
+-- post-bootstrap SQL from resources/bootstrap/default_auth_manifest.json plus
+-- compatibility harness metadata.
 -- This runs after bootstrap user creation using SysArch credentials.
 
 SET SCHEMA users.public;

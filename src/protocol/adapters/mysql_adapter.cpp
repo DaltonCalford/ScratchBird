@@ -10,9 +10,7 @@
 /**
  * MySQL Wire Protocol Adapter Implementation
  *
- * ScratchBird Network Layer - Phase 3.2
- *
- * Implements MySQL wire protocol for client compatibility.
+ * MySQL-compatible front-door implementation.
  */
 
 #include "scratchbird/protocol/adapters/mysql_adapter.h"
@@ -36,6 +34,9 @@
 #include <functional>
 #include <array>
 
+// These digest paths remain because MySQL protocol interoperability still
+// requires legacy authentication variants such as mysql_native_password.
+// They are compatibility code, not a recommendation for new engine auth.
 // For SHA1 (native password auth) and SHA256 (caching_sha2_password)
 #ifdef HAVE_OPENSSL
 #include <openssl/md5.h>

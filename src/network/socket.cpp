@@ -10,9 +10,7 @@
 /**
  * Socket Implementation
  *
- * ScratchBird Network Layer - Phase 3.1
- *
- * Platform-independent socket wrapper providing both blocking and non-blocking I/O.
+ * Platform-independent socket wrapper for local IPC and external listeners.
  */
 
 #include "scratchbird/network/socket.h"

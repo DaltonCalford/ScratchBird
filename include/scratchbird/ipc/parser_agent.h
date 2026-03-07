@@ -8,12 +8,18 @@
 
 /**
  * Parser Agent v1.1
- * 
+ *
  * Section E3: Parser Agents
- * 
- * Parser agents bridge external protocol connections to the IPC layer.
- * They handle protocol-specific startup, feature negotiation, and message
- * mapping between wire protocols and IPC messages.
+ *
+ * Parser agents are the protocol-facing SQL front-door in the deployed
+ * multi-protocol topology. They accept engine-specific client connections,
+ * apply protocol/auth policy, map the emulated schema tree to the emulated
+ * engine's root model, and compile SQL text into SBLR before handing work to
+ * the engine IPC layer.
+ *
+ * The engine runtime can still be built with in-process parser/compiler
+ * surfaces for local tools and tests, but that is not the primary external
+ * protocol architecture.
  */
 
 #include "scratchbird/ipc/ipc_contract_v1_1.h"

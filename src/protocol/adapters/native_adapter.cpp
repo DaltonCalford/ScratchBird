@@ -10,9 +10,7 @@
 /**
  * Native ScratchBird Protocol Adapter Implementation
  *
- * ScratchBird Network Layer - Phase 3.2
- *
- * Implements the native ScratchBird wire protocol.
+ * ScratchBird-native front-door implementation.
  */
 
 #include "scratchbird/protocol/adapters/native_adapter.h"

@@ -10,7 +10,7 @@
 /**
  * ScratchBird Authentication Method Implementation
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * Built-in and plugin-backed authentication method base implementation.
  */
 
 #include "scratchbird/security/auth_method.h"

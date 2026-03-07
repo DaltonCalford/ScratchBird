@@ -7,10 +7,13 @@
 #pragma once
 
 /**
- * SCRAM-SHA-256 Authentication
- * 
- * Implements RFC 5802 (SCRAM) and RFC 7677 (SCRAM-SHA-256)
- * for PostgreSQL and MySQL authentication.
+ * SCRAM helper for outbound UDR connectors
+ *
+ * Implements RFC 5802 (SCRAM) and RFC 7677 (SCRAM-SHA-256) support used when
+ * ScratchBird acts as a client to remote PostgreSQL/MySQL-compatible servers.
+ *
+ * This header is not the inbound ScratchBird user-auth contract; that lives in
+ * the engine security/plugin layer.
  */
 
 #include <string>
@@ -31,9 +34,11 @@ enum class SCRAMMechanism {
 };
 
 /**
- * SCRAM Server-side authentication
- * 
- * Use this for implementing SCRAM authentication in server components.
+ * SCRAM server-role state machine
+ *
+ * Use this when a connector test harness, compatibility shim, or simulated
+ * remote peer needs the server side of a SCRAM exchange. It is not the
+ * authoritative ScratchBird login path.
  */
 class SCRAMServer {
 public:
@@ -110,9 +115,10 @@ private:
 };
 
 /**
- * SCRAM Client-side authentication
- * 
- * Use this for connecting to servers that require SCRAM authentication.
+ * SCRAM client-role state machine
+ *
+ * Use this for outbound connector sessions that must authenticate against
+ * remote servers requiring SCRAM.
  */
 class SCRAMClient {
 public:

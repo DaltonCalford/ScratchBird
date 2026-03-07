@@ -10,7 +10,8 @@
 /**
  * ScratchBird Wire Protocol Implementation
  *
- * Local Server Architecture - Phase 2
+ * Canonical ScratchBird wire/message framing implementation used by native
+ * clients, protocol adapters, and local IPC-facing protocol surfaces.
  */
 
 #include "scratchbird/protocol/wire_protocol.h"

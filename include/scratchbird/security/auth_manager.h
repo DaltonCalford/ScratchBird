@@ -12,11 +12,11 @@
 /**
  * ScratchBird Authentication Manager
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * Authoritative inbound authentication coordinator.
  *
- * Central authentication coordinator:
+ * Central coordination point for ScratchBird client/server authentication:
  * - Host-Based Authentication (HBA) rules
- * - Authentication method dispatch
+ * - Authentication method and plugin dispatch
  * - Rate limiting
  * - Audit logging
  * - User credential management

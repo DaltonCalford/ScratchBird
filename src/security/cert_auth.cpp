@@ -10,7 +10,7 @@
 /**
  * ScratchBird Certificate Authentication Implementation
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * TLS client-certificate authentication implementation.
  */
 
 #include "scratchbird/security/cert_auth.h"

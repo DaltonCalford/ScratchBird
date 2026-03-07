@@ -10,7 +10,8 @@
 /**
  * ScratchBird Client Library Implementation
  *
- * Local Server Architecture - Phase 4
+ * Client-side connection/runtime implementation used by native clients,
+ * protocol adapters, and local control surfaces.
  */
 
 #include "scratchbird/client/connection.h"

@@ -10,8 +10,9 @@
 /**
  * ScratchBird Parser Agent - Protocol-Specific Entry Point
  *
- * Scaffolding for parser agent binaries per dialect. The control-plane
- * socket and engine IPC wiring are tracked separately.
+ * Parser-agent binaries terminate client protocol handoff from the listener,
+ * apply per-engine compatibility rules, and compile SQL text into SBLR for the
+ * engine IPC execution path.
  */
 
 #include <atomic>

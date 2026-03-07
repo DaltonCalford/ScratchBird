@@ -10,7 +10,7 @@
 /**
  * ScratchBird Kerberos/GSSAPI Authentication Implementation
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * Kerberos/GSSAPI provider authentication implementation.
  */
 
 #include "scratchbird/security/kerberos_auth.h"
@@ -20,8 +20,8 @@
 #include <fstream>
 #include <sstream>
 
-// Note: Full GSSAPI implementation would require libgssapi_krb5
-// This provides the framework and stub implementations
+// Note: full provider-backed GSSAPI support requires libgssapi_krb5. The
+// current file provides the admission/runtime framework and stubbed behavior.
 
 namespace scratchbird {
 namespace security {

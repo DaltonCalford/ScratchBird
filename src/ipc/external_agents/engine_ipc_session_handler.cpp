@@ -6,10 +6,16 @@
  */
 
 /**
- * EngineIPCSessionHandler - Full Implementation
- * 
- * Connects the IPC server to the ScratchBird execution engine.
- * Manages session state, prepared statements, portals, and query execution.
+ * EngineIPCSessionHandler - Engine-side IPC execution bridge
+ *
+ * This is the engine half of the external parser-agent topology. Listener and
+ * parser-agent processes own protocol negotiation, engine-specific SQL rules,
+ * and SQL-text to SBLR compilation. This handler manages session state,
+ * prepared statements, portals, and execution of precompiled engine payloads.
+ *
+ * Reviewers should not read this file as a general SQL parser inside the
+ * engine; the deployed IPC contract is intentionally parserless on the engine
+ * side.
  */
 
 #include "scratchbird/ipc/engine_ipc_session_handler.h"

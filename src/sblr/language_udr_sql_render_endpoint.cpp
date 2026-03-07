@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+/**
+ * @file language_udr_sql_render_endpoint.cpp
+ * @brief Trusted language UDR endpoint for SBLR-to-native-SQL rendering.
+ */
 #include "scratchbird/udr/language_udr_sql_render_endpoint.h"
 
 #include "scratchbird/sblr/native_sql_renderer.h"

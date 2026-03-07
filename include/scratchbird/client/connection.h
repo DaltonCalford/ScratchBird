@@ -12,9 +12,8 @@
 /**
  * ScratchBird Client Library
  *
- * Local Server Architecture - Phase 4
+ * Public client API for connecting to ScratchBird services.
  *
- * This header defines the client API for connecting to a ScratchBird server.
  * The library handles:
  * - Connection establishment via IPC (Unix sockets, named pipes, TCP)
  * - Auto-start of server if not running

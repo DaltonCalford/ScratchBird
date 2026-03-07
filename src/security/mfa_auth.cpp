@@ -10,7 +10,7 @@
 /**
  * ScratchBird Multi-Factor Authentication (MFA) Implementation
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * MFA support implementation for inbound auth policy chains.
  */
 
 #include "scratchbird/security/mfa_auth.h"

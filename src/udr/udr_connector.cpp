@@ -4,6 +4,13 @@
  *
  * Licensed under the Initial Developer's Public License Version 1.0
  */
+/**
+ * @file udr_connector.cpp
+ * @brief Outbound UDR connector framework implementation.
+ *
+ * This file owns connector selection and shared bridge behavior for engine-side
+ * tools that talk to remote databases or peer ScratchBird servers.
+ */
 
 #include "scratchbird/udr/udr_connector.h"
 

@@ -7,6 +7,15 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+/**
+ * @file jit_backend_llvm.cpp
+ * @brief Mock LLVM JIT backend.
+ *
+ * This translation unit preserves the JIT backend contract for Alpha wiring
+ * and test coverage, but it does not embed or invoke a real LLVM codegen
+ * pipeline yet. Reviewers should treat it as a deliberate mock until the
+ * full LLVM driver lands.
+ */
 #include "scratchbird/sblr/jit/jit_compiler.h"
 
 #include <algorithm>
@@ -18,6 +27,8 @@ namespace scratchbird::sblr::jit
 {
     namespace
     {
+        // Deterministic mock used to exercise backend selection and artifact
+        // plumbing before the real LLVM integration is enabled.
         class LlvmBackendMock final : public JitBackend
         {
         public:
@@ -65,4 +76,3 @@ namespace scratchbird::sblr::jit
         return std::make_unique<LlvmBackendMock>();
     }
 }
-

@@ -10,10 +10,10 @@
 /**
  * Windows Named Pipe IPC Implementation
  *
- * ScratchBird Local Server Architecture - Phase 1
+ * Windows local IPC backend using named pipes.
  *
- * This file implements IPC using Windows Named Pipes.
- * Named pipes are the standard Windows IPC mechanism for local database connections.
+ * This file implements engine IPC using Windows Named Pipes, the standard
+ * local-process transport on Windows deployments.
  *
  * Features:
  * - Bi-directional byte-mode communication

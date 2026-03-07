@@ -10,11 +10,11 @@
 /**
  * Protocol Adapter Base Class
  *
- * ScratchBird Network Layer - Phase 3.2
+ * Base class for protocol-emulation front-ends.
  *
- * Base class for wire protocol adapters that translate between external
- * database protocols (PostgreSQL, MySQL, Firebird) and ScratchBird's internal
- * wire protocol.
+ * Protocol adapters terminate external client wire protocols and translate
+ * them into ScratchBird-native execution requests, either through the local
+ * protocol/runtime path or the parser-agent/SBLR bridge.
  */
 
 #pragma once

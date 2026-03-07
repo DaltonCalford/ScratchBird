@@ -10,10 +10,10 @@
 /**
  * IPC Common Implementation
  *
- * ScratchBird Local Server Architecture - Phase 1
+ * Shared helpers for engine-side IPC transports.
  *
- * This file contains the platform-detection logic, factory methods,
- * and utility functions shared across all IPC implementations.
+ * This file contains platform detection, factory methods, and utility
+ * functions shared across the concrete IPC transport backends.
  */
 
 #include "scratchbird/server/ipc_server.h"

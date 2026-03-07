@@ -9,6 +9,14 @@
  */
 #pragma once
 
+/**
+ * Language UDR SQL render endpoint
+ *
+ * Exposes a tool-style endpoint that lets trusted language UDR modules render
+ * canonical SBLR instructions back into native SQL text for engine-internal
+ * dynamic SQL and trace/introspection flows.
+ */
+
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/sblr/v3_types.h"

@@ -345,8 +345,8 @@ protected:
                                     const std::string& database_name = "auth_policy_protocol_parity") {
         ConnectionConfig config;
         config.database_name = database_name;
-        config.username = "SYSARCH";
-        config.password = "ScratchBirdBeta1!";
+        config.username = "SysArch";
+        config.password = "replaceme";
         config.preferred_auth_methods = profile.preferred_methods;
         config.auto_start_server = false;
         config.ipc_method = IPCMethod::UNIX_SOCKET;

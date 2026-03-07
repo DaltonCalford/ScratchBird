@@ -12,15 +12,13 @@
 /**
  * ScratchBird Wire Protocol
  *
- * Local Server Architecture - Phase 2
+ * Canonical ScratchBird wire/message protocol.
  *
- * This header defines the binary wire protocol for client-server communication.
- * The protocol is designed to be:
+ * This header defines the binary protocol used by ScratchBird-native clients,
+ * adapters, and local IPC-facing protocol surfaces. The protocol is designed to be:
  * - Simple and efficient for local IPC
- * - Extensible for future network protocols (Alpha 3)
+ * - Extensible for additional network/front-door surfaces
  * - Compatible with streaming large result sets
- *
- * Protocol Version: 1.0 (Alpha 1 Local Protocol)
  */
 
 #include <cstdint>

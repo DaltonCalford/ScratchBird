@@ -10,7 +10,7 @@
 /**
  * ScratchBird Service Controller Implementation
  *
- * Alpha 3 Phase 3.3: Service Mode & systemd Integration
+ * Service-controller implementation for engine and front-door orchestration.
  */
 
 #include "scratchbird/server/service_controller.h"

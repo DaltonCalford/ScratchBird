@@ -10,7 +10,7 @@
 /**
  * ScratchBird Configuration Parser Implementation
  *
- * Alpha 3 Phase 3.3: Service Mode & systemd Integration
+ * Service/runtime configuration parser implementation.
  */
 
 #include "scratchbird/server/config_parser.h"

@@ -12,10 +12,10 @@
 /**
  * IPC Server Abstraction Layer
  *
- * ScratchBird Local Server Architecture - Phase 1
+ * Platform-agnostic engine IPC transport interface.
  *
- * This header defines the platform-agnostic IPC (Inter-Process Communication)
- * server interface for ScratchBird's local client-server architecture.
+ * This header defines the transport contract used by local ScratchBird client
+ * and service-controller paths to reach the engine runtime.
  *
  * Supported IPC Methods:
  * - Unix Domain Sockets (Linux/macOS) - Default on Unix-like systems

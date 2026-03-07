@@ -12,9 +12,9 @@
 /**
  * ScratchBird Kerberos/GSSAPI Authentication
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * Kerberos/GSSAPI provider authentication method.
  *
- * Implements Kerberos authentication via GSSAPI with:
+ * Defines the provider-facing contract for Kerberos authentication via GSSAPI:
  * - Service principal configuration
  * - Keytab management
  * - SPNEGO/Negotiate support

@@ -12,10 +12,10 @@
 /**
  * ScratchBird SCRAM-SHA-256/512 Authentication
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * Authoritative inbound SCRAM implementation for ScratchBird.
  *
- * Implements RFC 5802 (SCRAM) with SHA-256 and SHA-512.
- * This is the recommended authentication method.
+ * Implements RFC 5802 (SCRAM) with SHA-256 and SHA-512 for the engine's
+ * native client/server authentication paths.
  */
 
 #include <cstdint>

@@ -8,11 +8,11 @@
 
 /**
  * UDR Connection Pool
- * 
- * Section D: Remote Engine UDR Connectors
- * 
- * Thread-safe connection pool for UDR connectors with health checking,
- * idle timeout, and metrics collection.
+ *
+ * Section D: Engine tools and remote bridge connectors
+ *
+ * Thread-safe pool for outbound UDR connector sessions used by remote-engine
+ * bridge modules and related in-engine tooling.
  */
 
 #include "scratchbird/core/status.h"

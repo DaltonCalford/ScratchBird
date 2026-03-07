@@ -10,15 +10,15 @@
 /**
  * TCP Localhost IPC Implementation
  *
- * ScratchBird Local Server Architecture - Phase 1
+ * Cross-platform localhost IPC backend.
  *
- * This file implements IPC using TCP/IP localhost connections.
- * This is a cross-platform fallback that works on all systems.
+ * This file implements engine IPC over TCP/IP loopback. It is the
+ * cross-platform fallback backend and a useful diagnostic transport.
  *
  * Features:
  * - Cross-platform identical code (Unix/Windows)
  * - Standard debugging tools support (tcpdump, wireshark, netstat)
- * - Natural upgrade path to network protocols (Alpha 3)
+ * - Natural bridge to external network protocol deployments
  * - Well-understood semantics
  *
  * Note: TCP is ~25-50% slower than Unix sockets for local connections,

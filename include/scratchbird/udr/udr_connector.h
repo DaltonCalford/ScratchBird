@@ -8,11 +8,16 @@
 
 /**
  * UDR (User Defined Routine) Connector Framework
- * 
- * Section D: Remote Engine UDR Connectors
- * 
- * Provides infrastructure for connecting to remote databases via native
- * wire protocols (PostgreSQL, MySQL, Firebird, ScratchBird).
+ *
+ * Section D: Engine tools, language UDRs, and remote bridge connectors
+ *
+ * Provides outbound connector infrastructure used when ScratchBird acts as a
+ * client to another engine via native wire protocols (PostgreSQL, MySQL,
+ * Firebird, ScratchBird, and additional bridge targets as they are added).
+ *
+ * This layer is distinct from end-user authentication into ScratchBird. UDR
+ * connectors are used by in-engine tools, remote/pass-through queries,
+ * replication/bridge paths, and cluster server-to-server connectivity.
  */
 
 #include "scratchbird/core/status.h"

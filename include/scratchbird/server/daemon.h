@@ -12,7 +12,7 @@
 /**
  * ScratchBird Daemon Support
  *
- * Alpha 3 Phase 3.3: Service Mode & systemd Integration
+ * Daemon/service-process support helpers.
  *
  * Provides Unix-style daemonization and systemd integration:
  * - Process forking and session creation

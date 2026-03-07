@@ -38,8 +38,13 @@ Canonical user labels in the contract fixture are identity aliases, not engine l
 - `u_sys_admin` uses canonical alias `sys_admin`
 - `u_public_user` uses canonical alias `public_user`
 
-## Source of Truth in Code
+## Source of Truth in Repository
 
-- `tests/compatibility/scratchbird/example_sql/00_bootstrap_seed.sql`
-- `tests/compatibility/scratchbird/example_sql/01_post_bootstrap_seed.sql`
+- `resources/bootstrap/default_auth_manifest.json`
+- `scripts/emulation/render_example_seed_sql.py`
 - `scripts/example_db_manager.sh`
+
+The example database harness renders runtime bootstrap/post-bootstrap SQL from
+the manifest. The checked-in SQL files under
+`tests/compatibility/scratchbird/example_sql/` are reference mirrors, not the
+authoritative executable source.

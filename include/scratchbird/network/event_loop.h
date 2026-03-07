@@ -10,10 +10,7 @@
 /**
  * Event Loop
  *
- * ScratchBird Network Layer - Phase 3.1
- *
- * High-performance event loop using epoll (Linux) or kqueue (macOS/BSD).
- * Handles socket I/O events, timers, and signals.
+ * High-performance event-loop interface for listener and network I/O.
  */
 
 #pragma once

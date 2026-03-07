@@ -7,12 +7,14 @@
 #pragma once
 
 /**
- * ScratchBird UDR Connector
- * 
- * Section D5: Remote Engine UDR Connectors - ScratchBird
- * 
- * Implements UDRConnector interface for remote ScratchBird databases using
- * the native ScratchBird Wire Protocol (SBWP).
+ * ScratchBird UDR bridge connector
+ *
+ * Section D5: Engine tools and remote bridge connectors - ScratchBird
+ *
+ * Implements an outbound UDRConnector for remote ScratchBird servers using the
+ * native ScratchBird Wire Protocol (SBWP). This is the same bridge family used
+ * for pass-through queries, remote execution, and server-to-server cluster
+ * connectivity.
  */
 
 #include "scratchbird/udr/udr_connector.h"

@@ -12,7 +12,7 @@
 /**
  * ScratchBird TLS/SSL Configuration
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * TLS policy and configuration surface for ScratchBird security.
  *
  * Provides:
  * - TLS server and client configuration

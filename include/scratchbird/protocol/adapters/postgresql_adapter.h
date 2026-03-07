@@ -10,9 +10,11 @@
 /**
  * PostgreSQL Wire Protocol Adapter
  *
- * ScratchBird Network Layer - Phase 3.2
+ * PostgreSQL-compatible front-door adapter.
  *
- * Implements PostgreSQL v3 wire protocol for client compatibility.
+ * Implements PostgreSQL v3 wire protocol for client compatibility while
+ * mapping PostgreSQL session semantics onto ScratchBird execution/runtime
+ * services.
  * Supports Simple Query and Extended Query protocols.
  *
  * Reference: https://www.postgresql.org/docs/current/protocol.html

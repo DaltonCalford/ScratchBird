@@ -12,9 +12,9 @@
 /**
  * ScratchBird Certificate Authentication
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * TLS client-certificate authentication method.
  *
- * Implements TLS client certificate authentication with
+ * Implements inbound certificate authentication with
  * configurable certificate-to-user mapping.
  */
 

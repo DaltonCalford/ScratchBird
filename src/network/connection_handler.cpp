@@ -10,9 +10,10 @@
 /**
  * Connection Handler Implementation
  *
- * ScratchBird Network Layer - Phase 3.1
+ * Network-side connection lifecycle manager.
  *
- * Manages client connection lifecycle and routes to protocol handlers.
+ * Manages accepted sockets, per-connection state, and routing into protocol
+ * handlers/listener front-door code.
  */
 
 #include "scratchbird/network/connection_handler.h"

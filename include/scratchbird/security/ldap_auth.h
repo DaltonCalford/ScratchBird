@@ -12,9 +12,9 @@
 /**
  * ScratchBird LDAP/Active Directory Authentication
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * LDAP/Active Directory provider authentication method.
  *
- * Implements LDAP and LDAPS authentication with:
+ * Defines the provider-facing contract for LDAP and LDAPS authentication with:
  * - Simple bind authentication
  * - Search + bind authentication
  * - Group membership lookup

@@ -7,12 +7,14 @@
 #pragma once
 
 /**
- * Firebird UDR Connector
- * 
- * Section D4: Remote Engine UDR Connectors - Firebird
- * 
- * Implements UDRConnector interface for Firebird databases using
- * the native Firebird wire protocol with XDR encoding.
+ * Firebird UDR bridge connector
+ *
+ * Section D4: Engine tools and remote bridge connectors - Firebird
+ *
+ * Implements an outbound UDRConnector for Firebird-compatible servers using
+ * the native Firebird wire protocol with XDR encoding. This connector is used
+ * by pass-through/bridge work, replication paths, and other engine-side
+ * tooling where ScratchBird acts as a Firebird client.
  */
 
 #include "scratchbird/udr/udr_connector.h"

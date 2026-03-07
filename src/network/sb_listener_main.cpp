@@ -10,8 +10,9 @@
 /**
  * ScratchBird Listener - Protocol-Specific Entry Point
  *
- * Scaffolding for listener binaries per protocol. Accepts connections
- * and prepares for parser handoff (control-plane wired separately).
+ * Listener binaries are the network front-door for each supported protocol.
+ * They accept client sockets, perform process-level control-plane work, and
+ * hand connections off to protocol-specific parser agents.
  */
 
 #include <atomic>

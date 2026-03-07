@@ -10,10 +10,11 @@
 /**
  * Unix Domain Socket IPC Implementation
  *
- * ScratchBird Local Server Architecture - Phase 1
+ * Unix-domain-socket IPC backend.
  *
- * This file implements IPC using Unix domain sockets for Linux and macOS.
- * Unix sockets provide 25-50% better performance than TCP for local connections.
+ * This file implements engine IPC using Unix domain sockets for Linux and
+ * macOS/BSD deployments. Unix sockets typically outperform loopback TCP for
+ * local engine traffic.
  *
  * Features:
  * - Stream-oriented reliable communication

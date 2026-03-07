@@ -12,9 +12,9 @@
 /**
  * ScratchBird Configuration Parser
  *
- * Alpha 3 Phase 3.3: Service Mode & systemd Integration
+ * INI-style service/runtime configuration parser.
  *
- * INI-style configuration file parser supporting:
+ * Supports:
  * - Sections [section]
  * - Key-value pairs: key = value
  * - Comments: # or ;

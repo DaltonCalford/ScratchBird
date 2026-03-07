@@ -10,9 +10,7 @@
 /**
  * Thread Pool Implementation
  *
- * ScratchBird Network Layer - Phase 3.1
- *
- * High-performance thread pool for handling concurrent client connections.
+ * Shared thread-pool runtime used by listener and network-side workloads.
  */
 
 #include "scratchbird/network/thread_pool.h"

@@ -1,4 +1,6 @@
 -- ScratchBird example database bootstrap + seed data
+-- Reference mirror only: scripts/example_db_manager.sh now renders runtime
+-- bootstrap SQL from resources/bootstrap/default_auth_manifest.json.
 -- This script is executed during dynamic/static example DB initialization.
 
 DROP USER IF EXISTS SysArch;

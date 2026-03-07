@@ -12,9 +12,9 @@
 /**
  * ScratchBird Service Controller
  *
- * Alpha 3 Phase 3.3: Service Mode & systemd Integration
+ * High-level service orchestration for engine and front-door processes.
  *
- * High-level service orchestration combining:
+ * Combines:
  * - Configuration management (config_parser.h)
  * - Daemon lifecycle (daemon.h)
  * - Protocol listeners (network/)

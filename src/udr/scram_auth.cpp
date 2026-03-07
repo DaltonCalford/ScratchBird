@@ -6,16 +6,18 @@
  */
 
 /**
- * SCRAM-SHA-256 Authentication Implementation
- * 
- * Implements RFC 5802 (SCRAM) and RFC 7677 (SCRAM-SHA-256)
- * for PostgreSQL and MySQL authentication.
- * 
+ * SCRAM compatibility helper for UDR/client connectors
+ *
+ * This file implements outbound connector-side SCRAM behavior used when
+ * ScratchBird acts as a client to remote engines through UDR bridge modules.
+ * It is not part of end-user authentication into ScratchBird itself; that
+ * policy and handshake live under `src/security/`.
+ *
  * Features:
  * - SCRAM-SHA-256
  * - SCRAM-SHA-256-PLUS (channel binding)
  * - SCRAM-SHA-512
- * - Server and client-side authentication
+ * - Outbound connector compatibility flows
  */
 
 #include "scratchbird/udr/scram_auth.h"
@@ -90,12 +92,13 @@ static std::vector<uint8_t> base64Decode(const std::string& encoded) {
 }
 
 // ============================================================================
-// SASLprep (simplified)
+// SASLprep (connector-side simplified normalization)
 // ============================================================================
 
 static std::string saslPrep(const std::string& input) {
-    // Simplified SASLprep - in production, implement full RFC 4013
-    // This handles basic ASCII normalization
+    // This helper intentionally keeps the historical compatibility behavior for
+    // outbound remote-engine connectors. Full authoritative ScratchBird user
+    // authentication remains in the engine security/plugin layer.
     std::string result;
     result.reserve(input.size());
     

@@ -10,7 +10,7 @@
 /**
  * ScratchBird LDAP/Active Directory Authentication Implementation
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * LDAP/Active Directory provider authentication implementation.
  */
 
 #include "scratchbird/security/ldap_auth.h"
@@ -20,8 +20,8 @@
 #include <regex>
 #include <sstream>
 
-// Note: Full LDAP implementation would require libldap
-// This provides the framework and stub implementations
+// Note: full provider-backed LDAP support requires libldap. The current file
+// provides the admission/runtime framework and stubbed provider behavior.
 
 namespace scratchbird {
 namespace security {

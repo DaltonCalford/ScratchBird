@@ -10,7 +10,7 @@
 /**
  * Protocol Adapter Base Implementation
  *
- * ScratchBird Network Layer - Phase 3.2
+ * Shared protocol-emulation adapter implementation.
  */
 
 #include "scratchbird/protocol/adapters/protocol_adapter.h"

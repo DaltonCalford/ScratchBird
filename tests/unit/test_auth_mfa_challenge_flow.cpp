@@ -373,7 +373,7 @@ TEST_F(AuthMfaChallengeFlowTest, TokenAuthWithMfaChallengeSucceeds) {
         << ctx.message;
 
     CatalogManager::UserInfo sysarch{};
-    ASSERT_EQ(catalog_->getUserByName("SYSARCH", sysarch, &ctx), core::Status::OK) << ctx.message;
+    ASSERT_EQ(catalog_->getUserByName("SysArch", sysarch, &ctx), core::Status::OK) << ctx.message;
 
     ID authkey_id{};
     std::vector<uint8_t> token_binding;
@@ -392,7 +392,7 @@ TEST_F(AuthMfaChallengeFlowTest, TokenAuthWithMfaChallengeSucceeds) {
 
     ConnectionConfig config;
     config.database_name = "mfa_token_test";
-    config.username = "SYSARCH";
+    config.username = "SysArch";
     config.mfa_code = mfa_code;
     config.auth_token_authkey_id.assign(authkey_id.bytes.begin(), authkey_id.bytes.end());
     config.auth_token_secret = token_secret;
@@ -434,7 +434,7 @@ TEST_F(AuthMfaChallengeFlowTest, TokenAuthWithMfaPolicyFailsWhenCodeMissing) {
         << ctx.message;
 
     CatalogManager::UserInfo sysarch{};
-    ASSERT_EQ(catalog_->getUserByName("SYSARCH", sysarch, &ctx), core::Status::OK) << ctx.message;
+    ASSERT_EQ(catalog_->getUserByName("SysArch", sysarch, &ctx), core::Status::OK) << ctx.message;
 
     ID authkey_id{};
     std::vector<uint8_t> token_binding;
@@ -453,7 +453,7 @@ TEST_F(AuthMfaChallengeFlowTest, TokenAuthWithMfaPolicyFailsWhenCodeMissing) {
 
     ConnectionConfig config;
     config.database_name = "mfa_token_missing_code_test";
-    config.username = "SYSARCH";
+    config.username = "SysArch";
     config.auth_token_authkey_id.assign(authkey_id.bytes.begin(), authkey_id.bytes.end());
     config.auth_token_secret = token_secret;
     config.auth_token_binding = token_binding;
@@ -504,8 +504,8 @@ TEST_F(AuthMfaChallengeFlowTest, ScramAuthWithMfaContinuationSucceeds) {
 
     ConnectionConfig config;
     config.database_name = "mfa_scram_test";
-    config.username = "SYSARCH";
-    config.password = "ScratchBirdBeta1!";
+    config.username = "SysArch";
+    config.password = "replaceme";
     config.mfa_code = mfa_code;
     config.preferred_auth_methods = {protocol::AuthMethod::SCRAM_SHA_256};
     config.auto_start_server = false;
@@ -558,8 +558,8 @@ TEST_F(AuthMfaChallengeFlowTest, PrivilegedQueryDeniedWhenStepUpExpired) {
 
     ConnectionConfig config;
     config.database_name = "mfa_step_up_test";
-    config.username = "SYSARCH";
-    config.password = "ScratchBirdBeta1!";
+    config.username = "SysArch";
+    config.password = "replaceme";
     config.mfa_code = mfa_code;
     config.preferred_auth_methods = {protocol::AuthMethod::SCRAM_SHA_256};
     config.auto_start_server = false;

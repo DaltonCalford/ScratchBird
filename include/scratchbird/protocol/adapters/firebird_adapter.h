@@ -10,9 +10,10 @@
 /**
  * Firebird Wire Protocol Adapter
  *
- * ScratchBird Network Layer - Phase 3.2
+ * Firebird-compatible front-door adapter.
  *
- * Implements Firebird wire protocol for client compatibility.
+ * Implements Firebird wire protocol for client compatibility while mapping
+ * Firebird session semantics onto ScratchBird execution/runtime services.
  * Supports Firebird 3.0+ protocol with SRP authentication.
  *
  * Reference: Firebird Wire Protocol Documentation

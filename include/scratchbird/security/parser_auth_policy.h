@@ -9,6 +9,13 @@
  */
 #pragma once
 
+/**
+ * Parser/auth-surface policy helpers.
+ *
+ * Maps listener/parser surfaces to the authentication methods and preference
+ * order they are expected to negotiate for compatibility.
+ */
+
 #include "scratchbird/protocol/wire_protocol.h"
 
 #include <algorithm>

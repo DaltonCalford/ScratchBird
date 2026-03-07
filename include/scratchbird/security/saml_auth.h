@@ -12,9 +12,10 @@
 /**
  * ScratchBird SAML 2.0 Authentication
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * SAML 2.0 provider authentication method.
  *
- * Implements SAML 2.0 Service Provider (SP) authentication with:
+ * Defines the provider-facing contract for SAML 2.0 Service Provider (SP)
+ * authentication with:
  * - HTTP POST binding
  * - HTTP Redirect binding
  * - Assertion validation

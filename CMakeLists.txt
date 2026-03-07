@@ -9,9 +9,15 @@ set(SCRATCHBIRD_INSTALL_FULL_RESOURCE_DIR
     "${CMAKE_INSTALL_FULL_DATADIR}/${SCRATCHBIRD_INSTALL_RESOURCE_SUBDIR}")
 message(STATUS "ScratchBird resource install dir: ${SCRATCHBIRD_INSTALL_FULL_RESOURCE_DIR}")
 
-# Project in planning phase
-message(STATUS "ScratchBird Database Engine - Planning Phase")
-message(STATUS "See ProjectPlan/ directory for specifications")
+# Build-topology note for source-only reviewers:
+# - scratchbird_core + scratchbird_sblr are the canonical engine runtime.
+# - Multi-protocol deployments use listener/parser-agent binaries to turn
+#   protocol SQL text into SBLR before it reaches the engine IPC path.
+# - Engine-only builds may still link compiler/parsers for local tools/tests.
+message(STATUS "ScratchBird Database Engine - active implementation tree")
+message(STATUS
+    "Runtime topology: core+sblr engine, listener/parser front-doors, optional in-process compiler surfaces"
+)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)

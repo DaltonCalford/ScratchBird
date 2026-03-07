@@ -10,9 +10,7 @@
 /**
  * Network Subsystem Implementation
  *
- * ScratchBird Network Layer - Phase 3.1
- *
- * Initialization and cleanup for the network subsystem.
+ * Network subsystem bootstrap and teardown helpers.
  */
 
 #include "scratchbird/network/network.h"

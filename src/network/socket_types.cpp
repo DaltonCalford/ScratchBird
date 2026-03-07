@@ -10,7 +10,7 @@
 /**
  * Socket Types Implementation
  *
- * ScratchBird Network Layer - Phase 3.1
+ * Cross-platform socket type/error helpers.
  */
 
 #include "scratchbird/network/socket_types.h"

@@ -10,7 +10,7 @@
 /**
  * ScratchBird TLS Context Implementation
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * TLS context and certificate-validation implementation.
  */
 
 #include "scratchbird/security/tls_config.h"

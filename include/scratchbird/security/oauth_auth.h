@@ -12,9 +12,9 @@
 /**
  * ScratchBird OAuth 2.0 / OpenID Connect Authentication
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * OAuth 2.0 / OpenID Connect provider authentication method.
  *
- * Implements OAuth 2.0 and OIDC authentication with:
+ * Defines the provider-facing contract for OAuth 2.0 and OIDC authentication:
  * - Authorization Code flow
  * - Client Credentials flow
  * - JWT token validation

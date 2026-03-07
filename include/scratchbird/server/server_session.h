@@ -12,10 +12,9 @@
 /**
  * ScratchBird Server Session Management
  *
- * Local Server Architecture - Phase 3
+ * Engine-side session state for connected clients.
  *
- * This header defines the server-side session management for client connections.
- * Each connected client has a ServerSession that manages:
+ * Each connected client has a `ServerSession` that manages:
  * - Authentication state
  * - Database connection context
  * - Transaction state

@@ -10,7 +10,7 @@
 /**
  * ScratchBird Authentication Manager Implementation
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * Authoritative inbound authentication coordinator implementation.
  */
 
 #include "scratchbird/security/auth_manager.h"

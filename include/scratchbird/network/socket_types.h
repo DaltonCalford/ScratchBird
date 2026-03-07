@@ -10,8 +10,6 @@
 /**
  * Socket Types and Constants
  *
- * ScratchBird Network Layer - Phase 3.1
- *
  * Common types, constants, and platform-specific definitions for the network layer.
  */
 

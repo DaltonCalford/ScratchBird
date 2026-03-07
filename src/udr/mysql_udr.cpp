@@ -4,6 +4,10 @@
  *
  * Licensed under the Initial Developer's Public License Version 1.0
  */
+/**
+ * @file mysql_udr.cpp
+ * @brief Outbound MySQL bridge connector implementation.
+ */
 
 #include "scratchbird/udr/mysql_udr.h"
 
@@ -23,6 +27,8 @@
 #include <fcntl.h>
 #include <openssl/ssl.h>
 #include <openssl/evp.h>
+// Remote MySQL compatibility still requires mysql_native_password/SHA1 flows
+// for some servers when ScratchBird acts as an outbound client.
 #include <openssl/sha.h>
 #include <openssl/rsa.h>
 #include <openssl/pem.h>

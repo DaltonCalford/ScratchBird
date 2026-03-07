@@ -7,12 +7,14 @@
 #pragma once
 
 /**
- * MySQL UDR Connector
- * 
- * Section D3: Remote Engine UDR Connectors - MySQL
- * 
- * Implements UDRConnector interface for MySQL databases using
- * the native MySQL wire protocol.
+ * MySQL UDR bridge connector
+ *
+ * Section D3: Engine tools and remote bridge connectors - MySQL
+ *
+ * Implements an outbound UDRConnector for MySQL-compatible servers using the
+ * native MySQL wire protocol. This connector is used by pass-through/bridge
+ * work, replication paths, and other engine-side tooling where ScratchBird
+ * acts as a MySQL client.
  */
 
 #include "scratchbird/udr/udr_connector.h"

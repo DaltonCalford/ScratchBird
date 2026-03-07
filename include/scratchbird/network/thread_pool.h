@@ -10,10 +10,7 @@
 /**
  * Thread Pool
  *
- * ScratchBird Network Layer - Phase 3.1
- *
- * High-performance thread pool for handling concurrent client connections.
- * Supports work stealing, priority queues, and graceful shutdown.
+ * Shared thread-pool interface for listener and network workloads.
  */
 
 #pragma once

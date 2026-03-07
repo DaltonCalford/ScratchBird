@@ -7,6 +7,10 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
+/**
+ * @file auth_plugin_manager.cpp
+ * @brief Authentication plugin admission and registry implementation.
+ */
 
 #include "scratchbird/security/auth_plugin_manager.h"
 

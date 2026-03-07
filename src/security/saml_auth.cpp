@@ -10,7 +10,7 @@
 /**
  * ScratchBird SAML 2.0 Authentication Implementation
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * SAML 2.0 provider authentication implementation.
  */
 
 #include "scratchbird/security/saml_auth.h"
@@ -26,8 +26,8 @@
 #include <openssl/rand.h>
 #include <openssl/sha.h>
 
-// Note: Full SAML implementation would require libxml2 and xmlsec
-// This provides the framework and stub implementations
+// Note: full provider-backed SAML support requires libxml2 and xmlsec. The
+// current file provides the admission/runtime framework and stubbed behavior.
 
 namespace scratchbird {
 namespace security {

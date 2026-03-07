@@ -10,7 +10,8 @@
 /**
  * ScratchBird Server - Main Entry Point
  *
- * Service controller runner (listener + parser pools).
+ * Service controller runner for the engine runtime plus the protocol listener
+ * and parser-agent process sets.
  */
 
 #include <iostream>

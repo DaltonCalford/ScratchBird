@@ -4,6 +4,10 @@
  *
  * Licensed under the Initial Developer's Public License Version 1.0
  */
+/**
+ * @file firebird_udr.cpp
+ * @brief Outbound Firebird bridge connector implementation.
+ */
 
 #include "scratchbird/udr/firebird_udr.h"
 

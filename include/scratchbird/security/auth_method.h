@@ -12,9 +12,9 @@
 /**
  * ScratchBird Authentication Method Interface
  *
- * Alpha 3 Phase 3.4: Security Suite
+ * Built-in and plugin-backed authentication method contract.
  *
- * Provides pluggable authentication methods:
+ * Provides the common interface used by the engine security layer for:
  * - SCRAM-SHA-256/512
  * - Certificate-based (TLS client certificates)
  * - Password (PBKDF2)

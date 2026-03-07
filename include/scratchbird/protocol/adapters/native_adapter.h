@@ -10,11 +10,10 @@
 /**
  * Native ScratchBird Protocol Adapter
  *
- * ScratchBird Network Layer - Phase 3.2
+ * ScratchBird-native front-door adapter.
  *
- * Wraps the native ScratchBird wire protocol for use with the
- * protocol adapter framework. The native protocol is optimized for
- * local IPC communication with rich type support.
+ * Wraps the native ScratchBird wire protocol for use with the protocol adapter
+ * framework. This is the direct/native surface rather than an emulation layer.
  */
 
 #pragma once

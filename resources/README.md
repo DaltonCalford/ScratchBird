@@ -6,12 +6,32 @@ This directory contains data files and configuration resources used by ScratchBi
 
 ```
 resources/
+├── bootstrap/       # Development/test auth bootstrap manifest
 ├── config/          # Configuration files
 ├── timezones/       # IANA timezone database
 ├── charsets/        # Character set definitions
 ├── collations/      # Collation (sorting) rules
 └── i18n/            # i18n resource version marker
 ```
+
+---
+
+## Bootstrap Auth (`bootstrap/`)
+
+### `default_auth_manifest.json`
+
+Installable development/test credential manifest for native ScratchBird and
+the emulated engine compatibility surfaces.
+
+Runtime use:
+- `src/core/database.cpp` loads the ScratchBird entries from this manifest
+  during database open/bootstrap.
+- Only entries marked with `"seed_on_database_bootstrap": true` are created
+  automatically at core database bootstrap time.
+- Additional engine defaults remain here for example/test build scripts and
+  compatibility harnesses.
+
+See also `docs/DEFAULT_TEST_ENGINE_CREDENTIALS.md`.
 
 ---
 

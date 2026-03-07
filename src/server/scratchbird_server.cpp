@@ -10,7 +10,7 @@
 /**
  * ScratchBird Server Implementation
  *
- * Local Server Architecture - Phase 3
+ * Engine runtime lifecycle, listener startup, and orderly shutdown handling.
  */
 
 #include "scratchbird/server/scratchbird_server.h"

@@ -10,7 +10,7 @@
 /**
  * ScratchBird OAuth 2.0 / OpenID Connect Authentication Implementation
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * OAuth 2.0 / OIDC provider authentication implementation.
  */
 
 #include "scratchbird/security/oauth_auth.h"

@@ -4,6 +4,10 @@
  *
  * Licensed under the Initial Developer's Public License Version 1.0
  */
+/**
+ * @file scratchbird_udr.cpp
+ * @brief Outbound ScratchBird-to-ScratchBird bridge connector implementation.
+ */
 
 #include "scratchbird/udr/scratchbird_udr.h"
 #include "scratchbird/protocol/sbwp_protocol.h"

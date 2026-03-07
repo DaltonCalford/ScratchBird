@@ -10,10 +10,11 @@
 /**
  * MySQL Wire Protocol Adapter
  *
- * ScratchBird Network Layer - Phase 3.2
+ * MySQL-compatible front-door adapter.
  *
- * Implements MySQL wire protocol for client compatibility.
- * Supports MySQL 5.7+ protocol with native password authentication.
+ * Implements MySQL wire protocol for client compatibility while mapping MySQL
+ * session semantics onto ScratchBird execution/runtime services.
+ * Supports MySQL 5.7+ protocol including legacy compatibility auth paths.
  *
  * Reference: https://dev.mysql.com/doc/dev/mysql-server/latest/PAGE_PROTOCOL.html
  */

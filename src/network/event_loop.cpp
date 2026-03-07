@@ -10,9 +10,7 @@
 /**
  * Event Loop Implementation
  *
- * ScratchBird Network Layer - Phase 3.1
- *
- * High-performance event loop using epoll (Linux) or kqueue (macOS/BSD).
+ * Shared event-loop backend for listener and network-side I/O.
  */
 
 #include "scratchbird/network/event_loop.h"

@@ -7,12 +7,14 @@
 #pragma once
 
 /**
- * PostgreSQL UDR Connector
- * 
- * Section D2: Remote Engine UDR Connectors - PostgreSQL
- * 
- * Implements UDRConnector interface for PostgreSQL databases using
- * the native PostgreSQL wire protocol (v3).
+ * PostgreSQL UDR bridge connector
+ *
+ * Section D2: Engine tools and remote bridge connectors - PostgreSQL
+ *
+ * Implements an outbound UDRConnector for PostgreSQL-compatible servers using
+ * the native PostgreSQL wire protocol (v3). This connector is used by
+ * pass-through/bridge work, replication paths, and other engine-side tooling
+ * where ScratchBird acts as a PostgreSQL client.
  */
 
 #include "scratchbird/udr/udr_connector.h"

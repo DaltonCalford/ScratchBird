@@ -9,6 +9,13 @@
  */
 #pragma once
 
+/**
+ * Authentication plugin admission and registry manager.
+ *
+ * Owns signed plugin discovery, admission policy, built-in method exposure,
+ * and runtime lookup for plugin-backed authentication methods.
+ */
+
 #include <cstdint>
 #include <memory>
 #include <mutex>

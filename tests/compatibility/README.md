@@ -218,7 +218,13 @@ ctest -R "CompatibilityExampleDbSetup|CompatibilityScratchBirdNative|Compatibili
 ./scripts/example_db_manager.sh static-down
 ```
 
-The bootstrap and post-bootstrap seed SQL are at:
+The example harness renders runtime bootstrap and post-bootstrap seed SQL from:
+
+- `resources/bootstrap/default_auth_manifest.json`
+- `scripts/emulation/render_example_seed_sql.py`
+- `scripts/example_db_manager.sh`
+
+Reference mirror SQL files remain at:
 
 - `tests/compatibility/scratchbird/example_sql/00_bootstrap_seed.sql`
 - `tests/compatibility/scratchbird/example_sql/01_post_bootstrap_seed.sql`

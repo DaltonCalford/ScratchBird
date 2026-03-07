@@ -23,6 +23,9 @@ EXAMPLE_BUNDLE_MARKER=""
 EXAMPLE_BUNDLE_LOG=""
 RUNTIME_ENV_FILE=""
 CONNECTIONS_JSON_FILE=""
+GENERATED_AUTH_ENV_FILE=""
+GENERATED_BOOTSTRAP_SQL_FILE=""
+GENERATED_POST_BOOTSTRAP_SQL_FILE=""
 
 BIND_HOST="127.0.0.1"
 NATIVE_PORT=""
@@ -40,31 +43,33 @@ DID_IMPORT_BUNDLE="0"
 BOOTSTRAP_USER="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_USER:-bootstrap_admin}"
 BOOTSTRAP_TOKEN="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_TOKEN:-SbExampleBootstrap_2026!}"
 
-ADMIN_USER="${SCRATCHBIRD_EXAMPLE_ADMIN_USER:-SysArch}"
-ADMIN_PASSWORD="${SCRATCHBIRD_EXAMPLE_ADMIN_PASSWORD:-replaceme}"
+ADMIN_USER=""
+ADMIN_PASSWORD=""
 
-PG_USER="${SCRATCHBIRD_EXAMPLE_PG_USER:-postgres}"
-PG_PASSWORD="${SCRATCHBIRD_EXAMPLE_PG_PASSWORD:-postgres}"
+PG_USER=""
+PG_PASSWORD=""
 PG_DB="${SCRATCHBIRD_EXAMPLE_PG_DB:-regression}"
 
-MYSQL_USER="${SCRATCHBIRD_EXAMPLE_MY_USER:-root}"
-MYSQL_PASSWORD="${SCRATCHBIRD_EXAMPLE_MY_PASSWORD:-root}"
+MYSQL_USER=""
+MYSQL_PASSWORD=""
 MYSQL_DB="${SCRATCHBIRD_EXAMPLE_MY_DB:-compat_mysql}"
 
-FB_USER="${SCRATCHBIRD_EXAMPLE_FB_USER:-SYSDBA}"
-FB_PASSWORD="${SCRATCHBIRD_EXAMPLE_FB_PASSWORD:-masterkey}"
+FB_USER=""
+FB_PASSWORD=""
 FB_DB="${SCRATCHBIRD_EXAMPLE_FB_DB:-compat_firebird}"
 
+COMPAT_CANONICAL_ADMIN_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_ADMIN_USER:-sys_admin}"
+COMPAT_CANONICAL_ADMIN_USERID="${SCRATCHBIRD_EXAMPLE_COMPAT_ADMIN_USERID:-u_sys_admin}"
 COMPAT_CANONICAL_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_CANONICAL_USER:-public_user}"
 COMPAT_CANONICAL_USERID="${SCRATCHBIRD_EXAMPLE_COMPAT_CANONICAL_USERID:-u_public_user}"
-COMPAT_NATIVE_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_NATIVE_USER:-sb_public}"
-COMPAT_NATIVE_PASSWORD="${SCRATCHBIRD_EXAMPLE_COMPAT_NATIVE_PASSWORD:-sb_public}"
-COMPAT_PG_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_PG_USER:-pg_public}"
-COMPAT_PG_PASSWORD="${SCRATCHBIRD_EXAMPLE_COMPAT_PG_PASSWORD:-pg_public}"
-COMPAT_MY_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_MY_USER:-my_public}"
-COMPAT_MY_PASSWORD="${SCRATCHBIRD_EXAMPLE_COMPAT_MY_PASSWORD:-my_public}"
-COMPAT_FB_USER="${SCRATCHBIRD_EXAMPLE_COMPAT_FB_USER:-fb_public}"
-COMPAT_FB_PASSWORD="${SCRATCHBIRD_EXAMPLE_COMPAT_FB_PASSWORD:-fb_public}"
+COMPAT_NATIVE_USER=""
+COMPAT_NATIVE_PASSWORD=""
+COMPAT_PG_USER=""
+COMPAT_PG_PASSWORD=""
+COMPAT_MY_USER=""
+COMPAT_MY_PASSWORD=""
+COMPAT_FB_USER=""
+COMPAT_FB_PASSWORD=""
 COMPAT_FB_EXTERNAL_ALIAS="${SCRATCHBIRD_EXAMPLE_COMPAT_FB_EXTERNAL_ALIAS:-public.user}"
 
 MAIN_DB="${SCRATCHBIRD_EXAMPLE_MAIN_DB:-main}"
@@ -75,8 +80,10 @@ AUTH_ALLOW_SUPERUSER_REMOTE="${SCRATCHBIRD_EXAMPLE_ALLOW_SUPERUSER_REMOTE:-true}
 RUN_AS_USER="${SCRATCHBIRD_EXAMPLE_RUN_AS_USER:-$(id -un)}"
 RUN_AS_GROUP="${SCRATCHBIRD_EXAMPLE_RUN_AS_GROUP:-$(id -gn)}"
 
-BOOTSTRAP_SQL="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL:-${REPO_ROOT}/tests/compatibility/scratchbird/example_sql/00_bootstrap_seed.sql}"
-POST_BOOTSTRAP_SQL="${SCRATCHBIRD_EXAMPLE_POST_BOOTSTRAP_SQL:-${REPO_ROOT}/tests/compatibility/scratchbird/example_sql/01_post_bootstrap_seed.sql}"
+AUTH_MANIFEST="${SCRATCHBIRD_EXAMPLE_AUTH_MANIFEST:-${REPO_ROOT}/resources/bootstrap/default_auth_manifest.json}"
+SEED_RENDERER="${SCRATCHBIRD_EXAMPLE_SEED_RENDERER:-${REPO_ROOT}/scripts/emulation/render_example_seed_sql.py}"
+BOOTSTRAP_SQL="${SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL:-}"
+POST_BOOTSTRAP_SQL="${SCRATCHBIRD_EXAMPLE_POST_BOOTSTRAP_SQL:-}"
 EXAMPLE_BUNDLE_ROOT="${SCRATCHBIRD_EXAMPLE_BUNDLE_ROOT:-${WORKSPACE_ROOT}/local_work/findings/example_script_bundle_2}"
 EXAMPLE_BUNDLE_IMPORTER="${SCRATCHBIRD_EXAMPLE_BUNDLE_IMPORTER:-${REPO_ROOT}/scripts/emulation/import_example_bundle.py}"
 
@@ -108,8 +115,10 @@ Environment:
   SCRATCHBIRD_EXAMPLE_STATIC_ROOT    Static root path (default $HOME/.scratchbird/static-example)
   SCRATCHBIRD_SB_SERVER              Override sb_server binary
   SCRATCHBIRD_SB_ISQL                Override sb_isql binary
-  SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL  Override bootstrap/seed SQL script path
-  SCRATCHBIRD_EXAMPLE_POST_BOOTSTRAP_SQL  Override post-bootstrap SQL script path
+  SCRATCHBIRD_EXAMPLE_AUTH_MANIFEST  Override auth manifest path (default resources/bootstrap/default_auth_manifest.json)
+  SCRATCHBIRD_EXAMPLE_SEED_RENDERER  Override manifest->SQL renderer script
+  SCRATCHBIRD_EXAMPLE_BOOTSTRAP_SQL  Override generated bootstrap SQL path
+  SCRATCHBIRD_EXAMPLE_POST_BOOTSTRAP_SQL  Override generated post-bootstrap SQL path
   SCRATCHBIRD_EXAMPLE_AUTH_METHODS   Auth methods list (default password)
   SCRATCHBIRD_EXAMPLE_AUTH_PASSWORD_HASH Password hash algorithm (default argon2id)
   SCRATCHBIRD_EXAMPLE_ALLOW_SUPERUSER_REMOTE Allow remote superuser auth (default true)
@@ -208,10 +217,59 @@ set_mode_paths() {
     EXAMPLE_BUNDLE_LOG="${LOG_DIR}/example_bundle_import.out"
     RUNTIME_ENV_FILE="${PROFILE_DIR}/runtime.env"
     CONNECTIONS_JSON_FILE="${PROFILE_DIR}/connections.json"
+    GENERATED_AUTH_ENV_FILE="${PROFILE_DIR}/auth_defaults.env"
+    GENERATED_BOOTSTRAP_SQL_FILE="${PROFILE_DIR}/bootstrap_seed.generated.sql"
+    GENERATED_POST_BOOTSTRAP_SQL_FILE="${PROFILE_DIR}/post_bootstrap_seed.generated.sql"
 }
 
 prepare_layout() {
     mkdir -p "${EXAMPLE_ROOT}" "${CONTROL_DIR}" "${LOG_DIR}" "${PROFILE_DIR}"
+}
+
+load_auth_defaults() {
+    [[ -f "${AUTH_MANIFEST}" ]] || die "auth manifest not found: ${AUTH_MANIFEST}"
+    [[ -f "${SEED_RENDERER}" ]] || die "seed renderer not found: ${SEED_RENDERER}"
+
+    local env_out=""
+    local cleanup_env="0"
+    local -a cmd=(
+        python3 "${SEED_RENDERER}"
+        --manifest "${AUTH_MANIFEST}"
+        --compat-admin-userid "${COMPAT_CANONICAL_ADMIN_USERID}"
+        --compat-admin-user "${COMPAT_CANONICAL_ADMIN_USER}"
+        --compat-canonical-userid "${COMPAT_CANONICAL_USERID}"
+        --compat-canonical-user "${COMPAT_CANONICAL_USER}"
+        --compat-fb-external-alias "${COMPAT_FB_EXTERNAL_ALIAS}"
+    )
+
+    if [[ -n "${PROFILE_DIR}" && -d "${PROFILE_DIR}" ]]; then
+        env_out="${GENERATED_AUTH_ENV_FILE}"
+    else
+        env_out="$(mktemp)"
+        cleanup_env="1"
+    fi
+    cmd+=(--env-out "${env_out}")
+
+    if [[ -n "${PROFILE_DIR}" && -d "${PROFILE_DIR}" ]]; then
+        cmd+=(
+            --bootstrap-sql-out "${GENERATED_BOOTSTRAP_SQL_FILE}"
+            --post-bootstrap-sql-out "${GENERATED_POST_BOOTSTRAP_SQL_FILE}"
+        )
+    fi
+
+    "${cmd[@]}" || die "failed to materialize auth defaults from ${AUTH_MANIFEST}"
+    # shellcheck disable=SC1090
+    source "${env_out}"
+    if [[ "${cleanup_env}" == "1" ]]; then
+        rm -f "${env_out}"
+    fi
+
+    if [[ -z "${BOOTSTRAP_SQL}" && -n "${PROFILE_DIR}" && -d "${PROFILE_DIR}" ]]; then
+        BOOTSTRAP_SQL="${GENERATED_BOOTSTRAP_SQL_FILE}"
+    fi
+    if [[ -z "${POST_BOOTSTRAP_SQL}" && -n "${PROFILE_DIR}" && -d "${PROFILE_DIR}" ]]; then
+        POST_BOOTSTRAP_SQL="${GENERATED_POST_BOOTSTRAP_SQL_FILE}"
+    fi
 }
 
 write_token() {
@@ -722,6 +780,7 @@ dynamic_setup() {
     stop_server
     rm -rf "${EXAMPLE_ROOT}"
     prepare_layout
+    load_auth_defaults
     write_token
     write_config
     start_server
@@ -746,6 +805,7 @@ dynamic_teardown() {
 
 dynamic_status() {
     set_mode_paths dynamic
+    load_auth_defaults
     print_status
 }
 
@@ -753,6 +813,7 @@ static_up() {
     set_mode_paths static
     resolve_binaries
     prepare_layout
+    load_auth_defaults
     write_token
     write_config
 
@@ -794,6 +855,7 @@ static_refresh() {
     stop_server
     rm -rf "${EXAMPLE_ROOT}"
     prepare_layout
+    load_auth_defaults
     write_token
     write_config
     start_server
@@ -811,6 +873,7 @@ static_refresh() {
 
 static_status() {
     set_mode_paths static
+    load_auth_defaults
     print_status
 }
 

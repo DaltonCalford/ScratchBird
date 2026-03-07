@@ -9,6 +9,14 @@
  */
 #pragma once
 
+/**
+ * Language UDR runtime
+ *
+ * Tracks language-oriented UDR modules that the engine can invoke for
+ * tool-like behavior, including dynamic SQL compilation/rendering endpoints
+ * used by in-engine procedural SQL flows.
+ */
+
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/uuidv7.h"

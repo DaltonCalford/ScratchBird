@@ -10,7 +10,7 @@
 /**
  * ScratchBird Server Session Implementation
  *
- * Local Server Architecture - Phase 3
+ * Engine-side session state and request execution glue.
  */
 
 #include "scratchbird/server/server_session.h"

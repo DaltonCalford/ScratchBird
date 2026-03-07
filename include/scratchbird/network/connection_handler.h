@@ -10,9 +10,7 @@
 /**
  * Connection Handler
  *
- * ScratchBird Network Layer - Phase 3.1
- *
- * Manages client connection lifecycle and routes to protocol handlers.
+ * Connection lifecycle and dispatch surface for network/listener code.
  */
 
 #pragma once

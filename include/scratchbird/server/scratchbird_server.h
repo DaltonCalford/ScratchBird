@@ -12,7 +12,7 @@
 /**
  * ScratchBird Server
  *
- * Local Server Architecture - Phase 3
+ * Engine runtime/server lifecycle surface.
  *
  * This header defines the main server class that manages:
  * - Database lifecycle

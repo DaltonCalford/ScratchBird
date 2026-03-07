@@ -12,9 +12,9 @@
 /**
  * ScratchBird Multi-Factor Authentication (MFA)
  *
- * Alpha 3 Phase 3.5: Security Suite - Enterprise
+ * Multi-factor authentication framework for inbound auth policy chains.
  *
- * Implements MFA framework with:
+ * Provides MFA method definitions and support code for:
  * - TOTP (RFC 6238)
  * - HOTP (RFC 4226)
  * - Backup codes

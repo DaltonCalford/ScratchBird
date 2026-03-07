@@ -51,6 +51,7 @@
 #include <fstream>
 #include <filesystem>
 #include <cerrno>
+#include <exception>
 #include <string>
 #include <vector>
 #include <iomanip>
@@ -491,9 +492,16 @@ namespace scratchbird::core
         }
     }
     namespace {
-    constexpr uint32_t kSysarchScramIterations = 4096;
-    constexpr const char* kSysarchUser = "SYSARCH";
-    constexpr const char* kSysarchPassword = "ScratchBirdBeta1!";
+    constexpr uint32_t kBootstrapScramIterations = 4096;
+    constexpr const char* kBootstrapAuthManifestRelativePath = "bootstrap/default_auth_manifest.json";
+
+    struct BootstrapUserSpec
+    {
+        std::string username;
+        std::string password;
+        bool is_superuser = false;
+        bool seed_on_database_bootstrap = false;
+    };
 
     std::string toHexLower(const unsigned char* data, size_t len)
     {
@@ -520,46 +528,188 @@ namespace scratchbird::core
                                           std::string& out)
     {
         using json = nlohmann::json;
-        json payload = json::object();
-        payload["bcrypt"] = core::PasswordHash::hashPassword(password);
-        payload["md5"] = computePgMd5StoredHash(username, password);
-
-        json scram = json::object();
-        auto add_scram = [&](security::ScramAlgorithm algo, const char* key) -> core::Status
+        try
         {
-            std::vector<uint8_t> salt;
-            std::vector<uint8_t> stored_key;
-            std::vector<uint8_t> server_key;
-            auto status = security::generateScramCredentials(
-                password, algo, kSysarchScramIterations, salt, stored_key, server_key);
+            json payload = json::object();
+            payload["bcrypt"] = core::PasswordHash::hashPassword(password);
+            payload["md5"] = computePgMd5StoredHash(username, password);
+
+            json scram = json::object();
+            auto add_scram = [&](security::ScramAlgorithm algo, const char* key) -> core::Status
+            {
+                std::vector<uint8_t> salt;
+                std::vector<uint8_t> stored_key;
+                std::vector<uint8_t> server_key;
+                auto status = security::generateScramCredentials(
+                    password, algo, kBootstrapScramIterations, salt, stored_key, server_key);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+
+                json entry = json::object();
+                entry["iterations"] = kBootstrapScramIterations;
+                entry["salt"] = security::base64Encode(salt);
+                entry["stored_key"] = security::base64Encode(stored_key);
+                entry["server_key"] = security::base64Encode(server_key);
+                scram[key] = entry;
+                return core::Status::OK;
+            };
+
+            auto status = add_scram(security::ScramAlgorithm::SHA_256, "sha256");
+            if (status != core::Status::OK)
+            {
+                return status;
+            }
+            status = add_scram(security::ScramAlgorithm::SHA_512, "sha512");
             if (status != core::Status::OK)
             {
                 return status;
             }
 
-            json entry = json::object();
-            entry["iterations"] = kSysarchScramIterations;
-            entry["salt"] = security::base64Encode(salt);
-            entry["stored_key"] = security::base64Encode(stored_key);
-            entry["server_key"] = security::base64Encode(server_key);
-            scram[key] = entry;
+            payload["scram"] = scram;
+            out = payload.dump();
             return core::Status::OK;
-        };
-
-        auto status = add_scram(security::ScramAlgorithm::SHA_256, "sha256");
-        if (status != core::Status::OK)
-        {
-            return status;
         }
-        status = add_scram(security::ScramAlgorithm::SHA_512, "sha512");
-        if (status != core::Status::OK)
+        catch (const std::exception&)
         {
-            return status;
+            out.clear();
+            return core::Status::INTERNAL_ERROR;
+        }
+    }
+
+    core::Status loadBootstrapAuthManifest(std::vector<BootstrapUserSpec>& users_out,
+                                           ErrorContext* ctx)
+    {
+        using json = nlohmann::json;
+        users_out.clear();
+
+        const std::filesystem::path manifest_path =
+            resolveResourceEntry(std::filesystem::path(kBootstrapAuthManifestRelativePath));
+        if (manifest_path.empty())
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::FILE_NOT_FOUND,
+                              "Bootstrap auth manifest not found in runtime resources");
+            return Status::FILE_NOT_FOUND;
         }
 
-        payload["scram"] = scram;
-        out = payload.dump();
-        return core::Status::OK;
+        std::ifstream manifest_stream(manifest_path);
+        if (!manifest_stream.is_open())
+        {
+            if (ctx)
+            {
+                const std::string message =
+                    std::string("Failed to open bootstrap auth manifest: ") +
+                    manifest_path.string();
+                ctx->set(Status::IO_ERROR,
+                         message.c_str(),
+                         __FILE__, __LINE__, __func__);
+            }
+            return Status::IO_ERROR;
+        }
+
+        try
+        {
+            const json doc = json::parse(manifest_stream);
+            if (!doc.is_object())
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Bootstrap auth manifest must be a JSON object");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const int format_version = doc.value("format_version", 0);
+            if (format_version != 1)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Unsupported bootstrap auth manifest format_version");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            auto defaults_it = doc.find("defaults");
+            if (defaults_it == doc.end() || !defaults_it->is_object())
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Bootstrap auth manifest missing defaults object");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            auto scratchbird_it = defaults_it->find("scratchbird");
+            if (scratchbird_it == defaults_it->end() || !scratchbird_it->is_array())
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::INVALID_ARGUMENT,
+                                  "Bootstrap auth manifest missing defaults.scratchbird array");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            for (const auto& entry : *scratchbird_it)
+            {
+                if (!entry.is_object())
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::INVALID_ARGUMENT,
+                                      "Bootstrap auth manifest entries must be JSON objects");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                auto username_it = entry.find("username");
+                auto password_it = entry.find("password");
+                auto superuser_it = entry.find("is_superuser");
+                auto seed_it = entry.find("seed_on_database_bootstrap");
+                if (username_it == entry.end() || !username_it->is_string() ||
+                    password_it == entry.end() || !password_it->is_string() ||
+                    superuser_it == entry.end() || !superuser_it->is_boolean() ||
+                    seed_it == entry.end() || !seed_it->is_boolean())
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::INVALID_ARGUMENT,
+                                      "Bootstrap auth manifest scratchbird entries require username, password, is_superuser, and seed_on_database_bootstrap");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                BootstrapUserSpec spec;
+                spec.username = username_it->get<std::string>();
+                spec.password = password_it->get<std::string>();
+                spec.is_superuser = superuser_it->get<bool>();
+                spec.seed_on_database_bootstrap = seed_it->get<bool>();
+                if (spec.username.empty() || spec.password.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::INVALID_ARGUMENT,
+                                      "Bootstrap auth manifest entries may not use empty username or password");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                users_out.push_back(std::move(spec));
+            }
+        }
+        catch (const json::exception& ex)
+        {
+            if (ctx)
+            {
+                const std::string message =
+                    std::string("Invalid bootstrap auth manifest JSON: ") + ex.what();
+                ctx->set(Status::INVALID_ARGUMENT,
+                         message.c_str(),
+                         __FILE__, __LINE__, __func__);
+            }
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (users_out.empty())
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "Bootstrap auth manifest contains no ScratchBird credential entries");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        return Status::OK;
     }
 
     bool isZeroId(const ID& id)
@@ -602,23 +752,68 @@ namespace scratchbird::core
         audit_logger->logEvent(event, &audit_ctx);
     }
 
-    core::Status ensureSysarchUser(CatalogManager* catalog, ErrorContext* ctx)
+    core::Status ensureBootstrapUsersFromManifest(CatalogManager* catalog, ErrorContext* ctx)
     {
-        std::string password_hash;
-        auto status = buildPasswordHashPayload(kSysarchUser, kSysarchPassword, password_hash);
+        if (catalog == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<BootstrapUserSpec> users;
+        auto status = loadBootstrapAuthManifest(users, ctx);
         if (status != Status::OK)
         {
-            if (ctx)
-            {
-                ctx->set(status, "Failed to build SYSARCH password hash",
-                         __FILE__, __LINE__, __func__);
-            }
             return status;
         }
 
-        ID user_id;
-        status = catalog->ensureUserExists(kSysarchUser, password_hash, ID(), true, user_id, ctx);
-        return status;
+        bool seeded_any = false;
+        for (const auto& user : users)
+        {
+            if (!user.seed_on_database_bootstrap)
+            {
+                continue;
+            }
+
+            std::string password_hash;
+            status = buildPasswordHashPayload(user.username, user.password, password_hash);
+            if (status != Status::OK)
+            {
+                if (ctx)
+                {
+                    const std::string message =
+                        std::string("Failed to build bootstrap password hash for user ") +
+                        user.username;
+                    ctx->set(status,
+                             message.c_str(),
+                             __FILE__, __LINE__, __func__);
+                }
+                return status;
+            }
+
+            ID user_id;
+            status = catalog->ensureUserExists(user.username,
+                                               password_hash,
+                                               ID(),
+                                               user.is_superuser,
+                                               user_id,
+                                               ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            seeded_any = true;
+        }
+
+        if (!seeded_any)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "Bootstrap auth manifest does not mark any ScratchBird users for database bootstrap");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        return Status::OK;
     }
     } // namespace
 
@@ -2143,7 +2338,7 @@ namespace scratchbird::core
             close();
             return status;
         }
-        status = ensureSysarchUser(catalog_manager_.get(), ctx);
+        status = ensureBootstrapUsersFromManifest(catalog_manager_.get(), ctx);
         if (status != Status::OK)
         {
             close();

@@ -1,5 +1,13 @@
 ## ScratchBird Source CMake Configuration
 ## Core library and executable wiring
+##
+## Source-only topology summary:
+## - scratchbird_core + scratchbird_sblr are the canonical execution path.
+## - sb_listener_* + sb_parser_* are the deployed multi-protocol front-door.
+## - scratchbird_server and sb_server retain optional parser/compiler linkage
+##   for engine-local tools, tests, and single-process entry points.
+## - scratchbird_pool is an auxiliary pooling layer, distinct from
+##   scratchbird::core::ConnectionPool in the core runtime.
 
 # Core library: scratchbird_core
 file(GLOB_RECURSE SCRATCHBIRD_CORE_SOURCES CONFIGURE_DEPENDS
@@ -108,6 +116,10 @@ if(MINGW)
     target_compile_options(scratchbird_core PRIVATE -Wa,-mbig-obj)
 endif()
 
+message(STATUS
+    "Core library: scratchbird_core (storage, catalog, transactions, filespaces, bootstrap resources)"
+)
+
 # Note: scratchbird_optimizer_runtime dependency will be added after optimizer library is defined
 
 # Parser library: scratchbird_parser
@@ -135,6 +147,10 @@ set_target_properties(scratchbird_parser PROPERTIES
     CXX_STANDARD_REQUIRED YES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE ON
+)
+
+message(STATUS
+    "Parser library: scratchbird_parser (SQL front-end parsers shared by parser agents and engine-local builds)"
 )
 
 # SBLR runtime library: scratchbird_sblr
@@ -198,6 +214,10 @@ if(MINGW)
     target_compile_options(scratchbird_sblr PRIVATE -Wa,-mbig-obj)
 endif()
 
+message(STATUS
+    "SBLR library: scratchbird_sblr (canonical engine execution/runtime representation)"
+)
+
 
 # Compiler library: scratchbird_compiler (parsers + semantic + bytecode)
 if(SCRATCHBIRD_WITH_COMPILER)
@@ -220,6 +240,12 @@ if(SCRATCHBIRD_WITH_COMPILER)
         CXX_EXTENSIONS NO
         POSITION_INDEPENDENT_CODE ON
     )
+
+    message(STATUS
+        "Compiler library: scratchbird_compiler (SQL/AST to SBLR bridge for parser agents and engine-local builds)"
+    )
+else()
+    message(STATUS "Compiler library: scratchbird_compiler disabled")
 endif()
 
 add_library(scratchbird_link_group INTERFACE)
@@ -335,7 +361,7 @@ endif()
 target_link_libraries(scratchbird_core PUBLIC scratchbird_optimizer_runtime nlohmann_json::nlohmann_json)
 
 # ==============================================================================
-# Security Library: scratchbird_security (Alpha 3 Phase 3.4)
+# Security Library: scratchbird_security
 # ==============================================================================
 # SSL/TLS, authentication methods, HBA configuration, audit logging
 # Components: TLS context, SCRAM-SHA-256/512, certificate auth, rate limiting
@@ -390,9 +416,9 @@ endif()
 target_link_libraries(scratchbird_core PUBLIC scratchbird_security)
 
 # ==============================================================================
-# Network Library: scratchbird_network (Alpha 3 Phase 3.1)
+# Network Library: scratchbird_network
 # ==============================================================================
-# High-performance network infrastructure for multi-protocol server
+# Shared network infrastructure for listeners, adapters, and socket runtimes
 # Components: socket abstraction, event loop (epoll/kqueue), thread pool, connection management
 
 file(GLOB SCRATCHBIRD_NETWORK_SOURCES
@@ -430,11 +456,9 @@ set_target_properties(scratchbird_network PROPERTIES
 message(STATUS "Network library: scratchbird_network (socket, event loop, thread pool, connections)")
 
 # ==============================================================================
-# Server Library: scratchbird_server (Local Server Architecture - Phase 1 & 3)
+# Server Library: scratchbird_server
 # ==============================================================================
-# IPC infrastructure and server components for client-server communication
-# Phase 1: Unix domain sockets (Linux/macOS), Named pipes (Windows), TCP localhost
-# Phase 3: Session management, client handling, query execution
+# Engine IPC infrastructure, session management, and lifecycle/runtime control
 
 file(GLOB SCRATCHBIRD_SERVER_SOURCES
     server/ipc_*.cpp
@@ -478,12 +502,14 @@ set_target_properties(scratchbird_server PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-message(STATUS "Server library: scratchbird_server (IPC + session management)")
+message(STATUS
+    "Server library: scratchbird_server (engine session manager + IPC execution bridge)"
+)
 
 # ==============================================================================
-# Protocol Library: scratchbird_protocol (Local Server Architecture - Phase 2)
+# Protocol Library: scratchbird_protocol
 # ==============================================================================
-# Wire protocol for client-server message encoding/decoding
+# Wire codecs, native protocol helpers, and protocol-surface client utilities
 
 file(GLOB_RECURSE SCRATCHBIRD_PROTOCOL_SOURCES
     protocol/*.cpp
@@ -514,7 +540,9 @@ set_target_properties(scratchbird_protocol PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-message(STATUS "Protocol library: scratchbird_protocol (wire protocol)")
+message(STATUS
+    "Protocol library: scratchbird_protocol (wire codecs and client helpers for listeners, parser agents, and local clients)"
+)
 
 # Add server dependencies (after protocol is defined to resolve circular dependency)
 target_link_libraries(scratchbird_server PUBLIC
@@ -522,6 +550,9 @@ target_link_libraries(scratchbird_server PUBLIC
     scratchbird_protocol
     scratchbird_sblr
 )
+# scratchbird_server keeps an optional compiler/parser link for engine-local
+# entry points and tests. In the deployed multi-protocol topology, SQL text is
+# parsed by sb_parser_* agents and the engine IPC path consumes SBLR payloads.
 if(SCRATCHBIRD_WITH_COMPILER)
     target_link_libraries(scratchbird_server PUBLIC scratchbird_compiler scratchbird_parser)
 else()
@@ -529,7 +560,7 @@ else()
 endif()
 
 # ==============================================================================
-# Pool Library: scratchbird_pool (Alpha 3 Phase 3.6)
+# Pool Library: scratchbird_pool
 # ==============================================================================
 # Connection pooling with statement and result caching
 # Components: PoolManager, DatabasePool, PooledConnection, StatementCache, ResultCache
@@ -557,12 +588,14 @@ set_target_properties(scratchbird_pool PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-message(STATUS "Pool library: scratchbird_pool (connection pooling, statement/result caching)")
+message(STATUS
+    "Pool library: scratchbird_pool (auxiliary/scaffold pooling layer, not the authoritative engine connection path)"
+)
 
 # ==============================================================================
-# FDW Library: scratchbird_fdw (Alpha 3 Phase 3.7)
+# FDW Library: scratchbird_fdw
 # ==============================================================================
-# Foreign Data Wrapper for connecting to remote databases
+# Foreign-data-wrapper style access paths for remote databases
 # Components: PostgreSQL, MySQL, Firebird adapters, connection pooling
 
 option(SCRATCHBIRD_ENABLE_FDW "Build FDW adapters library" ON)
@@ -627,10 +660,14 @@ if(SCRATCHBIRD_ENABLE_FDW)
 endif()
 
 # ==============================================================================
-# UDR Library: scratchbird_udr (Section D: Remote Engine UDR Connectors)
+# UDR Library: scratchbird_udr (Section D: Engine Tools + Bridge UDRs)
 # ==============================================================================
-# User Defined Routine connectors for remote database access
-# Components: Connection pool, connector framework, PostgreSQL/MySQL/Firebird/SB clients
+# User Defined Routine runtime/tooling layer.
+# Components:
+# - language/runtime helpers used by in-engine tools and EXECUTE STATEMENT-style
+#   SQL->SBLR compilation flows
+# - outbound bridge connectors for PostgreSQL/MySQL/Firebird/ScratchBird
+# - cluster/server-to-server bridge support built on the same connector model
 
 if(SCRATCHBIRD_ENABLE_UDR)
     file(GLOB SCRATCHBIRD_UDR_SOURCES
@@ -662,7 +699,9 @@ if(SCRATCHBIRD_ENABLE_UDR)
         POSITION_INDEPENDENT_CODE ON
     )
 
-    message(STATUS "UDR library: scratchbird_udr (Remote Engine UDR Connectors)")
+    message(STATUS
+        "UDR library: scratchbird_udr (language/runtime tools, SQL->SBLR helpers, and outbound bridge connectors)"
+    )
 endif()
 if(TARGET scratchbird_udr)
     if(TARGET scratchbird_fdw)
@@ -718,7 +757,7 @@ else()
 endif()
 
 # ==============================================================================
-# Testing Library: scratchbird_testing (Alpha 3 Phase 3.12)
+# Testing Library: scratchbird_testing
 # ==============================================================================
 # Comprehensive testing framework for protocol compliance, authentication,
 # load/stress testing, security testing, and performance benchmarks
@@ -763,9 +802,9 @@ else()
 endif()
 
 # ==============================================================================
-# sb_server Executable (Local Server Architecture - Phase 3)
+# sb_server Executable
 # ==============================================================================
-# Database server daemon
+# Database server service controller entry point
 
 add_executable(sb_server server/sb_server_main.cpp)
 
@@ -791,7 +830,9 @@ set_target_properties(sb_server PROPERTIES
     CXX_EXTENSIONS NO
 )
 
-message(STATUS "Server executable: sb_server")
+message(STATUS
+    "Server executable: sb_server (service controller with optional engine-local compiler surfaces)"
+)
 
 # ==============================================================================
 # sb_manager Executable (Manager Proxy Front-Door Scaffold)
@@ -864,7 +905,9 @@ set_target_properties(sb_listener_fb PROPERTIES
     CXX_EXTENSIONS NO
 )
 
-message(STATUS "Listener executables: sb_listener_native/pg/mysql/fb")
+message(STATUS
+    "Listener executables: sb_listener_native/pg/mysql/fb (protocol front-doors that hand off to parser agents)"
+)
 
 # ==============================================================================
 # Parser Agent Binaries (Protocol Parsers)
@@ -918,10 +961,12 @@ set_target_properties(sb_parser_fb PROPERTIES
     CXX_EXTENSIONS NO
 )
 
-message(STATUS "Parser agent executables: sb_parser_native/pg/mysql/fb")
+message(STATUS
+    "Parser agent executables: sb_parser_native/pg/mysql/fb (protocol-specific SQL compilers producing SBLR for the engine)"
+)
 
 # ==============================================================================
-# Main executable (placeholder)
+# Main executable (developer CLI utility)
 add_executable(scratchbird main.cpp)
 
 target_link_libraries(scratchbird PRIVATE scratchbird_link_group)

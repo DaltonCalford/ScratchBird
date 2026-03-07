@@ -10,9 +10,7 @@
 /**
  * ScratchBird SCRAM-SHA-256/512 Authentication Implementation
  *
- * Alpha 3 Phase 3.4: Security Suite
- *
- * Implements RFC 5802 (SCRAM) and RFC 7677 (SCRAM-SHA-256)
+ * Authoritative inbound SCRAM implementation for ScratchBird.
  */
 
 #include "scratchbird/security/scram_auth.h"
