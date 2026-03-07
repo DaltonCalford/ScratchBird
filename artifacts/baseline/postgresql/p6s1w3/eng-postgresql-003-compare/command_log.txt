@@ -1,13 +1,13 @@
 task_id=ENG-POSTGRESQL-003
 status=blocked
-timestamp_utc=2026-02-24T19:59:45Z
+timestamp_utc=2026-03-05T14:53:29Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 20
+timeout_s: 160
 rc: 0
 timed_out: False
-duration_s: 0.018
+duration_s: 0.034
 cmd: test -d /home/dcalford/CliWork/postgresql && git -C /home/dcalford/CliWork/postgresql rev-parse --short HEAD
 --- output begin ---
 c67bef3f325
@@ -15,13 +15,20 @@ c67bef3f325
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/ScratchBird
-timeout_s: 120
-rc: 2
+timeout_s: 960
+rc: 1
 timed_out: False
-duration_s: 0.034
+duration_s: 0.116
 cmd: bash tests/compatibility/postgresql/scripts/run_postgresql_ctest.sh
 --- output begin ---
-Error: generic sb_isql fallback is not valid for PostgreSQL emulation compare runs.
-The generic client speaks native protocol only and cannot execute PostgreSQL wire-protocol parity.
-Provide sb_pg_isql via SCRATCHBIRD_PG_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
+FAIL: PostgreSQL compatibility endpoint is not reachable with current client/auth settings.
+Attempted profiles:
+  1) host=localhost port=5432 user=postgres db=main
+  2) host=localhost port=5432 user=dcalford db=main
+Set SCRATCHBIRD_PG_PASSWORD (or PGPASSWORD), and optionally SCRATCHBIRD_PG_USER/DB/HOST.
+For auto-provisioning, set SCRATCHBIRD_PG_ADMIN_USER with SCRATCHBIRD_PG_ADMIN_PASSWORD or SCRATCHBIRD_PG_ADMIN_PASSWORD_FILE.
+Ensure SCRATCHBIRD_PG_HOST/SCRATCHBIRD_PG_PORT point to sb_listener_pg (not native postgres).
+Connection failed: password authentication failed for user "postgres"
+Connection failed: password authentication failed for user "postgres"
+Connection failed: password authentication failed for user "dcalford"
 --- output end ---

@@ -1,10 +1,10 @@
 task_id=ENG-FIREBIRD-003
-status=blocked
-timestamp_utc=2026-02-24T19:59:45Z
+status=done
+timestamp_utc=2026-03-05T14:53:35Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 20
+timeout_s: 160
 rc: 0
 timed_out: False
 duration_s: 0.033
@@ -15,13 +15,11 @@ cmd: test -d /home/dcalford/CliWork/firebird && git -C /home/dcalford/CliWork/fi
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/ScratchBird
-timeout_s: 120
-rc: 2
+timeout_s: 960
+rc: 0
 timed_out: False
-duration_s: 0.034
+duration_s: 5.378
 cmd: bash tests/compatibility/firebird/scripts/run_firebird_ctest.sh
 --- output begin ---
-Error: generic sb_isql fallback is not valid for Firebird emulation compare runs.
-The generic client speaks native protocol only and cannot execute Firebird wire-protocol parity.
-Provide sb_fb_isql via SCRATCHBIRD_FB_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
+Firebird compatibility tests passed. Logs: /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260305_095329
 --- output end ---

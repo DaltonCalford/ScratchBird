@@ -1,10 +1,10 @@
-Last updated: 2026-03-05
+Last updated: 2026-03-06
 
 # FB-EMU-041 Firebird-QA Smoke Report
 
 - Mode: `execute`
 - Overall result: `pass`
-- Command timeout: `1200s`
+- Command timeout: `7200s`
 
 ## Command Results
 

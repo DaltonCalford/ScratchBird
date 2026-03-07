@@ -1,14 +1,14 @@
 # Compatibility CTest List Summary
 
-Generated: 2026-03-06T22:18:08Z
+Generated: 2026-03-07T00:46:46Z
 Expanded ratio: `0.35`
 Expanded max per suite: `400`
 
 | Engine | Curated | Expanded | Full | Runtime Model | Est. Curated | Est. Expanded | Est. Full |
 |--------|--------:|---------:|-----:|---------------|-------------:|--------------:|----------:|
-| firebird | 12 | 721 | 2257 | latest_run (20260306_123822, 3.40s/test) | 41s | 40m 53s | 2h 8m 0s |
-| mysql | 4 | 2995 | 8842 | latest_run (20260306_123508, 0.05s/test) | 0s | 2m 39s | 7m 51s |
-| postgresql | 5 | 88 | 238 | latest_run (20260306_110723, 3.72s/test) | 19s | 5m 27s | 14m 45s |
+| firebird | 12 | 721 | 2257 | latest_run (20260306_194116, 0.43s/test) | 5s | 5m 8s | 16m 4s |
+| mysql | 4 | 2995 | 8842 | latest_run (20260306_193828, 9.82s/test) | 39s | 8h 10m 24s | 24h 7m 47s |
+| postgresql | 5 | 88 | 238 | latest_run (20260306_193744, 3.79s/test) | 19s | 5m 33s | 15m 1s |
 
 Notes:
 - Runtime estimates are rough planning values, not hard guarantees.
