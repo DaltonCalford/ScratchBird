@@ -53,6 +53,31 @@ StatementEvictionPolicy mapStatementPolicy(EvictionPolicy policy) {
     }
 }
 
+ResultEvictionPolicy mapResultPolicy(EvictionPolicy policy) {
+    switch (policy) {
+        case EvictionPolicy::LFU:
+            return ResultEvictionPolicy::LFU;
+        case EvictionPolicy::FIFO:
+            return ResultEvictionPolicy::LRU;
+        case EvictionPolicy::TTL:
+            return ResultEvictionPolicy::TTL;
+        case EvictionPolicy::LRU:
+        default:
+            return ResultEvictionPolicy::LRU;
+    }
+}
+
+core::Status auxiliaryTransportNotImplemented(const char* action,
+                                              core::ErrorContext* ctx) {
+    const std::string message =
+        std::string("scratchbird_pool ") + action +
+        " is not implemented; use scratchbird::core::ConnectionPool for "
+        "engine-local pooling or scratchbird::udr::ConnectionPool for "
+        "outbound bridge pooling";
+    SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED, message.c_str());
+    return core::Status::NOT_IMPLEMENTED;
+}
+
 } // namespace
 
 // =============================================================================
@@ -118,7 +143,8 @@ PooledConnection::PooledConnection()
     , created_at_(std::chrono::steady_clock::now())
     , last_used_(created_at_)
     , idle_since_(created_at_)
-    , last_validated_(created_at_) {
+    , last_validated_(created_at_)
+    , impl_(std::make_unique<Impl>()) {
 }
 
 PooledConnection::~PooledConnection() {
@@ -147,7 +173,8 @@ PooledConnection::PooledConnection(PooledConnection&& other) noexcept
     , stmt_cache_(other.stmt_cache_)
     , session_stmt_cache_(std::move(other.session_stmt_cache_))
     , tags_(std::move(other.tags_))
-    , affinity_(std::move(other.affinity_)) {
+    , affinity_(std::move(other.affinity_))
+    , impl_(std::move(other.impl_)) {
     other.pool_ = nullptr;
     other.stmt_cache_ = nullptr;
     other.session_stmt_cache_.reset();
@@ -179,6 +206,7 @@ PooledConnection& PooledConnection::operator=(PooledConnection&& other) noexcept
         session_stmt_cache_ = std::move(other.session_stmt_cache_);
         tags_ = std::move(other.tags_);
         affinity_ = std::move(other.affinity_);
+        impl_ = std::move(other.impl_);
 
         other.pool_ = nullptr;
         other.stmt_cache_ = nullptr;
@@ -196,13 +224,13 @@ void PooledConnection::clearSessionStatementCache() {
 core::Status PooledConnection::connect(const ConnectionConfig& config, core::ErrorContext* ctx) {
     database_ = config.database;
     user_ = config.user;
-
-    // TODO: Implement actual connection logic
-    // For now, simulate successful connection
-    state_ = ConnectionState::IDLE;
-    last_validated_ = std::chrono::steady_clock::now();
-
-    return core::Status::OK;
+    if (impl_) {
+        impl_->connection_string = config.host + ":" + std::to_string(config.port) +
+                                   "/" + config.database;
+        impl_->connected = false;
+    }
+    state_ = ConnectionState::CREATED;
+    return auxiliaryTransportNotImplemented("connect()", ctx);
 }
 
 core::Status PooledConnection::execute(const std::string& sql, core::ErrorContext* ctx) {
@@ -211,11 +239,7 @@ core::Status PooledConnection::execute(const std::string& sql, core::ErrorContex
         return core::Status::CONNECTION_FAILURE;
     }
 
-    // TODO: Implement actual SQL execution
-    ++queries_executed_;
-    last_used_ = std::chrono::steady_clock::now();
-
-    return core::Status::OK;
+    return auxiliaryTransportNotImplemented("execute()", ctx);
 }
 
 core::Status PooledConnection::executeWithParams(const std::string& sql,
@@ -226,11 +250,7 @@ core::Status PooledConnection::executeWithParams(const std::string& sql,
         return core::Status::CONNECTION_FAILURE;
     }
 
-    // TODO: Implement actual parameterized SQL execution
-    ++queries_executed_;
-    last_used_ = std::chrono::steady_clock::now();
-
-    return core::Status::OK;
+    return auxiliaryTransportNotImplemented("executeWithParams()", ctx);
 }
 
 void PooledConnection::close() {
@@ -240,7 +260,10 @@ void PooledConnection::close() {
 
     state_ = ConnectionState::CLOSING;
 
-    // TODO: Close actual connection
+    if (impl_) {
+        impl_->connected = false;
+        impl_->socket_fd = -1;
+    }
 
     state_ = ConnectionState::CLOSED;
 }
@@ -254,17 +277,20 @@ void PooledConnection::markNeedsReset() {
 }
 
 bool PooledConnection::isValid() const {
+    if (!impl_ || !impl_->connected) {
+        return false;
+    }
     return state_ != ConnectionState::CLOSED &&
            state_ != ConnectionState::CLOSING &&
            !is_broken_;
 }
 
 bool PooledConnection::validate(const std::string& query, uint32_t timeout_ms) {
+    (void)query;
+    (void)timeout_ms;
     if (!isValid()) {
         return false;
     }
-
-    // TODO: Execute validation query with timeout
 
     last_validated_ = std::chrono::steady_clock::now();
     return true;
@@ -283,8 +309,6 @@ void PooledConnection::fullReset() {
 
     // Full reset includes clearing tags and state
     tags_.clear();
-
-    // TODO: Reset session variables, search path, etc.
 }
 
 void PooledConnection::setTag(const std::string& key, const std::string& value) {
@@ -356,6 +380,14 @@ DatabasePool::DatabasePool(const std::string& database_name,
         config.max_statements_per_connection = effective_config_.statement_cache_size;
         config.eviction_policy = mapStatementPolicy(effective_config_.statement_cache_policy);
         stmt_cache_ = std::make_unique<StatementCache>(database_name_, config);
+    }
+    if (effective_config_.result_cache_enabled) {
+        ResultCacheConfig config;
+        config.max_memory_bytes = effective_config_.result_cache_size;
+        config.max_result_size = effective_config_.result_cache_max_entry;
+        config.default_ttl = std::chrono::seconds(effective_config_.result_cache_ttl_sec);
+        config.eviction_policy = mapResultPolicy(effective_config_.result_cache_policy);
+        result_cache_ = std::make_unique<ResultCache>(database_name_, config);
     }
 }
 
@@ -559,12 +591,14 @@ core::Status DatabasePool::prewarm(uint32_t count, core::ErrorContext* ctx) {
     std::lock_guard<std::mutex> lock(mutex_);
 
     uint32_t created = 0;
+    core::Status first_failure = core::Status::OK;
     for (uint32_t i = 0; i < count && all_connections_.size() < effective_config_.max_connections; ++i) {
         auto conn = std::make_unique<PooledConnection>();
         ConnectionConfig config;
         config.database = database_name_;
 
-        if (conn->connect(config, ctx) == core::Status::OK) {
+        auto status = conn->connect(config, ctx);
+        if (status == core::Status::OK) {
             conn->setPool(this);
             conn->setState(ConnectionState::IDLE);
             conn->updateIdleSince();
@@ -577,7 +611,13 @@ core::Status DatabasePool::prewarm(uint32_t count, core::ErrorContext* ctx) {
             stats_.idle_connections++;
             stats_.creates++;
             created++;
+        } else if (first_failure == core::Status::OK) {
+            first_failure = status;
         }
+    }
+
+    if (created == 0 && count > 0 && first_failure != core::Status::OK) {
+        return first_failure;
     }
 
     if (created < count && ctx) {
@@ -665,12 +705,17 @@ void DatabasePool::clearStatementCache() {
 }
 
 void DatabasePool::clearResultCache() {
-    // TODO: Implement result cache clearing
+    if (result_cache_) {
+        result_cache_->clear();
+    }
 }
 
 void DatabasePool::invalidateCacheForTable(const std::string& table_name) {
     if (stmt_cache_) {
         stmt_cache_->invalidate_by_table(table_name);
+    }
+    if (result_cache_) {
+        result_cache_->invalidate_by_table(table_name);
     }
 }
 

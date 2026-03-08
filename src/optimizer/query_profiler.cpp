@@ -17,11 +17,115 @@
 // November 25, 2025
 
 #include "scratchbird/optimizer/query_profiler.h"
-#include <sstream>
-#include <iomanip>
 #include <algorithm>
+#include <cctype>
+#include <iomanip>
+#include <sstream>
 
 namespace scratchbird::optimizer {
+namespace {
+
+auto normalizeSqlFingerprint(std::string_view sql) -> std::string {
+    std::string normalized;
+    normalized.reserve(sql.size());
+
+    bool in_single_quote = false;
+    bool in_double_quote = false;
+    bool previous_was_space = false;
+    bool previous_was_literal = false;
+
+    for (size_t i = 0; i < sql.size(); ++i) {
+        const char ch = sql[i];
+
+        if (in_single_quote) {
+            if (ch == '\'' && (i == 0 || sql[i - 1] != '\\')) {
+                in_single_quote = false;
+            }
+            if (!previous_was_literal) {
+                normalized.push_back('?');
+                previous_was_literal = true;
+            }
+            continue;
+        }
+
+        if (in_double_quote) {
+            if (ch == '"' && (i == 0 || sql[i - 1] != '\\')) {
+                in_double_quote = false;
+            }
+            if (!previous_was_literal) {
+                normalized.push_back('?');
+                previous_was_literal = true;
+            }
+            continue;
+        }
+
+        if (ch == '\'') {
+            in_single_quote = true;
+            if (!previous_was_literal) {
+                normalized.push_back('?');
+                previous_was_literal = true;
+            }
+            continue;
+        }
+
+        if (ch == '"') {
+            in_double_quote = true;
+            if (!previous_was_literal) {
+                normalized.push_back('?');
+                previous_was_literal = true;
+            }
+            continue;
+        }
+
+        if (std::isdigit(static_cast<unsigned char>(ch))) {
+            if (!previous_was_literal) {
+                normalized.push_back('?');
+                previous_was_literal = true;
+            }
+            continue;
+        }
+
+        if (std::isspace(static_cast<unsigned char>(ch))) {
+            if (!previous_was_space && !normalized.empty()) {
+                normalized.push_back(' ');
+            }
+            previous_was_space = true;
+            previous_was_literal = false;
+            continue;
+        }
+
+        previous_was_space = false;
+        previous_was_literal = false;
+        normalized.push_back(
+            static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+
+    while (!normalized.empty() && normalized.back() == ' ') {
+        normalized.pop_back();
+    }
+    return normalized;
+}
+
+auto medianExecutionTimeUs(const std::deque<QueryHistoryEntry>& history) -> uint64_t {
+    if (history.empty()) {
+        return 0;
+    }
+
+    std::vector<uint64_t> samples;
+    samples.reserve(history.size());
+    for (const auto& entry : history) {
+        samples.push_back(entry.execution_time_us);
+    }
+
+    std::sort(samples.begin(), samples.end());
+    const size_t mid = samples.size() / 2;
+    if ((samples.size() % 2) == 0) {
+        return (samples[mid - 1] + samples[mid]) / 2;
+    }
+    return samples[mid];
+}
+
+} // namespace
 
 // ============================================================================
 // ProfileNode Implementation
@@ -279,6 +383,18 @@ void QueryProfile::addSubquery(const std::string& subquery_alias, std::shared_pt
     subqueries_[subquery_alias] = std::move(subprofile);
 }
 
+void QueryProfile::setFingerprint(std::string fingerprint) {
+    fingerprint_ = std::move(fingerprint);
+}
+
+void QueryProfile::setProtectedWorkload(bool value) {
+    protected_workload_ = value;
+}
+
+void QueryProfile::setRegressionSignal(const RegressionSignal& signal) {
+    regression_signal_ = signal;
+}
+
 uint64_t QueryProfile::sumStats(std::shared_ptr<ProfileNode> node,
                                  std::function<uint64_t(const OperatorStats&)> getter) const {
     if (!node) return 0;
@@ -316,11 +432,26 @@ std::string QueryProfile::toString(bool verbose) const {
         }
         ss << "Query: " << sql << "\n";
     }
+    if (!fingerprint_.empty()) {
+        ss << "Fingerprint: " << fingerprint_ << "\n";
+    }
+    if (protected_workload_) {
+        ss << "Protected Workload: yes\n";
+    }
 
     // Timing summary
     ss << "Planning Time: " << std::fixed << std::setprecision(3)
        << (planning_time_us_ / 1000.0) << " ms\n";
     ss << "Execution Time: " << (execution_time_us_ / 1000.0) << " ms\n";
+    if (regression_signal_.available) {
+        ss << "Regression Check: "
+           << (regression_signal_.regression_detected ? "regression" : "ok")
+           << " (ratio=" << std::fixed << std::setprecision(3)
+           << regression_signal_.execution_time_ratio
+           << ", threshold=" << regression_signal_.threshold_ratio
+           << ", baseline_ms=" << (regression_signal_.baseline_execution_time_us / 1000.0)
+           << ")\n";
+    }
 
     // Plan tree
     if (root_) {
@@ -363,11 +494,25 @@ std::string QueryProfile::toJson() const {
         }
         ss << "\"";
     }
+    if (!fingerprint_.empty()) {
+        ss << ",\"fingerprint\":\"" << fingerprint_ << "\"";
+    }
+    ss << ",\"protected_workload\":" << (protected_workload_ ? "true" : "false");
 
     // Timing
     ss << ",\"planning_time_ms\":" << std::fixed << std::setprecision(3)
        << (planning_time_us_ / 1000.0);
     ss << ",\"execution_time_ms\":" << (execution_time_us_ / 1000.0);
+    if (regression_signal_.available) {
+        ss << ",\"regression\":{";
+        ss << "\"detected\":" << (regression_signal_.regression_detected ? "true" : "false");
+        ss << ",\"ratio\":" << regression_signal_.execution_time_ratio;
+        ss << ",\"threshold\":" << regression_signal_.threshold_ratio;
+        ss << ",\"baseline_execution_time_us\":" << regression_signal_.baseline_execution_time_us;
+        ss << ",\"current_execution_time_us\":" << regression_signal_.current_execution_time_us;
+        ss << ",\"baseline_sample_count\":" << regression_signal_.baseline_sample_count;
+        ss << "}";
+    }
 
     // Plan tree
     if (root_) {
@@ -433,6 +578,7 @@ std::shared_ptr<QueryProfile> QueryProfiler::beginProfile(const std::string& sql
 
     auto profile = std::make_shared<QueryProfile>();
     profile->setQuery(sql);
+    profile->setFingerprint(fingerprintQuery(sql));
     return profile;
 }
 
@@ -443,6 +589,35 @@ void QueryProfiler::endProfile(std::shared_ptr<QueryProfile> profile) {
     total_execution_time_us_ += profile->executionTime();
 
     std::lock_guard<std::mutex> lock(mutex_);
+    const std::string fingerprint = profile->fingerprint().empty()
+        ? normalizeSqlFingerprint(profile->query())
+        : profile->fingerprint();
+    const bool protected_workload =
+        protected_workloads_.find(fingerprint) != protected_workloads_.end();
+    const RegressionSignal regression =
+        evaluateRegressionLocked(fingerprint, profile->executionTime());
+
+    profile->setFingerprint(fingerprint);
+    profile->setProtectedWorkload(protected_workload);
+    profile->setRegressionSignal(regression);
+
+    auto& history = history_by_fingerprint_[fingerprint];
+    history.push_back(QueryHistoryEntry{
+        ++history_sequence_,
+        profile->query(),
+        fingerprint,
+        profile->planningTime(),
+        profile->executionTime(),
+        profile->totalRows(),
+        profile->totalPagesRead(),
+        profile->totalMemoryUsed(),
+        protected_workload,
+        regression,
+    });
+    while (history.size() > MAX_HISTORY_PER_FINGERPRINT) {
+        history.pop_front();
+    }
+
     recent_profiles_.push_back(std::move(profile));
 
     // Trim if too many
@@ -476,12 +651,120 @@ std::shared_ptr<QueryProfile> QueryProfiler::findProfile(const std::string& sql_
 void QueryProfiler::clearProfiles() {
     std::lock_guard<std::mutex> lock(mutex_);
     recent_profiles_.clear();
+    history_by_fingerprint_.clear();
+    history_sequence_ = 0;
 }
 
 uint64_t QueryProfiler::avgExecutionTimeUs() const {
     uint64_t total = total_queries_.load();
     if (total == 0) return 0;
     return total_execution_time_us_.load() / total;
+}
+
+void QueryProfiler::setRegressionPolicy(const RegressionPolicy& policy) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    regression_policy_ = policy;
+}
+
+RegressionPolicy QueryProfiler::regressionPolicy() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return regression_policy_;
+}
+
+std::string QueryProfiler::fingerprintQuery(std::string_view sql) const {
+    return normalizeSqlFingerprint(sql);
+}
+
+void QueryProfiler::markProtectedWorkload(std::string_view sql) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    protected_workloads_.insert(normalizeSqlFingerprint(sql));
+}
+
+void QueryProfiler::unmarkProtectedWorkload(std::string_view sql) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    protected_workloads_.erase(normalizeSqlFingerprint(sql));
+}
+
+void QueryProfiler::clearProtectedWorkloads() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    protected_workloads_.clear();
+}
+
+bool QueryProfiler::isProtectedWorkload(std::string_view sql) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return protected_workloads_.find(normalizeSqlFingerprint(sql)) !=
+           protected_workloads_.end();
+}
+
+std::vector<QueryHistoryEntry> QueryProfiler::getHistoryForFingerprint(
+    std::string_view fingerprint, size_t count) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = history_by_fingerprint_.find(std::string(fingerprint));
+    if (it == history_by_fingerprint_.end()) {
+        return {};
+    }
+
+    const size_t n = std::min(count, it->second.size());
+    return std::vector<QueryHistoryEntry>(it->second.end() - n, it->second.end());
+}
+
+std::vector<QueryHistoryEntry> QueryProfiler::getHistoryForQuery(
+    std::string_view sql, size_t count) const {
+    return getHistoryForFingerprint(normalizeSqlFingerprint(sql), count);
+}
+
+std::optional<RegressionSignal> QueryProfiler::latestRegressionForFingerprint(
+    std::string_view fingerprint) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = history_by_fingerprint_.find(std::string(fingerprint));
+    if (it == history_by_fingerprint_.end() || it->second.empty()) {
+        return std::nullopt;
+    }
+    return it->second.back().regression;
+}
+
+std::optional<RegressionSignal> QueryProfiler::latestRegressionForQuery(
+    std::string_view sql) const {
+    return latestRegressionForFingerprint(normalizeSqlFingerprint(sql));
+}
+
+RegressionSignal QueryProfiler::evaluateRegressionLocked(
+    const std::string& fingerprint,
+    uint64_t execution_time_us) const {
+    RegressionSignal signal;
+
+    const bool protected_workload =
+        protected_workloads_.find(fingerprint) != protected_workloads_.end();
+    signal.protected_workload = protected_workload;
+    signal.current_execution_time_us = execution_time_us;
+    signal.threshold_ratio = regression_policy_.max_execution_time_ratio;
+
+    if (!regression_policy_.enabled || !protected_workload) {
+        return signal;
+    }
+
+    auto it = history_by_fingerprint_.find(fingerprint);
+    if (it == history_by_fingerprint_.end() ||
+        it->second.size() < regression_policy_.min_baseline_samples) {
+        return signal;
+    }
+
+    signal.available = true;
+    signal.baseline_sample_count = it->second.size();
+    signal.baseline_execution_time_us = medianExecutionTimeUs(it->second);
+    if (signal.baseline_execution_time_us == 0) {
+        signal.execution_time_ratio = execution_time_us == 0 ? 1.0 : 0.0;
+    } else {
+        signal.execution_time_ratio =
+            static_cast<double>(execution_time_us) /
+            static_cast<double>(signal.baseline_execution_time_us);
+    }
+    signal.regression_detected =
+        signal.execution_time_ratio > regression_policy_.max_execution_time_ratio;
+    signal.severity = signal.regression_detected ? RegressionSeverity::MAJOR
+                                                : RegressionSeverity::NONE;
+    return signal;
 }
 
 // ============================================================================

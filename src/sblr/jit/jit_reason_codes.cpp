@@ -31,6 +31,8 @@ namespace scratchbird::sblr::jit
                 return "COMPILE_MODE_EXPLICIT_ONLY";
             case JitReasonCode::HOTNESS_BELOW_THRESHOLD:
                 return "HOTNESS_BELOW_THRESHOLD";
+            case JitReasonCode::COMPILE_ALREADY_QUEUED:
+                return "COMPILE_ALREADY_QUEUED";
             case JitReasonCode::QUEUE_SATURATED:
                 return "QUEUE_SATURATED";
             case JitReasonCode::ARTIFACT_NOT_FOUND:
@@ -51,8 +53,14 @@ namespace scratchbird::sblr::jit
                 return "ARTIFACT_KEY_MISMATCH_SECURITY_POLICY";
             case JitReasonCode::ARTIFACT_KEY_MISMATCH_SBLR_HASH:
                 return "ARTIFACT_KEY_MISMATCH_SBLR_HASH";
+            case JitReasonCode::ARTIFACT_BLOB_LOAD_FAILED:
+                return "ARTIFACT_BLOB_LOAD_FAILED";
             case JitReasonCode::ARTIFACT_HASH_INVALID:
                 return "ARTIFACT_HASH_INVALID";
+            case JitReasonCode::ARTIFACT_HASH_MISMATCH:
+                return "ARTIFACT_HASH_MISMATCH";
+            case JitReasonCode::ARTIFACT_PAYLOAD_INVALID:
+                return "ARTIFACT_PAYLOAD_INVALID";
             case JitReasonCode::ARTIFACT_SIGNATURE_INVALID:
                 return "ARTIFACT_SIGNATURE_INVALID";
             case JitReasonCode::ARTIFACT_RETIRED:

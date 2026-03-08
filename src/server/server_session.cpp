@@ -21,6 +21,8 @@
 #include "scratchbird/core/auth_provider.h"
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/sqlstate.h"
+#include "scratchbird/core/workload_governance.h"
 #include "scratchbird/security/scram_auth.h"
 #include "scratchbird/security/mfa_auth.h"
 #include "scratchbird/security/parser_auth_policy.h"
@@ -3237,6 +3239,36 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
                 ? "Invalid bytecode"
                 : validate_ctx.message;
             return sendError(err, "0A000", ctx);
+        }
+    }
+
+    core::WorkloadGovernance::AdmissionLease admission_lease;
+    if (database_ != nullptr && database_->workload_governance() != nullptr) {
+        core::WorkloadGovernance::QueryDescriptor descriptor;
+        descriptor.connection = conn_ctx_.get();
+        descriptor.sql = sql;
+        if (conn_ctx_) {
+            descriptor.schema_name = conn_ctx_->current_schema();
+            conn_ctx_->getSessionVariable("APPLICATION_NAME", descriptor.client_app);
+            conn_ctx_->getSessionVariable("RESOURCE_TAG", descriptor.resource_tag);
+        }
+
+        core::ErrorContext governance_ctx;
+        auto decision =
+            database_->workload_governance()->acquire(descriptor, admission_lease, &governance_ctx);
+        if (!decision.admitted) {
+            stats_.queries_failed++;
+            if (conn_ctx_) {
+                conn_ctx_->endStatementTrackingFailure(
+                    static_cast<uint32_t>(decision.status),
+                    core::statusToSQLState(decision.status));
+            }
+            const std::string message = decision.detail.empty()
+                ? (governance_ctx.message.empty()
+                    ? "Workload governance rejected the request"
+                    : governance_ctx.message)
+                : decision.detail;
+            return sendError(message, core::statusToSQLState(decision.status), ctx);
         }
     }
 

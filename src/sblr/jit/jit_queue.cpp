@@ -33,6 +33,10 @@ namespace scratchbird::sblr::jit
         capacity_ = capacity;
         while (queue_.size() > capacity_)
         {
+            if (!queue_.back().dedupe_key.empty())
+            {
+                pending_keys_.erase(queue_.back().dedupe_key);
+            }
             queue_.pop_back();
         }
     }
@@ -41,12 +45,22 @@ namespace scratchbird::sblr::jit
                               JitReasonCode& reason_out) -> bool
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!entry.dedupe_key.empty() &&
+            pending_keys_.find(entry.dedupe_key) != pending_keys_.end())
+        {
+            reason_out = JitReasonCode::COMPILE_ALREADY_QUEUED;
+            return false;
+        }
         if (queue_.size() >= capacity_)
         {
             reason_out = JitReasonCode::QUEUE_SATURATED;
             return false;
         }
         queue_.push_back(entry);
+        if (!entry.dedupe_key.empty())
+        {
+            pending_keys_.insert(entry.dedupe_key);
+        }
         reason_out = JitReasonCode::NONE;
         return true;
     }
@@ -59,8 +73,11 @@ namespace scratchbird::sblr::jit
             return false;
         }
         out = queue_.front();
+        if (!out.dedupe_key.empty())
+        {
+            pending_keys_.erase(out.dedupe_key);
+        }
         queue_.pop_front();
         return true;
     }
 }
-

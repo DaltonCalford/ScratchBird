@@ -15,6 +15,8 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/jit/jit_artifact_store.h"
+#include "scratchbird/sblr/jit/jit_compiler.h"
+#include "scratchbird/sblr/jit/jit_llvm_toolchain.h"
 #include "scratchbird/sblr/jit/jit_runtime.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
@@ -63,6 +65,11 @@ namespace scratchbird::sblr::jit::test
 
         void SetUp() override
         {
+            if (!jit::llvmToolchainAvailable())
+            {
+                GTEST_SKIP() << "LLVM JIT provider not available in this build";
+            }
+
             db_path_ = scratchbird::testing::uniqueTestDbPath("test_sblr_jit", ".db");
             std::filesystem::remove(db_path_);
 
@@ -122,11 +129,20 @@ namespace scratchbird::sblr::jit::test
             binding.object_uuid = core::generateUuidV7();
             binding.module_id = core::generateUuidV7();
             binding.plan_id = core::generateUuidV7();
+            const std::string feature_key =
+                std::string("jit_select_") + binding.module_id.toString().substr(0, 8);
+            uint64_t module_checksum = 0;
+            for (size_t i = 0; i < sizeof(module_checksum); ++i)
+            {
+                module_checksum =
+                    (module_checksum << 8) |
+                    static_cast<uint64_t>(binding.module_id.bytes[i]);
+            }
 
             core::CatalogManager::SblrModuleCatalogInfo module{};
             module.module_id = binding.module_id;
-            module.sblr_checksum = 0xAABBCCDD00112233ULL;
-            module.feature_key = "jit_select";
+            module.sblr_checksum = module_checksum;
+            module.feature_key = feature_key;
             module.result_shape_id = "shape_scalar";
             module.payload_schema_id = "schema_v3";
             module.container_blob_id = core::generateUuidV7();
@@ -145,7 +161,7 @@ namespace scratchbird::sblr::jit::test
             norm.module_id = binding.module_id;
             norm.statement_id = core::generateUuidV7();
             norm.statement_order = 0;
-            norm.feature_key = "jit_select";
+            norm.feature_key = feature_key;
             norm.ast_family = "dml_select";
             norm.normalization_rule_set_id = 1;
             norm.clause_presence_mask_lo = 1;
@@ -190,20 +206,21 @@ namespace scratchbird::sblr::jit::test
 
         auto makeCompatibilityKey(const core::ID& object_uuid,
                                   const std::vector<uint8_t>& canonical_sblr,
-                                  const std::string& target = "x86_64-unknown-linux-gnu",
+                                  const std::string& target = "",
                                   const std::string& abi = "sb_abi_v1",
                                   uint64_t security_policy_version = 1)
             -> jit::ArtifactCompatibilityKey
         {
+            const jit::LlvmToolchainInfo& llvm_info = jit::llvmToolchainInfo();
             jit::ArtifactCompatibilityKey key{};
             key.object_uuid = object_uuid;
             key.canonical_sblr_hash =
                 jit::JitArtifactStore::canonicalSblrHashHex(canonical_sblr);
-            key.target_triple = target;
+            key.target_triple = jit::normalizeLlvmTargetTriple(target);
             key.cpu_feature_profile = "generic";
             key.native_abi_version = abi;
-            key.compiler_identity = "scratchbird_jit";
-            key.compiler_version = "1.0.0";
+            key.compiler_identity = llvm_info.provider_identity;
+            key.compiler_version = llvm_info.provider_version;
             key.optimization_profile = "O2";
             key.security_policy_version = security_policy_version;
             return key;
@@ -229,6 +246,41 @@ namespace scratchbird::sblr::jit::test
             return request;
         }
 
+        auto compileNativeArtifactBlob(const jit::ArtifactCompatibilityKey& key,
+                                       const std::vector<uint8_t>& canonical_sblr)
+            -> std::vector<uint8_t>
+        {
+            jit::JitCompiler compiler(jit::createLlvmBackend());
+            jit::JitCompileRequest request{};
+            request.key = key;
+            request.canonical_sblr = canonical_sblr;
+            const jit::JitCompileResult result = compiler.compile(request);
+            EXPECT_TRUE(result.success) << result.diagnostic;
+            EXPECT_FALSE(result.native_blob.empty());
+            return result.native_blob;
+        }
+
+        auto makeReadyArtifact(const ModulePlanBinding& binding,
+                               const std::vector<uint8_t>& canonical_sblr,
+                               const jit::ArtifactCompatibilityKey& key,
+                               core::CatalogManager::SblrArtifactState state =
+                                   core::CatalogManager::SblrArtifactState::READY)
+            -> jit::JitArtifact
+        {
+            jit::JitArtifact artifact{};
+            artifact.artifact_id = core::generateUuidV7();
+            artifact.module_id = binding.module_id;
+            artifact.plan_id = binding.plan_id;
+            artifact.binary_blob_id = core::generateUuidV7();
+            artifact.compatibility = key;
+            artifact.native_blob = compileNativeArtifactBlob(key, canonical_sblr);
+            artifact.has_native_hash = true;
+            artifact.native_hash_sha256 =
+                jit::JitArtifactStore::canonicalSblrHashHex(artifact.native_blob);
+            artifact.state = state;
+            return artifact;
+        }
+
         auto executeSqlWithJit(const std::string& sql,
                                const ModulePlanBinding& binding,
                                jit::JitCompileMode compile_mode,
@@ -237,21 +289,22 @@ namespace scratchbird::sblr::jit::test
         {
             auto bytecode = compileSql(sql);
             EXPECT_FALSE(bytecode.empty());
+            const jit::LlvmToolchainInfo& llvm_info = jit::llvmToolchainInfo();
 
             sblr::Executor executor(db_.get());
             executor.setConnectionContext(conn_ctx_.get());
             executor.setCurrentSchema(default_schema_id_);
             executor.setJitObjectBinding(binding.object_uuid, binding.module_id, binding.plan_id);
-            executor.setJitCompatibilityProfile("x86_64-unknown-linux-gnu",
+            executor.setJitCompatibilityProfile(llvm_info.host_target_triple,
                                                 "generic",
                                                 "sb_abi_v1",
-                                                "scratchbird_jit",
-                                                "1.0.0",
+                                                llvm_info.provider_identity,
+                                                llvm_info.provider_version,
                                                 "O2",
                                                 1);
             executor.setJitPolicy(compile_mode, execution_policy);
             executor.setJitHints(hints);
-            executor.setJitBackendLlvmMockEnabled(true);
+            executor.setJitBackendLlvmEnabled(true);
             return executor.execute(bytecode);
         }
 

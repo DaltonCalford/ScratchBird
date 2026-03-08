@@ -29,9 +29,11 @@ namespace scratchbird::core::review_manifest
 
     auto layeringNotes() -> const char*
     {
-        return "scratchbird_pool is an auxiliary/scaffold pooling layer and is "
-               "distinct from scratchbird::core::ConnectionPool; "
-               "scratchbird_udr contains language/tool modules, dynamic "
+        return "scratchbird_pool is an experimental auxiliary pool/cache layer "
+               "used for cache primitives and test-side scaffolding. It is "
+               "distinct from scratchbird::core::ConnectionPool and is not an "
+               "installed product runtime surface; scratchbird_udr contains "
+               "language/tool modules, dynamic "
                "SQL->SBLR helper endpoints, and outbound remote-engine or "
                "cluster bridge connectors separate from authoritative "
                "engine-auth enforcement in scratchbird_security.";
@@ -39,9 +41,11 @@ namespace scratchbird::core::review_manifest
 
     auto maturityNotes() -> const char*
     {
-        return "The LLVM JIT backend file currently contains a deliberate mock "
-               "implementation that preserves backend wiring while the full "
-               "LLVM driver is completed.";
+        return "The LLVM JIT lane now includes real toolchain detection, "
+               "provider-linked LLVM artifact emission, persisted payload "
+               "verification, queue dedupe, fallback tiering, and artifact-"
+               "backed runtime selection. Direct native callable lowering "
+               "remains a later implementation step.";
     }
 
     auto emulationNotes() -> const char*

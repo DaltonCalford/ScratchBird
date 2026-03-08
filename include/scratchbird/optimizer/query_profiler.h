@@ -24,10 +24,14 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include <string>
+#include <string_view>
 #include <vector>
 #include <memory>
 #include <chrono>
+#include <deque>
+#include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <atomic>
 #include <mutex>
 #include <functional>
@@ -36,6 +40,43 @@ namespace scratchbird::optimizer {
 
 // Forward declarations
 class PlanNode;
+
+enum class RegressionSeverity {
+    NONE,
+    MINOR,
+    MAJOR
+};
+
+struct RegressionPolicy {
+    bool enabled = false;
+    double max_execution_time_ratio = 1.25;
+    size_t min_baseline_samples = 3;
+};
+
+struct RegressionSignal {
+    bool available = false;
+    bool protected_workload = false;
+    bool regression_detected = false;
+    RegressionSeverity severity = RegressionSeverity::NONE;
+    double execution_time_ratio = 1.0;
+    double threshold_ratio = 1.0;
+    uint64_t baseline_execution_time_us = 0;
+    uint64_t current_execution_time_us = 0;
+    size_t baseline_sample_count = 0;
+};
+
+struct QueryHistoryEntry {
+    uint64_t sequence = 0;
+    std::string query;
+    std::string fingerprint;
+    uint64_t planning_time_us = 0;
+    uint64_t execution_time_us = 0;
+    uint64_t total_rows = 0;
+    uint64_t total_pages_read = 0;
+    uint64_t peak_memory_bytes = 0;
+    bool protected_workload = false;
+    RegressionSignal regression;
+};
 
 // Operator execution statistics
 struct OperatorStats {
@@ -159,11 +200,19 @@ public:
     // Add subquery stats
     void addSubquery(const std::string& subquery_alias, std::shared_ptr<QueryProfile> subprofile);
 
+    // Metadata
+    void setFingerprint(std::string fingerprint);
+    void setProtectedWorkload(bool value);
+    void setRegressionSignal(const RegressionSignal& signal);
+
     // Get stats
     const std::string& query() const { return query_; }
+    const std::string& fingerprint() const { return fingerprint_; }
     uint64_t planningTime() const { return planning_time_us_; }
     uint64_t executionTime() const { return execution_time_us_; }
     std::shared_ptr<ProfileNode> root() const { return root_; }
+    bool protectedWorkload() const { return protected_workload_; }
+    const RegressionSignal& regressionSignal() const { return regression_signal_; }
 
     // Calculate totals
     uint64_t totalRows() const;
@@ -182,6 +231,9 @@ private:
     uint64_t planning_time_us_ = 0;
     uint64_t execution_time_us_ = 0;
     std::shared_ptr<ProfileNode> root_;
+    std::string fingerprint_;
+    bool protected_workload_ = false;
+    RegressionSignal regression_signal_;
 
     struct TriggerStats {
         std::string name;
@@ -221,6 +273,23 @@ public:
     // Get profile by query text (for debugging)
     std::shared_ptr<QueryProfile> findProfile(const std::string& sql_substring) const;
 
+    // Fingerprinted query history and regression detection
+    void setRegressionPolicy(const RegressionPolicy& policy);
+    RegressionPolicy regressionPolicy() const;
+    std::string fingerprintQuery(std::string_view sql) const;
+    void markProtectedWorkload(std::string_view sql);
+    void unmarkProtectedWorkload(std::string_view sql);
+    void clearProtectedWorkloads();
+    bool isProtectedWorkload(std::string_view sql) const;
+    std::vector<QueryHistoryEntry> getHistoryForFingerprint(
+        std::string_view fingerprint, size_t count = 10) const;
+    std::vector<QueryHistoryEntry> getHistoryForQuery(
+        std::string_view sql, size_t count = 10) const;
+    std::optional<RegressionSignal> latestRegressionForFingerprint(
+        std::string_view fingerprint) const;
+    std::optional<RegressionSignal> latestRegressionForQuery(
+        std::string_view sql) const;
+
     // Clear stored profiles
     void clearProfiles();
 
@@ -236,10 +305,18 @@ private:
 
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<QueryProfile>> recent_profiles_;
+    std::unordered_map<std::string, std::deque<QueryHistoryEntry>> history_by_fingerprint_;
+    std::unordered_set<std::string> protected_workloads_;
+    RegressionPolicy regression_policy_;
+    uint64_t history_sequence_ = 0;
     static constexpr size_t MAX_STORED_PROFILES = 100;
+    static constexpr size_t MAX_HISTORY_PER_FINGERPRINT = 32;
 
     std::atomic<uint64_t> total_queries_{0};
     std::atomic<uint64_t> total_execution_time_us_{0};
+
+    RegressionSignal evaluateRegressionLocked(const std::string& fingerprint,
+                                              uint64_t execution_time_us) const;
 };
 
 // RAII timer for profiling nodes

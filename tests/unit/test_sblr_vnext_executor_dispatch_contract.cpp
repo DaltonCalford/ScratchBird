@@ -179,6 +179,15 @@ auto makeContainerWithInstruction(uint16_t opcode, Value::Bytes payload) -> std:
 
     return makeContainerFromStream(stream);
 }
+
+auto makeLiteralStringExpr(std::string text) -> Value
+{
+    Instruction lit;
+    lit.opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_STRING);
+    lit.flags = 0;
+    lit.payload = Value(Value::Object{{"value", Value(std::move(text))}});
+    return Value(std::make_shared<Instruction>(std::move(lit)));
+}
 } // namespace
 
 class SBLRVNextExecutorDispatchContractTest : public ::testing::Test
@@ -440,7 +449,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
         Value::Object payload;
     };
 
-    const std::array<DispatchCase, 13> cases = {{
+    const std::array<DispatchCase, 12> cases = {{
         {static_cast<uint16_t>(Opcode::SBLR3_OP_DOC_PATH_FILTER),
          "SBLR3_OP_DOC_PATH_FILTER",
          Value::Object{{"path_id", Value(static_cast<uint64_t>(11))},
@@ -494,11 +503,6 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
                        {"namespace_path", Value(Value::List{Value(std::string("users")),
                                                            Value(std::string("cassandra"))})},
                        {"options", Value(Value::Object{{"replication", Value(std::string("simple"))}})}}},
-        {static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS),
-         "SBLR3_CLUSTER_WORKLOAD_CLASS",
-         Value::Object{{"action", Value(static_cast<uint64_t>(2))},
-                       {"object_name", Value(std::string("oltp_default"))},
-                       {"options", Value(Value::Object{{"priority", Value(static_cast<uint64_t>(5))}})}}},
         {static_cast<uint16_t>(Opcode::SBLR3_SECURITY_ENCRYPTION_PROFILE),
          "SBLR3_SECURITY_ENCRYPTION_PROFILE",
          Value::Object{{"action", Value(static_cast<uint64_t>(3))},
@@ -1683,15 +1687,9 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_MILVUS_QUERY,
     }};
 
-    const std::array<Opcode, 38> bridge_control_cluster_security = {{
-        Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS,
-        Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE,
-        Opcode::SBLR3_CLUSTER_ADMISSION_POLICY,
-        Opcode::SBLR3_CLUSTER_ADMISSION_BINDING,
+    const std::array<Opcode, 32> bridge_control_cluster_security = {{
         Opcode::SBLR3_CLUSTER_SET_STATE,
         Opcode::SBLR3_CLUSTER_SHOW_STATE,
-        Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN,
-        Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS,
         Opcode::SBLR3_ALERT_RULE_DDL,
         Opcode::SBLR3_ALERT_TARGET_DDL,
         Opcode::SBLR3_ALERT_ROUTE_DDL,
@@ -1780,6 +1778,69 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
                                bridge_index.size() + bridge_control_admin.size() +
                                bridge_multi_model.size() + bridge_control_cluster_security.size();
     EXPECT_EQ(reject_before + static_cast<double>(total_cases),
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest, WorkloadGovernanceOpcodesExecuteAndReturnShowRows)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
+
+    auto class_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS),
+        Value::Object{{"action", Value(static_cast<uint64_t>(32))},
+                      {"object_name", Value(std::string("wl_oltp"))},
+                      {"value", makeLiteralStringExpr("MATCH=QUERY_TYPE:select;PRIORITY=5")}});
+    ASSERT_TRUE(class_result.success()) << class_result.error();
+
+    auto route_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE),
+        Value::Object{{"action", Value(static_cast<uint64_t>(35))},
+                      {"object_name", Value(std::string("rt_router"))},
+                      {"value", makeLiteralStringExpr(
+                          "CLASS=wl_oltp;TARGET_KIND=ROLE;TARGET_LABEL=router;ROLE=ROUTER;TRANSPORT=LOCAL;ROUTE_WEIGHT=10")}});
+    ASSERT_TRUE(route_result.success()) << route_result.error();
+
+    auto policy_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_ADMISSION_POLICY),
+        Value::Object{{"action", Value(static_cast<uint64_t>(38))},
+                      {"object_name", Value(std::string("ap_ingress"))},
+                      {"value", makeLiteralStringExpr(
+                          "MAX_CONCURRENT_SESSIONS=8;MAX_CONCURRENT_QUERIES=1;MAX_QUEUE_DEPTH=1;QUEUE_TIMEOUT_MS=25;REJECT_MODE=REJECT")}});
+    ASSERT_TRUE(policy_result.success()) << policy_result.error();
+
+    auto binding_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_ADMISSION_BINDING),
+        Value::Object{{"action", Value(static_cast<uint64_t>(41))},
+                      {"object_name", Value(std::string("ab_ingress"))},
+                      {"value", makeLiteralStringExpr(
+                          "POLICY=ap_ingress;CLASS=wl_oltp;PRIORITY=1")}});
+    ASSERT_TRUE(binding_result.success()) << binding_result.error();
+
+    auto routing_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN),
+        Value::Object{{"action", Value(static_cast<uint64_t>(46))},
+                      {"object_name", Value(std::string("routing_plan"))}});
+    ASSERT_TRUE(routing_result.success()) << routing_result.error();
+    ASSERT_TRUE(routing_result.hasResultSet());
+    ASSERT_NE(routing_result.resultSet(), nullptr);
+    ASSERT_EQ(routing_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(routing_result.resultSet()->getValue(0, 0).toString(), "wl_oltp");
+    EXPECT_EQ(routing_result.resultSet()->getValue(0, 2).toString(), "rt_router");
+
+    auto admission_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS),
+        Value::Object{{"action", Value(static_cast<uint64_t>(47))},
+                      {"object_name", Value(std::string("admission_status"))}});
+    ASSERT_TRUE(admission_result.success()) << admission_result.error();
+    ASSERT_TRUE(admission_result.hasResultSet());
+    ASSERT_NE(admission_result.resultSet(), nullptr);
+    ASSERT_EQ(admission_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(admission_result.resultSet()->getValue(0, 1).toString(), "wl_oltp");
+    EXPECT_EQ(admission_result.resultSet()->getValue(0, 2).toString(), "ap_ingress");
+
+    EXPECT_EQ(reject_before,
               metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
 }
 

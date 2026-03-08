@@ -191,6 +191,7 @@ endif()
 target_link_libraries(scratchbird_sblr PUBLIC
     scratchbird_core
     nlohmann_json::nlohmann_json
+    scratchbird_llvm_jit_provider
 )
 
 # Link with libxml2 for XML support (Nov 14, 2025)
@@ -217,6 +218,15 @@ endif()
 message(STATUS
     "SBLR library: scratchbird_sblr (canonical engine execution/runtime representation)"
 )
+if(SCRATCHBIRD_LLVM_JIT_AVAILABLE)
+    message(STATUS
+        "SBLR JIT provider: LLVM ${SCRATCHBIRD_LLVM_JIT_PROVIDER_VERSION} (${SCRATCHBIRD_LLVM_JIT_HOST_TRIPLE})"
+    )
+else()
+    message(STATUS
+        "SBLR JIT provider: unavailable, builds retain deterministic VM fallback"
+    )
+endif()
 
 
 # Compiler library: scratchbird_compiler (parsers + semantic + bytecode)
@@ -562,8 +572,13 @@ endif()
 # ==============================================================================
 # Pool Library: scratchbird_pool
 # ==============================================================================
-# Connection pooling with statement and result caching
-# Components: PoolManager, DatabasePool, PooledConnection, StatementCache, ResultCache
+# Experimental auxiliary pool/cache library.
+# Components: PoolManager, DatabasePool, PooledConnection, StatementCache,
+# ResultCache
+#
+# This library remains buildable for tests and cache primitives, but it is not
+# the supported product/runtime connection path and is therefore not installed
+# with the product target set.
 
 file(GLOB SCRATCHBIRD_POOL_SOURCES
     pool/*.cpp
@@ -589,7 +604,7 @@ set_target_properties(scratchbird_pool PROPERTIES
 )
 
 message(STATUS
-    "Pool library: scratchbird_pool (auxiliary/scaffold pooling layer, not the authoritative engine connection path)"
+    "Pool library: scratchbird_pool (experimental auxiliary pool/cache library; not installed as a product runtime surface)"
 )
 
 # ==============================================================================
@@ -1003,7 +1018,6 @@ set(SCRATCHBIRD_INSTALL_TARGETS
     scratchbird_optimizer_runtime
     scratchbird_server
     scratchbird_protocol
-    scratchbird_pool
     scratchbird_testing
 )
 if(TARGET scratchbird_fdw)

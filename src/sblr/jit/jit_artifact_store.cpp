@@ -18,6 +18,7 @@
 #include <sstream>
 
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/sblr/jit/jit_llvm_artifact.h"
 
 namespace scratchbird::sblr::jit
 {
@@ -62,6 +63,54 @@ namespace scratchbird::sblr::jit
             return core::Status::INVALID_ARGUMENT;
         }
 
+        core::ID binary_blob_id = isZeroUuidLocal(artifact.binary_blob_id)
+            ? core::generateUuidV7()
+            : artifact.binary_blob_id;
+        if (!artifact.native_blob.empty())
+        {
+            const std::string blob_string(reinterpret_cast<const char*>(artifact.native_blob.data()),
+                                          artifact.native_blob.size());
+            core::Status blob_status =
+                catalog_->storeStringInToast(blob_string, artifact.created_txid, binary_blob_id, ctx);
+            if (blob_status != core::Status::OK)
+            {
+                return blob_status;
+            }
+        }
+
+        bool has_signature_blob_id = artifact.has_signature_blob_id;
+        core::ID signature_blob_id = has_signature_blob_id
+            ? artifact.signature_blob_id
+            : core::ID{};
+        if (!artifact.signature_blob.empty())
+        {
+            if (isZeroUuidLocal(signature_blob_id))
+            {
+                signature_blob_id = core::generateUuidV7();
+            }
+            const std::string signature_string(
+                reinterpret_cast<const char*>(artifact.signature_blob.data()),
+                artifact.signature_blob.size());
+            core::Status signature_status =
+                catalog_->storeStringInToast(signature_string,
+                                             artifact.created_txid,
+                                             signature_blob_id,
+                                             ctx);
+            if (signature_status != core::Status::OK)
+            {
+                return signature_status;
+            }
+            has_signature_blob_id = true;
+        }
+
+        std::string native_hash = artifact.has_native_hash
+            ? artifact.native_hash_sha256
+            : std::string();
+        if (native_hash.empty() && !artifact.native_blob.empty())
+        {
+            native_hash = canonicalSblrHashHex(artifact.native_blob);
+        }
+
         core::CatalogManager::SblrArtifactCatalogInfo info{};
         info.artifact_id = isZeroUuidLocal(artifact.artifact_id)
             ? core::generateUuidV7()
@@ -80,16 +129,14 @@ namespace scratchbird::sblr::jit
         info.optimization_profile = artifact.compatibility.optimization_profile;
         info.security_policy_version = artifact.compatibility.security_policy_version;
         info.artifact_state = artifact.state;
-        info.binary_blob_id = isZeroUuidLocal(artifact.binary_blob_id)
-            ? core::generateUuidV7()
-            : artifact.binary_blob_id;
-        info.hash_sha256 = artifact.has_native_hash
-            ? artifact.native_hash_sha256
-            : info.canonical_sblr_hash;
-        info.has_signature_blob_id = artifact.has_signature_blob_id;
-        info.signature_blob_id = artifact.has_signature_blob_id
-            ? artifact.signature_blob_id
+        info.binary_blob_id = binary_blob_id;
+        info.hash_sha256 = native_hash.empty() ? info.canonical_sblr_hash : native_hash;
+        info.has_signature_blob_id = has_signature_blob_id;
+        info.signature_blob_id = has_signature_blob_id
+            ? signature_blob_id
             : core::ID{};
+        info.created_txid = artifact.created_txid;
+        info.created_at = artifact.created_at;
         info.is_valid = true;
         return catalog_->upsertSblrArtifactCatalogEntry(info, ctx);
     }
@@ -282,6 +329,66 @@ namespace scratchbird::sblr::jit
             artifact.compatibility.optimization_profile = row.optimization_profile;
             artifact.compatibility.security_policy_version = row.security_policy_version;
             artifact.state = row.artifact_state;
+            artifact.created_txid = row.created_txid;
+            artifact.created_at = row.created_at;
+
+            std::string blob_string;
+            core::Status blob_status =
+                catalog_->loadStringFromToast(row.binary_blob_id, row.created_txid, blob_string, ctx);
+            if (blob_status != core::Status::OK || blob_string.empty())
+            {
+                out.valid = false;
+                out.reason = JitReasonCode::ARTIFACT_BLOB_LOAD_FAILED;
+                out.artifact = artifact;
+                out.detail = "failed to load native artifact payload";
+                return out;
+            }
+            artifact.native_blob.assign(blob_string.begin(), blob_string.end());
+
+            const std::string computed_hash = canonicalSblrHashHex(artifact.native_blob);
+            if (core::IdentifierUtils::toUpper(computed_hash) !=
+                core::IdentifierUtils::toUpper(row.hash_sha256))
+            {
+                out.valid = false;
+                out.reason = JitReasonCode::ARTIFACT_HASH_MISMATCH;
+                out.artifact = artifact;
+                out.detail = "artifact payload hash does not match catalog metadata";
+                return out;
+            }
+
+            std::string envelope_detail;
+            if (!verifyLlvmArtifactEnvelope(artifact.native_blob,
+                                            artifact.compatibility,
+                                            envelope_detail))
+            {
+                out.valid = false;
+                out.reason = JitReasonCode::ARTIFACT_PAYLOAD_INVALID;
+                out.artifact = artifact;
+                out.detail = envelope_detail.empty()
+                    ? "artifact payload failed LLVM envelope verification"
+                    : envelope_detail;
+                return out;
+            }
+
+            if (row.has_signature_blob_id)
+            {
+                std::string signature_string;
+                core::Status signature_status = catalog_->loadStringFromToast(
+                    row.signature_blob_id,
+                    row.created_txid,
+                    signature_string,
+                    ctx);
+                if (signature_status != core::Status::OK || signature_string.empty())
+                {
+                    out.valid = false;
+                    out.reason = JitReasonCode::ARTIFACT_SIGNATURE_INVALID;
+                    out.artifact = artifact;
+                    out.detail = "artifact signature payload could not be loaded";
+                    return out;
+                }
+                artifact.signature_blob.assign(signature_string.begin(), signature_string.end());
+            }
+
             out.valid = true;
             out.reason = JitReasonCode::NONE;
             out.artifact = artifact;
@@ -352,6 +459,8 @@ namespace scratchbird::sblr::jit
             artifact.compatibility.optimization_profile = row.optimization_profile;
             artifact.compatibility.security_policy_version = row.security_policy_version;
             artifact.state = row.artifact_state;
+            artifact.created_txid = row.created_txid;
+            artifact.created_at = row.created_at;
             out.push_back(std::move(artifact));
         }
         return core::Status::OK;

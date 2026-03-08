@@ -99,6 +99,49 @@ namespace scratchbird::sblr::jit
         JitArtifact artifact{};
     };
 
+    struct JitPerformanceSnapshot
+    {
+        uint64_t vm_dispatch_count = 0;
+        uint64_t native_dispatch_count = 0;
+        uint64_t error_dispatch_count = 0;
+        uint64_t compile_queue_enqueued_count = 0;
+        uint64_t compile_queue_duplicate_count = 0;
+        uint64_t compile_queue_saturated_count = 0;
+        uint64_t compile_queue_current_depth = 0;
+        uint64_t compile_queue_max_depth = 0;
+        uint64_t hotness_below_threshold_count = 0;
+        uint64_t hotness_promotion_count = 0;
+        uint64_t explicit_compile_attempt_count = 0;
+        uint64_t explicit_compile_success_count = 0;
+        uint64_t explicit_compile_failure_count = 0;
+        uint64_t queued_compile_attempt_count = 0;
+        uint64_t queued_compile_success_count = 0;
+        uint64_t queued_compile_failure_count = 0;
+        uint64_t total_compile_latency_us = 0;
+        uint64_t last_compile_latency_us = 0;
+        uint64_t native_execution_count = 0;
+        uint64_t native_execution_cpu_us = 0;
+        uint64_t fallback_count = 0;
+        uint64_t load_failure_count = 0;
+        uint64_t retired_unusable_artifact_count = 0;
+    };
+
+    struct JitObjectPerformance
+    {
+        core::ID object_uuid{};
+        uint64_t total_dispatch_count = 0;
+        uint64_t vm_dispatch_count = 0;
+        uint64_t native_dispatch_count = 0;
+        uint64_t error_dispatch_count = 0;
+        uint64_t compile_queue_enqueued_count = 0;
+        uint64_t compile_queue_duplicate_count = 0;
+        uint64_t hotness_observation_count = 0;
+        uint64_t hotness_promotion_count = 0;
+        uint64_t compile_success_count = 0;
+        uint64_t compile_failure_count = 0;
+        uint64_t fallback_count = 0;
+    };
+
     class JitRuntime
     {
     public:
@@ -137,10 +180,37 @@ namespace scratchbird::sblr::jit
 
         auto drainCompileQueue(core::ErrorContext* ctx) -> size_t;
 
+        auto performanceSnapshot() const -> JitPerformanceSnapshot;
+        auto objectPerformance(const core::ID& object_uuid) const -> JitObjectPerformance;
+
+        auto recordArtifactExecution(const JitArtifact& artifact,
+                                     uint64_t execution_cpu_us,
+                                     core::ErrorContext* ctx) -> core::Status;
+
+        auto recordArtifactFallback(const JitArtifact& artifact,
+                                    bool load_failure,
+                                    core::ErrorContext* ctx) -> core::Status;
+
     private:
         auto hotnessKeyFor(const JitRuntimeRequest& request) const -> std::string;
+        auto compileQueueKeyFor(const ArtifactCompatibilityKey& key) const -> std::string;
         auto materializeArtifact(const JitRuntimeRequest& request,
                                  const JitCompileResult& compile_result,
+                                 core::ErrorContext* ctx) -> core::Status;
+        auto queueCompileForRequest(const JitRuntimeRequest& request,
+                                    bool bypass_hotness,
+                                    JitDispatchOutcome& out) -> void;
+        auto recordDispatchOutcome(const JitRuntimeRequest& request,
+                                   const JitDispatchOutcome& out) -> void;
+        auto noteCompileResult(const core::ID& object_uuid,
+                               bool success,
+                               uint64_t compile_latency_us) -> void;
+        auto retireUnusableArtifact(const JitArtifact& artifact,
+                                    core::ErrorContext* ctx) -> void;
+        auto objectMetricsFor(const core::ID& object_uuid) -> JitObjectPerformance&;
+        auto mutateArtifactStats(const core::ID& artifact_id,
+                                 const std::function<void(core::CatalogManager::SblrArtifactStatsCatalogInfo&)>&
+                                     mutator,
                                  core::ErrorContext* ctx) -> core::Status;
 
         core::CatalogManager* catalog_ = nullptr;
@@ -150,5 +220,7 @@ namespace scratchbird::sblr::jit
         uint32_t hotness_threshold_ = 3;
         bool require_artifact_signature_ = false;
         std::unordered_map<std::string, uint32_t> hotness_;
+        JitPerformanceSnapshot performance_{};
+        std::unordered_map<std::string, JitObjectPerformance> object_performance_;
     };
 }

@@ -19,6 +19,8 @@
 #include "scratchbird/protocol/adapters/native_adapter.h"
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/sqlstate.h"
+#include "scratchbird/core/workload_governance.h"
 #include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/sblr/opcodes.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
@@ -1061,6 +1063,33 @@ core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
             }
         }
     } dialect_scope(connection_ctx_.get(), getProtocolType());
+
+    core::WorkloadGovernance::AdmissionLease admission_lease;
+    if (core::Database* db = engineDatabase(); db != nullptr && db->workload_governance() != nullptr) {
+        core::WorkloadGovernance::QueryDescriptor descriptor;
+        descriptor.connection = connection_ctx_.get();
+        descriptor.sql = sql;
+        if (connection_ctx_ != nullptr) {
+            descriptor.schema_name = connection_ctx_->current_schema();
+            connection_ctx_->getSessionVariable("APPLICATION_NAME", descriptor.client_app);
+            connection_ctx_->getSessionVariable("RESOURCE_TAG", descriptor.resource_tag);
+        }
+
+        core::ErrorContext governance_ctx;
+        auto decision =
+            db->workload_governance()->acquire(descriptor, admission_lease, &governance_ctx);
+        if (!decision.admitted) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(decision.status);
+            result.sqlstate = core::statusToSQLState(decision.status);
+            result.error_message = decision.detail.empty()
+                ? (governance_ctx.message.empty()
+                    ? "Workload governance rejected the request"
+                    : governance_ctx.message)
+                : decision.detail;
+            return core::Status::OK;
+        }
+    }
 
     auto exec_result = executor_->execute(bytecode);
     if (!exec_result.success()) {

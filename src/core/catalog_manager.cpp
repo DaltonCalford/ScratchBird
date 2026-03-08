@@ -2885,6 +2885,16 @@ bool isValidAdmissionRejectMode(CatalogManager::AdmissionRejectMode mode)
     return mode == ARM::REJECT || mode == ARM::QUEUE || mode == ARM::SHED_LOW_PRIORITY;
 }
 
+bool hasValidAdmissionQueueConfiguration(const CatalogManager::AdmissionPolicyCatalogInfo& info)
+{
+    if (info.reject_mode != CatalogManager::AdmissionRejectMode::QUEUE)
+    {
+        return true;
+    }
+
+    return info.max_queue_depth > 0 && info.queue_timeout_ms > 0;
+}
+
 bool isValidAdmissionTargetKind(CatalogManager::AdmissionTargetKind kind)
 {
     using ATK = CatalogManager::AdmissionTargetKind;
@@ -74873,8 +74883,7 @@ auto CatalogManager::upsertAdmissionPolicyCatalogEntry(const AdmissionPolicyCata
     }
     if (info.max_concurrent_sessions == 0 ||
         info.max_concurrent_queries == 0 ||
-        info.max_queue_depth == 0 ||
-        info.queue_timeout_ms == 0)
+        !hasValidAdmissionQueueConfiguration(info))
     {
         return Status::INVALID_ARGUMENT;
     }

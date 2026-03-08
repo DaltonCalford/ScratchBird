@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include <string>
+#include <unordered_set>
 
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/sblr/jit/jit_compiler.h"
@@ -27,6 +29,7 @@ namespace scratchbird::sblr::jit
         core::ID module_id{};
         core::ID plan_id{};
         JitCompileRequest compile_request;
+        std::string dedupe_key;
         uint8_t priority = 0;
     };
 
@@ -46,5 +49,6 @@ namespace scratchbird::sblr::jit
         mutable std::mutex mutex_;
         size_t capacity_ = 128;
         std::deque<JitQueueEntry> queue_;
+        std::unordered_set<std::string> pending_keys_;
     };
 }

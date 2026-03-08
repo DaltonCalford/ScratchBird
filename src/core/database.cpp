@@ -26,6 +26,7 @@
 #include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/table_stats_manager.h"
+#include "scratchbird/core/workload_governance.h"
 #include "scratchbird/core/charset_loader.h"
 #include "scratchbird/core/timezone_loader.h"
 #include "scratchbird/core/proc_array.h"
@@ -884,6 +885,9 @@ namespace scratchbird::core
 
         // Shut down audit logger before catalog manager
         audit_logger_.reset();
+
+        // Shut down local workload governance before the catalog manager it queries.
+        workload_governance_.reset();
 
         // Shut down garbage collector first (before sweep manager)
         garbage_collector_.reset();
@@ -2562,6 +2566,17 @@ namespace scratchbird::core
         {
             close();
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate PermissionCache");
+            return Status::OOM;
+        }
+
+        try
+        {
+            workload_governance_ = std::make_unique<WorkloadGovernance>(this);
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate WorkloadGovernance");
             return Status::OOM;
         }
 

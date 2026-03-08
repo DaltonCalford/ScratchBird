@@ -31,5 +31,19 @@ namespace scratchbird::sblr::jit
             << request.compatibility.native_abi_version;
         return key.str();
     }
-}
 
+    auto JitRuntime::compileQueueKeyFor(const ArtifactCompatibilityKey& key) const -> std::string
+    {
+        std::ostringstream queue_key;
+        queue_key << key.object_uuid.toString() << ':'
+                  << key.canonical_sblr_hash << ':'
+                  << key.target_triple << ':'
+                  << key.cpu_feature_profile << ':'
+                  << key.native_abi_version << ':'
+                  << key.compiler_identity << ':'
+                  << key.compiler_version << ':'
+                  << key.optimization_profile << ':'
+                  << key.security_policy_version;
+        return queue_key.str();
+    }
+}

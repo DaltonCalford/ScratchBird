@@ -58,6 +58,7 @@ namespace scratchbird
         class DomainManager;
         class EncryptionKeyManager;
         class AuditLogger;
+        class WorkloadGovernance;
         class TIDResolver; // Sprint 4 Task 5.4.2
         class PermissionCache; // Security Phase 3.2.3
         class TableStatsManager;
@@ -508,6 +509,15 @@ namespace scratchbird
                 return audit_logger_.get();
             }
 
+            WorkloadGovernance *workload_governance()
+            {
+                return workload_governance_.get();
+            }
+            const WorkloadGovernance *workload_governance() const
+            {
+                return workload_governance_.get();
+            }
+
             // Initialize ProcArray for multi-connection support
             Status initializeProcArray(uint32_t max_backends, ErrorContext *ctx = nullptr);
 
@@ -629,6 +639,7 @@ namespace scratchbird
             std::unique_ptr<DomainManager> domain_manager_;                   // Domain manager (owned)
             std::unique_ptr<EncryptionKeyManager> encryption_key_manager_;    // Encryption key manager (owned)
             std::unique_ptr<AuditLogger> audit_logger_;                       // Audit logger (owned)
+            std::unique_ptr<WorkloadGovernance> workload_governance_;         // Local workload governance (owned)
 
             // Security components (Phase 3.2.3)
             std::unique_ptr<PermissionCache> permission_cache_; // Permission cache (owned)

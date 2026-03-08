@@ -42,9 +42,13 @@ namespace scratchbird::sblr::jit
         bool has_signature_blob_id = false;
         bool has_native_hash = false;
         std::string native_hash_sha256;
+        std::vector<uint8_t> native_blob;
+        std::vector<uint8_t> signature_blob;
         ArtifactCompatibilityKey compatibility;
         core::CatalogManager::SblrArtifactState state =
             core::CatalogManager::SblrArtifactState::QUEUED;
+        uint64_t created_txid = 0;
+        uint64_t created_at = 0;
     };
 
     struct ArtifactVerificationResult
@@ -91,4 +95,3 @@ namespace scratchbird::sblr::jit
         core::CatalogManager* catalog_ = nullptr;
     };
 }
-

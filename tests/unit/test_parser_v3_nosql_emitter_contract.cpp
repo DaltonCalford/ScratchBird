@@ -100,12 +100,33 @@ const Value::List* payloadListField(const Value::Object& payload, const char* ke
     return std::get_if<Value::List>(&it->second.data);
 }
 
+const std::string* payloadStringField(const Value::Object& payload, const char* key) {
+    auto it = payload.find(key);
+    if (it == payload.end()) {
+        return nullptr;
+    }
+    return std::get_if<std::string>(&it->second.data);
+}
+
 const Value::InstrPtr* payloadExprField(const Value::Object& payload, const char* key) {
     auto it = payload.find(key);
     if (it == payload.end()) {
         return nullptr;
     }
     return std::get_if<Value::InstrPtr>(&it->second.data);
+}
+
+const std::string* payloadLiteralStringExprField(const Value::Object& payload, const char* key) {
+    const auto* expr = payloadExprField(payload, key);
+    if (!expr || !expr->get() ||
+        expr->get()->opcode != static_cast<uint16_t>(Opcode::SBLR3_LITERAL_STRING)) {
+        return nullptr;
+    }
+    const auto* expr_payload = std::get_if<Value::Object>(&expr->get()->payload.data);
+    if (!expr_payload) {
+        return nullptr;
+    }
+    return payloadStringField(*expr_payload, "value");
 }
 
 const Instruction* firstSelectItemExpr(const EmittedRoot& emitted) {
@@ -265,6 +286,35 @@ TEST(ParserV3NoSqlEmitterContractTest, MapsAdminClusterAndServiceCommandsToBridg
         const auto* options = payloadListField(*payload, "options");
         ASSERT_NE(nullptr, options) << c.sql;
         EXPECT_TRUE(options->empty()) << c.sql;
+
+        if (c.action >= 32 && c.action <= 43) {
+            const auto* object_name = payloadStringField(*payload, "object_name");
+            ASSERT_NE(nullptr, object_name) << c.sql;
+            EXPECT_FALSE(object_name->empty()) << c.sql;
+
+            const bool is_drop = c.action == 34 || c.action == 37 ||
+                                 c.action == 40 || c.action == 43;
+            if (!is_drop) {
+                const auto* value_expr = payloadExprField(*payload, "value");
+                ASSERT_NE(nullptr, value_expr) << c.sql;
+                ASSERT_NE(nullptr, value_expr->get()) << c.sql;
+                const auto* literal = payloadLiteralStringExprField(*payload, "value");
+                ASSERT_NE(nullptr, literal) << c.sql;
+                EXPECT_FALSE(literal->empty()) << c.sql;
+            }
+        }
+
+        if (c.action == 46) {
+            const auto* object_name = payloadStringField(*payload, "object_name");
+            ASSERT_NE(nullptr, object_name) << c.sql;
+            EXPECT_EQ("routing_plan", *object_name) << c.sql;
+        }
+
+        if (c.action == 47) {
+            const auto* object_name = payloadStringField(*payload, "object_name");
+            ASSERT_NE(nullptr, object_name) << c.sql;
+            EXPECT_EQ("admission_status", *object_name) << c.sql;
+        }
     }
 }
 

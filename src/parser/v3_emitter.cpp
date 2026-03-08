@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cerrno>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <memory>
 #include <sstream>
@@ -2817,8 +2818,55 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
                 Value::Object multi_model_payload;
                 multi_model_payload["action"] = Value(uint64_t(action_code));
                 if (s->value) {
-                    multi_model_payload["query_expr"] =
-                        Value(makeInstr(emitExpression(s->value)));
+                    Value value_expr = Value(makeInstr(emitExpression(s->value)));
+                    multi_model_payload["query_expr"] = value_expr;
+                    multi_model_payload["value"] = value_expr;
+                }
+
+                auto set_object_name_from_key = [&](const char* prefix) {
+                    if (key_text.rfind(prefix, 0) != 0) {
+                        return;
+                    }
+                    const std::string object_name = key_text.substr(std::strlen(prefix));
+                    if (!object_name.empty()) {
+                        multi_model_payload["object_name"] = Value(object_name);
+                    }
+                };
+
+                set_object_name_from_key("cluster.workload_class.create.");
+                set_object_name_from_key("cluster.workload_class.alter.");
+                set_object_name_from_key("cluster.workload_class.drop.");
+                set_object_name_from_key("cluster.workload_route.create.");
+                set_object_name_from_key("cluster.workload_route.alter.");
+                set_object_name_from_key("cluster.workload_route.drop.");
+                set_object_name_from_key("cluster.admission_policy.create.");
+                set_object_name_from_key("cluster.admission_policy.alter.");
+                set_object_name_from_key("cluster.admission_policy.drop.");
+                set_object_name_from_key("cluster.admission_binding.create.");
+                set_object_name_from_key("cluster.admission_binding.alter.");
+                set_object_name_from_key("cluster.admission_binding.drop.");
+                set_object_name_from_key("cluster.ddl.create.");
+                set_object_name_from_key("cluster.ddl.alter.");
+                set_object_name_from_key("cluster.ddl.drop.");
+                set_object_name_from_key("cluster.ddl.set.");
+                set_object_name_from_key("cluster.ddl.set_state.");
+                set_object_name_from_key("cluster.ddl.reset.");
+                set_object_name_from_key("cluster.ddl.rename.");
+                set_object_name_from_key("cluster.ddl.start.");
+                set_object_name_from_key("cluster.ddl.stop.");
+                set_object_name_from_key("cluster.ddl.refresh.");
+                set_object_name_from_key("cube.ddl.create.");
+                set_object_name_from_key("cube.ddl.alter.");
+                set_object_name_from_key("cube.ddl.drop.");
+                set_object_name_from_key("cube.refresh.");
+                set_object_name_from_key("service.channel.");
+
+                if (key_text == "cluster.show_routing_plan") {
+                    multi_model_payload["object_name"] = Value(std::string("routing_plan"));
+                } else if (key_text == "cluster.show_admission_status") {
+                    multi_model_payload["object_name"] = Value(std::string("admission_status"));
+                } else if (key_text == "cluster.set_state") {
+                    multi_model_payload["object_name"] = Value(std::string("cluster_state"));
                 }
                 // OPTION_KV schema payload: empty object encodes deterministic zero-item list.
                 multi_model_payload["options"] = Value(Value::Object{});

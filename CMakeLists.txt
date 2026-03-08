@@ -272,6 +272,8 @@ else()
     message(WARNING "clang-format not found. 'make format' target will not be available.")
 endif()
 
+include(${CMAKE_SOURCE_DIR}/cmake/dependencies/llvm_jit_resolution.cmake)
+
 # Add source directory
 add_subdirectory(src)
 

@@ -71,6 +71,7 @@
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/workload_governance.h"
 #include "scratchbird/optimizer/statistics_manager.h"  // P1-10: ANALYZE command
 #include "scratchbird/spatial/wkt_parser.h"
 #include "scratchbird/spatial/wkb.h"
@@ -108,6 +109,7 @@
 #include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/catalog/emulation_view_generator.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
+#include "scratchbird/sblr/jit/jit_llvm_toolchain.h"
 #include "scratchbird/udr/language_udr_runtime.h"
 #include "scratchbird/udr/language_udr_test_harness.h"
 #include "scratchbird/udr/udr_connector.h"
@@ -4368,6 +4370,11 @@ namespace scratchbird
             jit_policy_.session_execution_policy = jit::JitExecutionPolicy::INTERPRETED_ONLY;
             jit_policy_.object_compile_mode = jit::JitCompileMode::EXPLICIT_ONLY;
             jit_policy_.object_execution_policy = jit::JitExecutionPolicy::INTERPRETED_ONLY;
+
+            const jit::LlvmToolchainInfo& llvm_info = jit::llvmToolchainInfo();
+            jit_target_triple_ = llvm_info.host_target_triple;
+            jit_compiler_identity_ = llvm_info.provider_identity;
+            jit_compiler_version_ = llvm_info.provider_version;
         }
 
         Executor::~Executor() = default;
@@ -4395,7 +4402,7 @@ namespace scratchbird
             parameter_nulls_.clear();
         }
 
-        void Executor::setJitBackendLlvmMockEnabled(bool enabled)
+        void Executor::setJitBackendLlvmEnabled(bool enabled)
         {
             if (!jit_runtime_)
             {
@@ -4409,6 +4416,11 @@ namespace scratchbird
             {
                 jit_runtime_->setCompileBackend(jit::createNullBackend());
             }
+        }
+
+        void Executor::setJitBackendLlvmMockEnabled(bool enabled)
+        {
+            setJitBackendLlvmEnabled(enabled);
         }
 
         void Executor::setJitHotnessThreshold(uint32_t threshold)
@@ -4748,7 +4760,10 @@ namespace scratchbird
                 }
 
                 jit::JitRuntimeRequest jit_request{};
-                jit_request.surface = jit::RoutineSurfaceKind::UNKNOWN;
+                jit_request.surface =
+                    isZeroUuid(jit_object_uuid_)
+                        ? jit::RoutineSurfaceKind::UNKNOWN
+                        : jit::RoutineSurfaceKind::FUNCTION;
                 jit_request.object_uuid = jit_object_uuid_;
                 jit_request.module_id = jit_module_id_;
                 jit_request.plan_id = jit_plan_id_;
@@ -4787,14 +4802,29 @@ namespace scratchbird
 
                 if (jit_outcome.path == jit::JitDispatchOutcome::Path::NATIVE)
                 {
-                    // Native dispatch path currently preserves canonical semantics by
-                    // executing equivalent VM logic with verified native eligibility.
+                    const auto native_start = std::chrono::steady_clock::now();
+                    // Artifact-backed native selection now requires a verified,
+                    // persisted LLVM payload. Result production remains on the
+                    // canonical VM path while the native lane closes payload
+                    // trust, invalidation, and dispatch selection.
                     ExecutionResult native_result = executeCanonicalV3(bytecode);
                     if (native_result.success())
                     {
+                        core::ErrorContext stats_ctx;
+                        (void)jit_runtime_->recordArtifactExecution(
+                            jit_outcome.artifact,
+                            static_cast<uint64_t>(
+                                std::chrono::duration_cast<std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now() - native_start)
+                                    .count()),
+                            &stats_ctx);
                         return native_result;
                     }
                     // Deterministic same-path deopt: retry through VM path.
+                    core::ErrorContext stats_ctx;
+                    (void)jit_runtime_->recordArtifactFallback(jit_outcome.artifact,
+                                                               false,
+                                                               &stats_ctx);
                     last_jit_reason_code_ = jit::JitReasonCode::NATIVE_EXECUTION_FAILED;
                     return executeCanonicalV3(bytecode);
                 }
@@ -65824,6 +65854,17 @@ namespace scratchbird
                                 out = *v ? "true" : "false";
                                 return true;
                             }
+                            scratchbird::sblr::v3::Instruction value_inst;
+                            if (getInstrFromValue(it->second, value_inst))
+                            {
+                                Value evaluated = evalExpr(value_inst);
+                                if (evaluated.isNull())
+                                {
+                                    return false;
+                                }
+                                out = evaluated.toString();
+                                return true;
+                            }
                             return false;
                         };
 
@@ -65946,6 +65987,1445 @@ namespace scratchbird
                             }
 
                             return false;
+                        };
+
+                        auto executeClusterGovernanceOpcode =
+                            [&](scratchbird::sblr::v3::Opcode control_opcode,
+                                const scratchbird::sblr::v3::Value::Object& control_payload) -> ExecutionResult {
+                            auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                            auto* workload_governance = db_ ? db_->workload_governance() : nullptr;
+                            if (catalog == nullptr || workload_governance == nullptr)
+                            {
+                                return ExecutionResult(
+                                    "V3 cluster governance runtime requires an active catalog and workload governance runtime");
+                            }
+
+                            auto normalizeUpper = [&](const std::string& value) {
+                                return scratchbird::core::IdentifierUtils::toUpper(
+                                    trimAsciiCopy(value));
+                            };
+
+                            auto normalizeConfigKey = [&](const std::string& value) {
+                                std::string normalized = normalizeUpper(value);
+                                for (char& ch : normalized)
+                                {
+                                    if (!(std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '_'))
+                                    {
+                                        ch = '_';
+                                    }
+                                }
+                                return normalized;
+                            };
+
+                            auto stripQuotes = [&](std::string value) {
+                                value = trimAsciiCopy(value);
+                                if (value.size() >= 2 &&
+                                    ((value.front() == '\'' && value.back() == '\'') ||
+                                     (value.front() == '"' && value.back() == '"')))
+                                {
+                                    value = value.substr(1, value.size() - 2);
+                                }
+                                return trimAsciiCopy(value);
+                            };
+
+                            auto parseUuidTextLocal = [&](const std::string& raw, core::ID& out) -> bool {
+                                std::string hex;
+                                hex.reserve(32);
+                                for (unsigned char ch : raw)
+                                {
+                                    if (ch == '-' || ch == '{' || ch == '}')
+                                    {
+                                        continue;
+                                    }
+                                    if (std::isxdigit(ch) == 0)
+                                    {
+                                        return false;
+                                    }
+                                    hex.push_back(static_cast<char>(std::tolower(ch)));
+                                }
+                                if (hex.size() != 32)
+                                {
+                                    return false;
+                                }
+
+                                auto nibble = [](char c) -> int {
+                                    if (c >= '0' && c <= '9')
+                                    {
+                                        return c - '0';
+                                    }
+                                    if (c >= 'a' && c <= 'f')
+                                    {
+                                        return 10 + (c - 'a');
+                                    }
+                                    return -1;
+                                };
+
+                                core::ID parsed{};
+                                for (size_t i = 0; i < parsed.bytes.size(); ++i)
+                                {
+                                    const int hi = nibble(hex[i * 2]);
+                                    const int lo = nibble(hex[i * 2 + 1]);
+                                    if (hi < 0 || lo < 0)
+                                    {
+                                        return false;
+                                    }
+                                    parsed.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
+                                }
+                                out = parsed;
+                                return true;
+                            };
+
+                            auto deriveDeterministicObjectId = [&](const std::string& family,
+                                                                   const std::string& object_name) {
+                                auto fnv1a64 = [](const std::string& text, uint64_t seed) {
+                                    uint64_t hash = seed;
+                                    for (unsigned char ch : text)
+                                    {
+                                        hash ^= static_cast<uint64_t>(ch);
+                                        hash *= 1099511628211ULL;
+                                    }
+                                    return hash;
+                                };
+
+                                const std::string stable_key =
+                                    scratchbird::core::IdentifierUtils::toUpper(family) + "::" +
+                                    scratchbird::core::IdentifierUtils::toUpper(object_name);
+                                const uint64_t hi = fnv1a64(stable_key, 1469598103934665603ULL);
+                                const uint64_t lo = fnv1a64(stable_key, 1099511628211ULL);
+                                core::ID id{};
+                                for (size_t i = 0; i < 8; ++i)
+                                {
+                                    id.bytes[i] = static_cast<uint8_t>((hi >> ((7 - i) * 8)) & 0xFF);
+                                    id.bytes[8 + i] = static_cast<uint8_t>((lo >> ((7 - i) * 8)) & 0xFF);
+                                }
+                                return id;
+                            };
+
+                            auto parseAssignments = [&](const std::string& raw) {
+                                std::unordered_map<std::string, std::string> assignments;
+                                std::string token;
+                                bool in_single = false;
+                                bool in_double = false;
+
+                                auto flush = [&]() {
+                                    std::string item = trimAsciiCopy(token);
+                                    token.clear();
+                                    if (item.empty())
+                                    {
+                                        return;
+                                    }
+
+                                    std::string key;
+                                    std::string value;
+                                    size_t sep = item.find('=');
+                                    if (sep != std::string::npos)
+                                    {
+                                        key = item.substr(0, sep);
+                                        value = item.substr(sep + 1);
+                                    }
+                                    else
+                                    {
+                                        const size_t lte = item.find("<=");
+                                        if (lte != std::string::npos)
+                                        {
+                                            key = item.substr(0, lte);
+                                            value = item.substr(lte + 2);
+                                        }
+                                        else
+                                        {
+                                            key = item;
+                                            value = "1";
+                                        }
+                                    }
+
+                                    key = normalizeConfigKey(key);
+                                    value = stripQuotes(value);
+                                    if (key == "QPS")
+                                    {
+                                        key = "MAX_CONCURRENT_QUERIES";
+                                    }
+                                    if (!key.empty())
+                                    {
+                                        assignments[key] = value;
+                                    }
+                                };
+
+                                for (char ch : raw)
+                                {
+                                    if (ch == '\'' && !in_double)
+                                    {
+                                        in_single = !in_single;
+                                        token.push_back(ch);
+                                        continue;
+                                    }
+                                    if (ch == '"' && !in_single)
+                                    {
+                                        in_double = !in_double;
+                                        token.push_back(ch);
+                                        continue;
+                                    }
+                                    if (!in_single && !in_double && (ch == ';' || ch == ','))
+                                    {
+                                        flush();
+                                        continue;
+                                    }
+                                    token.push_back(ch);
+                                }
+                                flush();
+                                return assignments;
+                            };
+
+                            auto parseBoolText = [&](const std::string& raw, bool& out) -> bool {
+                                const std::string upper = normalizeUpper(raw);
+                                if (upper == "1" || upper == "TRUE" || upper == "YES" ||
+                                    upper == "ON" || upper == "ENABLE" || upper == "ENABLED")
+                                {
+                                    out = true;
+                                    return true;
+                                }
+                                if (upper == "0" || upper == "FALSE" || upper == "NO" ||
+                                    upper == "OFF" || upper == "DISABLE" || upper == "DISABLED")
+                                {
+                                    out = false;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto parseUnsigned32 = [&](const std::string& raw, uint32_t& out) -> bool {
+                                std::string text = trimAsciiCopy(raw);
+                                if (text.empty())
+                                {
+                                    return false;
+                                }
+                                char* end = nullptr;
+                                unsigned long value = std::strtoul(text.c_str(), &end, 10);
+                                if (end == nullptr || *end != '\0' ||
+                                    value > std::numeric_limits<uint32_t>::max())
+                                {
+                                    return false;
+                                }
+                                out = static_cast<uint32_t>(value);
+                                return true;
+                            };
+
+                            auto parseUnsigned16 = [&](const std::string& raw, uint16_t& out) -> bool {
+                                uint32_t tmp = 0;
+                                if (!parseUnsigned32(raw, tmp) ||
+                                    tmp > std::numeric_limits<uint16_t>::max())
+                                {
+                                    return false;
+                                }
+                                out = static_cast<uint16_t>(tmp);
+                                return true;
+                            };
+
+                            auto parseUnsigned8 = [&](const std::string& raw, uint8_t& out) -> bool {
+                                uint32_t tmp = 0;
+                                if (!parseUnsigned32(raw, tmp) ||
+                                    tmp > std::numeric_limits<uint8_t>::max())
+                                {
+                                    return false;
+                                }
+                                out = static_cast<uint8_t>(tmp);
+                                return true;
+                            };
+
+                            auto parseMatchKind = [&](const std::string& raw,
+                                                      core::CatalogManager::WorkloadMatchKind& out) -> bool {
+                                const std::string upper = normalizeConfigKey(raw);
+                                if (upper == "ROLE")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::ROLE;
+                                    return true;
+                                }
+                                if (upper == "USER")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::USER;
+                                    return true;
+                                }
+                                if (upper == "DATABASE" || upper == "DB")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::DATABASE;
+                                    return true;
+                                }
+                                if (upper == "SCHEMA")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::SCHEMA;
+                                    return true;
+                                }
+                                if (upper == "CLIENT_APP" || upper == "CLIENT" || upper == "APPLICATION")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::CLIENT_APP;
+                                    return true;
+                                }
+                                if (upper == "STATEMENT_TAG" || upper == "TAG")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::STATEMENT_TAG;
+                                    return true;
+                                }
+                                if (upper == "QUERY_TYPE" || upper == "TYPE")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::QUERY_TYPE;
+                                    return true;
+                                }
+                                if (upper == "REGEX")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::REGEX;
+                                    return true;
+                                }
+                                if (upper == "RESOURCE_TAG" || upper == "RESOURCE")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::RESOURCE_TAG;
+                                    return true;
+                                }
+                                if (upper == "CUSTOM")
+                                {
+                                    out = core::CatalogManager::WorkloadMatchKind::CUSTOM;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto parseNodeRole = [&](const std::string& raw,
+                                                     core::CatalogManager::ClusterNodeRole& out) -> bool {
+                                const std::string upper = normalizeConfigKey(raw);
+                                if (upper == "METADATA")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::METADATA;
+                                    return true;
+                                }
+                                if (upper == "OLTP_DATA" || upper == "OLTP")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::OLTP_DATA;
+                                    return true;
+                                }
+                                if (upper == "ROUTER")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::ROUTER;
+                                    return true;
+                                }
+                                if (upper == "PARSER")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::PARSER;
+                                    return true;
+                                }
+                                if (upper == "LISTENER")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::LISTENER;
+                                    return true;
+                                }
+                                if (upper == "BACKUP")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::BACKUP;
+                                    return true;
+                                }
+                                if (upper == "SCHEDULER")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::SCHEDULER;
+                                    return true;
+                                }
+                                if (upper == "METRICS")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::METRICS;
+                                    return true;
+                                }
+                                if (upper == "OLAP_INGEST")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::OLAP_INGEST;
+                                    return true;
+                                }
+                                if (upper == "OLAP_STORAGE")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::OLAP_STORAGE;
+                                    return true;
+                                }
+                                if (upper == "OLAP_COMPUTE")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::OLAP_COMPUTE;
+                                    return true;
+                                }
+                                if (upper == "VECTOR_INDEX")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::VECTOR_INDEX;
+                                    return true;
+                                }
+                                if (upper == "SEARCH_INDEX")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::SEARCH_INDEX;
+                                    return true;
+                                }
+                                if (upper == "GRAPH_COMPUTE" || upper == "GRAPH")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::GRAPH_COMPUTE;
+                                    return true;
+                                }
+                                if (upper == "CACHE")
+                                {
+                                    out = core::CatalogManager::ClusterNodeRole::CACHE;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto parseServiceType = [&](const std::string& raw,
+                                                        core::CatalogManager::ClusterServiceType& out) -> bool {
+                                const std::string upper = normalizeConfigKey(raw);
+                                if (upper == "OLTP_RPC" || upper == "OLTP")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::OLTP_RPC;
+                                    return true;
+                                }
+                                if (upper == "OLAP_INGEST")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::OLAP_INGEST;
+                                    return true;
+                                }
+                                if (upper == "OLAP_QUERY")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::OLAP_QUERY;
+                                    return true;
+                                }
+                                if (upper == "VECTOR_QUERY" || upper == "VECTOR")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::VECTOR_QUERY;
+                                    return true;
+                                }
+                                if (upper == "TEXT_SEARCH" || upper == "SEARCH")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::TEXT_SEARCH;
+                                    return true;
+                                }
+                                if (upper == "GRAPH_QUERY" || upper == "GRAPH")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::GRAPH_QUERY;
+                                    return true;
+                                }
+                                if (upper == "BACKUP")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::BACKUP;
+                                    return true;
+                                }
+                                if (upper == "METRICS")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::METRICS;
+                                    return true;
+                                }
+                                if (upper == "ADMIN")
+                                {
+                                    out = core::CatalogManager::ClusterServiceType::ADMIN;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto parseTransport = [&](const std::string& raw,
+                                                      core::CatalogManager::ConnectionTransport& out) -> bool {
+                                const std::string upper = normalizeConfigKey(raw);
+                                if (upper == "LOCAL")
+                                {
+                                    out = core::CatalogManager::ConnectionTransport::LOCAL;
+                                    return true;
+                                }
+                                if (upper == "IPC")
+                                {
+                                    out = core::CatalogManager::ConnectionTransport::IPC;
+                                    return true;
+                                }
+                                if (upper == "INET" || upper == "TCP")
+                                {
+                                    out = core::CatalogManager::ConnectionTransport::INET;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto parseRejectMode = [&](const std::string& raw,
+                                                       core::CatalogManager::AdmissionRejectMode& out) -> bool {
+                                const std::string upper = normalizeConfigKey(raw);
+                                if (upper == "REJECT")
+                                {
+                                    out = core::CatalogManager::AdmissionRejectMode::REJECT;
+                                    return true;
+                                }
+                                if (upper == "QUEUE")
+                                {
+                                    out = core::CatalogManager::AdmissionRejectMode::QUEUE;
+                                    return true;
+                                }
+                                if (upper == "SHED" || upper == "SHED_LOW_PRIORITY")
+                                {
+                                    out = core::CatalogManager::AdmissionRejectMode::SHED_LOW_PRIORITY;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto parseRouteTargetKind = [&](const std::string& raw,
+                                                            core::CatalogManager::RouteTargetKind& out) -> bool {
+                                const std::string upper = normalizeConfigKey(raw);
+                                if (upper == "NODE")
+                                {
+                                    out = core::CatalogManager::RouteTargetKind::NODE;
+                                    return true;
+                                }
+                                if (upper == "SERVICE")
+                                {
+                                    out = core::CatalogManager::RouteTargetKind::SERVICE;
+                                    return true;
+                                }
+                                if (upper == "ROLE")
+                                {
+                                    out = core::CatalogManager::RouteTargetKind::ROLE;
+                                    return true;
+                                }
+                                if (upper == "SHARD")
+                                {
+                                    out = core::CatalogManager::RouteTargetKind::SHARD;
+                                    return true;
+                                }
+                                if (upper == "TIER")
+                                {
+                                    out = core::CatalogManager::RouteTargetKind::TIER;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto parseAdmissionTargetKind = [&](const std::string& raw,
+                                                                core::CatalogManager::AdmissionTargetKind& out) -> bool {
+                                const std::string upper = normalizeConfigKey(raw);
+                                if (upper == "CLUSTER")
+                                {
+                                    out = core::CatalogManager::AdmissionTargetKind::CLUSTER;
+                                    return true;
+                                }
+                                if (upper == "NODE")
+                                {
+                                    out = core::CatalogManager::AdmissionTargetKind::NODE;
+                                    return true;
+                                }
+                                if (upper == "SERVICE")
+                                {
+                                    out = core::CatalogManager::AdmissionTargetKind::SERVICE;
+                                    return true;
+                                }
+                                if (upper == "WORKLOAD_CLASS" || upper == "CLASS")
+                                {
+                                    out = core::CatalogManager::AdmissionTargetKind::WORKLOAD_CLASS;
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto sameName = [&](const std::string& lhs, const std::string& rhs) {
+                                return normalizeUpper(lhs) == normalizeUpper(rhs);
+                            };
+
+                            auto findWorkloadClassByName =
+                                [&](const std::string& name,
+                                    core::CatalogManager::WorkloadClassCatalogInfo& info_out,
+                                    core::ErrorContext* lookup_ctx) -> core::Status {
+                                std::vector<core::CatalogManager::WorkloadClassCatalogInfo> rows;
+                                core::Status status = catalog->listWorkloadClassCatalogEntries(rows, lookup_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return status;
+                                }
+                                for (const auto& row : rows)
+                                {
+                                    if (sameName(row.class_name, name))
+                                    {
+                                        info_out = row;
+                                        return core::Status::OK;
+                                    }
+                                }
+                                return core::Status::NOT_FOUND;
+                            };
+
+                            auto findWorkloadRouteByName =
+                                [&](const std::string& name,
+                                    core::CatalogManager::WorkloadRouteCatalogInfo& info_out,
+                                    core::ErrorContext* lookup_ctx) -> core::Status {
+                                std::vector<core::CatalogManager::WorkloadRouteCatalogInfo> rows;
+                                core::Status status =
+                                    catalog->listWorkloadRouteCatalogEntries(core::ID{}, rows, lookup_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return status;
+                                }
+                                for (const auto& row : rows)
+                                {
+                                    if (sameName(row.route_name, name))
+                                    {
+                                        info_out = row;
+                                        return core::Status::OK;
+                                    }
+                                }
+                                return core::Status::NOT_FOUND;
+                            };
+
+                            auto findAdmissionPolicyByName =
+                                [&](const std::string& name,
+                                    core::CatalogManager::AdmissionPolicyCatalogInfo& info_out,
+                                    core::ErrorContext* lookup_ctx) -> core::Status {
+                                std::vector<core::CatalogManager::AdmissionPolicyCatalogInfo> rows;
+                                core::Status status = catalog->listAdmissionPolicyCatalogEntries(rows, lookup_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return status;
+                                }
+                                for (const auto& row : rows)
+                                {
+                                    if (sameName(row.policy_name, name))
+                                    {
+                                        info_out = row;
+                                        return core::Status::OK;
+                                    }
+                                }
+                                return core::Status::NOT_FOUND;
+                            };
+
+                            auto loadAdmissionBindingByName =
+                                [&](const std::string& name,
+                                    core::CatalogManager::AdmissionBindingCatalogInfo& info_out,
+                                    core::ErrorContext* lookup_ctx) -> core::Status {
+                                return catalog->getAdmissionBindingCatalogEntry(
+                                    deriveDeterministicObjectId("admission_binding", name),
+                                    info_out,
+                                    lookup_ctx);
+                            };
+
+                            auto requireSuperuser = [&]() -> bool {
+                                return conn_ctx_ != nullptr && conn_ctx_->isSuperuser();
+                            };
+
+                            std::string object_name;
+                            (void)payloadFieldToString(control_payload, "object_name", object_name);
+                            object_name = trimAsciiCopy(object_name);
+
+                            std::string control_text;
+                            (void)payloadFieldToString(control_payload, "value", control_text);
+                            if (control_text.empty())
+                            {
+                                (void)payloadFieldToString(control_payload, "query_expr", control_text);
+                            }
+                            if (control_text.empty())
+                            {
+                                (void)payloadFieldToString(control_payload, "payload", control_text);
+                            }
+                            control_text = stripQuotes(control_text);
+                            auto assignments = parseAssignments(control_text);
+
+                            uint64_t action_u64 = 0;
+                            (void)getU64(control_payload, "action", action_u64);
+                            const uint8_t action_code = static_cast<uint8_t>(action_u64 & 0xFFu);
+
+                            auto successResult = [&]() {
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "ok", symbol);
+                                ExecutionResult result;
+                                result.setAffectedCount(1);
+                                return result;
+                            };
+
+                            if (control_opcode == scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN)
+                            {
+                                std::vector<core::WorkloadGovernance::RoutingPlanRow> rows;
+                                core::ErrorContext local_ctx;
+                                core::Status status = workload_governance->snapshotRoutingPlan(rows, &local_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return ExecutionResult(local_ctx.message.empty()
+                                                               ? "SHOW CLUSTER ROUTING PLAN failed"
+                                                               : local_ctx.message);
+                                }
+
+                                auto result_set = std::make_unique<ResultSet>();
+                                result_set->addColumn("class_name", core::DataType::VARCHAR);
+                                result_set->addColumn("class_priority", core::DataType::INT32);
+                                result_set->addColumn("route_name", core::DataType::VARCHAR);
+                                result_set->addColumn("target_kind", core::DataType::VARCHAR);
+                                result_set->addColumn("target_label", core::DataType::VARCHAR);
+                                result_set->addColumn("role", core::DataType::VARCHAR);
+                                result_set->addColumn("service_type", core::DataType::VARCHAR);
+                                result_set->addColumn("transport", core::DataType::VARCHAR);
+                                result_set->addColumn("route_weight", core::DataType::INT32);
+                                result_set->addColumn("fallback_route_name", core::DataType::VARCHAR);
+                                result_set->addColumn("class_enabled", core::DataType::BOOLEAN);
+                                result_set->addColumn("route_enabled", core::DataType::BOOLEAN);
+                                for (const auto& row : rows)
+                                {
+                                    result_set->addRow({
+                                        Value::makeVarchar(row.class_name),
+                                        Value::makeInt32(static_cast<int32_t>(row.class_priority)),
+                                        Value::makeVarchar(row.route_name),
+                                        Value::makeVarchar(row.target_kind),
+                                        Value::makeVarchar(row.target_label),
+                                        Value::makeVarchar(row.role),
+                                        Value::makeVarchar(row.service_type),
+                                        Value::makeVarchar(row.transport),
+                                        Value::makeInt32(static_cast<int32_t>(row.route_weight)),
+                                        Value::makeVarchar(row.fallback_route_name),
+                                        Value::makeBool(row.class_enabled),
+                                        Value::makeBool(row.route_enabled),
+                                    });
+                                }
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "ok", symbol);
+                                return ExecutionResult(std::move(result_set));
+                            }
+
+                            if (control_opcode == scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS)
+                            {
+                                std::vector<core::WorkloadGovernance::AdmissionStatusRow> rows;
+                                core::ErrorContext local_ctx;
+                                core::Status status = workload_governance->snapshotAdmissionStatus(rows, &local_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return ExecutionResult(local_ctx.message.empty()
+                                                               ? "SHOW CLUSTER ADMISSION STATUS failed"
+                                                               : local_ctx.message);
+                                }
+
+                                auto result_set = std::make_unique<ResultSet>();
+                                result_set->addColumn("scope", core::DataType::VARCHAR);
+                                result_set->addColumn("class_name", core::DataType::VARCHAR);
+                                result_set->addColumn("policy_name", core::DataType::VARCHAR);
+                                result_set->addColumn("reject_mode", core::DataType::VARCHAR);
+                                result_set->addColumn("binding_priority", core::DataType::INT32);
+                                result_set->addColumn("class_priority", core::DataType::INT32);
+                                result_set->addColumn("max_concurrent_sessions", core::DataType::INT32);
+                                result_set->addColumn("max_concurrent_queries", core::DataType::INT32);
+                                result_set->addColumn("max_queue_depth", core::DataType::INT32);
+                                result_set->addColumn("queue_timeout_ms", core::DataType::INT32);
+                                result_set->addColumn("active_sessions", core::DataType::INT32);
+                                result_set->addColumn("active_queries", core::DataType::INT32);
+                                result_set->addColumn("queued_queries", core::DataType::INT32);
+                                result_set->addColumn("class_enabled", core::DataType::BOOLEAN);
+                                result_set->addColumn("policy_enabled", core::DataType::BOOLEAN);
+                                result_set->addColumn("binding_enabled", core::DataType::BOOLEAN);
+                                for (const auto& row : rows)
+                                {
+                                    result_set->addRow({
+                                        Value::makeVarchar(row.scope),
+                                        Value::makeVarchar(row.class_name),
+                                        Value::makeVarchar(row.policy_name),
+                                        Value::makeVarchar(row.reject_mode),
+                                        Value::makeInt32(static_cast<int32_t>(row.binding_priority)),
+                                        Value::makeInt32(static_cast<int32_t>(row.class_priority)),
+                                        Value::makeInt32(static_cast<int32_t>(row.max_concurrent_sessions)),
+                                        Value::makeInt32(static_cast<int32_t>(row.max_concurrent_queries)),
+                                        Value::makeInt32(static_cast<int32_t>(row.max_queue_depth)),
+                                        Value::makeInt32(static_cast<int32_t>(row.queue_timeout_ms)),
+                                        Value::makeInt32(static_cast<int32_t>(row.active_sessions)),
+                                        Value::makeInt32(static_cast<int32_t>(row.active_queries)),
+                                        Value::makeInt32(static_cast<int32_t>(row.queued_queries)),
+                                        Value::makeBool(row.class_enabled),
+                                        Value::makeBool(row.policy_enabled),
+                                        Value::makeBool(row.binding_enabled),
+                                    });
+                                }
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "ok", symbol);
+                                return ExecutionResult(std::move(result_set));
+                            }
+
+                            if (!requireSuperuser())
+                            {
+                                return ExecutionResult(
+                                    "Permission denied: cluster workload governance controls require superuser");
+                            }
+
+                            auto requireObjectName = [&]() -> bool {
+                                return !object_name.empty();
+                            };
+
+                            switch (control_opcode)
+                            {
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS:
+                                {
+                                    if (!requireObjectName())
+                                    {
+                                        return ExecutionResult("V3 cluster workload class requires object_name");
+                                    }
+
+                                    const bool is_create = action_code == 32;
+                                    const bool is_alter = action_code == 33;
+                                    const bool is_drop = action_code == 34;
+                                    core::ErrorContext local_ctx;
+                                    core::CatalogManager::WorkloadClassCatalogInfo info{};
+                                    const core::Status existing_status =
+                                        findWorkloadClassByName(object_name, info, &local_ctx);
+
+                                    if (is_drop)
+                                    {
+                                        const bool if_exists =
+                                            assignments.count("IF_EXISTS") != 0 &&
+                                            normalizeUpper(assignments["IF_EXISTS"]) != "0";
+                                        if (existing_status == core::Status::NOT_FOUND && if_exists)
+                                        {
+                                            return successResult();
+                                        }
+                                        if (existing_status != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Undefined workload class: " + object_name);
+                                        }
+                                        if (catalog->deleteWorkloadClassCatalogEntry(info.class_id, &local_ctx) != core::Status::OK)
+                                        {
+                                            return ExecutionResult(local_ctx.message.empty()
+                                                                       ? "DROP CLUSTER WORKLOAD CLASS failed"
+                                                                       : local_ctx.message);
+                                        }
+                                        return successResult();
+                                    }
+
+                                    if (is_create && existing_status == core::Status::OK)
+                                    {
+                                        return ExecutionResult("Duplicate workload class: " + object_name);
+                                    }
+                                    if (is_alter && existing_status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Undefined workload class: " + object_name);
+                                    }
+
+                                    if (existing_status != core::Status::OK)
+                                    {
+                                        info = core::CatalogManager::WorkloadClassCatalogInfo{};
+                                        info.class_id = core::generateUuidV7();
+                                        info.class_name = object_name;
+                                        info.match_kind = core::CatalogManager::WorkloadMatchKind::CUSTOM;
+                                        info.match_text = ".*";
+                                        info.priority = 0;
+                                        info.allow_cross_shard = false;
+                                        info.is_enabled = true;
+                                    }
+
+                                    auto match_it = assignments.find("MATCH");
+                                    if (match_it != assignments.end())
+                                    {
+                                        const std::string raw_match = match_it->second;
+                                        size_t sep = raw_match.find(':');
+                                        if (sep == std::string::npos)
+                                        {
+                                            sep = raw_match.find('=');
+                                        }
+                                        if (sep != std::string::npos)
+                                        {
+                                            core::CatalogManager::WorkloadMatchKind kind{};
+                                            if (!parseMatchKind(raw_match.substr(0, sep), kind))
+                                            {
+                                                return ExecutionResult("Invalid workload match kind");
+                                            }
+                                            info.match_kind = kind;
+                                            info.match_expr_sblr_id = core::ID{};
+                                            info.match_text = trimAsciiCopy(raw_match.substr(sep + 1));
+                                        }
+                                        else
+                                        {
+                                            info.match_expr_sblr_id = core::ID{};
+                                            info.match_text = raw_match;
+                                        }
+                                    }
+                                    auto kind_it = assignments.find("MATCH_KIND");
+                                    if (kind_it != assignments.end())
+                                    {
+                                        core::CatalogManager::WorkloadMatchKind kind{};
+                                        if (!parseMatchKind(kind_it->second, kind))
+                                        {
+                                            return ExecutionResult("Invalid MATCH_KIND for workload class");
+                                        }
+                                        info.match_kind = kind;
+                                    }
+                                    auto text_it = assignments.find("MATCH_TEXT");
+                                    if (text_it != assignments.end())
+                                    {
+                                        info.match_expr_sblr_id = core::ID{};
+                                        info.match_text = text_it->second;
+                                    }
+                                    auto desc_it = assignments.find("DESCRIPTION");
+                                    if (desc_it != assignments.end())
+                                    {
+                                        info.description = desc_it->second;
+                                    }
+                                    auto role_it = assignments.find("DEFAULT_ROLE");
+                                    if (role_it != assignments.end())
+                                    {
+                                        core::CatalogManager::ClusterNodeRole role{};
+                                        if (!parseNodeRole(role_it->second, role))
+                                        {
+                                            return ExecutionResult("Invalid DEFAULT_ROLE for workload class");
+                                        }
+                                        info.has_default_role = true;
+                                        info.default_role = role;
+                                    }
+                                    auto priority_it = assignments.find("PRIORITY");
+                                    if (priority_it != assignments.end())
+                                    {
+                                        uint8_t priority = 0;
+                                        if (!parseUnsigned8(priority_it->second, priority))
+                                        {
+                                            return ExecutionResult("Invalid PRIORITY for workload class");
+                                        }
+                                        info.priority = priority;
+                                    }
+                                    auto latency_it = assignments.find("MAX_LATENCY_MS");
+                                    if (latency_it != assignments.end())
+                                    {
+                                        uint32_t latency = 0;
+                                        if (!parseUnsigned32(latency_it->second, latency))
+                                        {
+                                            return ExecutionResult("Invalid MAX_LATENCY_MS for workload class");
+                                        }
+                                        info.has_max_latency_ms = true;
+                                        info.max_latency_ms = latency;
+                                    }
+                                    auto cross_it = assignments.find("ALLOW_CROSS_SHARD");
+                                    if (cross_it != assignments.end())
+                                    {
+                                        bool enabled = false;
+                                        if (!parseBoolText(cross_it->second, enabled))
+                                        {
+                                            return ExecutionResult("Invalid ALLOW_CROSS_SHARD for workload class");
+                                        }
+                                        info.allow_cross_shard = enabled;
+                                    }
+                                    auto enabled_it = assignments.find("ENABLED");
+                                    if (enabled_it != assignments.end())
+                                    {
+                                        bool enabled = false;
+                                        if (!parseBoolText(enabled_it->second, enabled))
+                                        {
+                                            return ExecutionResult("Invalid ENABLED flag for workload class");
+                                        }
+                                        info.is_enabled = enabled;
+                                    }
+
+                                    info.class_name = object_name;
+                                    if (info.match_text.empty())
+                                    {
+                                        info.match_kind = core::CatalogManager::WorkloadMatchKind::CUSTOM;
+                                        info.match_text = ".*";
+                                    }
+
+                                    if (catalog->upsertWorkloadClassCatalogEntry(info, &local_ctx) != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "CLUSTER WORKLOAD CLASS upsert failed"
+                                                                   : local_ctx.message);
+                                    }
+                                    return successResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE:
+                                {
+                                    if (!requireObjectName())
+                                    {
+                                        return ExecutionResult("V3 cluster workload route requires object_name");
+                                    }
+
+                                    const bool is_create = action_code == 35;
+                                    const bool is_alter = action_code == 36;
+                                    const bool is_drop = action_code == 37;
+                                    core::ErrorContext local_ctx;
+                                    core::CatalogManager::WorkloadRouteCatalogInfo info{};
+                                    const core::Status existing_status =
+                                        findWorkloadRouteByName(object_name, info, &local_ctx);
+
+                                    if (is_drop)
+                                    {
+                                        const bool if_exists =
+                                            assignments.count("IF_EXISTS") != 0 &&
+                                            normalizeUpper(assignments["IF_EXISTS"]) != "0";
+                                        if (existing_status == core::Status::NOT_FOUND && if_exists)
+                                        {
+                                            return successResult();
+                                        }
+                                        if (existing_status != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Undefined workload route: " + object_name);
+                                        }
+                                        if (catalog->deleteWorkloadRouteCatalogEntry(info.route_id, &local_ctx) != core::Status::OK)
+                                        {
+                                            return ExecutionResult(local_ctx.message.empty()
+                                                                       ? "DROP CLUSTER WORKLOAD ROUTE failed"
+                                                                       : local_ctx.message);
+                                        }
+                                        return successResult();
+                                    }
+
+                                    if (is_create && existing_status == core::Status::OK)
+                                    {
+                                        return ExecutionResult("Duplicate workload route: " + object_name);
+                                    }
+                                    if (is_alter && existing_status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Undefined workload route: " + object_name);
+                                    }
+
+                                    if (existing_status != core::Status::OK)
+                                    {
+                                        info = core::CatalogManager::WorkloadRouteCatalogInfo{};
+                                        info.route_id = core::generateUuidV7();
+                                        info.route_name = object_name;
+                                        info.target_kind = core::CatalogManager::RouteTargetKind::ROLE;
+                                        info.target_label = "ROUTER";
+                                        info.has_role = true;
+                                        info.role = core::CatalogManager::ClusterNodeRole::ROUTER;
+                                        info.transport = core::CatalogManager::ConnectionTransport::LOCAL;
+                                        info.route_weight = 1;
+                                        info.is_enabled = true;
+                                    }
+
+                                    std::string class_name;
+                                    auto class_it = assignments.find("CLASS");
+                                    if (class_it != assignments.end())
+                                    {
+                                        class_name = class_it->second;
+                                    }
+                                    core::CatalogManager::WorkloadClassCatalogInfo klass{};
+                                    if (!class_name.empty())
+                                    {
+                                        if (findWorkloadClassByName(class_name, klass, &local_ctx) != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Undefined workload class for route: " + class_name);
+                                        }
+                                        info.class_id = klass.class_id;
+                                    }
+                                    else if (is_create && info.class_id == core::ID{})
+                                    {
+                                        return ExecutionResult("CLUSTER WORKLOAD ROUTE requires CLASS=<workload_class>");
+                                    }
+
+                                    auto target_kind_it = assignments.find("TARGET_KIND");
+                                    if (target_kind_it != assignments.end())
+                                    {
+                                        core::CatalogManager::RouteTargetKind kind{};
+                                        if (!parseRouteTargetKind(target_kind_it->second, kind))
+                                        {
+                                            return ExecutionResult("Invalid TARGET_KIND for workload route");
+                                        }
+                                        info.target_kind = kind;
+                                    }
+                                    auto target_it = assignments.find("TARGET");
+                                    if (target_it != assignments.end())
+                                    {
+                                        core::ID target_id{};
+                                        if (parseUuidTextLocal(target_it->second, target_id))
+                                        {
+                                            info.target_uuid = target_id;
+                                            info.target_label.clear();
+                                        }
+                                        else
+                                        {
+                                            info.target_uuid = core::ID{};
+                                            info.target_label = target_it->second;
+                                        }
+                                    }
+                                    auto target_uuid_it = assignments.find("TARGET_UUID");
+                                    if (target_uuid_it != assignments.end())
+                                    {
+                                        core::ID target_id{};
+                                        if (!parseUuidTextLocal(target_uuid_it->second, target_id))
+                                        {
+                                            return ExecutionResult("Invalid TARGET_UUID for workload route");
+                                        }
+                                        info.target_uuid = target_id;
+                                    }
+                                    auto target_label_it = assignments.find("TARGET_LABEL");
+                                    if (target_label_it != assignments.end())
+                                    {
+                                        info.target_label = target_label_it->second;
+                                    }
+                                    auto role_it = assignments.find("ROLE");
+                                    if (role_it != assignments.end())
+                                    {
+                                        core::CatalogManager::ClusterNodeRole role{};
+                                        if (!parseNodeRole(role_it->second, role))
+                                        {
+                                            return ExecutionResult("Invalid ROLE for workload route");
+                                        }
+                                        info.has_role = true;
+                                        info.role = role;
+                                    }
+                                    auto service_it = assignments.find("SERVICE_TYPE");
+                                    if (service_it != assignments.end())
+                                    {
+                                        core::CatalogManager::ClusterServiceType service_type{};
+                                        if (!parseServiceType(service_it->second, service_type))
+                                        {
+                                            return ExecutionResult("Invalid SERVICE_TYPE for workload route");
+                                        }
+                                        info.has_service_type = true;
+                                        info.service_type = service_type;
+                                    }
+                                    auto transport_it = assignments.find("TRANSPORT");
+                                    if (transport_it != assignments.end())
+                                    {
+                                        core::CatalogManager::ConnectionTransport transport{};
+                                        if (!parseTransport(transport_it->second, transport))
+                                        {
+                                            return ExecutionResult("Invalid TRANSPORT for workload route");
+                                        }
+                                        info.transport = transport;
+                                    }
+                                    auto weight_it = assignments.find("ROUTE_WEIGHT");
+                                    if (weight_it == assignments.end())
+                                    {
+                                        weight_it = assignments.find("WEIGHT");
+                                    }
+                                    if (weight_it != assignments.end())
+                                    {
+                                        uint16_t weight = 0;
+                                        if (!parseUnsigned16(weight_it->second, weight) || weight == 0)
+                                        {
+                                            return ExecutionResult("Invalid ROUTE_WEIGHT for workload route");
+                                        }
+                                        info.route_weight = weight;
+                                    }
+                                    auto fallback_it = assignments.find("FALLBACK");
+                                    if (fallback_it != assignments.end())
+                                    {
+                                        core::CatalogManager::WorkloadRouteCatalogInfo fallback{};
+                                        if (findWorkloadRouteByName(fallback_it->second, fallback, &local_ctx) != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Undefined FALLBACK route: " + fallback_it->second);
+                                        }
+                                        info.fallback_route_id = fallback.route_id;
+                                    }
+                                    auto enabled_it = assignments.find("ENABLED");
+                                    if (enabled_it != assignments.end())
+                                    {
+                                        bool enabled = false;
+                                        if (!parseBoolText(enabled_it->second, enabled))
+                                        {
+                                            return ExecutionResult("Invalid ENABLED flag for workload route");
+                                        }
+                                        info.is_enabled = enabled;
+                                    }
+
+                                    info.route_name = object_name;
+                                    if (catalog->upsertWorkloadRouteCatalogEntry(info, &local_ctx) != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "CLUSTER WORKLOAD ROUTE upsert failed"
+                                                                   : local_ctx.message);
+                                    }
+                                    return successResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_POLICY:
+                                {
+                                    if (!requireObjectName())
+                                    {
+                                        return ExecutionResult("V3 cluster admission policy requires object_name");
+                                    }
+
+                                    const bool is_create = action_code == 38;
+                                    const bool is_alter = action_code == 39;
+                                    const bool is_drop = action_code == 40;
+                                    core::ErrorContext local_ctx;
+                                    core::CatalogManager::AdmissionPolicyCatalogInfo info{};
+                                    const core::Status existing_status =
+                                        findAdmissionPolicyByName(object_name, info, &local_ctx);
+
+                                    if (is_drop)
+                                    {
+                                        const bool if_exists =
+                                            assignments.count("IF_EXISTS") != 0 &&
+                                            normalizeUpper(assignments["IF_EXISTS"]) != "0";
+                                        if (existing_status == core::Status::NOT_FOUND && if_exists)
+                                        {
+                                            return successResult();
+                                        }
+                                        if (existing_status != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Undefined admission policy: " + object_name);
+                                        }
+                                        if (catalog->deleteAdmissionPolicyCatalogEntry(info.policy_id, &local_ctx) != core::Status::OK)
+                                        {
+                                            return ExecutionResult(local_ctx.message.empty()
+                                                                       ? "DROP CLUSTER ADMISSION POLICY failed"
+                                                                       : local_ctx.message);
+                                        }
+                                        return successResult();
+                                    }
+
+                                    if (is_create && existing_status == core::Status::OK)
+                                    {
+                                        return ExecutionResult("Duplicate admission policy: " + object_name);
+                                    }
+                                    if (is_alter && existing_status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Undefined admission policy: " + object_name);
+                                    }
+
+                                    if (existing_status != core::Status::OK)
+                                    {
+                                        info = core::CatalogManager::AdmissionPolicyCatalogInfo{};
+                                        info.policy_id = core::generateUuidV7();
+                                        info.policy_name = object_name;
+                                        info.max_concurrent_sessions = 1024;
+                                        info.max_concurrent_queries = 1024;
+                                        info.max_queue_depth = 1024;
+                                        info.reject_mode = core::CatalogManager::AdmissionRejectMode::REJECT;
+                                        info.queue_timeout_ms = 1000;
+                                        info.is_enabled = true;
+                                    }
+
+                                    auto sessions_it = assignments.find("MAX_CONCURRENT_SESSIONS");
+                                    if (sessions_it != assignments.end())
+                                    {
+                                        if (!parseUnsigned32(sessions_it->second, info.max_concurrent_sessions) ||
+                                            info.max_concurrent_sessions == 0)
+                                        {
+                                            return ExecutionResult("Invalid MAX_CONCURRENT_SESSIONS for admission policy");
+                                        }
+                                    }
+                                    auto queries_it = assignments.find("MAX_CONCURRENT_QUERIES");
+                                    if (queries_it == assignments.end())
+                                    {
+                                        queries_it = assignments.find("MAX");
+                                    }
+                                    if (queries_it != assignments.end())
+                                    {
+                                        if (!parseUnsigned32(queries_it->second, info.max_concurrent_queries) ||
+                                            info.max_concurrent_queries == 0)
+                                        {
+                                            return ExecutionResult("Invalid MAX_CONCURRENT_QUERIES for admission policy");
+                                        }
+                                    }
+                                    auto queue_depth_it = assignments.find("MAX_QUEUE_DEPTH");
+                                    if (queue_depth_it != assignments.end())
+                                    {
+                                        if (!parseUnsigned32(queue_depth_it->second, info.max_queue_depth))
+                                        {
+                                            return ExecutionResult("Invalid MAX_QUEUE_DEPTH for admission policy");
+                                        }
+                                    }
+                                    auto queue_timeout_it = assignments.find("QUEUE_TIMEOUT_MS");
+                                    if (queue_timeout_it != assignments.end())
+                                    {
+                                        if (!parseUnsigned32(queue_timeout_it->second, info.queue_timeout_ms))
+                                        {
+                                            return ExecutionResult("Invalid QUEUE_TIMEOUT_MS for admission policy");
+                                        }
+                                    }
+                                    auto cpu_it = assignments.find("CPU_REJECT_PCT");
+                                    if (cpu_it != assignments.end() &&
+                                        !parseUnsigned8(cpu_it->second, info.cpu_reject_pct))
+                                    {
+                                        return ExecutionResult("Invalid CPU_REJECT_PCT for admission policy");
+                                    }
+                                    auto mem_it = assignments.find("MEM_REJECT_PCT");
+                                    if (mem_it != assignments.end() &&
+                                        !parseUnsigned8(mem_it->second, info.mem_reject_pct))
+                                    {
+                                        return ExecutionResult("Invalid MEM_REJECT_PCT for admission policy");
+                                    }
+                                    auto io_it = assignments.find("IO_REJECT_PCT");
+                                    if (io_it != assignments.end() &&
+                                        !parseUnsigned8(io_it->second, info.io_reject_pct))
+                                    {
+                                        return ExecutionResult("Invalid IO_REJECT_PCT for admission policy");
+                                    }
+                                    auto mode_it = assignments.find("REJECT_MODE");
+                                    if (mode_it == assignments.end())
+                                    {
+                                        mode_it = assignments.find("MODE");
+                                    }
+                                    if (mode_it != assignments.end())
+                                    {
+                                        core::CatalogManager::AdmissionRejectMode reject_mode{};
+                                        if (!parseRejectMode(mode_it->second, reject_mode))
+                                        {
+                                            return ExecutionResult("Invalid REJECT_MODE for admission policy");
+                                        }
+                                        info.reject_mode = reject_mode;
+                                    }
+                                    if (info.reject_mode == core::CatalogManager::AdmissionRejectMode::QUEUE)
+                                    {
+                                        if (info.max_queue_depth == 0)
+                                        {
+                                            return ExecutionResult(
+                                                "Invalid MAX_QUEUE_DEPTH for queued admission policy");
+                                        }
+                                        if (info.queue_timeout_ms == 0)
+                                        {
+                                            return ExecutionResult(
+                                                "Invalid QUEUE_TIMEOUT_MS for queued admission policy");
+                                        }
+                                    }
+                                    auto enabled_it = assignments.find("ENABLED");
+                                    if (enabled_it != assignments.end())
+                                    {
+                                        bool enabled = false;
+                                        if (!parseBoolText(enabled_it->second, enabled))
+                                        {
+                                            return ExecutionResult("Invalid ENABLED flag for admission policy");
+                                        }
+                                        info.is_enabled = enabled;
+                                    }
+
+                                    info.policy_name = object_name;
+                                    if (catalog->upsertAdmissionPolicyCatalogEntry(info, &local_ctx) != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "CLUSTER ADMISSION POLICY upsert failed"
+                                                                   : local_ctx.message);
+                                    }
+                                    return successResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_BINDING:
+                                {
+                                    if (!requireObjectName())
+                                    {
+                                        return ExecutionResult("V3 cluster admission binding requires object_name");
+                                    }
+
+                                    const bool is_create = action_code == 41;
+                                    const bool is_alter = action_code == 42;
+                                    const bool is_drop = action_code == 43;
+                                    core::ErrorContext local_ctx;
+                                    core::CatalogManager::AdmissionBindingCatalogInfo info{};
+                                    const core::Status existing_status =
+                                        loadAdmissionBindingByName(object_name, info, &local_ctx);
+
+                                    if (is_drop)
+                                    {
+                                        const bool if_exists =
+                                            assignments.count("IF_EXISTS") != 0 &&
+                                            normalizeUpper(assignments["IF_EXISTS"]) != "0";
+                                        if (existing_status == core::Status::NOT_FOUND && if_exists)
+                                        {
+                                            return successResult();
+                                        }
+                                        if (existing_status != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Undefined admission binding: " + object_name);
+                                        }
+                                        if (catalog->deleteAdmissionBindingCatalogEntry(info.binding_id, &local_ctx) != core::Status::OK)
+                                        {
+                                            return ExecutionResult(local_ctx.message.empty()
+                                                                       ? "DROP CLUSTER ADMISSION BINDING failed"
+                                                                       : local_ctx.message);
+                                        }
+                                        return successResult();
+                                    }
+
+                                    if (is_create && existing_status == core::Status::OK)
+                                    {
+                                        return ExecutionResult("Duplicate admission binding: " + object_name);
+                                    }
+                                    if (is_alter && existing_status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Undefined admission binding: " + object_name);
+                                    }
+
+                                    if (existing_status != core::Status::OK)
+                                    {
+                                        info = core::CatalogManager::AdmissionBindingCatalogInfo{};
+                                        info.binding_id = deriveDeterministicObjectId("admission_binding", object_name);
+                                        info.target_kind = core::CatalogManager::AdmissionTargetKind::CLUSTER;
+                                        info.priority = 0;
+                                        info.is_enabled = true;
+                                    }
+
+                                    std::string policy_name;
+                                    auto policy_it = assignments.find("POLICY");
+                                    if (policy_it != assignments.end())
+                                    {
+                                        policy_name = policy_it->second;
+                                    }
+                                    core::CatalogManager::AdmissionPolicyCatalogInfo policy{};
+                                    if (!policy_name.empty())
+                                    {
+                                        if (findAdmissionPolicyByName(policy_name, policy, &local_ctx) != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Undefined admission policy for binding: " + policy_name);
+                                        }
+                                        info.policy_id = policy.policy_id;
+                                    }
+                                    else if (is_create && info.policy_id == core::ID{})
+                                    {
+                                        return ExecutionResult("CLUSTER ADMISSION BINDING requires POLICY=<policy_name>");
+                                    }
+
+                                    auto target_kind_it = assignments.find("TARGET_KIND");
+                                    if (target_kind_it != assignments.end())
+                                    {
+                                        core::CatalogManager::AdmissionTargetKind target_kind{};
+                                        if (!parseAdmissionTargetKind(target_kind_it->second, target_kind))
+                                        {
+                                            return ExecutionResult("Invalid TARGET_KIND for admission binding");
+                                        }
+                                        info.target_kind = target_kind;
+                                    }
+
+                                    auto class_it = assignments.find("CLASS");
+                                    if (class_it != assignments.end())
+                                    {
+                                        core::CatalogManager::WorkloadClassCatalogInfo klass{};
+                                        if (findWorkloadClassByName(class_it->second, klass, &local_ctx) != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Undefined workload class for binding: " + class_it->second);
+                                        }
+                                        info.class_id = klass.class_id;
+                                        info.target_kind = core::CatalogManager::AdmissionTargetKind::WORKLOAD_CLASS;
+                                        info.target_uuid = core::ID{};
+                                    }
+
+                                    auto target_uuid_it = assignments.find("TARGET_UUID");
+                                    if (target_uuid_it != assignments.end())
+                                    {
+                                        core::ID target_uuid{};
+                                        if (!parseUuidTextLocal(target_uuid_it->second, target_uuid))
+                                        {
+                                            return ExecutionResult("Invalid TARGET_UUID for admission binding");
+                                        }
+                                        info.target_uuid = target_uuid;
+                                        info.class_id = core::ID{};
+                                    }
+
+                                    auto priority_it = assignments.find("PRIORITY");
+                                    if (priority_it != assignments.end())
+                                    {
+                                        uint8_t priority = 0;
+                                        if (!parseUnsigned8(priority_it->second, priority))
+                                        {
+                                            return ExecutionResult("Invalid PRIORITY for admission binding");
+                                        }
+                                        info.priority = priority;
+                                    }
+
+                                    auto enabled_it = assignments.find("ENABLED");
+                                    if (enabled_it != assignments.end())
+                                    {
+                                        bool enabled = false;
+                                        if (!parseBoolText(enabled_it->second, enabled))
+                                        {
+                                            return ExecutionResult("Invalid ENABLED flag for admission binding");
+                                        }
+                                        info.is_enabled = enabled;
+                                    }
+
+                                    if (info.target_kind == core::CatalogManager::AdmissionTargetKind::WORKLOAD_CLASS &&
+                                        info.class_id == core::ID{})
+                                    {
+                                        return ExecutionResult("Admission binding with TARGET_KIND=WORKLOAD_CLASS requires CLASS=<workload_class>");
+                                    }
+
+                                    if (catalog->upsertAdmissionBindingCatalogEntry(info, &local_ctx) != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "CLUSTER ADMISSION BINDING upsert failed"
+                                                                   : local_ctx.message);
+                                    }
+                                    return successResult();
+                                }
+                                default:
+                                    break;
+                            }
+
+                            return semanticBridgeReject(symbol);
                         };
 
                         auto executeUdrCompileBridgeOpcode =
@@ -69404,6 +70884,13 @@ namespace scratchbird
                                     "vnext_opcode_dispatch", "ok", symbol);
                                 return ExecutionResult();
                             }
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_POLICY:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_BINDING:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS:
+                                return executeClusterGovernanceOpcode(opcode, payload);
 			                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_TS_BUCKET_AGG:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_COL_SCAN:
@@ -69460,14 +70947,8 @@ namespace scratchbird
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_DELETE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_SEARCH:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_QUERY:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_POLICY:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_BINDING:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SET_STATE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_STATE:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_RULE_DDL:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_TARGET_DDL:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_ROUTE_DDL:

@@ -8,16 +8,19 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 /**
- * ScratchBird Connection Pool
+ * ScratchBird Auxiliary Pooling And Cache Primitives
  *
- * Alpha 3 Phase 3.6: Connection Pooling
+ * This header defines the standalone `scratchbird_pool` library used for
+ * statement/result cache primitives plus experimental pool orchestration.
  *
- * Built-in connection pooling with:
- * - Session, Transaction, and Statement pool modes
- * - Per-database and per-user pools
- * - Statement and result caching
- * - Health checking and validation
- * - Comprehensive statistics
+ * It is not the authoritative engine runtime pool. The core engine connection
+ * pool lives in `scratchbird/core/connection_pool.h`, and the remote bridge
+ * pool lives in `scratchbird/udr/connection_pool.h`.
+ *
+ * Important status:
+ * - Statement and result cache primitives are supported here.
+ * - Transport-backed pooled connections remain experimental scaffolding.
+ * - This library must not be presented as the primary engine connection path.
  */
 
 #ifndef SCRATCHBIRD_POOL_CONNECTION_POOL_H

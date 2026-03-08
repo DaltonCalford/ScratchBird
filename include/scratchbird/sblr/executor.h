@@ -330,6 +330,7 @@ namespace scratchbird
                 jit_optimization_profile_ = optimization_profile;
                 jit_security_policy_version_ = security_policy_version;
             }
+            void setJitBackendLlvmEnabled(bool enabled);
             void setJitBackendLlvmMockEnabled(bool enabled);
             void setJitHotnessThreshold(uint32_t threshold);
             size_t drainJitCompileQueue();
@@ -548,11 +549,11 @@ namespace scratchbird
             core::ID jit_object_uuid_{};
             core::ID jit_module_id_{};
             core::ID jit_plan_id_{};
-            std::string jit_target_triple_ = "native";
+            std::string jit_target_triple_;
             std::string jit_cpu_feature_profile_ = "generic";
-            std::string jit_native_abi_version_ = "v1";
-            std::string jit_compiler_identity_ = "scratchbird_jit";
-            std::string jit_compiler_version_ = "1.0.0";
+            std::string jit_native_abi_version_ = "sb_abi_v1";
+            std::string jit_compiler_identity_;
+            std::string jit_compiler_version_;
             std::string jit_optimization_profile_ = "O2";
             uint64_t jit_security_policy_version_ = 1;
             jit::JitReasonCode last_jit_reason_code_ = jit::JitReasonCode::NONE;
