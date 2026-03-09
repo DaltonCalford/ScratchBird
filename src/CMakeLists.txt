@@ -191,6 +191,7 @@ endif()
 
 target_link_libraries(scratchbird_sblr PUBLIC
     scratchbird_core
+    scratchbird_parser
     nlohmann_json::nlohmann_json
     scratchbird_llvm_jit_provider
 )
@@ -228,6 +229,10 @@ else()
         "SBLR JIT provider: unavailable, builds retain deterministic VM fallback"
     )
 endif()
+
+# scratchbird_core references Executor for scheduler-run procedures, so the
+# static library graph must model the core <-> sblr cycle explicitly.
+target_link_libraries(scratchbird_core PUBLIC scratchbird_sblr)
 
 
 # Compiler library: scratchbird_compiler (parsers + semantic + bytecode)
@@ -283,8 +288,8 @@ if(CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
         $<LINK_GROUP:RESCAN,${SCRATCHBIRD_LINK_GROUP_LIBS_CSV}>
     )
 else()
-target_link_libraries(scratchbird_link_group INTERFACE
-        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_security,scratchbird_ipc>
+    target_link_libraries(scratchbird_link_group INTERFACE
+        ${SCRATCHBIRD_LINK_GROUP_LIBS}
     )
 endif()
 if(NOT WIN32)
@@ -365,6 +370,9 @@ if(SCRATCHBIRD_WITH_COMPILER)
         scratchbird_optimizer_runtime
         scratchbird_parser  # Parser dependency for AST-based optimizers
     )
+
+    # The SBLR optimizer support bridge invokes QueryPlanner directly.
+    target_link_libraries(scratchbird_sblr PUBLIC scratchbird_optimizer_compiler)
 
     set_target_properties(scratchbird_optimizer_compiler PROPERTIES
         CXX_STANDARD 17
