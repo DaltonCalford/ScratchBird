@@ -25,12 +25,14 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/page_manager.h"
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
@@ -114,6 +116,79 @@ protected:
         }
 
         return conn->rollback(&ctx) == Status::OK;
+    }
+
+    bool readRawPage(const Database& db, uint32_t page_id, std::vector<uint8_t>& page_out)
+    {
+        page_out.assign(db.page_size(), 0);
+        std::ifstream in(test_db_->path(), std::ios::binary);
+        if (!in.is_open())
+        {
+            return false;
+        }
+        in.seekg(static_cast<std::streamoff>(page_id) * static_cast<std::streamoff>(db.page_size()));
+        in.read(reinterpret_cast<char*>(page_out.data()), static_cast<std::streamsize>(page_out.size()));
+        return in.good();
+    }
+
+    bool writeRawPage(const Database& db, uint32_t page_id, const std::vector<uint8_t>& page)
+    {
+        std::fstream io(test_db_->path(), std::ios::in | std::ios::out | std::ios::binary);
+        if (!io.is_open())
+        {
+            return false;
+        }
+        io.seekp(static_cast<std::streamoff>(page_id) * static_cast<std::streamoff>(db.page_size()));
+        io.write(reinterpret_cast<const char*>(page.data()), static_cast<std::streamsize>(page.size()));
+        io.flush();
+        return io.good();
+    }
+
+    bool allocateHeapAuditPage(Database& db, uint32_t& page_id_out, std::vector<uint8_t>& page_out)
+    {
+        ErrorContext ctx;
+        page_id_out = 0;
+        if (db.page_manager() == nullptr)
+        {
+            return false;
+        }
+        if (db.page_manager()->allocatePage(page_id_out, &ctx) != Status::OK)
+        {
+            return false;
+        }
+
+        page_out.assign(db.page_size(), 0);
+        HeapPage heap(page_out.data(), db.page_size());
+        if (heap.initialize(page_id_out, &ctx) != Status::OK)
+        {
+            return false;
+        }
+        return db.write_page(page_id_out, page_out.data(), &ctx) == Status::OK;
+    }
+
+    std::string summarizePageAuditFindings(const std::vector<SweepPageAuditFinding>& findings,
+                                           uint32_t page_id) const
+    {
+        std::ostringstream out;
+        bool first = true;
+        for (const auto& finding : findings)
+        {
+            if (finding.page_id != page_id)
+            {
+                continue;
+            }
+            if (!first)
+            {
+                out << "; ";
+            }
+            first = false;
+            out << finding.error_code << "@" << finding.scan_mode << "/" << finding.trigger_source;
+        }
+        if (first)
+        {
+            out << "<none>";
+        }
+        return out.str();
     }
 
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_;
@@ -834,6 +909,135 @@ TEST_F(GarbageCollectorTest, SweepWalAfterLogFailureDoesNotBlockPrune)
     std::vector<SweepWalAfterLogSegment> segments;
     ASSERT_EQ(sweep_mgr->listWalAfterLogSegments(segments, &ctx), Status::OK) << ctx.message;
     EXPECT_TRUE(segments.empty());
+}
+
+TEST_F(GarbageCollectorTest, SweepPageSpotAuditEmitsDeterministicFindingsWithoutInlineRepair)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+
+    uint32_t audit_page_id = 0;
+    std::vector<uint8_t> raw_page;
+    ASSERT_TRUE(allocateHeapAuditPage(db, audit_page_id, raw_page));
+
+    auto* header = reinterpret_cast<PageHeader*>(raw_page.data());
+    const uint32_t original_checksum = header->checksum;
+    header->checksum ^= 0x00FF00FFu;
+    ASSERT_TRUE(writeRawPage(db, audit_page_id, raw_page));
+
+    ID tx_uuid{};
+    uint64_t txid = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::PAGE_SPOT_AUDIT};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+
+    auto stats = sweep_mgr->getStatistics();
+    EXPECT_GE(stats.last_page_audit_findings_emitted, 1u);
+    EXPECT_EQ(stats.page_audit_mode_downgrades, 0u);
+
+    std::vector<SweepPageAuditFinding> findings;
+    ASSERT_EQ(sweep_mgr->listPageAuditFindings(findings, &ctx), Status::OK) << ctx.message;
+    auto it = std::find_if(findings.begin(), findings.end(),
+                           [audit_page_id](const SweepPageAuditFinding& finding) {
+                               return finding.page_id == audit_page_id &&
+                                      finding.error_code == "PAGE_CHECKSUM_FAIL";
+                           });
+    ASSERT_TRUE(it != findings.end()) << summarizePageAuditFindings(findings, audit_page_id);
+    EXPECT_EQ(it->scan_mode, "DIAGNOSTIC");
+    EXPECT_EQ(it->trigger_source, "SWEEP_BACKGROUND");
+    EXPECT_EQ(it->severity, "ERROR");
+
+    std::vector<uint8_t> after_page;
+    ASSERT_TRUE(readRawPage(db, audit_page_id, after_page));
+    const auto* after_header = reinterpret_cast<const PageHeader*>(after_page.data());
+    EXPECT_EQ(after_header->checksum, (original_checksum ^ 0x00FF00FFu));
+    EXPECT_FALSE(validatePageChecksum(after_page.data(), db.page_size()));
+}
+
+TEST_F(GarbageCollectorTest, SweepPageSpotAuditDowngradesToLightUnderForegroundPressure)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+
+    uint32_t audit_page_id = 0;
+    std::vector<uint8_t> raw_page;
+    ASSERT_TRUE(allocateHeapAuditPage(db, audit_page_id, raw_page));
+
+    auto* header = reinterpret_cast<PageHeader*>(raw_page.data());
+    const uint32_t original_upper = pageUpper(*header);
+    pageSetLower(*header, sizeof(PageHeader) + sizeof(ItemPointer));
+    pageSetUpper(*header, original_upper);
+    header->item_count = 1;
+    auto* item = reinterpret_cast<ItemPointer*>(raw_page.data() + sizeof(PageHeader));
+    item->offset = db.page_size() - 128;
+    item->length = 8;
+    item->flags = 0;
+    header->checksum = calculatePageChecksum(raw_page.data(), db.page_size());
+    ASSERT_TRUE(writeRawPage(db, audit_page_id, raw_page));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::PAGE_SPOT_AUDIT};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+
+    ID tx_uuid_1{};
+    uint64_t txid_1 = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid_1, txid_1));
+    ASSERT_EQ(sweep_mgr->executeSweep(true, &ctx), Status::OK) << ctx.message;
+
+    auto stats = sweep_mgr->getStatistics();
+    EXPECT_EQ(stats.page_audit_mode_downgrades, 1u);
+
+    std::vector<SweepPageAuditFinding> findings;
+    ASSERT_EQ(sweep_mgr->listPageAuditFindings(findings, &ctx), Status::OK) << ctx.message;
+    auto foreground_it = std::find_if(findings.begin(), findings.end(),
+                                      [audit_page_id](const SweepPageAuditFinding& finding) {
+                                          return finding.page_id == audit_page_id;
+                                      });
+    EXPECT_TRUE(foreground_it == findings.end()) << summarizePageAuditFindings(findings, audit_page_id);
+
+    std::vector<uint8_t> after_foreground_page;
+    ASSERT_TRUE(readRawPage(db, audit_page_id, after_foreground_page));
+    const auto* foreground_item =
+        reinterpret_cast<const ItemPointer*>(after_foreground_page.data() + sizeof(PageHeader));
+    EXPECT_EQ(foreground_item->offset, db.page_size() - 128);
+    EXPECT_EQ(foreground_item->length, 8u);
+    EXPECT_TRUE(validatePageChecksum(after_foreground_page.data(), db.page_size()));
+
+    ID tx_uuid_2{};
+    uint64_t txid_2 = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid_2, txid_2));
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+
+    findings.clear();
+    ASSERT_EQ(sweep_mgr->listPageAuditFindings(findings, &ctx), Status::OK) << ctx.message;
+    auto it = std::find_if(findings.begin(), findings.end(),
+                           [audit_page_id](const SweepPageAuditFinding& finding) {
+                               return finding.page_id == audit_page_id &&
+                                      finding.error_code == "RECORD_CHAIN_CORRUPT";
+                           });
+    ASSERT_TRUE(it != findings.end()) << summarizePageAuditFindings(findings, audit_page_id);
+    EXPECT_EQ(it->scan_mode, "DIAGNOSTIC");
+    EXPECT_EQ(it->trigger_source, "SWEEP_BACKGROUND");
+    EXPECT_EQ(it->severity, "ERROR");
 }
 
 TEST_F(GarbageCollectorTest, ConcurrentAccess)

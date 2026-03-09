@@ -11,15 +11,18 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/buffer_pool.h"
+#include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/heap_toast_lob_diagnostics.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/config.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <sstream>
 #include <cstdlib>
 #include <thread>
@@ -709,6 +712,102 @@ namespace scratchbird::core
             out << "created_time=" << created_time << "\n";
             return out.str();
         }
+
+        struct PageAuditObservation
+        {
+            uint64_t page_id = 0;
+            std::string page_type;
+            std::string error_code;
+            std::string severity;
+            std::string details_json;
+        };
+
+        auto isRecognizedPageTypeForAudit(uint16_t page_type) -> bool
+        {
+            if (validateVNextPageTypeKnown(page_type) != Status::OK)
+            {
+                return false;
+            }
+            switch (page_type)
+            {
+                case PAGE_TYPE_DATABASE_HEADER:
+                case PAGE_TYPE_SYSTEM_STATE:
+                case PAGE_TYPE_CATALOG_ROOT:
+                case PAGE_TYPE_CATALOG_PAGE:
+                case PAGE_TYPE_FSM_ROOT:
+                case PAGE_TYPE_FSM_PAGE:
+                case PAGE_TYPE_TRANSACTION_MAP:
+                case PAGE_TYPE_HEAP:
+                case PAGE_TYPE_TOAST_META:
+                case PAGE_TYPE_TOAST_CHUNK:
+                case PAGE_TYPE_LOB_META:
+                case PAGE_TYPE_LOB_CHUNK:
+                case PAGE_TYPE_TEMP_HEAP:
+                case PAGE_TYPE_NAME_REGISTRY:
+                case PAGE_TYPE_BOOTSTRAP_RESERVED:
+                case PAGE_TYPE_FILESPACE_HEADER:
+                    return true;
+                default:
+                    return isCanonicalIndexPageType(page_type) || isKnownVNextPageType(page_type);
+            }
+        }
+
+        auto pageTypeToAuditString(uint16_t page_type) -> std::string
+        {
+            switch (page_type)
+            {
+                case PAGE_TYPE_DATABASE_HEADER: return "DATABASE_HEADER";
+                case PAGE_TYPE_CATALOG_ROOT: return "CATALOG_ROOT";
+                case PAGE_TYPE_CATALOG_PAGE: return "CATALOG_PAGE";
+                case PAGE_TYPE_FSM_ROOT: return "FSM_ROOT";
+                case PAGE_TYPE_FSM_PAGE: return "FSM_PAGE";
+                case PAGE_TYPE_TRANSACTION_MAP: return "TRANSACTION_MAP";
+                case PAGE_TYPE_HEAP: return "HEAP";
+                case PAGE_TYPE_TOAST_META: return "TOAST_META";
+                case PAGE_TYPE_TOAST_CHUNK: return "TOAST_CHUNK";
+                case PAGE_TYPE_LOB_META: return "LOB_META";
+                case PAGE_TYPE_LOB_CHUNK: return "LOB_CHUNK";
+                case PAGE_TYPE_TEMP_HEAP: return "TEMP_HEAP";
+                case PAGE_TYPE_FILESPACE_HEADER: return "FILESPACE_HEADER";
+                default:
+                    if (isCanonicalIndexPageType(page_type))
+                    {
+                        return "INDEX";
+                    }
+                    if (isKnownVNextPageType(page_type))
+                    {
+                        return "VNEXT";
+                    }
+                    return "UNKNOWN";
+            }
+        }
+
+        auto makePageAuditDetails(std::initializer_list<std::pair<const char*, std::string>> fields)
+            -> std::string
+        {
+            nlohmann::json json = nlohmann::json::object();
+            for (const auto& field : fields)
+            {
+                json[field.first] = field.second;
+            }
+            return json.dump();
+        }
+
+        auto appendPageAuditObservation(std::vector<PageAuditObservation>& findings,
+                                        uint64_t page_id,
+                                        const std::string& page_type,
+                                        const std::string& error_code,
+                                        const std::string& severity,
+                                        const std::string& details_json) -> void
+        {
+            findings.push_back(PageAuditObservation{
+                page_id,
+                page_type,
+                error_code,
+                severity,
+                details_json,
+            });
+        }
     } // namespace
 
     SweepManager::SweepManager(Database *db) : db_(db), txn_manager_(nullptr), buffer_pool_(nullptr)
@@ -1022,6 +1121,44 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status SweepManager::listPageAuditFindings(std::vector<SweepPageAuditFinding>& rows_out,
+                                               ErrorContext* ctx) const
+    {
+        rows_out.clear();
+        if (!db_ || !db_->catalog_manager())
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::PageAuditFindingCatalogInfo> findings;
+        Status status = db_->catalog_manager()->listPageAuditFindingCatalogEntries(findings, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        rows_out.reserve(findings.size());
+        for (const auto& finding : findings)
+        {
+            SweepPageAuditFinding row{};
+            row.finding_id = finding.finding_id;
+            row.finding_time = finding.finding_time;
+            row.scan_mode = finding.scan_mode;
+            row.trigger_source = finding.trigger_source;
+            row.filespace_uuid = finding.filespace_uuid;
+            row.page_id = finding.page_id;
+            row.page_type = finding.page_type;
+            row.error_code = finding.error_code;
+            row.severity = finding.severity;
+            row.related_tx_uuid = finding.related_tx_uuid;
+            row.related_capsule_uuid = finding.related_capsule_uuid;
+            row.details_json = finding.details_json;
+            row.is_valid = finding.is_valid;
+            rows_out.push_back(std::move(row));
+        }
+        return Status::OK;
+    }
+
     bool SweepManager::checkSweepTrigger(ErrorContext *ctx)
     {
         // Don't trigger if sweep is already in progress
@@ -1100,7 +1237,8 @@ namespace scratchbird::core
             uint64_t duration_ms =
                 std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
                     .count();
-            updateStatistics(oit_before, oit_before, duration_ms, 0, 0, 0, false, false, false);
+            updateStatistics(
+                oit_before, oit_before, duration_ms, 0, 0, 0, 0, false, false, false, false, false);
 
             sweep_in_progress_.store(false, std::memory_order_release);
             return Status::OK;
@@ -1118,8 +1256,11 @@ namespace scratchbird::core
         uint64_t evidence_items_emitted = 0;
         uint64_t wal_after_segments_emitted = 0;
         uint64_t wal_after_backlog_depth = 0;
+        uint64_t page_audit_findings_emitted = 0;
         bool prune_blocked = false;
         bool evidence_failure = false;
+        bool page_audit_failure = false;
+        bool page_audit_mode_downgraded = false;
         bool wal_after_failure = false;
 
         // 3. Mandatory local evidence spool for non-normal lanes before prune handoff
@@ -1140,8 +1281,11 @@ namespace scratchbird::core
                              evidence_items_emitted,
                              0,
                              0,
+                             0,
                              true,
                              true,
+                             false,
+                             false,
                              false);
 
             if (db_->garbage_collector() != nullptr)
@@ -1153,7 +1297,42 @@ namespace scratchbird::core
             return s;
         }
 
-        // 4. Derivative wal_after_log export is downstream of local immutable
+        // 4. Page spot audit is read-only but its findings are mandatory local
+        // evidence for the PAGE_SPOT_AUDIT lane.
+        s = emitPageSpotAuditFindings(
+            foreground, &page_audit_findings_emitted, &page_audit_mode_downgraded, ctx);
+        if (s != Status::OK)
+        {
+            page_audit_failure = true;
+            prune_blocked = true;
+
+            auto end_time = std::chrono::steady_clock::now();
+            uint64_t duration_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
+                    .count();
+            updateStatistics(oit_before,
+                             new_oit,
+                             duration_ms,
+                             evidence_items_emitted,
+                             0,
+                             0,
+                             page_audit_findings_emitted,
+                             true,
+                             evidence_failure,
+                             true,
+                             page_audit_mode_downgraded,
+                             false);
+
+            if (db_->garbage_collector() != nullptr)
+            {
+                db_->garbage_collector()->notifySweepEvidenceBlocked(oit_before, new_oit);
+            }
+
+            sweep_in_progress_.store(false, std::memory_order_release);
+            return s;
+        }
+
+        // 5. Derivative wal_after_log export is downstream of local immutable
         // evidence and never becomes prune or recovery truth.
         {
             ErrorContext wal_ctx;
@@ -1169,7 +1348,7 @@ namespace scratchbird::core
             }
         }
 
-        // 5. Optional: Remove old tuple versions (if foreground)
+        // 6. Optional: Remove old tuple versions (if foreground)
         if (foreground)
         {
             s = reclaimSpace(new_oit, ctx);
@@ -1180,7 +1359,7 @@ namespace scratchbird::core
             }
         }
 
-        // 6. Update statistics
+        // 7. Update statistics
         auto end_time = std::chrono::steady_clock::now();
         uint64_t duration_ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
@@ -1191,14 +1370,17 @@ namespace scratchbird::core
                          evidence_items_emitted,
                          wal_after_segments_emitted,
                          wal_after_backlog_depth,
+                         page_audit_findings_emitted,
                          prune_blocked,
                          evidence_failure,
+                         page_audit_failure,
+                         page_audit_mode_downgraded,
                          wal_after_failure);
 
         LOG_INFO(VACUUM, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums", oit_before,
                  new_oit, duration_ms);
 
-        // 7. Notify garbage collector that OIT has advanced and the local evidence gate is clear
+        // 8. Notify garbage collector that OIT has advanced and the local evidence gate is clear
         // This allows GC to identify more garbage tuples for removal
         if (db_->garbage_collector() != nullptr)
         {
@@ -1507,6 +1689,320 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status SweepManager::emitPageSpotAuditFindings(bool foreground,
+                                                   uint64_t* findings_emitted,
+                                                   bool* mode_downgraded,
+                                                   ErrorContext* ctx)
+    {
+        if (findings_emitted)
+        {
+            *findings_emitted = 0;
+        }
+        if (mode_downgraded)
+        {
+            *mode_downgraded = false;
+        }
+
+        if (!db_ || !db_->catalog_manager())
+        {
+            return Status::OK;
+        }
+
+        SweepPolicyBinding binding{};
+        Status status = resolvePolicyBinding(
+            {SweepPolicyScope{SweepScopeKind::DATABASE, db_->uuid()}}, binding, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!hasSweepPolicyLane(binding.lanes, SweepPolicyLane::PAGE_SPOT_AUDIT))
+        {
+            return Status::OK;
+        }
+
+        const std::string scan_mode = foreground ? "LIGHT" : "DIAGNOSTIC";
+        const std::string trigger_source = foreground ? "SWEEP_FOREGROUND" : "SWEEP_BACKGROUND";
+        if (foreground && mode_downgraded)
+        {
+            *mode_downgraded = true;
+        }
+
+        std::vector<uint8_t> page_buffer(db_->page_size());
+        PageManager* page_manager = db_->page_manager();
+        if (page_manager == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available for page audit");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const uint64_t total_pages = db_->total_pages();
+        for (uint32_t page_id = 0; page_id < total_pages; ++page_id)
+        {
+            if (!page_manager->isAllocated(page_id))
+            {
+                continue;
+            }
+
+            ErrorContext page_ctx;
+            Status read_status =
+                db_->read_page_partial(page_id, page_buffer.data(), db_->page_size(), 0, &page_ctx);
+            if (read_status != Status::OK)
+            {
+                CatalogManager::PageAuditFindingCatalogInfo finding{};
+                finding.finding_id = generateUuidV7();
+                finding.scan_mode = scan_mode;
+                finding.trigger_source = trigger_source;
+                finding.page_id = page_id;
+                finding.page_type = "UNKNOWN";
+                finding.error_code = "PAGE_HEADER_CORRUPT";
+                finding.severity = "CRITICAL";
+                finding.details_json = makePageAuditDetails({
+                    {"status", std::to_string(static_cast<int>(read_status))},
+                    {"message", page_ctx.message},
+                });
+                status = db_->catalog_manager()->appendPageAuditFindingCatalogEntry(finding, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                if (findings_emitted)
+                {
+                    ++(*findings_emitted);
+                }
+                continue;
+            }
+
+            const auto* header = reinterpret_cast<const PageHeader*>(page_buffer.data());
+            std::vector<PageAuditObservation> observations;
+            const std::string page_type_text = pageTypeToAuditString(header->page_type);
+
+            Status header_status =
+                validatePageHeaderContract(*header, db_->page_size(), 0xFFFFu, nullptr, nullptr);
+            if (header_status != Status::OK)
+            {
+                appendPageAuditObservation(
+                    observations,
+                    page_id,
+                    page_type_text,
+                    "PAGE_HEADER_CORRUPT",
+                    "CRITICAL",
+                    makePageAuditDetails({
+                        {"status", std::to_string(static_cast<int>(header_status))},
+                        {"page_type_raw", std::to_string(header->page_type)},
+                    }));
+            }
+            else
+            {
+                if (!isRecognizedPageTypeForAudit(header->page_type))
+                {
+                    appendPageAuditObservation(
+                        observations,
+                        page_id,
+                        page_type_text,
+                        "PAGE_TYPE_INVALID",
+                        "ERROR",
+                        makePageAuditDetails({
+                            {"page_type_raw", std::to_string(header->page_type)},
+                        }));
+                }
+
+                if (!validatePageChecksum(page_buffer.data(), db_->page_size()))
+                {
+                    appendPageAuditObservation(
+                        observations,
+                        page_id,
+                        page_type_text,
+                        "PAGE_CHECKSUM_FAIL",
+                        "ERROR",
+                        makePageAuditDetails({
+                            {"stored_checksum", std::to_string(header->checksum)},
+                            {"computed_checksum",
+                             std::to_string(calculatePageChecksum(page_buffer.data(), db_->page_size()))},
+                        }));
+                }
+
+                if (scan_mode == "DIAGNOSTIC")
+                {
+                    if (header->page_type == PAGE_TYPE_HEAP ||
+                        header->page_type == PAGE_TYPE_TOAST_CHUNK ||
+                        header->page_type == PAGE_TYPE_LOB_CHUNK)
+                    {
+                        HeapToastLobDiagnosticReport report{};
+                        ErrorContext diag_ctx;
+                        Status diag_status = HeapToastLobDiagnostics::walkPage(
+                            page_buffer.data(), db_->page_size(), &report, &diag_ctx);
+                        if (diag_status != Status::OK && !report.issues.empty())
+                        {
+                            bool saw_slot = false;
+                            bool saw_record = false;
+                            bool saw_lob = false;
+                            for (const auto& issue : report.issues)
+                            {
+                                switch (issue.code)
+                                {
+                                    case HeapToastLobIssueCode::INVALID_ITEM_POINTER:
+                                        if (!saw_slot)
+                                        {
+                                            appendPageAuditObservation(
+                                                observations,
+                                                page_id,
+                                                page_type_text,
+                                                "SLOT_DIRECTORY_CORRUPT",
+                                                "ERROR",
+                                                makePageAuditDetails({
+                                                    {"item_id", std::to_string(issue.item_id)},
+                                                    {"offset", std::to_string(issue.offset)},
+                                                }));
+                                            saw_slot = true;
+                                        }
+                                        break;
+                                    case HeapToastLobIssueCode::INVALID_TUPLE_HEADER:
+                                    case HeapToastLobIssueCode::INVALID_PAYLOAD_LENGTH:
+                                        if (!saw_record)
+                                        {
+                                            appendPageAuditObservation(
+                                                observations,
+                                                page_id,
+                                                page_type_text,
+                                                "RECORD_CHAIN_CORRUPT",
+                                                "ERROR",
+                                                makePageAuditDetails({
+                                                    {"item_id", std::to_string(issue.item_id)},
+                                                    {"offset", std::to_string(issue.offset)},
+                                                }));
+                                            saw_record = true;
+                                        }
+                                        break;
+                                    case HeapToastLobIssueCode::INVALID_TOAST_POINTER:
+                                    case HeapToastLobIssueCode::TOAST_FLAG_MISMATCH:
+                                    case HeapToastLobIssueCode::LOB_CHUNK_MISSING:
+                                        if (!saw_lob)
+                                        {
+                                            appendPageAuditObservation(
+                                                observations,
+                                                page_id,
+                                                page_type_text,
+                                                "LOB_CHAIN_CORRUPT",
+                                                "ERROR",
+                                                makePageAuditDetails({
+                                                    {"item_id", std::to_string(issue.item_id)},
+                                                    {"offset", std::to_string(issue.offset)},
+                                                }));
+                                            saw_lob = true;
+                                        }
+                                        break;
+                                    default:
+                                        break;
+                                }
+                            }
+                        }
+                    }
+                    else if (isCanonicalIndexPageType(header->page_type))
+                    {
+                        if (header->special_size < sizeof(IndexPageHeader) ||
+                            pageSpecial(*header) + sizeof(IndexPageHeader) > db_->page_size())
+                        {
+                            appendPageAuditObservation(
+                                observations,
+                                page_id,
+                                page_type_text,
+                                "INDEX_ENTRY_CORRUPT",
+                                "ERROR",
+                                makePageAuditDetails({
+                                    {"special_size", std::to_string(header->special_size)},
+                                    {"special_offset", std::to_string(pageSpecial(*header))},
+                                }));
+                        }
+                        else
+                        {
+                            const auto* index_header = reinterpret_cast<const IndexPageHeader*>(
+                                page_buffer.data() + pageSpecial(*header));
+                            if (!isValidIndexPageHeaderBasic(*index_header, index_header->opaque_len) ||
+                                !isValidIndexSiblingContract(*index_header))
+                            {
+                                appendPageAuditObservation(
+                                    observations,
+                                    page_id,
+                                    page_type_text,
+                                    "INDEX_ENTRY_CORRUPT",
+                                    "ERROR",
+                                    makePageAuditDetails({
+                                        {"page_level", std::to_string(index_header->page_level)},
+                                        {"flags", std::to_string(index_header->flags)},
+                                    }));
+                            }
+                        }
+                    }
+                    else if (header->page_type == PAGE_TYPE_FSM_ROOT ||
+                             header->page_type == PAGE_TYPE_FSM_PAGE)
+                    {
+                        if (pageLower(*header) < sizeof(PageHeader) + sizeof(uint32_t) * 3)
+                        {
+                            appendPageAuditObservation(
+                                observations,
+                                page_id,
+                                page_type_text,
+                                "FSM_MISMATCH",
+                                "WARNING",
+                                makePageAuditDetails({
+                                    {"lower", std::to_string(pageLower(*header))},
+                                }));
+                        }
+                        else
+                        {
+                            struct FsmAuditPayload
+                            {
+                                uint32_t total_pages;
+                                uint32_t free_pages;
+                                uint32_t next_fsm_page;
+                            };
+                            const auto* fsm_payload = reinterpret_cast<const FsmAuditPayload*>(
+                                page_buffer.data() + sizeof(PageHeader));
+                            if (fsm_payload->total_pages == 0 ||
+                                fsm_payload->free_pages > fsm_payload->total_pages)
+                            {
+                                appendPageAuditObservation(
+                                    observations,
+                                    page_id,
+                                    page_type_text,
+                                    "FSM_MISMATCH",
+                                    "WARNING",
+                                    makePageAuditDetails({
+                                        {"total_pages", std::to_string(fsm_payload->total_pages)},
+                                        {"free_pages", std::to_string(fsm_payload->free_pages)},
+                                    }));
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (auto& observation : observations)
+            {
+                CatalogManager::PageAuditFindingCatalogInfo finding{};
+                finding.finding_id = generateUuidV7();
+                finding.scan_mode = scan_mode;
+                finding.trigger_source = trigger_source;
+                finding.page_id = observation.page_id;
+                finding.page_type = observation.page_type;
+                finding.error_code = observation.error_code;
+                finding.severity = observation.severity;
+                finding.details_json = observation.details_json;
+                status = db_->catalog_manager()->appendPageAuditFindingCatalogEntry(finding, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                if (findings_emitted)
+                {
+                    ++(*findings_emitted);
+                }
+            }
+        }
+
+        return Status::OK;
+    }
+
     Status SweepManager::emitDerivativeWalAfterLog(uint64_t* segments_emitted,
                                                    uint64_t* backlog_depth,
                                                    ErrorContext* ctx)
@@ -1775,8 +2271,11 @@ namespace scratchbird::core
                                         uint64_t evidence_items_emitted,
                                         uint64_t wal_after_segments_emitted,
                                         uint64_t wal_after_backlog_depth,
+                                        uint64_t page_audit_findings_emitted,
                                         bool prune_blocked,
                                         bool evidence_failure,
+                                        bool page_audit_failure,
+                                        bool page_audit_mode_downgraded,
                                         bool wal_after_failure)
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -1792,10 +2291,20 @@ namespace scratchbird::core
         stats_.total_wal_after_segments_emitted += wal_after_segments_emitted;
         stats_.last_wal_after_segments_emitted = wal_after_segments_emitted;
         stats_.wal_after_backlog_depth = wal_after_backlog_depth;
+        stats_.total_page_audit_findings_emitted += page_audit_findings_emitted;
+        stats_.last_page_audit_findings_emitted = page_audit_findings_emitted;
         stats_.prune_blocked = prune_blocked;
         if (evidence_failure)
         {
             stats_.evidence_persist_failures++;
+        }
+        if (page_audit_failure)
+        {
+            stats_.page_audit_persist_failures++;
+        }
+        if (page_audit_mode_downgraded)
+        {
+            stats_.page_audit_mode_downgrades++;
         }
         if (wal_after_failure)
         {
@@ -1804,9 +2313,10 @@ namespace scratchbird::core
         stats_.sweep_in_progress = false;
 
         LOG_DEBUG(VACUUM,
-                  "Statistics updated: count=%lu, transactions_swept=%lu, evidence_items=%lu, wal_after_segments=%lu, wal_after_backlog=%lu, prune_blocked=%d",
+                  "Statistics updated: count=%lu, transactions_swept=%lu, evidence_items=%lu, page_audit_findings=%lu, wal_after_segments=%lu, wal_after_backlog=%lu, prune_blocked=%d",
                   stats_.sweep_count, stats_.total_transactions_swept,
                   stats_.total_evidence_items_emitted,
+                  stats_.total_page_audit_findings_emitted,
                   stats_.total_wal_after_segments_emitted,
                   stats_.wal_after_backlog_depth,
                   prune_blocked ? 1 : 0);

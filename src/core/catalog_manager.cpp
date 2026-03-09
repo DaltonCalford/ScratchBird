@@ -670,6 +670,33 @@ bool isTerminalTransactionLineageEventKind(CatalogManager::TransactionLineageEve
     return kind == TLEK::TX_COMMIT || kind == TLEK::TX_ROLLBACK;
 }
 
+bool isValidPageAuditScanMode(const std::string& mode)
+{
+    return mode == "LIGHT" || mode == "DIAGNOSTIC";
+}
+
+bool isValidPageAuditTriggerSource(const std::string& source)
+{
+    return source == "SWEEP_BACKGROUND" || source == "SWEEP_FOREGROUND";
+}
+
+bool isValidPageAuditSeverity(const std::string& severity)
+{
+    return severity == "WARNING" || severity == "ERROR" || severity == "CRITICAL";
+}
+
+bool isValidPageAuditErrorCode(const std::string& code)
+{
+    return code == "PAGE_HEADER_CORRUPT" ||
+           code == "PAGE_CHECKSUM_FAIL" ||
+           code == "PAGE_TYPE_INVALID" ||
+           code == "SLOT_DIRECTORY_CORRUPT" ||
+           code == "RECORD_CHAIN_CORRUPT" ||
+           code == "INDEX_ENTRY_CORRUPT" ||
+           code == "LOB_CHAIN_CORRUPT" ||
+           code == "FSM_MISMATCH";
+}
+
 bool isValidStorageProfile(CatalogManager::StorageProfile profile)
 {
     using SP = CatalogManager::StorageProfile;
@@ -3128,6 +3155,8 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"action_oid", "[sb_dom]LOB_REF"},
     {"audit_export_segment_id", "[sb_dom]UUID_V7"},
     {"audit_export_segment_page", "[sb_dom]PAGE_ID"},
+    {"page_audit_finding_id", "[sb_dom]UUID_V7"},
+    {"page_audit_finding_page", "[sb_dom]PAGE_ID"},
     {"array_size", "[sb_dom]U32"},
     {"attachment_id", "[sb_dom]KEY_ATTACHMENT"},
     {"audit_log_page", "[sb_dom]PAGE_ID"},
@@ -3582,6 +3611,7 @@ const std::unordered_map<std::string, const char*> kSystemTableAliasMap = {
     {"audit_log", "sys.auditlogrecord"},
     {"audit_export_segment", "sys.auditexportsegmentrecord"},
     {"audit_sink_profile", "sys.auditsinkprofilerecord"},
+    {"page_audit_finding", "sys.pageauditfindingrecord"},
     {"authkeys", "sys.authkeyrecord"},
     {"charsets", "sys.charsetrecord"},
     {"collations", "sys.collationrecord"},
@@ -4844,8 +4874,9 @@ bool hasTriggerNameConflictInTable(
         uint32_t audit_sink_profile_page; // Page containing audit_sink_profile table
         uint32_t audit_export_segment_page; // Page containing audit_export_segment table
         uint32_t transaction_lineage_event_page; // Page containing transaction_lineage_event table
+        uint32_t page_audit_finding_page; // Page containing page_audit_finding table
 
-        uint8_t reserved[2908];       // Padding for 4KB page
+        uint8_t reserved[2904];       // Padding for 4KB page
     };
 
     // Database record on disk
@@ -9681,6 +9712,27 @@ bool hasTriggerNameConflictInTable(
         ID object_id;
         uint64_t statement_hash;
         ID payload_oid;
+        uint64_t created_time;
+        uint32_t padding;
+    };
+
+    struct PageAuditFindingRecord
+    {
+        ID finding_id;
+        uint64_t finding_time;
+        char scan_mode[32];
+        char trigger_source[32];
+        ID filespace_uuid;
+        uint64_t page_id;
+        char page_type[64];
+        char error_code[64];
+        char severity[32];
+        ID related_tx_uuid;
+        ID related_capsule_uuid;
+        ID details_oid;
+        uint8_t has_details_oid;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
         uint64_t created_time;
         uint32_t padding;
     };
@@ -20218,6 +20270,7 @@ bool hasTriggerNameConflictInTable(
         root->audit_sink_profile_page = audit_sink_profile_table_page_;
         root->audit_export_segment_page = audit_export_segment_table_page_;
         root->transaction_lineage_event_page = transaction_lineage_event_table_page_;
+        root->page_audit_finding_page = page_audit_finding_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -20547,6 +20600,7 @@ bool hasTriggerNameConflictInTable(
         audit_sink_profile_table_page_ = root->audit_sink_profile_page;
         audit_export_segment_table_page_ = root->audit_export_segment_page;
         transaction_lineage_event_table_page_ = root->transaction_lineage_event_page;
+        page_audit_finding_table_page_ = root->page_audit_finding_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
@@ -62408,6 +62462,211 @@ auto CatalogManager::listTransactionLineageEventCatalogEntries(
                       return lhs.txid < rhs.txid;
                   }
                   return lhs.event_seq < rhs.event_seq;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::appendPageAuditFindingCatalogEntry(PageAuditFindingCatalogInfo& info,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (!isValidPageAuditScanMode(info.scan_mode))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "page_audit_finding.scan_mode is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidPageAuditTriggerSource(info.trigger_source))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "page_audit_finding.trigger_source is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.page_id == 0 && info.page_type.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "page_audit_finding.page_id or page_type is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.page_type.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "page_audit_finding.page_type is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidPageAuditErrorCode(info.error_code))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "page_audit_finding.error_code is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidPageAuditSeverity(info.severity))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "page_audit_finding.severity is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (isZeroUuidLocal(info.finding_id))
+    {
+        info.finding_id = generateUuidV7();
+    }
+
+    if (page_audit_finding_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(page_audit_finding_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_id = [&info](const PageAuditFindingRecord& row) {
+        return row.is_valid == 1 && row.finding_id == info.finding_id;
+    };
+    auto existing_id = findRecordInHeapPage<PageAuditFindingRecord>(
+        page_audit_finding_table_page_, duplicate_id, ctx);
+    if (existing_id.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "page_audit_finding rows are immutable");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing_id.status != Status::NOT_FOUND)
+    {
+        return existing_id.status;
+    }
+
+    PageAuditFindingRecord rec{};
+    rec.finding_id = info.finding_id;
+    rec.finding_time = (info.finding_time == 0) ? catalogNowTicks() : info.finding_time;
+    copyStringField(rec.scan_mode, info.scan_mode);
+    copyStringField(rec.trigger_source, info.trigger_source);
+    rec.filespace_uuid = info.filespace_uuid;
+    rec.page_id = info.page_id;
+    copyStringField(rec.page_type, info.page_type);
+    copyStringField(rec.error_code, info.error_code);
+    copyStringField(rec.severity, info.severity);
+    rec.related_tx_uuid = info.related_tx_uuid;
+    rec.related_capsule_uuid = info.related_capsule_uuid;
+    rec.has_details_oid = (!info.details_json.empty()) ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = rec.finding_time;
+
+    if (!info.details_json.empty())
+    {
+        uint64_t xmin = 0;
+        Status status = storeStringInToast(info.details_json, xmin, rec.details_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    info.finding_time = rec.finding_time;
+    return writeRecordToHeapPage(page_audit_finding_table_page_, rec, ctx);
+}
+
+auto CatalogManager::getPageAuditFindingCatalogEntry(const ID& finding_id,
+                                                     PageAuditFindingCatalogInfo& info_out,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (page_audit_finding_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&finding_id](const PageAuditFindingRecord& rec) {
+        return rec.is_valid == 1 && rec.finding_id == finding_id;
+    };
+    auto result = findRecordInHeapPage<PageAuditFindingRecord>(
+        page_audit_finding_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = PageAuditFindingCatalogInfo{};
+    info_out.finding_id = result.record.finding_id;
+    info_out.finding_time = result.record.finding_time;
+    info_out.scan_mode = result.record.scan_mode;
+    info_out.trigger_source = result.record.trigger_source;
+    info_out.filespace_uuid = result.record.filespace_uuid;
+    info_out.page_id = result.record.page_id;
+    info_out.page_type = result.record.page_type;
+    info_out.error_code = result.record.error_code;
+    info_out.severity = result.record.severity;
+    info_out.related_tx_uuid = result.record.related_tx_uuid;
+    info_out.related_capsule_uuid = result.record.related_capsule_uuid;
+    info_out.is_valid = result.record.is_valid == 1;
+    if (result.record.has_details_oid != 0)
+    {
+        uint64_t xmin = 0;
+        return loadStringFromToast(result.record.details_oid, xmin, info_out.details_json, ctx);
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listPageAuditFindingCatalogEntries(
+    std::vector<PageAuditFindingCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (page_audit_finding_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const PageAuditFindingRecord& rec) { return rec.is_valid == 1; };
+    auto converter = [this, ctx](const PageAuditFindingRecord& rec,
+                                 PageAuditFindingCatalogInfo& info) {
+        info = PageAuditFindingCatalogInfo{};
+        info.finding_id = rec.finding_id;
+        info.finding_time = rec.finding_time;
+        info.scan_mode = rec.scan_mode;
+        info.trigger_source = rec.trigger_source;
+        info.filespace_uuid = rec.filespace_uuid;
+        info.page_id = rec.page_id;
+        info.page_type = rec.page_type;
+        info.error_code = rec.error_code;
+        info.severity = rec.severity;
+        info.related_tx_uuid = rec.related_tx_uuid;
+        info.related_capsule_uuid = rec.related_capsule_uuid;
+        info.is_valid = rec.is_valid == 1;
+        if (rec.has_details_oid != 0)
+        {
+            uint64_t xmin = 0;
+            std::string details;
+            if (loadStringFromToast(rec.details_oid, xmin, details, ctx) == Status::OK)
+            {
+                info.details_json = std::move(details);
+            }
+        }
+    };
+    Status status = readRecordsToVector<PageAuditFindingRecord, PageAuditFindingCatalogInfo>(
+        page_audit_finding_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const PageAuditFindingCatalogInfo& lhs,
+                 const PageAuditFindingCatalogInfo& rhs) {
+                  if (lhs.finding_time != rhs.finding_time)
+                  {
+                      return lhs.finding_time < rhs.finding_time;
+                  }
+                  if (lhs.page_id != rhs.page_id)
+                  {
+                      return lhs.page_id < rhs.page_id;
+                  }
+                  return std::memcmp(lhs.finding_id.bytes.data(),
+                                     rhs.finding_id.bytes.data(),
+                                     lhs.finding_id.bytes.size()) < 0;
               });
     return Status::OK;
 }

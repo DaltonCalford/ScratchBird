@@ -43,6 +43,10 @@ namespace scratchbird::core
         uint64_t last_wal_after_segments_emitted = 0;
         uint64_t wal_after_export_failures = 0;
         uint64_t wal_after_backlog_depth = 0;
+        uint64_t total_page_audit_findings_emitted = 0;
+        uint64_t last_page_audit_findings_emitted = 0;
+        uint64_t page_audit_persist_failures = 0;
+        uint64_t page_audit_mode_downgrades = 0;
         bool prune_blocked = false;
     };
 
@@ -115,6 +119,23 @@ namespace scratchbird::core
         std::string segment_path;
     };
 
+    struct SweepPageAuditFinding
+    {
+        ID finding_id{};
+        uint64_t finding_time = 0;
+        std::string scan_mode;
+        std::string trigger_source;
+        ID filespace_uuid{};
+        uint64_t page_id = 0;
+        std::string page_type;
+        std::string error_code;
+        std::string severity;
+        ID related_tx_uuid{};
+        ID related_capsule_uuid{};
+        std::string details_json;
+        bool is_valid = true;
+    };
+
     // SweepManager - Manages database sweep operations
     //
     // Sweep advances the Oldest Interesting Transaction (OIT) marker by:
@@ -170,6 +191,10 @@ namespace scratchbird::core
         Status listWalAfterLogSegments(std::vector<SweepWalAfterLogSegment>& rows_out,
                                        ErrorContext* ctx = nullptr) const;
 
+        // List persisted page spot-audit findings emitted by the sweep worker.
+        Status listPageAuditFindings(std::vector<SweepPageAuditFinding>& rows_out,
+                                     ErrorContext* ctx = nullptr) const;
+
         // Get current sweep statistics
         SweepStatistics getStatistics() const;
 
@@ -209,13 +234,20 @@ namespace scratchbird::core
                               uint64_t evidence_items_emitted,
                               uint64_t wal_after_segments_emitted,
                               uint64_t wal_after_backlog_depth,
+                              uint64_t page_audit_findings_emitted,
                               bool prune_blocked,
                               bool evidence_failure,
+                              bool page_audit_failure,
+                              bool page_audit_mode_downgraded,
                               bool wal_after_failure);
 
         Status emitLocalEvidenceForSweep(uint64_t oit_before, uint64_t oit_after,
                                          uint64_t* evidence_items_emitted,
                                          bool* prune_blocked_out,
+                                         ErrorContext* ctx);
+        Status emitPageSpotAuditFindings(bool foreground,
+                                         uint64_t* findings_emitted,
+                                         bool* mode_downgraded,
                                          ErrorContext* ctx);
         Status emitDerivativeWalAfterLog(uint64_t* segments_emitted,
                                          uint64_t* backlog_depth,
