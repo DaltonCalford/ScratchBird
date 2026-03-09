@@ -17,7 +17,7 @@
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/spgist_index.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/spgist_quad_ops.h:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/spgist_text_ops.h:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_spgist_index.cpp:1`
+
 
 ## Synopsis
 
@@ -367,7 +367,6 @@ class SPGiSTTextOpClass : public SPGiSTOpClass {
 
 | Test File | Coverage |
 |-----------|----------|
-| `test_spgist_index.cpp` | Core SP-GiST operations |
 | `test_spgist_quadtree.cpp` | Quadtree opclass |
 | `test_spgist_text.cpp` | Text/radix opclass |
 

@@ -16,7 +16,7 @@
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/gist_index.h:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/gist_index.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/gist_box_ops.h:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_gist_index.cpp:1`
+
 
 ## Synopsis
 
@@ -369,7 +369,6 @@ Output: Two pages with redistributed entries
 
 | Test File | Coverage |
 |-----------|----------|
-| `test_gist_index.cpp` | Core GiST operations |
 | `test_gist_box_ops.cpp` | Box operator class |
 | `test_gist_nn.cpp` | Nearest neighbor search |
 

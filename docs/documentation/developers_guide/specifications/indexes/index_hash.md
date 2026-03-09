@@ -15,8 +15,7 @@
 
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/hash_index.h:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/hash_index.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_hash_index.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_hash_index_concurrent.cpp:1`
+- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_hash_index_gc.cpp:1`
 
 ## Synopsis
 
@@ -414,9 +413,7 @@ struct HashEntry {
 
 | Test File | Coverage |
 |-----------|----------|
-| `test_hash_index.cpp` | Basic operations, collision handling |
-| `test_hash_index_concurrent.cpp` | Concurrent inserts, splits |
-| `test_hash_index_gc.cpp` | Garbage collection, compaction |
+| `test_hash_index_gc.cpp` | Basic operations, GC, compaction |
 
 ## Related Specifications
 

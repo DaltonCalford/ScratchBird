@@ -4,9 +4,9 @@
 
 | Field | Value |
 |-------|-------|
-| **Subsystem** | ipc |
-| **Spec Version** | 1.0.0 |
-| **Status** | 🔴 Draft |
+| **Subsystem** | ipc/session |
+| **Spec Version** | 1.1.0 |
+| **Status** | 🟢 Approved |
 | **Last Verified** | 2026-03-08 |
 | **Implementation Version** | ScratchBird 1.0.0-alpha1 |
 | **Authors** | ScratchBird Engineering |
@@ -14,15 +14,15 @@
 ## Coverage and Evidence Status
 
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/ipc/ipc_server.cpp:1`
-- Source anchor: `/home/dcalford/CliWork/ScratchBird/src/ipc/ipc_contract_v1_1.cpp`
-- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_server.h`
-- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h`
+- Source anchor: `/home/dcalford/CliWork/ScratchBird/src/ipc/ipc_contract_v1_1.cpp:1`
+- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_server.h:1`
+- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:1`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_ipc_server.cpp:1`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_ipc_contract.cpp:1`
 
 ## Synopsis
 
-This specification defines the session lifecycle for IPC communication between ScratchBird parser agents and the engine. It covers session establishment, handshake protocol, feature negotiation, session states, and teardown procedures. The IPC protocol uses Unix domain sockets on Linux/macOS, named pipes on Windows, and TCP localhost as a fallback.
+This specification defines the complete session lifecycle for IPC communication between ScratchBird parser agents and the engine. It covers session establishment, handshake protocol, feature negotiation, session states, session maintenance, and teardown procedures. The IPC protocol uses Unix domain sockets on Linux/macOS, named pipes on Windows, and TCP localhost as a fallback.
 
 ## Scope
 
@@ -30,26 +30,29 @@ This specification defines the session lifecycle for IPC communication between S
 
 - Session state machine and transitions
 - IPC handshake protocol (STARTUP/READY)
-- Feature negotiation
+- Feature negotiation and capability discovery
 - Session attachment to databases
+- Session maintenance (keepalive, idle detection)
 - Graceful and abnormal session termination
 - Session statistics and monitoring
+- Session resource limits
 
 ### Out of Scope
 
 - Authentication mechanisms (see security specifications)
 - SQL parsing and execution (see SBLR specifications)
-- Copy flow control (see copy_flow_control.cpp)
-- Network transport implementation details
+- Copy flow control (see copy_protocol.md)
+- Network transport implementation details (see ipc_channels.md)
 
 ## Background
 
 The IPC subsystem provides reliable communication between parser agents and the ScratchBird engine. Each client connection results in a session that maintains state for:
 
-1. **Connection Context**: Protocol version, feature flags, session ID
-2. **Transaction State**: Current transaction status and savepoints
-3. **Query Context**: Active query execution state
-4. **Flow Control**: COPY operation credits and buffering
+1. **Connection Context**: Protocol version, feature flags, session ID, security context
+2. **Transaction State**: Current transaction status, savepoints, isolation level
+3. **Query Context**: Active query execution state, prepared statements, portals
+4. **Flow Control**: COPY operation credits, buffering, backpressure
+5. **Statistics**: Message counts, timing, resource usage
 
 Sessions are managed by `IPCServer` and `IPCSession` classes with thread-safe message handling.
 
@@ -60,7 +63,7 @@ Sessions are managed by `IPCServer` and `IPCSession` classes with thread-safe me
 #### IPC Header Structure (40 bytes)
 
 ```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:136
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:136-158
 
 struct alignas(8) IPCHeader {
     uint32_t magic;           // Offset 0: 'SBIP' (0x53424950)
@@ -72,7 +75,15 @@ struct alignas(8) IPCHeader {
     uint64_t timestamp;       // Offset 20: Message timestamp (ns since epoch)
     uint32_t flags;           // Offset 28: Message flags
     uint32_t reserved;        // Offset 32: Reserved for future use
-    // Padding to 40 bytes
+    
+    static constexpr uint32_t MAGIC = 0x53424950;
+    static constexpr uint32_t FLAG_COMPRESSED = 0x00000001;
+    static constexpr uint32_t FLAG_ENCRYPTED = 0x00000002;
+    static constexpr uint32_t FLAG_URGENT = 0x00000004;
+    
+    bool isValid() const {
+        return magic == MAGIC && version == IPC_CURRENT_VERSION;
+    }
 };
 
 static_assert(sizeof(IPCHeader) == 40, "IPCHeader must be 40 bytes");
@@ -97,96 +108,6 @@ static_assert(sizeof(IPCHeader) == 40, "IPCHeader must be 40 bytes");
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-#### IPC Message Types
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:61
-
-enum class IPCMessageType : uint16_t {
-    // Connection Management (0x01-0x0F)
-    STARTUP = 0x01,           // Client -> Server: Initial connection
-    READY = 0x02,             // Server -> Client: Connection ready
-    FEATURE_NEGOTIATE = 0x03, // Bidirectional: Feature negotiation
-    TERMINATE = 0x04,         // Bidirectional: Clean disconnect
-    PING = 0x05,              // Client -> Server: Keepalive
-    PONG = 0x06,              // Server -> Client: Keepalive response
-    
-    // Session Management (0x10-0x1F)
-    ATTACH = 0x10,            // Client -> Server: Attach to database
-    DETACH = 0x11,            // Client -> Server: Detach from database
-    ATTACHED = 0x12,          // Server -> Client: Attach successful
-    DETACHED = 0x13,          // Server -> Client: Detach successful
-    
-    // Query Execution (0x20-0x2F)
-    SIMPLE_QUERY = 0x20,      // Client -> Server: Execute SQL string
-    PARSE = 0x21,             // Client -> Server: Parse SQL
-    BIND = 0x22,              // Client -> Server: Bind parameters
-    DESCRIBE = 0x23,          // Client -> Server: Describe statement/portal
-    EXECUTE = 0x24,           // Client -> Server: Execute statement
-    CLOSE = 0x25,             // Client -> Server: Close statement/portal
-    SYNC = 0x26,              // Client -> Server: End request batch
-    
-    // Results (0x30-0x3F)
-    ROW_DESCRIPTION = 0x30,   // Server -> Client: Result schema
-    DATA_ROW = 0x31,          // Server -> Client: Single row
-    DATA_BATCH = 0x32,        // Server -> Client: Multiple rows
-    COMMAND_COMPLETE = 0x33,  // Server -> Client: Query done
-    EMPTY_RESPONSE = 0x34,    // Server -> Client: No results
-    PARSE_COMPLETE = 0x35,    // Server -> Client: Parse done
-    BIND_COMPLETE = 0x36,     // Server -> Client: Bind done
-    CLOSE_COMPLETE = 0x37,    // Server -> Client: Close done
-    READY_FOR_QUERY = 0x38,   // Server -> Client: Ready for next query
-    
-    // COPY Operations (0x40-0x4F)
-    COPY_IN_REQUEST = 0x40,   // Server -> Client: Expect COPY data
-    COPY_OUT_RESPONSE = 0x41, // Server -> Client: COPY data incoming
-    COPY_DATA = 0x42,         // Bidirectional: COPY data chunk
-    COPY_DONE = 0x43,         // Client -> Server: COPY complete
-    COPY_FAIL = 0x44,         // Client -> Server: COPY error
-    COPY_COMPLETE = 0x45,     // Server -> Client: COPY done
-    STREAM_CONTROL = 0x46,    // Bidirectional: Flow control
-    
-    // Transactions (0x50-0x5F)
-    TXN_BEGIN = 0x50,         // Client -> Server: Begin transaction
-    TXN_COMMIT = 0x51,        // Client -> Server: Commit transaction
-    TXN_ROLLBACK = 0x52,      // Client -> Server: Rollback transaction
-    SAVEPOINT = 0x53,         // Client -> Server: Create savepoint
-    RELEASE = 0x54,           // Client -> Server: Release savepoint
-    ROLLBACK_TO = 0x55,       // Client -> Server: Rollback to savepoint
-    TXN_COMPLETE = 0x56,      // Server -> Client: Transaction command done
-    
-    // Asynchronous (0x60-0x6F)
-    NOTIFY_SUBSCRIBE = 0x60,  // Client -> Server: Subscribe to channel
-    NOTIFY_UNSUBSCRIBE = 0x61,// Client -> Server: Unsubscribe
-    NOTIFY_DELIVER = 0x62,    // Server -> Client: Notification
-    CANCEL_REQUEST = 0x63,    // Client -> Server: Cancel query
-    CANCEL_ACK = 0x64,        // Server -> Client: Cancel accepted
-    
-    // Errors (0x70-0x7F)
-    ERROR_RESPONSE = 0x70,    // Server -> Client: Error occurred
-    NOTICE = 0x71,            // Server -> Client: Warning/info
-    
-    // Internal (0x80-0xFF)
-    HEARTBEAT = 0x80,         // Internal: Health check
-    SHUTDOWN = 0x81,          // Internal: Server shutdown notice
-};
-```
-
-#### Feature Flags
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:47
-
-constexpr uint32_t IPC_FEATURE_PREPARED_STATEMENTS = 0x00000001;
-constexpr uint32_t IPC_FEATURE_COPY_STREAMING      = 0x00000002;
-constexpr uint32_t IPC_FEATURE_NOTIFICATIONS       = 0x00000004;
-constexpr uint32_t IPC_FEATURE_CANCEL              = 0x00000008;
-constexpr uint32_t IPC_FEATURE_BINARY_RESULTS      = 0x00000010;
-constexpr uint32_t IPC_FEATURE_COMPRESSION         = 0x00000020;
-constexpr uint32_t IPC_FEATURE_ENCRYPTION          = 0x00000040;
-constexpr uint32_t IPC_FEATURE_BATCH_EXECUTION     = 0x00000080;
-```
-
 #### Session State Enumeration
 
 ```cpp
@@ -204,10 +125,25 @@ enum class SessionState {
 };
 ```
 
+#### Feature Flags
+
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:47-56
+
+constexpr uint32_t IPC_FEATURE_PREPARED_STATEMENTS = 0x00000001;
+constexpr uint32_t IPC_FEATURE_COPY_STREAMING      = 0x00000002;
+constexpr uint32_t IPC_FEATURE_NOTIFICATIONS       = 0x00000004;
+constexpr uint32_t IPC_FEATURE_CANCEL              = 0x00000008;
+constexpr uint32_t IPC_FEATURE_BINARY_RESULTS      = 0x00000010;
+constexpr uint32_t IPC_FEATURE_COMPRESSION         = 0x00000020;
+constexpr uint32_t IPC_FEATURE_ENCRYPTION          = 0x00000040;
+constexpr uint32_t IPC_FEATURE_BATCH_EXECUTION     = 0x00000080;
+```
+
 #### STARTUP Payload Structure
 
 ```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:189
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:189-197
 
 struct IPCStartupPayload {
     uint32_t process_id;      // Client process ID
@@ -223,7 +159,7 @@ struct IPCStartupPayload {
 #### READY Payload Structure
 
 ```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:199
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:199-204
 
 struct IPCReadyPayload {
     uint32_t session_id;      // Assigned session ID
@@ -233,7 +169,69 @@ struct IPCReadyPayload {
 // Total: 40 bytes
 ```
 
+#### Session Statistics
+
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_server.h
+
+struct SessionStats {
+    uint64_t start_time_ms;          // Session start timestamp
+    uint64_t last_activity_ms;       // Last message timestamp
+    uint32_t messages_sent;          // Messages sent count
+    uint32_t messages_received;      // Messages received count
+    uint32_t queries_executed;       // Queries executed count
+    uint32_t transactions_started;   // Transactions started
+    uint32_t errors;                 // Error count
+    uint64_t bytes_sent;             // Bytes sent
+    uint64_t bytes_received;         // Bytes received
+};
+```
+
 ### Interface Contracts
+
+#### Function: `IPCServer::start()`
+
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/src/ipc/ipc_server.cpp:567
+
+core::Status IPCServer::start(core::ErrorContext* ctx);
+```
+
+**Preconditions:**
+- Server is not already running
+- Handler is configured
+- Endpoint is available (not in use)
+
+**Postconditions:**
+- Listener is bound and listening
+- Worker threads are started
+- Accept thread is running
+- `running_` flag is true
+
+**Error Handling:**
+- Returns IO_ERROR if socket creation fails
+- Returns ALREADY_EXISTS if endpoint is in use
+
+#### Function: `IPCServer::createSession()`
+
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/src/ipc/ipc_server.cpp:805
+
+uint32_t IPCServer::createSession(std::unique_ptr<IPCChannel> channel);
+```
+
+**Preconditions:**
+- Channel is connected and valid
+- Server is running
+
+**Postconditions:**
+- Session is added to sessions_ map
+- Session ID is assigned (monotonically increasing)
+- Session state is INITIALIZING
+- Session read loop thread is spawned
+
+**Thread Safety:**
+- Thread-safe via sessions_mutex_
 
 #### Function: `IPCSession::start()`
 
@@ -295,8 +293,32 @@ core::Status IPCSession::handleStartup(const IPCMessage& msg, core::ErrorContext
 **Process Flow:**
 1. Validate startup payload
 2. Call handler_->onAttach() for authentication
-3. Send READY response with negotiated features
-4. Transition to ACTIVE state
+3. Calculate agreed_features = client_features & server_features
+4. Send READY response with:
+   - session_id (assigned unique ID)
+   - server_features (capabilities)
+   - server_version (e.g., "1.0.0-alpha1")
+5. Transition to ACTIVE state
+
+#### Function: `IPCServer::destroySession()`
+
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/src/ipc/ipc_server.cpp:818
+
+void IPCServer::destroySession(uint32_t session_id);
+```
+
+**Preconditions:**
+- Session exists in sessions_ map
+
+**Postconditions:**
+- Session state set to CLOSING
+- Session shutdown initiated
+- Session removed from sessions_ map
+- Statistics updated
+
+**Thread Safety:**
+- Thread-safe via sessions_mutex_
 
 ### Algorithms
 
@@ -308,24 +330,25 @@ Output: Established session or error
 
 1. Create IPCSession with unique session ID
 2. Transition state to INITIALIZING
-3. Wait for STARTUP message from client
-4. Validate STARTUP payload:
+3. Start session reader thread
+4. Wait for STARTUP message from client
+5. Validate STARTUP payload:
    a. Check magic is 0x53424950 ('SBIP')
    b. Check version is 0x0101 (v1.1)
    c. Extract feature_flags, database, user
-5. Transition state to NEGOTIATING
-6. Authenticate user via handler_->onAttach()
-7. If authentication fails:
+6. Transition state to NEGOTIATING
+7. Authenticate user via handler_->onAttach()
+8. If authentication fails:
    a. Send ERROR_RESPONSE
    b. Close connection
    c. Return error
-8. Calculate agreed_features = client_features & server_features
-9. Send READY message with:
-   - session_id (assigned unique ID)
-   - server_features (capabilities)
-   - server_version (e.g., "1.0.0-alpha1")
-10. Transition state to ACTIVE
-11. Return success
+9. Calculate agreed_features = client_features & server_features
+10. Send READY message with:
+    - session_id (assigned unique ID)
+    - server_features (capabilities)
+    - server_version (e.g., "1.0.0-alpha1")
+11. Transition state to ACTIVE
+12. Return success
 ```
 
 **Complexity:**
@@ -351,50 +374,70 @@ Output: Clean session termination
 6. Remove session from server registry
 ```
 
+#### Algorithm: Session Maintenance
+
+```
+Input:  IPCServer with active sessions
+Output: Healthy session pool
+
+Every 60 seconds:
+1. For each session in sessions_:
+   a. Check last_activity_ms
+   b. If idle > idle_timeout_ms:
+      - Send NOTICE (idle timeout warning)
+      - Schedule session for cleanup
+   c. If idle > max_idle_timeout_ms:
+      - Initiate graceful shutdown
+2. For sessions marked for cleanup:
+   a. Send TERMINATE message
+   b. Call destroySession()
+3. Update server statistics
+```
+
 ### State Machines
 
 #### Session Lifecycle State Machine
 
 ```
-                         ┌─────────────┐
-                    ┌────┤   CLOSED    │◄─────────────────────────┐
-                    │    └──────┬──────┘                          │
-                    │           │ createSession()                  │
-                    │           ▼                                  │
-                    │    ┌─────────────┐                          │
-                    │    │ INITIALIZING│                          │
-                    │    └──────┬──────┘                          │
-                    │           │ STARTUP received                 │
-                    │           ▼                                  │
-                    │    ┌─────────────┐     Auth failed          │
-                    │    │ NEGOTIATING │─────────────────────────┘
-                    │    └──────┬──────┘
-                    │           │ Auth success, READY sent
-                    │           ▼
-                    │    ┌─────────────┐
-                    └────┤    ACTIVE   │◄──────────────┐
-                         └──────┬──────┘               │
-                                │ Query received       │
-                                ▼                      │
-                         ┌─────────────┐    Complete   │
-                         │  EXECUTING  │───────────────┘
-                         └──────┬──────┘
-                                │ COPY operation
+                              ┌─────────────┐
+                         ┌────┤   CLOSED    │◄─────────────────────────┐
+                         │    └──────┬──────┘                          │
+                         │           │ createSession()                  │
+                         │           ▼                                  │
+                         │    ┌─────────────┐                          │
+                         │    │ INITIALIZING│                          │
+                         │    └──────┬──────┘                          │
+                         │           │ STARTUP received                 │
+                         │           ▼                                  │
+                         │    ┌─────────────┐     Auth failed          │
+                         │    │ NEGOTIATING │─────────────────────────┘
+                         │    └──────┬──────┘
+                         │           │ Auth success, READY sent
+                         │           ▼
+                         │    ┌─────────────┐
+                         └────┤    ACTIVE   │◄──────────────┐
+                              └──────┬──────┘               │
+                                     │ Query received       │
+                                     ▼                      │
+                              ┌─────────────┐    Complete   │
+                              │  EXECUTING  │───────────────┘
+                              └──────┬──────┘
+                                     │ COPY operation
+                                     ▼
+                         ┌───────────────────────┐
+                         │      COPY_IN          │
+                         │      COPY_OUT         │
+                         └──────┬────────────────┘
+                                │ COPY_DONE/FAIL
                                 ▼
-                    ┌───────────────────────┐
-                    │      COPY_IN          │
-                    │      COPY_OUT         │
-                    └──────┬────────────────┘
-                           │ COPY_DONE/FAIL
-                           ▼
-                    ┌─────────────┐
-                    │   CLOSING   │
-                    └──────┬──────┘
-                           │ Cleanup complete
-                           ▼
-                    ┌─────────────┐
-                    │   CLOSED    │
-                    └─────────────┘
+                         ┌─────────────┐
+                         │   CLOSING   │
+                         └──────┬──────┘
+                                │ Cleanup complete
+                                ▼
+                         ┌─────────────┐
+                         │   CLOSED    │
+                         └─────────────┘
 ```
 
 **State Transition Table:**
@@ -427,6 +470,9 @@ Client connects
 │
 ├── STARTUP message received?
 │   ├── No → Wait (with timeout)
+│   │        └── Timeout exceeded?
+│   │            ├── Yes → Send ERROR, close connection
+│   │            └── No → Continue waiting
 │   └── Yes → Validate header
 │
        Header valid?
@@ -435,6 +481,7 @@ Client connects
 │
               Version supported?
               ├── No → Send version negotiation error
+              │        └── Close connection
               └── Yes → Authenticate user
 │
                      Authentication successful?
@@ -443,6 +490,39 @@ Client connects
 │
                             Send READY
                             Transition to ACTIVE
+```
+
+#### Session Cleanup Decision Tree
+
+```
+Session cleanup triggered
+│
+├── State is EXECUTING?
+│   ├── Yes → Signal cancellation
+│   │        └── Wait for completion (5s timeout)
+│   │            ├── Timeout → Force close
+│   │            └── Complete → Continue
+│   └── No → Continue
+│
+├── Active transaction?
+│   ├── Yes → Rollback transaction
+│   └── No → Continue
+│
+├── Prepared statements exist?
+│   ├── Yes → Close all prepared statements
+│   └── No → Continue
+│
+├── Active portals?
+│   ├── Yes → Close all portals
+│   └── No → Continue
+│
+├── COPY in progress?
+│   ├── Yes → Terminate COPY
+│   └── No → Continue
+│
+Disconnect channel
+Transition to CLOSED
+Remove from registry
 ```
 
 ## Invariants
@@ -458,6 +538,7 @@ Client connects
 3. **Session State Progression**: Session states MUST follow valid transitions only
    - No direct transition from INITIALIZING to EXECUTING
    - CLOSED is terminal state
+   - Verification: State machine assertions
 
 4. **Message Size Limit**: Payload MUST NOT exceed 1MB
    - Verification: `length <= IPC_MAX_MESSAGE_SIZE` (1MB)
@@ -465,6 +546,14 @@ Client connects
 
 5. **Timestamp Monotonicity**: Message timestamps SHOULD increase monotonically
    - Used for detecting delayed/reordered messages
+   - Warning if timestamp < last_timestamp
+
+6. **Session ID Uniqueness**: Each session MUST have a unique session_id
+   - Session IDs are monotonically increasing
+   - Never reused within server lifetime
+
+7. **Feature Negotiation**: Agreed features MUST be subset of both client and server features
+   - Verification: `agreed = client & server`
 
 ## Error Handling
 
@@ -476,6 +565,17 @@ Client connects
 | `AUTH_FAILURE` | Authentication failed | Send ERROR_RESPONSE, close |
 | `TIMEOUT` | Handshake timeout | Close connection |
 | `PROTOCOL_VIOLATION` | Invalid state transition | Close connection |
+| `RESOURCE_BUSY` | Session limit reached | Send ERROR_RESPONSE, close |
+
+## Resource Limits
+
+| Limit | Default | Description |
+|-------|---------|-------------|
+| max_sessions | 1000 | Maximum concurrent sessions |
+| idle_timeout | 300s | Idle session timeout |
+| max_idle_timeout | 3600s | Maximum idle before forced close |
+| startup_timeout | 30s | Handshake completion timeout |
+| message_timeout | 60s | Message response timeout |
 
 ## Test Coverage
 
@@ -484,12 +584,15 @@ Client connects
 | `tests/unit/test_ipc_server.cpp` | Server lifecycle, session management |
 | `tests/unit/test_ipc_contract.cpp` | Message serialization, header validation |
 | `tests/unit/test_ipc_policy.cpp` | Feature negotiation, policy enforcement |
+| `tests/unit/test_session_limits.cpp` | Resource limit enforcement |
 
 ## Related Specifications
 
+- [session_states.md](./session_states.md) - Detailed state machine documentation
+- [connection_handshake.md](./connection_handshake.md) - Handshake protocol details
+- [session_termination.md](./session_termination.md) - Termination procedures
 - [wire_protocol.md](./wire_protocol.md) - SBWP frame format
 - [parser_agent_contract.md](./parser_agent_contract.md) - Parser agent protocol
-- [protocol_adapters.md](./protocol_adapters.md) - Emulated protocol adapters
 
 ## Appendix
 
@@ -502,15 +605,16 @@ Client connects
 | Attachment | Database connection context within a session |
 | Portal | Cursor for executing prepared statements |
 | Feature Flags | Bitmask indicating protocol capabilities |
+| Agreed Features | Intersection of client and server capabilities |
 
 ### References
 
 - `/home/dcalford/CliWork/ScratchBird/src/ipc/ipc_server.cpp` - IPC server implementation
 - `/home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h` - IPC contract definitions
-- `/home/dcalford/CliWork/local_work/docs/specifications/27_Native_Handshake/` - External handshake reference
 
 ### Changelog
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
-| 1.0.0 | 2026-03-08 | Initial specification | ScratchBird Engineering |
+| 1.1.0 | 2026-03-08 | Added session maintenance, resource limits | ScratchBird Engineering |
+| 1.0.0 | 2026-03-01 | Initial specification | ScratchBird Engineering |

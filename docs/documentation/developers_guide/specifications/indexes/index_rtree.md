@@ -17,7 +17,7 @@
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/rtree_index.h:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/rtree.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/rtree_index.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_rtree_index.cpp:1`
+
 
 ## Synopsis
 
@@ -371,7 +371,6 @@ Output: Status
 
 | Test File | Coverage |
 |-----------|----------|
-| `test_rtree_index.cpp` | Core R-tree operations |
 | `test_rtree_nn.cpp` | Nearest neighbor queries |
 | `test_rtree_gist.cpp` | GiST integration |
 

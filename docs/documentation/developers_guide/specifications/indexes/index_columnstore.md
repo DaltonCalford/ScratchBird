@@ -17,7 +17,7 @@
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/columnstore.h:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/columnstore_index.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/columnstore.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_columnstore_index.cpp:1`
+
 
 ## Synopsis
 
@@ -358,7 +358,6 @@ Rowgroup 3: zone_map = [2024-03-01, 2024-06-01]
 
 | Test File | Coverage |
 |-----------|----------|
-| `test_columnstore_index.cpp` | Columnstore operations |
 | `test_columnstore_encoding.cpp` | Encoding/decoding |
 | `test_columnstore_scan.cpp` | Vectorized scans |
 

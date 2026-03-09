@@ -13,7 +13,7 @@
 
 ## Coverage and Evidence Status
 
-- Source anchor: `/home/dcalford/CliWork/ScratchBird/src/security/auth_manager.h:257-300` (AuditLogger)
+- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/security/auth_manager.h:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/security/auth_manager.h`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_security_issues.cpp`
 

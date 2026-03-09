@@ -17,8 +17,7 @@
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/fulltext_index.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/tsvector.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/tsquery.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_fulltext_index.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_tsvector_ops.cpp:1`
+- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_inverted_index_basic.cpp:1`
 
 ## Synopsis
 
@@ -381,8 +380,7 @@ struct TextSearchConfig {
 
 | Test File | Coverage |
 |-----------|----------|
-| `test_fulltext_index.cpp` | Core full-text operations |
-| `test_tsvector_ops.cpp` | TsVector parsing, ranking |
+| `test_inverted_index_basic.cpp` | Basic inverted index operations |
 | `test_tsquery_parse.cpp` | Query parsing |
 
 ## Related Specifications

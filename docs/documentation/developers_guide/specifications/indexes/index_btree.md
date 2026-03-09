@@ -17,7 +17,6 @@
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/btree_page.h:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/btree.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/btree_page.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_btree_index.cpp:1`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_index_page_base_layout_contract.cpp:1`
 
 ## Synopsis
@@ -387,10 +386,8 @@ struct KeySegment {
 
 | Test File | Coverage |
 |-----------|----------|
-| `test_btree_index.cpp` | Core B-tree operations |
 | `test_index_page_base_layout_contract.cpp` | Page header validation |
 | `test_index_page_walk_conformance.cpp` | Tree traversal correctness |
-| `test_btree_concurrent.cpp` | Concurrent access patterns |
 
 ## Related Specifications
 

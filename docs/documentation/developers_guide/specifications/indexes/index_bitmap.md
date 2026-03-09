@@ -15,7 +15,6 @@
 
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/bitmap_index.h:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/bitmap_index.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_bitmap_index.cpp:1`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_bitmap_index_gc.cpp:1`
 
 ## Synopsis
@@ -353,8 +352,7 @@ Output: Compacted bitmaps
 
 | Test File | Coverage |
 |-----------|----------|
-| `test_bitmap_index.cpp` | Basic bitmap operations |
-| `test_bitmap_index_gc.cpp` | GC and compaction |
+| `test_bitmap_index_gc.cpp` | Bitmap operations and GC |
 | `test_bitmap_rle.cpp` | RLE compression |
 
 ## Related Specifications

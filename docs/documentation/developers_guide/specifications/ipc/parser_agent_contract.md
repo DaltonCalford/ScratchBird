@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | **Subsystem** | ipc/parser |
-| **Spec Version** | 1.0.0 |
-| **Status** | 🔴 Draft |
+| **Spec Version** | 1.1.0 |
+| **Status** | 🟢 Approved |
 | **Last Verified** | 2026-03-08 |
 | **Implementation Version** | ScratchBird 1.0.0-alpha1 |
 | **Authors** | ScratchBird Engineering |
@@ -22,36 +22,63 @@
 
 ## Synopsis
 
-This specification defines the contract between parser agents and the ScratchBird engine. Parser agents act as protocol translators, converting emulated database wire protocols (PostgreSQL, MySQL, Firebird) into native IPC messages for the engine. The contract specifies message formats, lifecycle management, and error handling for parser-agent communication.
+This specification defines the complete contract between parser agents and the ScratchBird engine. Parser agents act as protocol translators, converting emulated database wire protocols (PostgreSQL, MySQL, Firebird) into native IPC messages for the engine. The contract specifies message formats, lifecycle management, protocol translation, and error handling.
 
 ## Scope
 
 ### In Scope
 
 - Parser agent base class interface
+- Protocol-specific agent implementations
 - IPC message translation protocol
 - Connection lifecycle management
-- Query execution flow
+- Query execution flow (simple and extended)
+- Prepared statement handling
 - Error propagation from engine to client
 - Flow control for COPY operations
+- Capability negotiation
 
 ### Out of Scope
 
 - SQL parsing and SBLR generation (see SBLR specifications)
 - Specific wire protocol implementations (see protocol_adapters.md)
 - Authentication mechanisms (see security specifications)
-- Network transport layer details
+- Network transport layer details (see ipc_channels.md)
 
 ## Background
 
 Parser agents enable ScratchBird to emulate multiple database protocols by:
 
 1. **Protocol Translation**: Converting PostgreSQL, MySQL, Firebird wire formats to IPC messages
-2. **SQL Normalization**: Translating dialect-specific SQL to SBLR bytecode
+2. **SQL Normalization**: Translating dialect-specific SQL to canonical form
 3. **Result Transformation**: Mapping engine results back to emulated protocol formats
 4. **Session Management**: Maintaining connection state between client and engine
+5. **Type Mapping**: Converting between protocol-specific and engine types
 
-Each parser agent runs as an independent process that accepts client connections on a protocol-specific port and communicates with the engine via Unix domain sockets (or TCP fallback).
+Each parser agent runs as an independent process that accepts client connections on a protocol-specific port and communicates with the engine via IPC channels.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Parser Agent Architecture                    │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────┐    Wire Protocol    ┌──────────────┐             │
+│  │   Client     │◄───────────────────►│ Parser Agent │             │
+│  │  (psql/mysql)│   (PostgreSQL/      │  Process     │             │
+│  └──────────────┘    MySQL/Firebird)  └──────┬───────┘             │
+│                                              │                      │
+│                                              │ IPC (SBWP)           │
+│                                              │                      │
+│                                              ▼                      │
+│                                       ┌──────────────┐             │
+│                                       │    Engine    │             │
+│                                       │   Process    │             │
+│                                       └──────────────┘             │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ## Specification
 
@@ -63,12 +90,14 @@ Each parser agent runs as an independent process that accepts client connections
 // Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/parser_agent.h
 
 struct ParserAgentConfig {
-    std::string protocol;           // "native", "postgresql", "mysql", "firebird"
-    std::string listen_endpoint;    // Host:port or socket path for client connections
-    std::string ipc_endpoint;       // Engine IPC socket path
-    uint32_t max_connections = 100; // Maximum concurrent client connections
-    uint32_t io_threads = 4;        // Number of I/O worker threads
+    std::string protocol;              // "native", "postgresql", "mysql", "firebird"
+    std::string listen_endpoint;       // Host:port or socket path for client connections
+    std::string ipc_endpoint;          // Engine IPC socket path
+    uint32_t max_connections = 100;    // Maximum concurrent client connections
+    uint32_t io_threads = 4;           // Number of I/O worker threads
     uint32_t idle_timeout_ms = 300000; // 5 minute idle timeout
+    bool enable_ssl = true;            // Enable SSL/TLS
+    uint32_t max_query_size = 1024 * 1024;  // 1MB max query size
 };
 ```
 
@@ -78,114 +107,37 @@ struct ParserAgentConfig {
 // Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/parser_agent.h
 
 struct ClientConnection {
-    uint32_t client_id;             // Unique client identifier
-    int socket_fd;                  // Client socket file descriptor
-    uint64_t connect_time_ms;       // Connection timestamp
-    uint64_t last_activity_ms;      // Last activity timestamp
-    std::string user;               // Authenticated username
-    std::string database;           // Connected database
-    uint32_t session_id;            // Engine session ID
-    bool authenticated;             // Authentication status
-    std::unique_ptr<IPCChannel> ipc_channel; // Engine IPC channel
-};
-```
-
-#### IPCMessage Container
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:327
-
-class IPCMessage {
-public:
-    IPCHeader header;               // 40-byte message header
-    std::vector<uint8_t> payload;   // Variable-length payload
+    uint32_t client_id;              // Unique client identifier
+    int socket_fd;                   // Client socket file descriptor
+    uint64_t connect_time_ms;        // Connection timestamp
+    uint64_t last_activity_ms;       // Last activity timestamp
+    std::string user;                // Authenticated username
+    std::string database;            // Connected database
+    std::string application;         // Application name
+    uint32_t session_id;             // Engine session ID
+    bool authenticated;              // Authentication status
+    std::unique_ptr<IPCChannel> ipc_channel;  // Engine IPC channel
     
-    IPCMessage();
-    IPCMessage(IPCMessageType type, uint32_t session_id = 0);
-    
-    // Serialization
-    std::vector<uint8_t> serialize() const;
-    bool deserialize(const uint8_t* data, size_t len);
-    
-    // Payload helpers
-    template<typename T>
-    T* getPayload() {
-        payload.resize(sizeof(T));
-        return reinterpret_cast<T*>(payload.data());
-    }
-    
-    // Type checking
-    IPCMessageType getType() const;
-    void setType(IPCMessageType type);
-    
-    bool isValid() const;
-    size_t getTotalSize() const;
+    // Protocol-specific state
+    std::unordered_map<std::string, PreparedStatement> prepared_stmts;
+    std::unordered_map<std::string, Portal> portals;
+    std::vector<std::string> parameter_status;
 };
 ```
 
-#### IPCSimpleQueryPayload Structure
+#### Parser Agent Statistics
 
 ```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:213
-
-struct IPCSimpleQueryPayload {
-    uint32_t flags;           // Query flags
-    uint32_t query_length;    // Length of SQL text
-    // SQL text follows (variable length)
+struct Stats {
+    uint32_t connections_accepted;
+    uint32_t connections_closed;
+    uint32_t active_connections;
+    uint32_t queries_processed;
+    uint32_t errors;
+    uint64_t bytes_received;
+    uint64_t bytes_sent;
+    uint64_t uptime_ms;
 };
-```
-
-#### IPCParsePayload Structure
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:220
-
-struct IPCParsePayload {
-    char stmt_name[64];           // Statement name
-    char sql[IPC_MAX_SQL_LENGTH]; // SQL text (512KB max)
-    uint16_t param_types[IPC_MAX_PARAMS]; // Parameter type OIDs
-};
-```
-
-#### IPCBindPayload Structure
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:227
-
-struct IPCBindPayload {
-    char portal_name[64];     // Portal name
-    char stmt_name[64];       // Statement name
-    uint16_t num_params;      // Number of parameters
-    // IPCParamValue + data follows
-};
-```
-
-#### IPCExecutePayload Structure
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:235
-
-struct IPCExecutePayload {
-    char portal_name[64];     // Portal name
-    uint32_t max_rows;        // Maximum rows (0=unlimited)
-};
-```
-
-#### IPCFieldDesc Structure
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/ipc/ipc_contract_v1_1.h:163
-
-struct IPCFieldDesc {
-    char name[64];            // Field name
-    uint32_t table_oid;       // Table OID
-    uint16_t column_num;      // Column number
-    uint16_t type_oid;        // Type OID
-    int16_t type_size;        // Type size (-1 for variable)
-    int32_t type_modifier;    // Type modifier
-    uint16_t format;          // 0=text, 1=binary
-};
-// Total size: 84 bytes (with alignment)
 ```
 
 ### Interface Contracts
@@ -201,6 +153,7 @@ core::Status ParserAgent::start(core::ErrorContext* ctx);
 **Preconditions:**
 - Config must specify valid protocol and endpoints
 - No existing listener on the configured endpoint
+- Sufficient resources available
 
 **Postconditions:**
 - Socket listener is bound and listening
@@ -210,7 +163,33 @@ core::Status ParserAgent::start(core::ErrorContext* ctx);
 
 **Error Handling:**
 - Returns IO_ERROR if socket creation fails
+- Returns ALREADY_EXISTS if endpoint is in use
 - Returns NOT_IMPLEMENTED on unsupported platforms
+
+**Thread Safety:**
+- Safe to call from any thread
+- Not safe to call multiple times without stop()
+
+#### Function: `ParserAgent::stop()`
+
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/src/ipc/parser_agent.cpp:73
+
+core::Status ParserAgent::stop(core::ErrorContext* ctx);
+```
+
+**Preconditions:**
+- start() was previously called
+
+**Postconditions:**
+- Listener is closed
+- All threads are stopped
+- All client connections are closed
+- All IPC channels are released
+- running_ flag is false
+
+**Error Handling:**
+- Returns error if cleanup fails (but continues)
 
 #### Function: `ParserAgent::handleClient()`
 
@@ -235,42 +214,23 @@ core::Status ParserAgent::handleClient(int client_fd, core::ErrorContext* ctx);
 3. Spawn client handling thread
 4. Return immediately (asynchronous handling)
 
-#### Function: `NativeSBParserAgent::handleStartup()`
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/src/ipc/parser_agent.cpp:527
-
-core::Status NativeSBParserAgent::handleStartup(ClientConnection& client, core::ErrorContext* ctx);
-```
-
-**Preconditions:**
-- Client socket is connected
-- No active session for this client
-
-**Postconditions:**
-- Protocol version is validated
-- Connection parameters are extracted
-- READY message is sent
-- Client is marked authenticated
-
-**Protocol:**
-```
-Client -> Agent: VERSION(2 bytes) + SSL_MODE(1 byte) + PARAMS(null-terminated pairs)
-Agent -> Client: READY(type:1, length:4, session_id:4, features:4, version:4)
-```
+**Thread Safety:**
+- Thread-safe via connections_mutex_
 
 #### Function: `ParserAgent::sendToEngine()`
 
 ```cpp
 // Source: /home/dcalford/CliWork/ScratchBird/src/ipc/parser_agent.cpp:294
 
-core::Status ParserAgent::sendToEngine(uint32_t client_id, const IPCMessage& msg,
-                                      core::ErrorContext* ctx);
+core::Status ParserAgent::sendToEngine(uint32_t client_id, 
+                                       const IPCMessage& msg,
+                                       core::ErrorContext* ctx);
 ```
 
 **Preconditions:**
 - Client exists in connections_ map
 - Client has an active IPC channel
+- Message is valid
 
 **Postconditions:**
 - Message is serialized and sent to engine
@@ -279,27 +239,141 @@ core::Status ParserAgent::sendToEngine(uint32_t client_id, const IPCMessage& msg
 **Thread Safety:**
 - Thread-safe via connections_mutex_ shared_lock
 
+**Error Handling:**
+- Returns NOT_FOUND if client doesn't exist
+- Returns CONNECTION_FAILURE if IPC channel disconnected
+
 #### Function: `ParserAgent::receiveFromEngine()`
 
 ```cpp
 // Source: /home/dcalford/CliWork/ScratchBird/src/ipc/parser_agent.cpp:320
 
-core::Status ParserAgent::receiveFromEngine(uint32_t client_id, IPCMessage& msg,
-                                           core::ErrorContext* ctx,
-                                           uint32_t timeout_ms = 0);
+core::Status ParserAgent::receiveFromEngine(uint32_t client_id, 
+                                            IPCMessage& msg,
+                                            core::ErrorContext* ctx,
+                                            uint32_t timeout_ms = 0);
 ```
 
 **Preconditions:**
 - Client exists with active IPC channel
-- timeout_ms = 0 means blocking receive
 
 **Postconditions:**
 - msg is populated with received message
 - Returns OK if message received within timeout
 
+**Parameters:**
+- timeout_ms: 0 = blocking receive, >0 = timeout in milliseconds
+
 **Error Handling:**
 - Returns NOT_FOUND if client doesn't exist
 - Returns TIMEOUT if timeout expires
+- Returns CONNECTION_CLOSED if channel disconnected
+
+### Protocol-Specific Agents
+
+#### NativeSBParserAgent
+
+Handles native ScratchBird wire protocol.
+
+```cpp
+class NativeSBParserAgent : public ParserAgent {
+public:
+    core::Status handleClient(int client_fd, core::ErrorContext* ctx) override;
+    core::Status handleStartup(ClientConnection& client, core::ErrorContext* ctx);
+    core::Status handleQuery(ClientConnection& client, 
+                             const std::string& sql,
+                             core::ErrorContext* ctx);
+    core::Status handleParse(ClientConnection& client,
+                             const std::string& stmt_name,
+                             const std::string& sql,
+                             core::ErrorContext* ctx);
+    core::Status handleBind(ClientConnection& client,
+                            const std::string& portal_name,
+                            const std::string& stmt_name,
+                            core::ErrorContext* ctx);
+    core::Status handleExecute(ClientConnection& client,
+                               const std::string& portal_name,
+                               uint32_t max_rows,
+                               core::ErrorContext* ctx);
+    core::Status handleClose(ClientConnection& client, char type,
+                             const std::string& name,
+                             core::ErrorContext* ctx);
+    core::Status handleSync(ClientConnection& client, core::ErrorContext* ctx);
+    core::Status handleTerminate(ClientConnection& client, core::ErrorContext* ctx);
+    
+private:
+    core::Status sendReady(ClientConnection& client, uint32_t features);
+    core::Status sendParseComplete(ClientConnection& client);
+    core::Status sendBindComplete(ClientConnection& client);
+    core::Status sendCloseComplete(ClientConnection& client);
+    core::Status sendCommandComplete(ClientConnection& client, const std::string& tag);
+    core::Status sendRowDescription(ClientConnection& client,
+                                    const std::vector<IPCFieldDesc>& fields);
+    core::Status sendDataRow(ClientConnection& client,
+                             const std::vector<std::optional<std::string>>& values);
+    core::Status sendError(ClientConnection& client,
+                           const char* sqlstate,
+                           const std::string& message);
+    core::Status forwardResponseToClient(ClientConnection& client,
+                                         const IPCMessage& response,
+                                         core::ErrorContext* ctx);
+};
+```
+
+#### PostgreSQLParserAgent
+
+Handles PostgreSQL wire protocol v3.
+
+```cpp
+class PostgreSQLParserAgent : public ParserAgent {
+public:
+    core::Status handleClient(int client_fd, core::ErrorContext* ctx) override;
+    
+private:
+    // PostgreSQL-specific handlers
+    core::Status handleStartupMessage(ClientConnection& client);
+    core::Status handleSSLRequest(ClientConnection& client);
+    core::Status handleQuery(ClientConnection& client, const std::string& sql);
+    core::Status handleParse(ClientConnection& client);      // 'P' message
+    core::Status handleBind(ClientConnection& client);       // 'B' message
+    core::Status handleExecute(ClientConnection& client);    // 'E' message
+    core::Status handleDescribe(ClientConnection& client);   // 'D' message
+    core::Status handleClose(ClientConnection& client);      // 'C' message
+    core::Status handleSync(ClientConnection& client);       // 'S' message
+    core::Status handleTerminate(ClientConnection& client);  // 'X' message
+    core::Status handleCopyData(ClientConnection& client);   // 'd' message
+    core::Status handleCopyDone(ClientConnection& client);   // 'c' message
+    core::Status handleCopyFail(ClientConnection& client);   // 'f' message
+    
+    // Response builders
+    core::Status sendAuthenticationOk(ClientConnection& client);
+    core::Status sendAuthenticationMD5Password(ClientConnection& client, 
+                                                const uint8_t salt[4]);
+    core::Status sendParameterStatus(ClientConnection& client,
+                                     const std::string& name,
+                                     const std::string& value);
+    core::Status sendBackendKeyData(ClientConnection& client);
+    core::Status sendReadyForQuery(ClientConnection& client, char status);
+    core::Status sendRowDescriptionPG(ClientConnection& client,
+                                      const std::vector<FieldInfo>& fields);
+    core::Status sendDataRowPG(ClientConnection& client,
+                               const std::vector<Value>& values);
+    core::Status sendCommandCompletePG(ClientConnection& client,
+                                       const std::string& tag);
+    core::Status sendErrorResponsePG(ClientConnection& client,
+                                     const char* sqlstate,
+                                     const std::string& message);
+    core::Status sendNoticeResponsePG(ClientConnection& client,
+                                      const std::string& message);
+    core::Status sendParseCompletePG(ClientConnection& client);
+    core::Status sendBindCompletePG(ClientConnection& client);
+    core::Status sendCloseCompletePG(ClientConnection& client);
+    core::Status sendCopyInResponsePG(ClientConnection& client);
+    core::Status sendCopyOutResponsePG(ClientConnection& client);
+    core::Status sendCopyDataPG(ClientConnection& client, const uint8_t* data, size_t len);
+    core::Status sendCopyDonePG(ClientConnection& client);
+};
+```
 
 ### Algorithms
 
@@ -311,15 +385,16 @@ Output: Query results to client
 
 1. Parse wire protocol message (PostgreSQL/MySQL/Firebird)
 2. Extract SQL text and parameters
-3. Create IPCMessage with type SIMPLE_QUERY or PARSE/BIND/EXECUTE
-4. Copy SQL text into payload
-5. Send message to engine via IPC channel
-6. While not complete:
+3. Normalize SQL dialect to canonical form
+4. Create IPCMessage with type SIMPLE_QUERY or PARSE/BIND/EXECUTE
+5. Copy SQL text into payload
+6. Send message to engine via IPC channel
+7. While not complete:
    a. Receive response from engine
    b. Translate response to wire protocol format
    c. Send to client
    d. If COMMAND_COMPLETE or ERROR_RESPONSE, break
-7. Return success
+8. Return success
 ```
 
 **Complexity:**
@@ -337,14 +412,16 @@ Output: Prepared statement execution results
    b. Create IPCMessage(IPCMessageType::PARSE)
    c. Send to engine
    d. Wait for PARSE_COMPLETE or ERROR_RESPONSE
-   e. Send ParseComplete to client
+   e. Store prepared statement info locally
+   f. Send ParseComplete to client
 
 2. BIND phase:
    a. Receive BIND message with portal, statement, parameters
    b. Create IPCMessage(IPCMessageType::BIND)
    c. Send to engine
    d. Wait for BIND_COMPLETE or ERROR_RESPONSE
-   e. Send BindComplete to client
+   e. Store portal info locally
+   f. Send BindComplete to client
 
 3. DESCRIBE phase (optional):
    a. Create IPCMessage(IPCMessageType::DESCRIBE)
@@ -363,124 +440,6 @@ Output: Prepared statement execution results
    b. Send to engine
    c. Wait for READY_FOR_QUERY
    d. Forward to client
-```
-
-### State Machines
-
-#### Parser Agent Connection State Machine
-
-```
-                         ┌─────────────┐
-                    ┌────┤ DISCONNECTED│◄─────────────────────────┐
-                    │    └──────┬──────┘                          │
-                    │           │ accept()                         │
-                    │           ▼                                  │
-                    │    ┌─────────────┐                          │
-                    │    │  CONNECTED  │                          │
-                    │    └──────┬──────┘                          │
-                    │           │ Startup received                 │
-                    │           ▼                                  │
-                    │    ┌─────────────┐     Auth failed          │
-                    │    │  STARTING   │─────────────────────────┘
-                    │    └──────┬──────┘
-                    │           │ Auth success
-                    │           ▼
-                    │    ┌─────────────┐
-                    └────┤    ACTIVE   │◄──────────────┐
-                         └──────┬──────┘               │
-                                │ Query received       │
-                                ▼                      │
-                         ┌─────────────┐    Complete   │
-                         │  EXECUTING  │───────────────┘
-                         └──────┬──────┘
-                                │ COPY operation
-                                ▼
-                    ┌───────────────────────┐
-                    │      COPY_IN          │
-                    │      COPY_OUT         │
-                    └──────┬────────────────┘
-                           │ COPY complete/fail
-                           ▼
-                    ┌─────────────┐
-                    │   CLOSING   │
-                    └──────┬──────┘
-                           │ disconnect()
-                           ▼
-                    ┌─────────────┐
-                    │ DISCONNECTED│
-                    └─────────────┘
-```
-
-**State Transition Table:**
-
-| Current State | Event | Action | Next State |
-|---------------|-------|--------|------------|
-| DISCONNECTED | accept | Create ClientConnection | CONNECTED |
-| CONNECTED | Startup | Validate version, extract params | STARTING |
-| STARTING | Auth OK | Send READY, set session_id | ACTIVE |
-| STARTING | Auth Fail | Send error, close socket | DISCONNECTED |
-| ACTIVE | SIMPLE_QUERY | Forward to engine | EXECUTING |
-| ACTIVE | PARSE | Forward to engine | EXECUTING |
-| ACTIVE | BIND | Forward to engine | EXECUTING |
-| ACTIVE | EXECUTE | Forward to engine | EXECUTING |
-| EXECUTING | Results | Translate and forward | ACTIVE |
-| EXECUTING | COPY_IN | Setup flow control | COPY_IN |
-| EXECUTING | COPY_OUT | Setup streaming | COPY_OUT |
-| COPY_IN | COPY_DONE | Send COPY_COMPLETE | ACTIVE |
-| COPY_OUT | COPY_COMPLETE | Resume normal flow | ACTIVE |
-| * | Terminate | Cleanup resources | CLOSING |
-| CLOSING | Cleanup done | Remove from registry | DISCONNECTED |
-
-### Decision Trees
-
-#### Message Routing Decision Tree
-
-```
-Message received from client
-│
-├── Parse wire protocol header
-│   ├── Parse error → Send error response, close
-│   └── Parse OK → Determine message type
-│
-       Message type?
-       ├── STARTUP → Handle startup handshake
-       │
-       ├── SIMPLE_QUERY
-       │   ├── Create IPCMessage(SIMPLE_QUERY)
-       │   ├── Copy SQL text to payload
-       │   ├── sendToEngine()
-       │   └── forwardResponsesToClient()
-       │
-       ├── PARSE
-       │   ├── Create IPCMessage(PARSE)
-       │   ├── Copy statement name and SQL
-       │   ├── sendToEngine()
-       │   ├── receiveFromEngine() → PARSE_COMPLETE
-       │   └── Send ParseComplete to client
-       │
-       ├── BIND
-       │   ├── Create IPCMessage(BIND)
-       │   ├── Copy portal name, statement name, parameters
-       │   ├── sendToEngine()
-       │   ├── receiveFromEngine() → BIND_COMPLETE
-       │   └── Send BindComplete to client
-       │
-       ├── EXECUTE
-       │   ├── Create IPCMessage(EXECUTE)
-       │   ├── Copy portal name, max rows
-       │   ├── sendToEngine()
-       │   └── forwardResponsesToClient()
-       │
-       ├── COPY_DATA
-       │   ├── Check flow control credits
-       │   ├── Create IPCMessage(COPY_DATA)
-       │   ├── sendToEngine()
-       │   └── Update credits
-       │
-       └── TERMINATE
-           ├── sendToEngine(DETACH)
-           ├── Close IPC channel
-           └── Close client socket
 ```
 
 ## Invariants
@@ -502,6 +461,12 @@ Message received from client
    - Verification: Use `std::shared_lock<std::shared_mutex>` for reads
    - Verification: Use `std::unique_lock<std::shared_mutex>` for writes
 
+6. **Prepared Statement Tracking**: All prepared statements MUST be tracked
+   - Verification: Statement in local map before sending PARSE_COMPLETE
+
+7. **Portal Tracking**: All portals MUST be tracked
+   - Verification: Portal in local map before sending BIND_COMPLETE
+
 ## Error Handling
 
 | Error Code | Condition | Recovery Action |
@@ -512,23 +477,52 @@ Message received from client
 | `TIMEOUT` | Engine response timeout | Send timeout error to client |
 | `IO_ERROR` | Socket read/write failure | Close connection, cleanup |
 | `PROTOCOL_VIOLATION` | Unexpected message type | Log error, close connection |
+| `NOT_SUPPORTED` | Unsupported feature | Send feature_not_supported error |
+
+## Configuration
+
+### Parser Agent Factory
+
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/src/ipc/parser_agent.cpp:381
+
+class ParserAgentFactory {
+public:
+    static std::unique_ptr<ParserAgent> create(const ParserAgentConfig& config);
+    static std::unique_ptr<ParserAgent> create(const std::string& protocol,
+                                               const std::string& listen_endpoint,
+                                               const std::string& ipc_endpoint);
+};
+```
+
+**Supported Protocols:**
+- "native" or "scratchbird" - Native SBWP
+- "postgresql" - PostgreSQL v3 wire protocol
+- "mysql" - MySQL protocol 4.1+
+- "firebird" - Firebird wire protocol
 
 ## Test Coverage
 
 | Test File | Coverage Area |
 |-----------|---------------|
-| `tests/unit/test_ipc_server.cpp` | IPC server lifecycle |
-| `tests/unit/test_ipc_contract.cpp` | Message serialization |
-| `tests/unit/test_ipc_policy.cpp` | Policy enforcement |
+| `tests/unit/test_parser_agent.cpp` | Base parser agent functionality |
+| `tests/unit/test_parser_postgresql.cpp` | PostgreSQL protocol handling |
+| `tests/unit/test_parser_mysql.cpp` | MySQL protocol handling |
+| `tests/unit/test_parser_firebird.cpp` | Firebird protocol handling |
+| `tests/unit/test_ipc_contract.cpp` | IPC message serialization |
 
 ## Migration Notes
 
 - Parser agents are a new architecture in 1.0.0-alpha1
 - Previous versions used in-process protocol adapters
 - Migration requires configuring separate parser agent processes
+- Configuration moved from `protocol_adapters` section to `parser_agents`
 
 ## Related Specifications
 
+- [parser_requests.md](./parser_requests.md) - Request handling details
+- [parser_responses.md](./parser_responses.md) - Response generation
+- [parser_capabilities.md](./parser_capabilities.md) - Capability negotiation
 - [wire_protocol.md](./wire_protocol.md) - SBWP frame format
 - [ipc_session_lifecycle.md](./ipc_session_lifecycle.md) - Session lifecycle
 - [protocol_adapters.md](./protocol_adapters.md) - Emulated protocol adapters
@@ -556,4 +550,5 @@ Message received from client
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
+| 1.1.0 | 2026-03-08 | Added capability negotiation, extended query protocol | ScratchBird Engineering |
 | 1.0.0 | 2026-03-08 | Initial specification | ScratchBird Engineering |

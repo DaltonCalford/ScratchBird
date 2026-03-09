@@ -17,7 +17,6 @@
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/hnsw_index.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/vector.cpp:1`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_hnsw_index.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_vector_index.cpp:1`
 
 ## Synopsis
 
@@ -462,7 +461,6 @@ double inner_product_distance(const float* a, const float* b, size_t dim) {
 | Test File | Coverage |
 |-----------|----------|
 | `test_hnsw_index.cpp` | Core HNSW operations |
-| `test_vector_index.cpp` | Vector storage, distance |
 | `test_hnsw_recall.cpp` | Recall rate validation |
 | `test_hnsw_concurrent.cpp` | Concurrent insert/search |
 

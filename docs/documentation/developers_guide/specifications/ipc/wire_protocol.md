@@ -4,9 +4,9 @@
 
 | Field | Value |
 |-------|-------|
-| **Subsystem** | ipc/protocol |
-| **Spec Version** | 1.0.0 |
-| **Status** | 🔴 Draft |
+| **Subsystem** | protocol/wire_protocol |
+| **Spec Version** | 1.1.0 |
+| **Status** | 🟢 Approved |
 | **Last Verified** | 2026-03-08 |
 | **Implementation Version** | ScratchBird 1.0.0-alpha1 |
 | **Authors** | ScratchBird Engineering |
@@ -15,8 +15,8 @@
 
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/protocol/sbwp_protocol.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/protocol/wire_protocol.cpp:1`
-- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h`
-- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/wire_protocol.h`
+- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h:1`
+- Source anchor: `/home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/wire_protocol.h:1`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_ipc_contract.cpp:1`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_ipc_server.cpp:1`
 
@@ -34,6 +34,11 @@ This specification defines the ScratchBird Wire Protocol (SBWP) - a binary proto
 - Compression and encryption extensions
 - Protocol version negotiation
 - Error frame format
+- Connection lifecycle messages
+- Query execution messages
+- Transaction messages
+- COPY operation messages
+- Streaming and flow control
 
 ### Out of Scope
 
@@ -41,6 +46,8 @@ This specification defines the ScratchBird Wire Protocol (SBWP) - a binary proto
 - Authentication mechanism details (see ipc_session_lifecycle.md)
 - SQL parsing and SBLR generation (see parser_agent_contract.md)
 - Emulated protocol specifics (PostgreSQL, MySQL, Firebird - see protocol_adapters.md)
+- FDW protocol details (see fdw_protocol.md)
+- UDR protocol details (see udr_protocol.md)
 
 ## Background
 
@@ -50,32 +57,39 @@ SBWP serves as the canonical wire protocol for ScratchBird, designed to:
 2. **Support Emulation**: Enable protocol adapters to translate PostgreSQL, MySQL, and Firebird wire formats
 3. **Enable Streaming**: Support large result sets and COPY operations via chunked transfer
 4. **Ensure Security**: Built-in support for TLS and application-layer encryption
+5. **Enable Federation**: Support federated queries across multiple data sources
 
 The protocol uses little-endian byte order for numeric fields and UTF-8 for text encoding.
 
 ## Specification
 
-### Data Structures
-
-#### SBWP Frame Header (40 bytes)
+### Protocol Constants
 
 ```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h
-// Fixed 40-byte header for all SBWP messages
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h:14-19
+
+constexpr uint32_t kProtocolMagic = 0x53425750;           // "SBWP"
+constexpr uint8_t kProtocolMajor = 1;
+constexpr uint8_t kProtocolMinor = 1;
+constexpr uint16_t kProtocolVersion = (static_cast<uint16_t>(kProtocolMajor) << 8) | kProtocolMinor;
+constexpr size_t kHeaderSize = 40;
+constexpr size_t kMaxMessageSize = 1024u * 1024u * 1024u;  // 1GB max
+```
+
+### SBWP Frame Header (40 bytes)
+
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h:225-232
 
 struct MessageHeader {
-    uint8_t  magic[4];           // Offset 0: 'S', 'B', 'W', 'P' (0x53425750)
-    uint8_t  version_major;      // Offset 4: Protocol major version (1)
-    uint8_t  version_minor;      // Offset 5: Protocol minor version (0)
-    uint8_t  type;               // Offset 6: MessageType enum value
-    uint8_t  flags;              // Offset 7: Message flags bitmask
-    uint32_t length;             // Offset 8: Payload length in bytes (little-endian)
-    uint32_t sequence;           // Offset 12: Sequence number (little-endian)
-    uint8_t  attachment_id[16];  // Offset 16: Attachment/connection UUID
-    uint64_t txn_id;             // Offset 32: Transaction ID (little-endian)
+    MessageType type{MessageType::Query};     // Offset 0: Message type (1 byte)
+    uint8_t flags{0};                         // Offset 1: Message flags
+    uint32_t length{0};                       // Offset 2: Payload length (4 bytes)
+    uint32_t sequence{0};                     // Offset 6: Sequence number (4 bytes)
+    std::array<uint8_t, 16> attachment_id{};  // Offset 10: Attachment UUID (16 bytes)
+    uint64_t txn_id{0};                       // Offset 26: Transaction ID (8 bytes)
 };
-
-static_assert(sizeof(MessageHeader) == 40, "Header must be 40 bytes");
+// Total: 35 bytes + 5 bytes padding = 40 bytes
 ```
 
 **Binary Frame Layout:**
@@ -84,254 +98,161 @@ static_assert(sizeof(MessageHeader) == 40, "Header must be 40 bytes");
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|     'S'       |     'B'       |     'W'       |     'P'       | 0-3: Magic
+|     Type      |     Flags     |            Length             | 0-5
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|  Maj  |  Min  |     Type      |     Flags     |    Length...  | 4-7: Version/Type/Flags/Length
+|                         Sequence Number                       | 6-9
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-| ...Length (cont)  |              Sequence Number...             | 8-11: Length cont/Sequence
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                        Sequence Number (cont)                   | 12-15: Sequence cont
-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                                                               | 16-31: Attachment ID (16 bytes)
-|                      Attachment UUID (16 bytes)               |
+|                                                               | 10-25
+|                      Attachment ID (16 bytes)                 |
 |                                                               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                                                               | 32-39: Transaction ID (8 bytes)
-|                      Transaction ID (uint64)                  |
+|                                                               | 26-33
+|                      Transaction ID (8 bytes)                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     Padding (5 bytes)                                         | 34-39
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
-#### Header Flags
+### Message Types
 
 ```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/src/protocol/sbwp_protocol.cpp
-
-constexpr uint8_t kFlagCompressed = 0x01;    // Payload is compressed
-constexpr uint8_t kFlagEncrypted  = 0x02;    // Payload is encrypted
-constexpr uint8_t kFlagStreaming  = 0x04;    // Streaming/chunked message
-constexpr uint8_t kFlagFinalChunk = 0x08;    // Final chunk in stream
-constexpr uint8_t kFlagError      = 0x80;    // Error response message
-```
-
-#### Message Types
-
-```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h
-// Message type enumeration (1 byte)
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h:21-89
 
 enum class MessageType : uint8_t {
-    // Connection Management (0x01-0x0F)
-    STARTUP         = 0x01,  // Client -> Server: Connection startup
-    READY           = 0x02,  // Server -> Client: Connection ready
-    AUTH_REQUEST    = 0x03,  // Server -> Client: Authentication required
-    AUTH_CONTINUE   = 0x04,  // Bidirectional: Auth challenge/response
-    AUTH_OK         = 0x05,  // Server -> Client: Authentication successful
-    TERMINATE       = 0x06,  // Bidirectional: Clean disconnect
-    
-    // Query Execution (0x10-0x1F)
-    QUERY           = 0x10,  // Client -> Server: Execute SQL query
-    PARSE           = 0x11,  // Client -> Server: Parse SQL statement
-    BIND            = 0x12,  // Client -> Server: Bind parameters
-    EXECUTE         = 0x13,  // Client -> Server: Execute prepared statement
-    DESCRIBE        = 0x14,  // Client -> Server: Describe statement/portal
-    CLOSE           = 0x15,  // Client -> Server: Close statement/portal
-    SYNC            = 0x16,  // Client -> Server: Synchronize
-    
-    // Results (0x20-0x2F)
-    ROW_DESCRIPTION = 0x20,  // Server -> Client: Result column metadata
-    DATA_ROW        = 0x21,  // Server -> Client: Single data row
-    COMMAND_COMPLETE= 0x22,  // Server -> Client: Query completion
-    PARSE_COMPLETE  = 0x23,  // Server -> Client: Parse completion
-    BIND_COMPLETE   = 0x24,  // Server -> Client: Bind completion
-    CLOSE_COMPLETE  = 0x25,  // Server -> Client: Close completion
-    EMPTY_RESPONSE  = 0x26,  // Server -> Client: Empty result
-    
-    // COPY Operations (0x30-0x3F)
-    COPY_DATA       = 0x30,  // Bidirectional: COPY data chunk
-    COPY_DONE       = 0x31,  // Client -> Server: COPY complete
-    COPY_FAIL       = 0x32,  // Client -> Server: COPY failed
-    COPY_IN_RESPONSE= 0x33,  // Server -> Client: Expect COPY data
-    COPY_OUT_RESPONSE=0x34,  // Server -> Client: COPY data incoming
-    COPY_BOTH_RESPONSE=0x35, // Server -> Client: Bidirectional COPY
-    
-    // Transactions (0x40-0x4F)
-    TXN_BEGIN       = 0x40,  // Client -> Server: Begin transaction
-    TXN_COMMIT      = 0x41,  // Client -> Server: Commit transaction
-    TXN_ROLLBACK    = 0x42,  // Client -> Server: Rollback transaction
-    TXN_SAVEPOINT   = 0x43,  // Client -> Server: Create savepoint
-    TXN_RELEASE     = 0x44,  // Client -> Server: Release savepoint
-    TXN_ROLLBACK_TO = 0x45,  // Client -> Server: Rollback to savepoint
-    
-    // Asynchronous (0x50-0x5F)
-    SUBSCRIBE       = 0x50,  // Client -> Server: Subscribe to channel
-    UNSUBSCRIBE     = 0x51,  // Client -> Server: Unsubscribe from channel
-    NOTIFY          = 0x52,  // Server -> Client: Notification delivery
-    CANCEL          = 0x53,  // Client -> Server: Cancel request
-    
-    // SBLR Execution (0x60-0x6F)
-    SBLR_EXECUTE    = 0x60,  // Client -> Server: Execute SBLR bytecode
-    SBLR_COMPILED   = 0x61,  // Server -> Client: SBLR compilation result
-    QUERY_PLAN      = 0x62,  // Server -> Client: Query execution plan
-    
-    // Errors (0x70-0x7F)
-    ERROR_RESPONSE  = 0x70,  // Server -> Client: Error occurred
-    NOTICE          = 0x71,  // Server -> Client: Notice/warning
-    
-    // Flow Control (0x80-0x8F)
-    STREAM_CONTROL  = 0x80,  // Bidirectional: Flow control
-    
-    // Database Attach (0x90-0x9F)
-    ATTACH_CREATE   = 0x90,  // Client -> Server: Create attachment
-    ATTACH_DETACH   = 0x91,  // Client -> Server: Detach from database
-    ATTACH_LIST     = 0x92,  // Client -> Server: List attachments
+    // Client Request Messages (0x01-0x3F)
+    Startup = 0x01,           // Connection startup
+    AuthResponse = 0x02,      // Authentication response
+    Query = 0x03,             // Execute SQL query
+    Parse = 0x04,             // Parse SQL statement
+    Bind = 0x05,              // Bind parameters to statement
+    Describe = 0x06,          // Describe statement/portal
+    Execute = 0x07,           // Execute prepared statement
+    Close = 0x08,             // Close statement/portal
+    Sync = 0x09,              // End request batch
+    Flush = 0x0A,             // Flush output buffer
+    Cancel = 0x0B,            // Cancel query
+    Terminate = 0x0C,         // Close connection
+    CopyData = 0x0D,          // COPY data chunk
+    CopyDone = 0x0E,          // COPY complete
+    CopyFail = 0x0F,          // COPY failed
+    SblrExecute = 0x10,       // Execute SBLR bytecode
+    Subscribe = 0x11,         // Subscribe to notifications
+    Unsubscribe = 0x12,       // Unsubscribe from notifications
+    FederatedQuery = 0x13,    // Execute federated query
+    StreamControl = 0x14,     // Flow control message
+    TxnBegin = 0x15,          // Begin transaction
+    TxnCommit = 0x16,         // Commit transaction
+    TxnRollback = 0x17,       // Rollback transaction
+    TxnSavepoint = 0x18,      // Create savepoint
+    TxnRelease = 0x19,        // Release savepoint
+    TxnRollbackTo = 0x1A,     // Rollback to savepoint
+    Ping = 0x1B,              // Keepalive ping
+    SetOption = 0x1C,         // Set connection option
+    ClusterAuth = 0x1D,       // Cluster authentication
+    AttachCreate = 0x1E,      // Create attachment
+    AttachDetach = 0x1F,      // Detach from database
+    AttachList = 0x20,        // List attachments
+
+    // Server Response Messages (0x40-0x7F)
+    AuthRequest = 0x40,       // Authentication required
+    AuthOk = 0x41,            // Authentication successful
+    AuthContinue = 0x42,      // Authentication continue
+    Ready = 0x43,             // Connection ready
+    RowDescription = 0x44,    // Result column metadata
+    DataRow = 0x45,           // Single data row
+    CommandComplete = 0x46,   // Query completion
+    EmptyQuery = 0x47,        // Empty result
+    Error = 0x48,             // Error response
+    Notice = 0x49,            // Notice/warning
+    ParseComplete = 0x4A,     // Parse completion
+    BindComplete = 0x4B,      // Bind completion
+    CloseComplete = 0x4C,     // Close completion
+    PortalSuspended = 0x4D,   // Portal suspended (row limit)
+    NoData = 0x4E,            // No data available
+    ParameterStatus = 0x4F,   // Parameter status update
+    ParameterDescription = 0x50,  // Parameter types
+    CopyInResponse = 0x51,    // Expect COPY data
+    CopyOutResponse = 0x52,   // COPY data incoming
+    CopyBothResponse = 0x53,  // Bidirectional COPY
+    Notification = 0x54,      // Async notification
+    FunctionResult = 0x55,    // Function call result
+    NegotiateVersion = 0x56,  // Version negotiation
+    SblrCompiled = 0x57,      // SBLR compilation result
+    QueryPlan = 0x58,         // Query execution plan
+    StreamReady = 0x59,       // Stream ready
+    StreamData = 0x5A,        // Stream data chunk
+    StreamEnd = 0x5B,         // Stream end
+    TxnStatus = 0x5C,         // Transaction status
+    Pong = 0x5D,              // Keepalive response
+    ClusterAuthOk = 0x5E,     // Cluster auth success
+    FederatedResult = 0x5F,   // Federated query result
+
+    // Internal Messages (0x80-0xFF)
+    Heartbeat = 0x80,         // Health check
+    Extension = 0x81,         // Extension message
 };
 ```
 
-#### Protocol Constants
+### Header Flags
 
 ```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/src/protocol/sbwp_protocol.cpp
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h:91-98
 
-constexpr uint8_t  kProtocolMajor = 1;
-constexpr uint8_t  kProtocolMinor = 0;
-constexpr uint32_t kHeaderSize = 40;
-constexpr uint32_t kMaxMessageSize = 64 * 1024 * 1024;  // 64 MB
+enum MessageFlags : uint8_t {
+    kFlagCompressed = 0x01,   // Payload is compressed
+    kFlagContinued = 0x02,    // Multi-part message (not final)
+    kFlagFinal = 0x04,        // Final part of multi-part message
+    kFlagUrgent = 0x08,       // Urgent priority message
+    kFlagEncrypted = 0x10,    // Payload is encrypted
+    kFlagChecksum = 0x20,     // Checksum included
+};
 ```
 
-### Payload Schemas
-
-#### STARTUP Payload
-
-```
-Offset  Size  Description
-------  ----  -----------
-0       2     Protocol major version (1)
-2       2     Protocol minor version (0)
-4       8     Feature flags bitmask (uint64)
-12      var   Connection parameters (null-terminated key=value pairs)
-```
-
-**Feature Profile Bits:**
+### Feature Flags
 
 ```cpp
-// Source: /home/dcalford/CliWork/ScratchBird/src/protocol/sbwp_protocol.cpp:68
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h:100-142
 
-constexpr uint64_t kFeatureProfilePostgresql = 0x00000001;
-constexpr uint64_t kFeatureProfileMysql      = 0x00000002;
-constexpr uint64_t kFeatureProfileFirebird   = 0x00000004;
-constexpr uint64_t kFeatureProfileCassandra  = 0x00000008;
-constexpr uint64_t kFeatureProfileMariadb    = 0x00000010;
-constexpr uint64_t kFeatureProfileClickhouse = 0x00000020;
-constexpr uint64_t kFeatureProfileDuckdb     = 0x00000040;
-constexpr uint64_t kFeatureProfileInfluxdb   = 0x00000080;
-constexpr uint64_t kFeatureProfileMongodb    = 0x00000100;
-constexpr uint64_t kFeatureProfileRedis      = 0x00000200;
-constexpr uint64_t kFeatureProfileNeo4j      = 0x00000400;
-constexpr uint64_t kFeatureProfileMilvus     = 0x00000800;
-constexpr uint64_t kFeatureProfileOpensearch = 0x00001000;
+constexpr uint64_t kFeatureCompression = 1ULL << 0;
+constexpr uint64_t kFeatureStreaming = 1ULL << 1;
+constexpr uint64_t kFeatureSblr = 1ULL << 2;
+constexpr uint64_t kFeatureFederation = 1ULL << 3;
+constexpr uint64_t kFeatureNotifications = 1ULL << 4;
+constexpr uint64_t kFeatureQueryPlan = 1ULL << 5;
+constexpr uint64_t kFeatureBatch = 1ULL << 6;
+constexpr uint64_t kFeaturePipeline = 1ULL << 7;
+constexpr uint64_t kFeatureBinaryCopy = 1ULL << 8;
+constexpr uint64_t kFeatureSavepoints = 1ULL << 9;
+constexpr uint64_t kFeatureTwoPhase = 1ULL << 10;
+constexpr uint64_t kFeatureChecksums = 1ULL << 11;
+
+// Engine-profile capability bits
+constexpr uint64_t kFeatureProfilePostgresql = 1ULL << 16;
+constexpr uint64_t kFeatureProfileMysql = 1ULL << 17;
+constexpr uint64_t kFeatureProfileFirebird = 1ULL << 18;
+constexpr uint64_t kFeatureProfileCassandra = 1ULL << 19;
+constexpr uint64_t kFeatureProfileMariadb = 1ULL << 20;
+constexpr uint64_t kFeatureProfileClickhouse = 1ULL << 21;
+constexpr uint64_t kFeatureProfileDuckdb = 1ULL << 22;
+constexpr uint64_t kFeatureProfileInfluxdb = 1ULL << 23;
+constexpr uint64_t kFeatureProfileMongodb = 1ULL << 24;
+constexpr uint64_t kFeatureProfileRedis = 1ULL << 25;
+constexpr uint64_t kFeatureProfileNeo4j = 1ULL << 26;
+constexpr uint64_t kFeatureProfileMilvus = 1ULL << 27;
+constexpr uint64_t kFeatureProfileOpensearch = 1ULL << 28;
 ```
 
-#### QUERY Payload
+### Query Flags
 
-```
-Offset  Size  Description
-------  ----  -----------
-0       4     Query flags (uint32)
-4       4     Max rows to return (uint32, 0=unlimited)
-8       4     Timeout in milliseconds (uint32)
-12      var   SQL query text (null-terminated)
-```
+```cpp
+// Source: /home/dcalford/CliWork/ScratchBird/include/scratchbird/protocol/sbwp_protocol.h:143-148
 
-#### PARSE Payload
-
-```
-Offset  Size  Description
-------  ----  -----------
-0       4     Statement name length (uint32)
-4       len   Statement name bytes
-4+len   4     Query length (uint32)
-8+len   len2  Query bytes
-8+len+len2 2  Parameter count (uint16)
-10+len+len2 2 Reserved (0)
-12+len+len2 var Parameter type OIDs (uint32 each)
-```
-
-#### BIND Payload
-
-```
-Offset  Size  Description
-------  ----  -----------
-0       4     Portal name length (uint32)
-4       len   Portal name bytes
-4+len   4     Statement name length (uint32)
-8+len   len2  Statement name bytes
-8+len+len2 2  Parameter format count (uint16)
-10+len+len2 var Parameter formats (uint16 each, 0=text, 1=binary)
-var     2     Parameter count (uint16)
-var+2   2     Reserved (0)
-var+4   var   Parameter values (length-prefixed)
-var     2     Result format count (uint16)
-var+2   var   Result formats (uint16 each)
-```
-
-#### ROW_DESCRIPTION Payload
-
-```
-Offset  Size  Description
-------  ----  -----------
-0       2     Field count (uint16)
-2       2     Reserved (0)
-4       var   Field descriptors (repeated):
-              - Name length (uint32)
-              - Name bytes
-              - Table OID (uint32)
-              - Column index (uint16)
-              - Type OID (uint32)
-              - Type size (int16)
-              - Type modifier (int32)
-              - Format (uint8)
-              - Nullable (uint8)
-              - Padding (2 bytes)
-```
-
-#### DATA_ROW Payload
-
-```
-Offset  Size  Description
-------  ----  -----------
-0       2     Field count (uint16)
-2       2     Null bitmap bytes (uint16)
-4       var   Null bitmap (1 bit per field)
-var     var   Field values (repeated):
-              - Length (int32, -1 for NULL)
-              - Data bytes (if not NULL)
-```
-
-#### ERROR_RESPONSE Payload
-
-```
-Offset  Size  Description
-------  ----  -----------
-0       var   Error fields (null-terminated key=value pairs):
-              'S' = Severity (ERROR, FATAL, PANIC)
-              'C' = SQLSTATE code (5 characters)
-              'M' = Primary message
-              'D' = Detail
-              'H' = Hint
-              'P' = Position
-              'F' = File
-              'L' = Line
-              'R' = Routine
-              0x00 = End of fields
-```
-
-#### COPY_DATA Payload
-
-```
-Offset  Size  Description
-------  ----  -----------
-0       8     Data length (uint64)
-8       len   Data bytes
+constexpr uint32_t kQueryFlagDescribeOnly = 0x01;    // Describe only, don't execute
+constexpr uint32_t kQueryFlagNoPortal = 0x02;        // Don't create portal
+constexpr uint32_t kQueryFlagBinaryResult = 0x04;    // Return binary results
+constexpr uint32_t kQueryFlagIncludePlan = 0x08;     // Include query plan
+constexpr uint32_t kQueryFlagReturnSblr = 0x10;      // Return compiled SBLR
+constexpr uint32_t kQueryFlagNoCache = 0x20;         // Bypass query cache
 ```
 
 ### Interface Contracts
@@ -346,16 +267,18 @@ std::vector<uint8_t> encodeMessage(const MessageHeader& header,
 ```
 
 **Preconditions:**
-- Header magic must be valid ('SBWP')
-- Protocol version must be supported (1.0)
-- Payload length must not exceed kMaxMessageSize
+- Header type must be a valid MessageType value
+- Payload size must not exceed kMaxMessageSize
+- Header flags must be valid combination
 
 **Postconditions:**
-- Returns complete frame (header + payload)
-- Header fields are serialized in little-endian
+- Returns complete frame (header + payload) in wire format
+- All numeric fields are serialized in little-endian
+- Header is exactly kHeaderSize (40) bytes
 
 **Error Handling:**
-- Returns empty vector on invalid header
+- Returns empty vector if payload exceeds kMaxMessageSize
+- Undefined behavior for invalid message types
 
 #### Function: `decodeHeader()`
 
@@ -368,13 +291,17 @@ core::Status decodeHeader(const std::vector<uint8_t>& header_bytes,
 ```
 
 **Preconditions:**
-- header_bytes must be exactly 40 bytes
+- header_bytes must contain exactly kHeaderSize (40) bytes
 
 **Postconditions:**
 - header is populated with decoded values
+- All numeric fields are deserialized from little-endian
 
 **Error Handling:**
-- Returns PROTOCOL_VIOLATION for invalid magic, version, or oversized payload
+- Returns PROTOCOL_VIOLATION for:
+  - Invalid header length
+  - Unsupported protocol version
+  - Payload length exceeds kMaxMessageSize
 
 ### State Machines
 
@@ -429,10 +356,10 @@ core::Status decodeHeader(const std::vector<uint8_t>& header_bytes,
 1. **Header Size Invariant**: All SBWP frames MUST have exactly 40-byte headers
    - Verification: `assert(header_bytes.size() == kHeaderSize)`
 
-2. **Magic Value Invariant**: Header magic MUST be 0x53425750 ('SBWP')
-   - Verification: Header bytes [0-3] == {0x53, 0x42, 0x57, 0x50}
+2. **Magic Value Invariant**: Protocol magic MUST be 0x53425750 ('SBWP')
+   - Verification: Header magic == kProtocolMagic
 
-3. **Payload Size Limit**: Payload MUST NOT exceed 64MB
+3. **Payload Size Limit**: Payload MUST NOT exceed 1GB
    - Verification: `length <= kMaxMessageSize`
 
 4. **Sequence Monotonicity**: Sequence numbers MUST increase monotonically per connection
@@ -441,16 +368,20 @@ core::Status decodeHeader(const std::vector<uint8_t>& header_bytes,
 5. **Little-Endian Invariant**: All multi-byte numeric fields MUST be little-endian
    - Verification: Use platform-agnostic read/write functions
 
+6. **Type Validity Invariant**: Message type MUST be a valid MessageType enum value
+   - Verification: `type >= 0x01 && type <= 0x81`
+
 ## Error Handling
 
 | Error Code | Condition | Recovery Action |
 |------------|-----------|-----------------|
 | `PROTOCOL_VIOLATION` | Invalid magic, version, or header length | Close connection |
-| `MESSAGE_TOO_LARGE` | Payload exceeds 64MB limit | Reject with error frame |
+| `MESSAGE_TOO_LARGE` | Payload exceeds 1GB limit | Reject with error frame |
 | `INVALID_SEQUENCE` | Out-of-order sequence number | Close connection |
-| `UNSUPPORTED_VERSION` | Protocol version mismatch | Send version negotiation frame |
+| `UNSUPPORTED_VERSION` | Protocol version mismatch | Send NegotiateVersion frame |
 | `COMPRESSION_ERROR` | Failed to decompress payload | Close connection |
 | `ENCRYPTION_ERROR` | Decryption failure | Close connection |
+| `CHECKSUM_ERROR` | Checksum validation failed | Request retransmission |
 
 ## Test Coverage
 
@@ -462,12 +393,16 @@ core::Status decodeHeader(const std::vector<uint8_t>& header_bytes,
 
 ## Migration Notes
 
-- SBWP 1.0 is the initial protocol version
-- Future versions will maintain backward compatibility through version negotiation
-- Deprecated message types will be documented with migration paths
+- SBWP 1.1 is the current stable protocol version
+- Maintains backward compatibility with SBWP 1.0 through version negotiation
+- Future versions will add new message types but preserve existing type codes
+- Deprecated message types are marked but still supported for compatibility
 
 ## Related Specifications
 
+- [sbwp_frames.md](./sbwp_frames.md) - Detailed frame formats
+- [sbwp_messages.md](./sbwp_messages.md) - All message type schemas
+- [sbwp_error_handling.md](./sbwp_error_handling.md) - Error frames and status codes
 - [ipc_session_lifecycle.md](./ipc_session_lifecycle.md) - Connection handshake and authentication
 - [parser_agent_contract.md](./parser_agent_contract.md) - Parser agent IPC protocol
 - [protocol_adapters.md](./protocol_adapters.md) - Emulated protocol adapters
@@ -483,15 +418,18 @@ core::Status decodeHeader(const std::vector<uint8_t>& header_bytes,
 | Attachment | A logical connection to a database |
 | Portal | A cursor for executing a prepared statement |
 | OID | Object Identifier (type reference) |
+| Feature Flag | Bitmask indicating protocol capabilities |
+| Continued Message | Part of a multi-part message sequence |
 
 ### References
 
 - `/home/dcalford/CliWork/ScratchBird/src/protocol/sbwp_protocol.cpp` - Core SBWP implementation
 - `/home/dcalford/CliWork/ScratchBird/src/protocol/wire_protocol.cpp` - Message class implementation
-- `/home/dcalford/CliWork/local_work/docs/specifications/26_Native_Wire_Protocol/` - External wire protocol reference
+- PostgreSQL Protocol Documentation: https://www.postgresql.org/docs/current/protocol.html
 
 ### Changelog
 
 | Version | Date | Changes | Author |
 |---------|------|---------|--------|
-| 1.0.0 | 2026-03-08 | Initial specification | ScratchBird Engineering |
+| 1.1.0 | 2026-03-08 | Updated for SBWP v1.1, added federation support | ScratchBird Engineering |
+| 1.0.0 | 2026-03-01 | Initial specification | ScratchBird Engineering |

@@ -17,7 +17,6 @@
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/gin_index.cpp:1`
 - Source anchor: `/home/dcalford/CliWork/ScratchBird/src/core/gin_compression.cpp:1`
 - Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_gin_index_gc.cpp:1`
-- Test anchor: `/home/dcalford/CliWork/ScratchBird/tests/unit/test_gin_compression.cpp:1`
 
 ## Synopsis
 
@@ -406,7 +405,6 @@ public:
 | Test File | Coverage |
 |-----------|----------|
 | `test_gin_index_gc.cpp` | Pending list GC, multi-key removal |
-| `test_gin_compression.cpp` | Posting compression/decompression |
 | `test_gin_array_ops.cpp` | Array operator support |
 | `test_inverted_index_basic.cpp` | Basic inverted index operations |
 
