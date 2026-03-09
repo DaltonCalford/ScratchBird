@@ -73,6 +73,7 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/workload_governance.h"
+#include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/statistics_manager.h"  // P1-10: ANALYZE command
 #include "scratchbird/spatial/wkt_parser.h"
 #include "scratchbird/spatial/wkb.h"
@@ -58881,6 +58882,33 @@ namespace scratchbird
                         if (grouping_type != 0) has_group = true;
                         auto it_order = payload.find("order_by");
                         bool has_order = (it_order != payload.end() && listNonEmpty(it_order->second));
+                        optimizer::RuntimePlan runtime_plan;
+                        bool has_runtime_plan = false;
+                        auto it_plan = payload.find("plan");
+                        if (it_plan != payload.end())
+                        {
+                            if (const auto* bytes =
+                                    std::get_if<scratchbird::sblr::v3::Value::Bytes>(&it_plan->second.data))
+                            {
+                                if (!bytes->empty())
+                                {
+                                    std::string plan_error;
+                                    has_runtime_plan =
+                                        optimizer::decodeRuntimePlan(*bytes, runtime_plan, plan_error);
+                                    if (!has_runtime_plan)
+                                    {
+                                        return ExecutionResult(
+                                            plan_error.empty()
+                                                ? "V3 SELECT runtime plan payload invalid"
+                                                : plan_error);
+                                    }
+                                }
+                            }
+                            else if (!it_plan->second.isNull())
+                            {
+                                return ExecutionResult("V3 SELECT plan payload invalid");
+                            }
+                        }
                         last_select_table_ids_.clear();
                         last_select_cacheable_ = true;
                         if (has_locking)
@@ -60454,6 +60482,12 @@ namespace scratchbird
                             bool has_condition = false;
                             std::vector<std::string> using_cols;
                             bool is_natural = false;
+                            std::string method = "NESTED_LOOP";
+                            bool has_hash_keys = false;
+                            std::string left_hash_qualifier;
+                            std::string left_hash_column;
+                            std::string right_hash_qualifier;
+                            std::string right_hash_column;
                         };
                         std::vector<JoinSpec> joins;
                         if (has_joins)
@@ -60580,6 +60614,16 @@ namespace scratchbird
                                 spec.has_condition = has_cond;
                                 spec.using_cols = std::move(using_cols);
                                 spec.is_natural = natural_join;
+                                if (has_runtime_plan && joins.size() < runtime_plan.join_steps.size())
+                                {
+                                    const auto& runtime_join = runtime_plan.join_steps[joins.size()];
+                                    spec.method = runtime_join.method;
+                                    spec.has_hash_keys = runtime_join.has_hash_keys;
+                                    spec.left_hash_qualifier = runtime_join.left_hash_key.qualifier;
+                                    spec.left_hash_column = runtime_join.left_hash_key.column_name;
+                                    spec.right_hash_qualifier = runtime_join.right_hash_key.qualifier;
+                                    spec.right_hash_column = runtime_join.right_hash_key.column_name;
+                                }
                                 joins.push_back(std::move(spec));
                             }
                         }
@@ -60643,73 +60687,193 @@ namespace scratchbird
                                 }
                             }
 
-                            std::vector<bool> right_matched(right.rows.size(), false);
-                            for (const auto& left_row : combined_rows)
-                            {
-                                bool any_match = false;
-                                for (size_t r = 0; r < right.rows.size(); ++r)
-                                {
-                                    const auto& right_row = right.rows[r];
-                                    bool pass = true;
+                            auto build_combined_row =
+                                [&](const std::vector<Value>& left_row,
+                                    const std::vector<Value>& right_row) {
+                                    std::vector<Value> combined;
+                                    combined.reserve(left_row.size() + right_row.size());
+                                    combined.insert(combined.end(), left_row.begin(), left_row.end());
+                                    combined.insert(combined.end(), right_row.begin(), right_row.end());
+                                    return combined;
+                                };
+
+                            auto passes_join_predicate =
+                                [&](const std::vector<Value>& left_row,
+                                    const std::vector<Value>& right_row) {
                                     if (!left_using_idx.empty())
                                     {
                                         for (size_t u = 0; u < left_using_idx.size(); ++u)
                                         {
-                                            if (!valuesEqual(left_row[left_using_idx[u]], right_row[right_using_idx[u]]))
+                                            if (!valuesEqual(left_row[left_using_idx[u]],
+                                                             right_row[right_using_idx[u]]))
                                             {
-                                                pass = false;
-                                                break;
+                                                return false;
                                             }
                                         }
                                     }
-                                    if (pass && join_type != parser::JoinType::CROSS && join.has_condition)
+                                    if (join_type != parser::JoinType::CROSS && join.has_condition)
                                     {
-                                        std::vector<Value> combined;
-                                        combined.reserve(left_row.size() + right_row.size());
-                                        combined.insert(combined.end(), left_row.begin(), left_row.end());
-                                        combined.insert(combined.end(), right_row.begin(), right_row.end());
+                                        std::vector<Value> combined = build_combined_row(left_row, right_row);
                                         current_row_values_ = &combined;
                                         current_row_columns_ = &combined_columns;
                                         Value cond = evalExpr(join.condition);
                                         current_row_values_ = nullptr;
                                         current_row_columns_ = nullptr;
-                                        if (!predicateIsTrue(cond))
+                                        return predicateIsTrue(cond);
+                                    }
+                                    return true;
+                                };
+
+                            auto resolve_alias_column_index =
+                                [&](const std::string& qualifier,
+                                    const std::string& column_name) -> std::optional<size_t> {
+                                    if (!qualifier.empty())
+                                    {
+                                        const std::string key =
+                                            core::IdentifierUtils::toUpper(qualifier) + "." +
+                                            core::IdentifierUtils::toUpper(column_name);
+                                        auto it = current_row_alias_map_.find(key);
+                                        if (it != current_row_alias_map_.end())
                                         {
-                                            pass = false;
+                                            return it->second;
                                         }
                                     }
-                                    if (!pass)
+
+                                    for (size_t i = 0; i < combined_columns.size(); ++i)
                                     {
-                                        continue;
+                                        if (core::IdentifierUtils::namesMatch(
+                                                combined_columns[i].column_name,
+                                                false,
+                                                column_name,
+                                                false))
+                                        {
+                                            return i;
+                                        }
                                     }
-                                    any_match = true;
-                                    right_matched[r] = true;
-                                    std::vector<Value> combined;
-                                    combined.reserve(left_row.size() + right_row.size());
-                                    combined.insert(combined.end(), left_row.begin(), left_row.end());
-                                    combined.insert(combined.end(), right_row.begin(), right_row.end());
-                                    new_rows.push_back(std::move(combined));
-                                }
-                                if (!any_match &&
-                                    (join_type == parser::JoinType::LEFT || join_type == parser::JoinType::FULL))
+                                    return std::nullopt;
+                                };
+
+                            const bool use_hash_join =
+                                join.method == "HASH_JOIN" &&
+                                join.has_hash_keys &&
+                                join_type != parser::JoinType::RIGHT &&
+                                join_type != parser::JoinType::FULL &&
+                                join_type != parser::JoinType::CROSS;
+
+                            std::vector<bool> right_matched(right.rows.size(), false);
+                            bool executed_hash_join = false;
+                            if (use_hash_join)
+                            {
+                                std::optional<size_t> left_key_pos =
+                                    resolve_alias_column_index(join.left_hash_qualifier,
+                                                               join.left_hash_column);
+                                std::optional<size_t> right_key_pos_combined =
+                                    resolve_alias_column_index(join.right_hash_qualifier,
+                                                               join.right_hash_column);
+
+                                if (left_key_pos.has_value() &&
+                                    right_key_pos_combined.has_value() &&
+                                    *left_key_pos < all_columns.size() &&
+                                    *right_key_pos_combined >= all_columns.size())
                                 {
-                                    std::vector<Value> combined = left_row;
-                                    combined.resize(left_row.size() + right.columns.size(), Value::makeNull());
-                                    new_rows.push_back(std::move(combined));
+                                    const size_t right_key_pos =
+                                        *right_key_pos_combined - all_columns.size();
+                                    std::unordered_map<std::string, std::vector<size_t>> hash_table;
+                                    hash_table.reserve(right.rows.size());
+
+                                    auto key_for_positions =
+                                        [&](const std::vector<Value>& row,
+                                            const std::vector<size_t>& positions) {
+                                            std::string key;
+                                            for (size_t position : positions)
+                                            {
+                                                key.append(row[position].toString());
+                                                key.push_back('|');
+                                            }
+                                            return key;
+                                        };
+
+                                    for (size_t r = 0; r < right.rows.size(); ++r)
+                                    {
+                                        hash_table[key_for_positions(right.rows[r], {right_key_pos})]
+                                            .push_back(r);
+                                    }
+
+                                    for (const auto& left_row : combined_rows)
+                                    {
+                                        bool any_match = false;
+                                        const auto key =
+                                            key_for_positions(left_row, {*left_key_pos});
+                                        auto it_bucket = hash_table.find(key);
+                                        if (it_bucket != hash_table.end())
+                                        {
+                                            for (size_t r : it_bucket->second)
+                                            {
+                                                const auto& right_row = right.rows[r];
+                                                if (!passes_join_predicate(left_row, right_row))
+                                                {
+                                                    continue;
+                                                }
+                                                any_match = true;
+                                                right_matched[r] = true;
+                                                new_rows.push_back(build_combined_row(left_row, right_row));
+                                            }
+                                        }
+                                        if (!any_match && join_type == parser::JoinType::LEFT)
+                                        {
+                                            std::vector<Value> combined = left_row;
+                                            combined.resize(left_row.size() + right.columns.size(),
+                                                            Value::makeNull());
+                                            new_rows.push_back(std::move(combined));
+                                        }
+                                    }
+                                    executed_hash_join = true;
                                 }
                             }
-                            if (join_type == parser::JoinType::RIGHT || join_type == parser::JoinType::FULL)
+
+                            if (!executed_hash_join)
                             {
-                                std::vector<Value> left_nulls(all_columns.size(), Value::makeNull());
-                                for (size_t r = 0; r < right.rows.size(); ++r)
+                                for (const auto& left_row : combined_rows)
                                 {
-                                    if (right_matched[r])
+                                    bool any_match = false;
+                                    for (size_t r = 0; r < right.rows.size(); ++r)
                                     {
-                                        continue;
+                                        const auto& right_row = right.rows[r];
+                                        if (!passes_join_predicate(left_row, right_row))
+                                        {
+                                            continue;
+                                        }
+                                        any_match = true;
+                                        right_matched[r] = true;
+                                        new_rows.push_back(build_combined_row(left_row, right_row));
                                     }
-                                    std::vector<Value> combined = left_nulls;
-                                    combined.insert(combined.end(), right.rows[r].begin(), right.rows[r].end());
-                                    new_rows.push_back(std::move(combined));
+                                    if (!any_match &&
+                                        (join_type == parser::JoinType::LEFT ||
+                                         join_type == parser::JoinType::FULL))
+                                    {
+                                        std::vector<Value> combined = left_row;
+                                        combined.resize(left_row.size() + right.columns.size(),
+                                                        Value::makeNull());
+                                        new_rows.push_back(std::move(combined));
+                                    }
+                                }
+                                if (join_type == parser::JoinType::RIGHT ||
+                                    join_type == parser::JoinType::FULL)
+                                {
+                                    std::vector<Value> left_nulls(all_columns.size(),
+                                                                  Value::makeNull());
+                                    for (size_t r = 0; r < right.rows.size(); ++r)
+                                    {
+                                        if (right_matched[r])
+                                        {
+                                            continue;
+                                        }
+                                        std::vector<Value> combined = left_nulls;
+                                        combined.insert(combined.end(),
+                                                        right.rows[r].begin(),
+                                                        right.rows[r].end());
+                                        new_rows.push_back(std::move(combined));
+                                    }
                                 }
                             }
 
@@ -62142,6 +62306,251 @@ namespace scratchbird
                             out_rs->addRow(std::move(row));
                         }
                         return ExecutionResult(std::move(out_rs));
+                    }
+                    case Opcode::SBLR3_EXPLAIN_PLAN: {
+                        bool analyze = false;
+                        bool verbose = false;
+                        bool costs = true;
+                        bool buffers = false;
+                        bool wal = false;
+                        bool timing = false;
+                        getBool(payload, "analyze", analyze);
+                        getBool(payload, "verbose", verbose);
+                        getBool(payload, "costs", costs);
+                        getBool(payload, "buffers", buffers);
+                        getBool(payload, "wal", wal);
+                        getBool(payload, "timing", timing);
+
+                        scratchbird::sblr::v3::Instruction query_inst;
+                        auto it_query = payload.find("query");
+                        if (it_query == payload.end() || !getInstrFromValue(it_query->second, query_inst))
+                        {
+                            return ExecutionResult("V3 EXPLAIN missing query");
+                        }
+
+                        std::vector<std::string> option_labels;
+                        if (verbose) option_labels.push_back("VERBOSE");
+                        if (costs) option_labels.push_back("COSTS");
+                        if (buffers) option_labels.push_back("BUFFERS");
+                        if (wal) option_labels.push_back("WAL");
+                        if (timing) option_labels.push_back("TIMING");
+
+                        auto escape_json = [](const std::string& input) {
+                            std::string out;
+                            out.reserve(input.size() + 8);
+                            for (char c : input)
+                            {
+                                switch (c)
+                                {
+                                    case '\\': out += "\\\\"; break;
+                                    case '"': out += "\\\""; break;
+                                    case '\n': out += "\\n"; break;
+                                    case '\r': out += "\\r"; break;
+                                    case '\t': out += "\\t"; break;
+                                    default: out.push_back(c); break;
+                                }
+                            }
+                            return out;
+                        };
+                        auto escape_xml = [](const std::string& input) {
+                            std::string out;
+                            out.reserve(input.size() + 8);
+                            for (char c : input)
+                            {
+                                switch (c)
+                                {
+                                    case '&': out += "&amp;"; break;
+                                    case '<': out += "&lt;"; break;
+                                    case '>': out += "&gt;"; break;
+                                    case '"': out += "&quot;"; break;
+                                    case '\'': out += "&apos;"; break;
+                                    default: out.push_back(c); break;
+                                }
+                            }
+                            return out;
+                        };
+
+                        std::vector<std::string> plan_lines;
+                        std::string plan_hash;
+                        if (static_cast<Opcode>(query_inst.opcode) == Opcode::SBLR3_SELECT)
+                        {
+                            scratchbird::sblr::v3::Value::Object query_payload;
+                            if (!getObject(query_inst.payload, query_payload, "SBLR3_SELECT"))
+                            {
+                                return ExecutionResult("V3 EXPLAIN query payload invalid");
+                            }
+                            auto it_plan = query_payload.find("plan");
+                            if (it_plan != query_payload.end())
+                            {
+                                const auto* bytes =
+                                    std::get_if<scratchbird::sblr::v3::Value::Bytes>(&it_plan->second.data);
+                                if (bytes == nullptr)
+                                {
+                                    return ExecutionResult("V3 EXPLAIN plan payload invalid");
+                                }
+
+                                optimizer::RuntimePlan runtime_plan;
+                                std::string plan_error;
+                                if (!optimizer::decodeRuntimePlan(*bytes, runtime_plan, plan_error))
+                                {
+                                    return ExecutionResult(
+                                        plan_error.empty() ? "V3 EXPLAIN failed to decode plan" :
+                                                             plan_error);
+                                }
+                                plan_hash = runtime_plan.plan_hash;
+                                std::istringstream explain_stream(runtime_plan.explain_text);
+                                for (std::string line; std::getline(explain_stream, line);)
+                                {
+                                    if (!line.empty())
+                                    {
+                                        plan_lines.push_back(line);
+                                    }
+                                }
+                            }
+                        }
+                        if (plan_lines.empty())
+                        {
+                            plan_lines.push_back("Plan unavailable for opcode " +
+                                                 std::string(name));
+                        }
+
+                        int64_t analyzed_rows = 0;
+                        if (analyze)
+                        {
+                            auto query_result = execStmt(query_inst);
+                            if (!query_result.success())
+                            {
+                                return query_result;
+                            }
+                            if (query_result.hasResultSet() && query_result.resultSet())
+                            {
+                                analyzed_rows =
+                                    static_cast<int64_t>(query_result.resultSet()->rowCount());
+                            }
+                            else
+                            {
+                                analyzed_rows = last_affected_rows_;
+                            }
+                        }
+
+                        std::string format;
+                        getString(payload, "format", format);
+                        const bool format_json =
+                            core::IdentifierUtils::namesMatch(format, false, "JSON", false);
+                        const bool format_xml =
+                            core::IdentifierUtils::namesMatch(format, false, "XML", false);
+                        const bool format_yaml =
+                            core::IdentifierUtils::namesMatch(format, false, "YAML", false);
+
+                        auto rs = std::make_unique<ResultSet>();
+                        rs->addColumn("QUERY PLAN", core::DataType::VARCHAR);
+                        if (!format_json && !format_xml && !format_yaml)
+                        {
+                            if (!option_labels.empty())
+                            {
+                                std::string option_line = "Options: ";
+                                for (size_t i = 0; i < option_labels.size(); ++i)
+                                {
+                                    if (i > 0)
+                                    {
+                                        option_line += ", ";
+                                    }
+                                    option_line += option_labels[i];
+                                }
+                                rs->addRow({Value::makeVarchar(option_line)});
+                            }
+                            for (const auto& line : plan_lines)
+                            {
+                                rs->addRow({Value::makeVarchar(line)});
+                            }
+                            if (!plan_hash.empty())
+                            {
+                                rs->addRow({Value::makeVarchar("Plan Hash: " + plan_hash)});
+                            }
+                            if (analyze)
+                            {
+                                rs->addRow({Value::makeVarchar("Actual Rows: " +
+                                                               std::to_string(analyzed_rows))});
+                            }
+                            return ExecutionResult(std::move(rs));
+                        }
+
+                        std::ostringstream formatted;
+                        if (format_json)
+                        {
+                            formatted << "{";
+                            formatted << "\"plan_hash\":\"" << escape_json(plan_hash) << "\"";
+                            formatted << ",\"options\":[";
+                            for (size_t i = 0; i < option_labels.size(); ++i)
+                            {
+                                if (i > 0) formatted << ",";
+                                formatted << "\"" << escape_json(option_labels[i]) << "\"";
+                            }
+                            formatted << "]";
+                            formatted << ",\"plan\":[";
+                            for (size_t i = 0; i < plan_lines.size(); ++i)
+                            {
+                                if (i > 0) formatted << ",";
+                                formatted << "\"" << escape_json(plan_lines[i]) << "\"";
+                            }
+                            formatted << "]";
+                            if (analyze)
+                            {
+                                formatted << ",\"analyze\":{\"rows\":" << analyzed_rows << "}";
+                            }
+                            formatted << "}";
+                        }
+                        else if (format_xml)
+                        {
+                            formatted << "<explain plan_hash=\"" << escape_xml(plan_hash) << "\">";
+                            if (!option_labels.empty())
+                            {
+                                formatted << "<options>";
+                                for (size_t i = 0; i < option_labels.size(); ++i)
+                                {
+                                    if (i > 0) formatted << ",";
+                                    formatted << escape_xml(option_labels[i]);
+                                }
+                                formatted << "</options>";
+                            }
+                            formatted << "<plan>";
+                            for (const auto& line : plan_lines)
+                            {
+                                formatted << "<line>" << escape_xml(line) << "</line>";
+                            }
+                            formatted << "</plan>";
+                            if (analyze)
+                            {
+                                formatted << "<analyze rows=\"" << analyzed_rows << "\"/>";
+                            }
+                            formatted << "</explain>";
+                        }
+                        else
+                        {
+                            formatted << "plan_hash: \"" << escape_json(plan_hash) << "\"\n";
+                            if (!option_labels.empty())
+                            {
+                                formatted << "options: [";
+                                for (size_t i = 0; i < option_labels.size(); ++i)
+                                {
+                                    if (i > 0) formatted << ", ";
+                                    formatted << option_labels[i];
+                                }
+                                formatted << "]\n";
+                            }
+                            formatted << "plan:\n";
+                            for (const auto& line : plan_lines)
+                            {
+                                formatted << "  - \"" << escape_json(line) << "\"\n";
+                            }
+                            if (analyze)
+                            {
+                                formatted << "analyze:\n  rows: " << analyzed_rows << "\n";
+                            }
+                        }
+
+                        rs->addRow({Value::makeVarchar(formatted.str())});
+                        return ExecutionResult(std::move(rs));
                     }
                     case Opcode::SBLR3_INSERT: {
                         std::string table_path;

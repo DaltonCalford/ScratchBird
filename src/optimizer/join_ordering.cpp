@@ -261,6 +261,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
                     current_rows,
                     right_rows,
                     selectivity,
+                    edge.join_type,
                     ctx);
 
                 if (join_cost.total_cost < best_cost)
@@ -300,6 +301,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
                         current_rows,
                         right_rows,
                         selectivity,
+                        parser::JoinType::CROSS,
                         ctx);
 
                     auto join_path = std::make_shared<NestedLoopJoinPath>(
@@ -400,15 +402,27 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
         left_rows,
         right_rows,
         selectivity,
+        edge.join_type,
         ctx);
 
-    CostEstimate hash_cost = cost_model_.costHashJoin(
-        left_entry.best_path ? left_entry.best_path->cost() : CostEstimate{},
-        right_entry.best_path ? right_entry.best_path->cost() : CostEstimate{},
-        left_rows,
-        right_rows,
-        selectivity,
-        ctx);
+    CostEstimate hash_cost{};
+    bool allow_hash = (edge.join_type == parser::JoinType::INNER ||
+                       edge.join_type == parser::JoinType::LEFT);
+    if (allow_hash)
+    {
+        hash_cost = cost_model_.costHashJoin(
+            left_entry.best_path ? left_entry.best_path->cost() : CostEstimate{},
+            right_entry.best_path ? right_entry.best_path->cost() : CostEstimate{},
+            left_rows,
+            right_rows,
+            selectivity,
+            edge.join_type,
+            ctx);
+    }
+    else
+    {
+        hash_cost.total_cost = std::numeric_limits<double>::max();
+    }
 
     // Choose cheaper join method
     bool use_hash = (hash_cost.total_cost < nl_cost.total_cost);

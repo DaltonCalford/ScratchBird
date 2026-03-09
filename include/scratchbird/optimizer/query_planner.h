@@ -23,9 +23,11 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/optimizer/path.h"
 #include "scratchbird/optimizer/plan_node.h"
+#include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/optimizer/statistics_manager.h"
 #include "scratchbird/optimizer/selectivity_estimator.h"
+#include "scratchbird/optimizer/v3_semantic_analyzer.h"
 #include "scratchbird/parser/shared_types.h"      // For JoinType, GroupingType, etc.
 #include <memory>
 #include <vector>
@@ -38,6 +40,13 @@ namespace scratchbird::parser::v3 {
 
 namespace scratchbird::optimizer
 {
+    struct PlannedSelectQuery
+    {
+        std::shared_ptr<PlanNode> root_plan;
+        RuntimePlan runtime_plan;
+        ResolvedSelectQuery resolved_query;
+        bool reordered_relations = false;
+    };
 
     /**
      * QueryPlanner - Cost-based query planner (V3 pending)
@@ -58,7 +67,7 @@ namespace scratchbird::optimizer
             : db_(db),
               cost_model_(cost_model),
               stats_manager_(stats_manager),
-              selectivity_estimator_(stats_manager),
+              selectivity_estimator_(stats_manager, db),
               conn_ctx_(nullptr)
         {
         }
@@ -75,6 +84,14 @@ namespace scratchbird::optimizer
                        core::ErrorContext *ctx = nullptr,
                        core::ConnectionContext *conn_ctx = nullptr)
             -> std::shared_ptr<PlanNode>;
+
+        auto buildSelectPlan(const parser::v3::SelectStmt *select_stmt,
+                             const parser::v3::StringPool &pool,
+                             PlannedSelectQuery &planned_out,
+                             core::ErrorContext *ctx = nullptr,
+                             core::ConnectionContext *conn_ctx = nullptr,
+                             const core::ID &current_schema_id = core::ID{})
+            -> core::Status;
 
         /**
          * planAnalyze - Generate execution plan for ANALYZE statement (V3 AST)

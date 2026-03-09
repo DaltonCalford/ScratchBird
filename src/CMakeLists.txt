@@ -243,6 +243,7 @@ if(SCRATCHBIRD_WITH_COMPILER)
     target_link_libraries(scratchbird_compiler PUBLIC
         scratchbird_parser
         scratchbird_sblr
+        scratchbird_optimizer_compiler
     )
 
     set_target_properties(scratchbird_compiler PROPERTIES
@@ -307,6 +308,7 @@ endif()
 set(SCRATCHBIRD_OPTIMIZER_RUNTIME_SOURCES
     optimizer/cost_model.cpp
     optimizer/multi_track_classifier.cpp
+    optimizer/plan_payload.cpp
     optimizer/vnext_plan_cache.cpp
     optimizer/vnext_plan_selection.cpp
     optimizer/statistics_manager.cpp
@@ -322,6 +324,10 @@ add_library(scratchbird_optimizer_runtime STATIC
 
 target_include_directories(scratchbird_optimizer_runtime PUBLIC
     ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(scratchbird_optimizer_runtime PUBLIC
+    nlohmann_json::nlohmann_json
 )
 
 # Link OpenSSL if available for RAND_bytes in statistics_manager.cpp
@@ -344,6 +350,7 @@ if(SCRATCHBIRD_WITH_COMPILER)
         optimizer/query_planner.cpp
         optimizer/selectivity_estimator.cpp
         optimizer/join_ordering.cpp
+        optimizer/v3_semantic_analyzer.cpp
     )
 
     add_library(scratchbird_optimizer_compiler STATIC

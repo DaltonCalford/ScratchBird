@@ -9,17 +9,246 @@
  */
 #include "scratchbird/optimizer/selectivity_estimator.h"
 #include "scratchbird/parser/ast_v3.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/debug.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <optional>
 
 namespace scratchbird::optimizer
 {
+    namespace
+    {
+        struct ResolvedColumnRef
+        {
+            core::ID column_id{};
+            std::string column_name;
+        };
+
+        auto isZeroId(const core::ID &id) -> bool
+        {
+            return id == core::ID{};
+        }
+
+        auto unwrapCasts(const parser::v3::Expression *expr) -> const parser::v3::Expression *
+        {
+            const auto *current = expr;
+            while (current != nullptr &&
+                   current->kind() == parser::v3::ASTKind::CastExpr)
+            {
+                current = static_cast<const parser::v3::CastExpr *>(current)->expr;
+            }
+            return current;
+        }
+
+        auto encodeScalarValueToBytes(const void *value,
+                                      size_t value_size,
+                                      std::vector<uint8_t> &out) -> void
+        {
+            out.resize(value_size);
+            std::memcpy(out.data(), value, value_size);
+        }
+
+        auto literalExprToBytes(const parser::v3::Expression *expr,
+                                const parser::v3::StringPool *pool,
+                                std::vector<uint8_t> &value_out) -> bool
+        {
+            const auto *current = unwrapCasts(expr);
+            if (current == nullptr)
+            {
+                return false;
+            }
+
+            switch (current->kind())
+            {
+                case parser::v3::ASTKind::LiteralExpr: {
+                    const auto *literal = static_cast<const parser::v3::LiteralExpr *>(current);
+                    switch (literal->literal_type)
+                    {
+                        case parser::v3::LiteralType::INTEGER:
+                            encodeScalarValueToBytes(&literal->int_value,
+                                                     sizeof(literal->int_value),
+                                                     value_out);
+                            return true;
+                        case parser::v3::LiteralType::FLOAT:
+                            encodeScalarValueToBytes(&literal->float_value,
+                                                     sizeof(literal->float_value),
+                                                     value_out);
+                            return true;
+                        case parser::v3::LiteralType::BOOLEAN:
+                            value_out = {static_cast<uint8_t>(literal->bool_value ? 1 : 0)};
+                            return true;
+                        case parser::v3::LiteralType::STRING:
+                            if (pool == nullptr ||
+                                literal->string_value == parser::v3::StringPool::INVALID_ID)
+                            {
+                                return false;
+                            }
+                            {
+                                const std::string text(pool->get(literal->string_value));
+                                value_out.assign(text.begin(), text.end());
+                            }
+                            return true;
+                        case parser::v3::LiteralType::NULL_VALUE:
+                            value_out.clear();
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+                case parser::v3::ASTKind::LiteralInt8Expr: {
+                    const auto value =
+                        static_cast<const parser::v3::LiteralInt8Expr *>(current)->value;
+                    encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                    return true;
+                }
+                case parser::v3::ASTKind::LiteralInt16Expr: {
+                    const auto value =
+                        static_cast<const parser::v3::LiteralInt16Expr *>(current)->value;
+                    encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                    return true;
+                }
+                case parser::v3::ASTKind::LiteralUInt8Expr: {
+                    const auto value =
+                        static_cast<const parser::v3::LiteralUInt8Expr *>(current)->value;
+                    encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                    return true;
+                }
+                case parser::v3::ASTKind::LiteralUInt16Expr: {
+                    const auto value =
+                        static_cast<const parser::v3::LiteralUInt16Expr *>(current)->value;
+                    encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                    return true;
+                }
+                case parser::v3::ASTKind::LiteralUInt32Expr: {
+                    const auto value =
+                        static_cast<const parser::v3::LiteralUInt32Expr *>(current)->value;
+                    encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                    return true;
+                }
+                case parser::v3::ASTKind::LiteralUInt64Expr: {
+                    const auto value =
+                        static_cast<const parser::v3::LiteralUInt64Expr *>(current)->value;
+                    encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                    return true;
+                }
+                case parser::v3::ASTKind::LiteralFloat32Expr: {
+                    const auto value =
+                        static_cast<const parser::v3::LiteralFloat32Expr *>(current)->value;
+                    encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        auto literalExprToString(const parser::v3::Expression *expr,
+                                 const parser::v3::StringPool *pool,
+                                 std::string &value_out) -> bool
+        {
+            const auto *current = unwrapCasts(expr);
+            if (current == nullptr)
+            {
+                return false;
+            }
+            if (current->kind() != parser::v3::ASTKind::LiteralExpr || pool == nullptr)
+            {
+                return false;
+            }
+            const auto *literal = static_cast<const parser::v3::LiteralExpr *>(current);
+            if (literal->literal_type != parser::v3::LiteralType::STRING ||
+                literal->string_value == parser::v3::StringPool::INVALID_ID)
+            {
+                return false;
+            }
+            value_out = pool->get(literal->string_value);
+            return true;
+        }
+
+        auto resolveColumnRef(core::Database *db,
+                              const core::ID &table_id,
+                              const parser::v3::Expression *expr,
+                              const parser::v3::StringPool *pool,
+                              core::ErrorContext *ctx) -> std::optional<ResolvedColumnRef>
+        {
+            if (db == nullptr || db->catalog_manager() == nullptr ||
+                pool == nullptr || isZeroId(table_id))
+            {
+                return std::nullopt;
+            }
+
+            const auto *current = unwrapCasts(expr);
+            if (current == nullptr ||
+                current->kind() != parser::v3::ASTKind::ColumnRefExpr)
+            {
+                return std::nullopt;
+            }
+
+            const auto *column_ref = static_cast<const parser::v3::ColumnRefExpr *>(current);
+            if (column_ref->column.column_name == parser::v3::StringPool::INVALID_ID)
+            {
+                return std::nullopt;
+            }
+
+            const std::string wanted(pool->get(column_ref->column.column_name));
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            if (db->catalog_manager()->getColumns(table_id, columns, ctx) != core::Status::OK)
+            {
+                return std::nullopt;
+            }
+
+            for (const auto &column : columns)
+            {
+                if (core::IdentifierUtils::namesMatch(column.column_name,
+                                                      false,
+                                                      wanted,
+                                                      false))
+                {
+                    return ResolvedColumnRef{column.column_id, column.column_name};
+                }
+            }
+
+            return std::nullopt;
+        }
+
+        auto resolveColumnPairForJoin(core::Database *db,
+                                      const core::ID &left_table_id,
+                                      const core::ID &right_table_id,
+                                      const parser::v3::Expression *left_expr,
+                                      const parser::v3::Expression *right_expr,
+                                      const parser::v3::StringPool *pool,
+                                      core::ID &left_column_id_out,
+                                      core::ID &right_column_id_out,
+                                      core::ErrorContext *ctx) -> bool
+        {
+            auto left_column = resolveColumnRef(db, left_table_id, left_expr, pool, ctx);
+            auto right_column = resolveColumnRef(db, right_table_id, right_expr, pool, ctx);
+            if (left_column.has_value() && right_column.has_value())
+            {
+                left_column_id_out = left_column->column_id;
+                right_column_id_out = right_column->column_id;
+                return true;
+            }
+
+            left_column = resolveColumnRef(db, left_table_id, right_expr, pool, ctx);
+            right_column = resolveColumnRef(db, right_table_id, left_expr, pool, ctx);
+            if (left_column.has_value() && right_column.has_value())
+            {
+                left_column_id_out = left_column->column_id;
+                right_column_id_out = right_column->column_id;
+                return true;
+            }
+
+            return false;
+        }
+    } // namespace
 
     auto SelectivityEstimator::estimateWhereClause(
         const parser::v3::Expression *where_clause,
         const core::ID &table_id,
+        const parser::v3::StringPool *pool,
         core::ErrorContext *ctx)
         -> double
     {
@@ -29,12 +258,177 @@ namespace scratchbird::optimizer
             return 1.0;
         }
 
-        // For Phase 1, use simple heuristic
-        // Phase 2 will traverse expression tree to estimate each predicate
-        // For now, return conservative default
+        const auto *expr = unwrapCasts(where_clause);
+        if (expr == nullptr)
+        {
+            return DEFAULT_RANGE_SEL;
+        }
+
+        if (expr->kind() == parser::v3::ASTKind::BinaryExpr)
+        {
+            const auto *binary = static_cast<const parser::v3::BinaryExpr *>(expr);
+            if (binary->op == parser::v3::BinaryOp::AND)
+            {
+                return estimateAnd(estimateWhereClause(binary->left, table_id, pool, ctx),
+                                   estimateWhereClause(binary->right, table_id, pool, ctx));
+            }
+            if (binary->op == parser::v3::BinaryOp::OR)
+            {
+                return estimateOr(estimateWhereClause(binary->left, table_id, pool, ctx),
+                                  estimateWhereClause(binary->right, table_id, pool, ctx));
+            }
+
+            auto estimate_binary_predicate =
+                [&](const parser::v3::Expression *column_expr,
+                    const parser::v3::Expression *literal_expr,
+                    bool reversed_range) -> std::optional<double> {
+                    auto column = resolveColumnRef(db_, table_id, column_expr, pool, ctx);
+                    if (!column.has_value())
+                    {
+                        return std::nullopt;
+                    }
+
+                    std::vector<uint8_t> literal_bytes;
+                    if (!literalExprToBytes(literal_expr, pool, literal_bytes))
+                    {
+                        return std::nullopt;
+                    }
+
+                    switch (binary->op)
+                    {
+                        case parser::v3::BinaryOp::EQ:
+                            return estimateEquality(table_id, column->column_id, literal_bytes, ctx);
+                        case parser::v3::BinaryOp::LT:
+                            return estimateRange(table_id,
+                                                 column->column_id,
+                                                 reversed_range ? ">" : "<",
+                                                 literal_bytes,
+                                                 ctx);
+                        case parser::v3::BinaryOp::LE:
+                            return estimateRange(table_id,
+                                                 column->column_id,
+                                                 reversed_range ? ">=" : "<=",
+                                                 literal_bytes,
+                                                 ctx);
+                        case parser::v3::BinaryOp::GT:
+                            return estimateRange(table_id,
+                                                 column->column_id,
+                                                 reversed_range ? "<" : ">",
+                                                 literal_bytes,
+                                                 ctx);
+                        case parser::v3::BinaryOp::GE:
+                            return estimateRange(table_id,
+                                                 column->column_id,
+                                                 reversed_range ? "<=" : ">=",
+                                                 literal_bytes,
+                                                 ctx);
+                        default:
+                            return std::nullopt;
+                    }
+                };
+
+            if (auto sel = estimate_binary_predicate(binary->left, binary->right, false))
+            {
+                return *sel;
+            }
+            if (auto sel = estimate_binary_predicate(binary->right, binary->left, true))
+            {
+                return *sel;
+            }
+        }
+
+        if (expr->kind() == parser::v3::ASTKind::UnaryExpr)
+        {
+            const auto *unary = static_cast<const parser::v3::UnaryExpr *>(expr);
+            if (unary->op == parser::v3::UnaryOp::NOT)
+            {
+                return estimateNot(estimateWhereClause(unary->operand, table_id, pool, ctx));
+            }
+            if (unary->op == parser::v3::UnaryOp::IS_NULL ||
+                unary->op == parser::v3::UnaryOp::IS_NOT_NULL)
+            {
+                auto column = resolveColumnRef(db_, table_id, unary->operand, pool, ctx);
+                if (!column.has_value() || stats_manager_ == nullptr)
+                {
+                    return unary->op == parser::v3::UnaryOp::IS_NOT_NULL
+                               ? (1.0 - DEFAULT_EQUALITY_SEL)
+                               : DEFAULT_EQUALITY_SEL;
+                }
+
+                ColumnStatistics col_stats;
+                if (stats_manager_->getColumnStatistics(table_id, column->column_id, col_stats, ctx) !=
+                    core::Status::OK)
+                {
+                    return unary->op == parser::v3::UnaryOp::IS_NOT_NULL
+                               ? (1.0 - DEFAULT_EQUALITY_SEL)
+                               : DEFAULT_EQUALITY_SEL;
+                }
+                return unary->op == parser::v3::UnaryOp::IS_NOT_NULL
+                           ? (1.0 - col_stats.null_fraction)
+                           : col_stats.null_fraction;
+            }
+        }
+
+        if (expr->kind() == parser::v3::ASTKind::BetweenExpr)
+        {
+            const auto *between = static_cast<const parser::v3::BetweenExpr *>(expr);
+            auto column = resolveColumnRef(db_, table_id, between->expr, pool, ctx);
+            std::vector<uint8_t> lower_value;
+            std::vector<uint8_t> upper_value;
+            if (!column.has_value() ||
+                !literalExprToBytes(between->low, pool, lower_value) ||
+                !literalExprToBytes(between->high, pool, upper_value))
+            {
+                return DEFAULT_RANGE_SEL;
+            }
+            double sel = estimateBetween(table_id, column->column_id, lower_value, upper_value, ctx);
+            return between->negated ? estimateNot(sel) : sel;
+        }
+
+        if (expr->kind() == parser::v3::ASTKind::LikeExpr)
+        {
+            const auto *like = static_cast<const parser::v3::LikeExpr *>(expr);
+            auto column = resolveColumnRef(db_, table_id, like->expr, pool, ctx);
+            std::string pattern;
+            if (!column.has_value() ||
+                !literalExprToString(like->pattern, pool, pattern))
+            {
+                return DEFAULT_LIKE_CONTAINS_SEL;
+            }
+
+            double sel = estimateLike(table_id, column->column_id, pattern, ctx);
+            return like->negated ? estimateNot(sel) : sel;
+        }
+
+        if (expr->kind() == parser::v3::ASTKind::InExpr)
+        {
+            const auto *in_expr = static_cast<const parser::v3::InExpr *>(expr);
+            auto column = resolveColumnRef(db_, table_id, in_expr->expr, pool, ctx);
+            if (!column.has_value() || in_expr->has_subquery)
+            {
+                return DEFAULT_EQUALITY_SEL;
+            }
+
+            std::vector<std::vector<uint8_t>> values;
+            for (const auto *entry : in_expr->values)
+            {
+                std::vector<uint8_t> bytes;
+                if (literalExprToBytes(entry, pool, bytes))
+                {
+                    values.push_back(std::move(bytes));
+                }
+            }
+            if (values.empty())
+            {
+                return DEFAULT_EQUALITY_SEL;
+            }
+
+            double sel = estimateIn(table_id, column->column_id, values, ctx);
+            return in_expr->negated ? estimateNot(sel) : sel;
+        }
+
         DEBUG_LOG_DB("Using default WHERE clause selectivity: " +
                      std::to_string(DEFAULT_RANGE_SEL));
-
         return DEFAULT_RANGE_SEL;
     }
 
@@ -503,6 +897,7 @@ namespace scratchbird::optimizer
         const parser::v3::Expression* join_condition,
         const core::ID& left_table_id,
         const core::ID& right_table_id,
+        const parser::v3::StringPool *pool,
         core::ErrorContext* ctx)
         -> double
     {
@@ -514,21 +909,32 @@ namespace scratchbird::optimizer
             return 1.0;
         }
 
-        // For Phase 1, use simplified heuristic based on expression type
-        // Full implementation would recursively traverse the expression tree
-
-        // Check if this is a binary operation (V3 BinaryExpr)
-        if (auto* binary_expr = dynamic_cast<const parser::v3::BinaryExpr*>(join_condition))
+        const auto *expr = unwrapCasts(join_condition);
+        if (auto* binary_expr = dynamic_cast<const parser::v3::BinaryExpr*>(expr))
         {
             // Check for equality (equi-join)
             if (binary_expr->op == parser::v3::BinaryOp::EQ)
             {
-                // Try to extract column references from both sides
-                // For Phase 1, use default equi-join selectivity
-                // Full implementation would call estimateEquiJoinSelectivity
-
-                DEBUG_LOG_DB("Equi-join detected, using default selectivity: " +
-                           std::to_string(DEFAULT_EQUALITY_SEL));
+                core::ID left_column_id{};
+                core::ID right_column_id{};
+                if (resolveColumnPairForJoin(db_,
+                                             left_table_id,
+                                             right_table_id,
+                                             binary_expr->left,
+                                             binary_expr->right,
+                                             pool,
+                                             left_column_id,
+                                             right_column_id,
+                                             ctx))
+                {
+                    return estimateEquiJoinSelectivity(left_column_id,
+                                                       right_column_id,
+                                                       left_table_id,
+                                                       right_table_id,
+                                                       ctx);
+                }
+                DEBUG_LOG_DB("Equi-join detected without resolved column IDs, using default selectivity: " +
+                             std::to_string(DEFAULT_EQUALITY_SEL));
                 return DEFAULT_EQUALITY_SEL;
             }
             // Range join (>, <, >=, <=)
@@ -545,9 +951,9 @@ namespace scratchbird::optimizer
             else if (binary_expr->op == parser::v3::BinaryOp::AND)
             {
                 double left_sel = estimateJoinSelectivity(
-                    binary_expr->left, left_table_id, right_table_id, ctx);
+                    binary_expr->left, left_table_id, right_table_id, pool, ctx);
                 double right_sel = estimateJoinSelectivity(
-                    binary_expr->right, left_table_id, right_table_id, ctx);
+                    binary_expr->right, left_table_id, right_table_id, pool, ctx);
 
                 double combined = left_sel * right_sel;
                 DEBUG_LOG_DB("AND join condition: " + std::to_string(left_sel) +
@@ -559,9 +965,9 @@ namespace scratchbird::optimizer
             else if (binary_expr->op == parser::v3::BinaryOp::OR)
             {
                 double left_sel = estimateJoinSelectivity(
-                    binary_expr->left, left_table_id, right_table_id, ctx);
+                    binary_expr->left, left_table_id, right_table_id, pool, ctx);
                 double right_sel = estimateJoinSelectivity(
-                    binary_expr->right, left_table_id, right_table_id, ctx);
+                    binary_expr->right, left_table_id, right_table_id, pool, ctx);
 
                 // sel(A OR B) = sel(A) + sel(B) - sel(A) * sel(B)
                 double combined = left_sel + right_sel - (left_sel * right_sel);

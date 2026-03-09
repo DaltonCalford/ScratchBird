@@ -321,6 +321,7 @@ namespace scratchbird::optimizer
                                        uint64_t outer_rows,
                                        uint64_t inner_rows,
                                        double selectivity,
+                                       parser::JoinType join_type,
                                        core::ErrorContext* ctx)
         -> CostEstimate
     {
@@ -344,8 +345,36 @@ namespace scratchbird::optimizer
 
         // 3. CPU cost of evaluating join condition and materializing output
         //    Join produces: outer_rows * inner_rows * selectivity output rows
-        uint64_t output_rows = static_cast<uint64_t>(
-            static_cast<double>(outer_rows) * static_cast<double>(inner_rows) * selectivity);
+        uint64_t output_rows = 0;
+        if (join_type == parser::JoinType::CROSS)
+        {
+            output_rows = outer_rows * inner_rows;
+        }
+        else
+        {
+            output_rows = static_cast<uint64_t>(
+                static_cast<double>(outer_rows) * static_cast<double>(inner_rows) * selectivity);
+        }
+        if (outer_rows > 0 && inner_rows > 0 && output_rows == 0 &&
+            join_type != parser::JoinType::LEFT &&
+            join_type != parser::JoinType::RIGHT &&
+            join_type != parser::JoinType::FULL)
+        {
+            output_rows = 1;
+        }
+        if (join_type == parser::JoinType::LEFT)
+        {
+            output_rows = std::max<uint64_t>(outer_rows, output_rows);
+        }
+        else if (join_type == parser::JoinType::RIGHT)
+        {
+            output_rows = std::max<uint64_t>(inner_rows, output_rows);
+        }
+        else if (join_type == parser::JoinType::FULL)
+        {
+            output_rows = std::max<uint64_t>(std::max<uint64_t>(outer_rows, inner_rows),
+                                             output_rows);
+        }
 
         // Cost of evaluating join condition for each combination
         // (before selectivity filtering)
@@ -376,6 +405,7 @@ namespace scratchbird::optimizer
                                  uint64_t outer_rows,
                                  uint64_t inner_rows,
                                  double selectivity,
+                                 parser::JoinType join_type,
                                  core::ErrorContext* ctx)
         -> CostEstimate
     {
@@ -415,8 +445,36 @@ namespace scratchbird::optimizer
                                 params_.cpu_tuple_cost * HASH_PROBE_FACTOR;
 
         // 3. CPU cost of evaluating join condition and materializing output
-        uint64_t output_rows = static_cast<uint64_t>(
-            static_cast<double>(outer_rows) * static_cast<double>(inner_rows) * selectivity);
+        uint64_t output_rows = 0;
+        if (join_type == parser::JoinType::CROSS)
+        {
+            output_rows = outer_rows * inner_rows;
+        }
+        else
+        {
+            output_rows = static_cast<uint64_t>(
+                static_cast<double>(outer_rows) * static_cast<double>(inner_rows) * selectivity);
+        }
+        if (outer_rows > 0 && inner_rows > 0 && output_rows == 0 &&
+            join_type != parser::JoinType::LEFT &&
+            join_type != parser::JoinType::RIGHT &&
+            join_type != parser::JoinType::FULL)
+        {
+            output_rows = 1;
+        }
+        if (join_type == parser::JoinType::LEFT)
+        {
+            output_rows = std::max<uint64_t>(outer_rows, output_rows);
+        }
+        else if (join_type == parser::JoinType::RIGHT)
+        {
+            output_rows = std::max<uint64_t>(inner_rows, output_rows);
+        }
+        else if (join_type == parser::JoinType::FULL)
+        {
+            output_rows = std::max<uint64_t>(std::max<uint64_t>(outer_rows, inner_rows),
+                                             output_rows);
+        }
 
         // For hash join, we only evaluate join condition for matching hash buckets
         // (much cheaper than nested loop which evaluates for all combinations)

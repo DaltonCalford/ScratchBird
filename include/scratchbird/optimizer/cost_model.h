@@ -11,6 +11,7 @@
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/parser/shared_types.h"
 #include <cstdint>
 #include <string>
 
@@ -233,6 +234,7 @@ namespace scratchbird::optimizer
                                uint64_t outer_rows,
                                uint64_t inner_rows,
                                double selectivity,
+                               parser::JoinType join_type = parser::JoinType::INNER,
                                core::ErrorContext* ctx = nullptr)
             -> CostEstimate;
 
@@ -266,6 +268,7 @@ namespace scratchbird::optimizer
                          uint64_t outer_rows,
                          uint64_t inner_rows,
                          double selectivity,
+                         parser::JoinType join_type = parser::JoinType::INNER,
                          core::ErrorContext* ctx = nullptr)
             -> CostEstimate;
 

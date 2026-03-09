@@ -18,6 +18,7 @@
  */
 
 #include "scratchbird/core/status.h"
+#include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/optimizer/statistics_manager.h"
@@ -26,6 +27,7 @@
 
 namespace scratchbird::parser::v3 {
     class Expression;
+    class StringPool;
 }
 
 namespace scratchbird::optimizer
@@ -56,8 +58,9 @@ namespace scratchbird::optimizer
          *
          * @param stats_manager Statistics manager for accessing column statistics
          */
-        explicit SelectivityEstimator(StatisticsManager *stats_manager)
-            : stats_manager_(stats_manager)
+        explicit SelectivityEstimator(StatisticsManager *stats_manager,
+                                      core::Database *db = nullptr)
+            : stats_manager_(stats_manager), db_(db)
         {
         }
 
@@ -76,6 +79,7 @@ namespace scratchbird::optimizer
          */
         auto estimateWhereClause(const parser::v3::Expression *where_clause,
                                  const core::ID &table_id,
+                                 const parser::v3::StringPool *pool = nullptr,
                                  core::ErrorContext *ctx = nullptr)
             -> double;
 
@@ -303,10 +307,10 @@ namespace scratchbird::optimizer
         auto estimateJoinSelectivity(const parser::v3::Expression* join_condition,
                                      const core::ID& left_table_id,
                                      const core::ID& right_table_id,
+                                     const parser::v3::StringPool *pool = nullptr,
                                      core::ErrorContext* ctx = nullptr)
             -> double;
 
-    private:
         /**
          * estimateEquiJoinSelectivity - Estimate selectivity for equi-join (col1 = col2)
          *
@@ -329,6 +333,7 @@ namespace scratchbird::optimizer
             -> double;
 
     private:
+        core::Database *db_ = nullptr;
         StatisticsManager *stats_manager_;
 
         /**

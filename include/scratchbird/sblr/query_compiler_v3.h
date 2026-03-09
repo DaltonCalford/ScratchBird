@@ -32,6 +32,7 @@
 #include "scratchbird/parser/parser_v3.h"
 #include "scratchbird/parser/v3_emitter.h"
 #include "scratchbird/sblr/native_sql_renderer.h"
+#include "scratchbird/sblr/query_compiler_v3_optimizer_support.h"
 #include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/sblr/v3_opcode_identity.h"
 #include "scratchbird/sblr/v3_payloads.h"
@@ -100,6 +101,16 @@ public:
     void setStatsEnabled(bool enabled) { stats_enabled_ = enabled; }
     void setOptimizationsEnabled(bool enabled) { optimizations_enabled_ = enabled; }
 
+    static auto planCacheStats() -> optimizer::VNextPlanCacheStats
+    {
+        return detail::queryCompilerV3PlanCacheStats();
+    }
+
+    static auto resetPlanCacheStats() -> void
+    {
+        detail::resetQueryCompilerV3PlanCacheStats();
+    }
+
     CompileResult compile(const std::string& sql) {
         CompileResult result;
         if (db_ == nullptr) {
@@ -128,13 +139,23 @@ public:
         }
         container.metadata.module_name = "scratchbird_native";
 
-        std::vector<uint8_t> encoded;
-        std::string encode_err;
-        if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
-            result.addError(encode_err.empty() ? "V3 container encode failed" : encode_err);
+        auto finalized = detail::finalizeQueryCompilerV3Compilation(db_,
+                                                                    sql,
+                                                                    parse_result.statement(),
+                                                                    parser.stringPool(),
+                                                                    current_schema_,
+                                                                    optimizations_enabled_,
+                                                                    container);
+        for (const auto& warning : finalized.warnings) {
+            result.addWarning(warning);
+        }
+        for (const auto& error : finalized.errors) {
+            result.addError(error);
+        }
+        if (!finalized.success) {
             return result;
         }
-        result.setBytecode(std::move(encoded));
+        result.setBytecode(std::move(finalized.bytecode));
         if (stats_enabled_) {
             CompilationStats stats;
             stats.bytecode_size = result.bytecode().size();
@@ -183,16 +204,29 @@ public:
         }
         container.metadata.module_name = "scratchbird_native";
 
-        std::vector<uint8_t> encoded;
-        std::string encode_err;
-        if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
-            addTraceError(encode_err.empty() ? "V3 container encode failed" : encode_err);
+        auto finalized = detail::finalizeQueryCompilerV3Compilation(db_,
+                                                                    sql,
+                                                                    parse_result.statement(),
+                                                                    parser.stringPool(),
+                                                                    current_schema_,
+                                                                    optimizations_enabled_,
+                                                                    container);
+        for (const auto& warning : finalized.warnings) {
+            trace.addWarning(warning);
+        }
+        if (!finalized.success) {
+            for (const auto& error : finalized.errors) {
+                addTraceError(error);
+            }
             return trace;
         }
 
         sblr::v3::Container decoded;
         std::string decode_err;
-        if (!sblr::v3::decodeContainer(encoded.data(), encoded.size(), decoded, decode_err)) {
+        if (!sblr::v3::decodeContainer(finalized.bytecode.data(),
+                                       finalized.bytecode.size(),
+                                       decoded,
+                                       decode_err)) {
             addTraceError(decode_err.empty() ? "V3 container decode failed" : decode_err);
             return trace;
         }
@@ -270,7 +304,7 @@ public:
         digest.normalized_sql = normalized_sql;
         digest.sql_hash = hashStringHex(normalized_sql);
         digest.ast_hash = hashStringHex(ast_fingerprint);
-        digest.sblr_hash = hashBytesHex(encoded);
+        digest.sblr_hash = hashBytesHex(finalized.bytecode);
         digest.root_opcode_symbol = root_symbol;
         trace.setDigest(std::move(digest));
         return trace;
