@@ -65,6 +65,27 @@ struct RegressionSignal {
     size_t baseline_sample_count = 0;
 };
 
+struct CardinalityFeedbackPolicy {
+    bool enabled = true;
+    uint64_t min_observations = 1;
+    double max_estimation_error_ratio = 4.0;
+    uint64_t max_replan_actions = 2;
+};
+
+struct CardinalityFeedbackSignal {
+    bool available = false;
+    bool replan_required = false;
+    bool stats_refresh_requested = false;
+    bool stats_refresh_applied = false;
+    uint64_t last_estimated_rows = 0;
+    uint64_t last_actual_rows = 0;
+    double estimation_error_ratio = 1.0;
+    double correction_factor = 1.0;
+    uint64_t observation_count = 0;
+    uint64_t replan_action_count = 0;
+    std::string last_plan_hash;
+};
+
 struct QueryHistoryEntry {
     uint64_t sequence = 0;
     std::string query;
@@ -290,6 +311,21 @@ public:
     std::optional<RegressionSignal> latestRegressionForQuery(
         std::string_view sql) const;
 
+    // Adaptive cardinality feedback and bounded replan signaling.
+    void setCardinalityFeedbackPolicy(const CardinalityFeedbackPolicy& policy);
+    CardinalityFeedbackPolicy cardinalityFeedbackPolicy() const;
+    CardinalityFeedbackSignal recordCardinalityFeedback(
+        std::string_view feedback_key,
+        std::string_view plan_hash,
+        uint64_t estimated_rows,
+        uint64_t actual_rows);
+    std::optional<CardinalityFeedbackSignal> latestCardinalityFeedback(
+        std::string_view feedback_key) const;
+    std::optional<CardinalityFeedbackSignal> acknowledgeCardinalityFeedback(
+        std::string_view feedback_key,
+        bool stats_refresh_applied);
+    void clearCardinalityFeedback();
+
     // Clear stored profiles
     void clearProfiles();
 
@@ -308,6 +344,13 @@ private:
     std::unordered_map<std::string, std::deque<QueryHistoryEntry>> history_by_fingerprint_;
     std::unordered_set<std::string> protected_workloads_;
     RegressionPolicy regression_policy_;
+    struct CardinalityFeedbackState
+    {
+        CardinalityFeedbackSignal signal;
+        uint64_t last_consumed_observation = 0;
+    };
+    std::unordered_map<std::string, CardinalityFeedbackState> cardinality_feedback_;
+    CardinalityFeedbackPolicy cardinality_feedback_policy_;
     uint64_t history_sequence_ = 0;
     static constexpr size_t MAX_STORED_PROFILES = 100;
     static constexpr size_t MAX_HISTORY_PER_FINGERPRINT = 32;

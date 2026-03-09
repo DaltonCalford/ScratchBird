@@ -320,12 +320,179 @@ namespace scratchbird::core
             }
             out.push_back('"');
         }
+
+        CatalogManager::EmulationEngine catalogEmulationEngineForMode(const std::string& mode)
+        {
+            std::string folded;
+            folded.reserve(mode.size());
+            for (unsigned char c : mode)
+            {
+                folded.push_back(static_cast<char>(std::tolower(c)));
+            }
+
+            using Engine = CatalogManager::EmulationEngine;
+            if (folded.empty() || folded == "native")
+            {
+                return Engine::NATIVE;
+            }
+            if (folded == "firebird" || folded == "firebirdsql")
+            {
+                return Engine::FIREBIRD;
+            }
+            if (folded == "postgresql")
+            {
+                return Engine::POSTGRESQL;
+            }
+            if (folded == "mysql")
+            {
+                return Engine::MYSQL;
+            }
+            if (folded == "cassandra")
+            {
+                return Engine::CASSANDRA;
+            }
+            if (folded == "milvus")
+            {
+                return Engine::MILVUS;
+            }
+            if (folded == "mongodb")
+            {
+                return Engine::MONGODB;
+            }
+            if (folded == "neo4j")
+            {
+                return Engine::NEO4J;
+            }
+            if (folded == "redis")
+            {
+                return Engine::REDIS;
+            }
+            if (folded == "mariadb")
+            {
+                return Engine::MARIADB;
+            }
+            if (folded == "influxdb")
+            {
+                return Engine::INFLUXDB;
+            }
+            if (folded == "clickhouse")
+            {
+                return Engine::CLICKHOUSE;
+            }
+            if (folded == "opensearch")
+            {
+                return Engine::OPENSEARCH;
+            }
+            if (folded == "duckdb")
+            {
+                return Engine::DUCKDB;
+            }
+            return Engine::NATIVE;
+        }
+
+        void appendJsonFieldPrefix(std::string& out, const char* key, bool& first)
+        {
+            if (!first)
+            {
+                out.push_back(',');
+            }
+            first = false;
+            appendJsonString(out, key);
+            out.push_back(':');
+        }
+
+        std::string buildTransactionBeginPayload(const Database* db, const ConnectionContext* conn)
+        {
+            std::string payload = "{";
+            bool first = true;
+
+            appendJsonFieldPrefix(payload, "database_uuid", first);
+            appendJsonString(payload, db->uuid().toString());
+            appendJsonFieldPrefix(payload, "node_uuid", first);
+            appendJsonString(payload, db->server_instance_id().toString());
+            appendJsonFieldPrefix(payload, "begin_time", first);
+            payload += std::to_string(static_cast<uint64_t>(conn->getTransactionStartTime().count()));
+            appendJsonFieldPrefix(payload, "transaction_outcome", first);
+            appendJsonString(payload, "in_progress");
+            appendJsonFieldPrefix(payload, "emulation_engine", first);
+            appendJsonString(payload, conn->emulationMode());
+            appendJsonFieldPrefix(payload, "isolation_level", first);
+            payload += std::to_string(static_cast<uint32_t>(conn->getIsolationLevel()));
+            appendJsonFieldPrefix(payload, "read_only", first);
+            payload += conn->isReadOnly() ? "true" : "false";
+            appendJsonFieldPrefix(payload, "autocommit", first);
+            payload += (conn->autocommitMode() && !conn->autocommitSuspended()) ? "true" : "false";
+
+            payload.push_back('}');
+            return payload;
+        }
+
+        std::string buildTransactionContextPayload(const ConnectionContext* conn)
+        {
+            std::string payload = "{";
+            bool first = true;
+
+            appendJsonFieldPrefix(payload, "session_uuid", first);
+            appendJsonString(payload, conn->effectiveSessionId().toString());
+            appendJsonFieldPrefix(payload, "connection_uuid", first);
+            appendJsonString(payload, conn->attachmentId().toString());
+            appendJsonFieldPrefix(payload, "user_uuid", first);
+            appendJsonString(payload, conn->getCurrentUserId().toString());
+            appendJsonFieldPrefix(payload, "role_uuid", first);
+            appendJsonString(payload, conn->getActiveRoleId().toString());
+            appendJsonFieldPrefix(payload, "auth_context_uuid", first);
+            appendJsonString(payload, conn->authKeyId().toString());
+
+            payload.push_back('}');
+            return payload;
+        }
+
+        std::string buildTransactionTerminalPayload(const Database* db,
+                                                    const ConnectionContext* conn,
+                                                    bool committed,
+                                                    uint64_t start_time,
+                                                    uint64_t end_time)
+        {
+            std::string payload = "{";
+            bool first = true;
+
+            appendJsonFieldPrefix(payload, "database_uuid", first);
+            appendJsonString(payload, db->uuid().toString());
+            appendJsonFieldPrefix(payload, "node_uuid", first);
+            appendJsonString(payload, db->server_instance_id().toString());
+            appendJsonFieldPrefix(payload, "session_uuid", first);
+            appendJsonString(payload, conn->effectiveSessionId().toString());
+            appendJsonFieldPrefix(payload, "connection_uuid", first);
+            appendJsonString(payload, conn->attachmentId().toString());
+            appendJsonFieldPrefix(payload, "user_uuid", first);
+            appendJsonString(payload, conn->getCurrentUserId().toString());
+            appendJsonFieldPrefix(payload, "role_uuid", first);
+            appendJsonString(payload, conn->getActiveRoleId().toString());
+            appendJsonFieldPrefix(payload, "begin_time", first);
+            payload += std::to_string(start_time);
+            appendJsonFieldPrefix(payload, committed ? "commit_time" : "rollback_time", first);
+            payload += std::to_string(end_time);
+            appendJsonFieldPrefix(payload, "transaction_outcome", first);
+            appendJsonString(payload, committed ? "committed" : "aborted");
+            appendJsonFieldPrefix(payload, "last_statement_hash", first);
+            payload += std::to_string(conn->lastStatementHash());
+            appendJsonFieldPrefix(payload, "last_statement_time", first);
+            payload += std::to_string(conn->lastStatementTime());
+            appendJsonFieldPrefix(payload, "last_error_code", first);
+            payload += std::to_string(conn->lastErrorCode());
+            appendJsonFieldPrefix(payload, "last_sqlstate", first);
+            appendJsonString(payload, conn->lastSqlstate());
+
+            payload.push_back('}');
+            return payload;
+        }
     }
 
     ConnectionContext::ConnectionContext(Database *db, uint32_t proc_id)
         : db_(db), txn_manager_(db ? db->transaction_manager() : nullptr), proc_id_(proc_id),
           current_xid_(0) // Will be set by initialize()
           ,
+          current_transaction_uuid_(),
           xact_start_time_(std::chrono::microseconds(0)),
           current_user_id_(), // Zero UUID - will be set during authentication
           active_role_id_(),  // Zero UUID - no role active initially
@@ -378,6 +545,7 @@ namespace scratchbird::core
         // Initialize UUIDs to zero (no user authenticated yet)
         std::memset(&current_user_id_, 0, sizeof(current_user_id_));
         std::memset(&active_role_id_, 0, sizeof(active_role_id_));
+        std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
         std::memset(&current_schema_id_, 0, sizeof(current_schema_id_));
         std::memset(&session_user_id_, 0, sizeof(session_user_id_));  // WP-5 EXEC-M3
         std::memset(&protocol_session_id_, 0, sizeof(protocol_session_id_));
@@ -426,7 +594,8 @@ namespace scratchbird::core
 
     ConnectionContext::ConnectionContext(ConnectionContext &&other) noexcept
         : db_(other.db_), txn_manager_(other.txn_manager_), proc_id_(other.proc_id_),
-          current_xid_(other.current_xid_), xact_start_time_(other.xact_start_time_),
+          current_xid_(other.current_xid_), current_transaction_uuid_(other.current_transaction_uuid_),
+          xact_start_time_(other.xact_start_time_),
           current_user_id_(other.current_user_id_), active_role_id_(other.active_role_id_),
           is_superuser_(other.is_superuser_),
           session_user_id_(other.session_user_id_),  // WP-5 EXEC-M3
@@ -512,6 +681,7 @@ namespace scratchbird::core
         other.statement_xid_ = 0;
         std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
         std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
+        std::memset(&other.current_transaction_uuid_, 0, sizeof(other.current_transaction_uuid_));
         std::memset(&other.current_schema_id_, 0, sizeof(other.current_schema_id_));
         std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
         std::memset(&other.attachment_id_, 0, sizeof(other.attachment_id_));
@@ -586,6 +756,7 @@ namespace scratchbird::core
             txn_manager_ = other.txn_manager_;
             proc_id_ = other.proc_id_;
             current_xid_ = other.current_xid_;
+            current_transaction_uuid_ = other.current_transaction_uuid_;
             xact_start_time_ = other.xact_start_time_;
             current_user_id_ = other.current_user_id_;
             active_role_id_ = other.active_role_id_;
@@ -673,6 +844,7 @@ namespace scratchbird::core
             other.statement_xid_ = 0;
             std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
             std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
+            std::memset(&other.current_transaction_uuid_, 0, sizeof(other.current_transaction_uuid_));
             std::memset(&other.current_schema_id_, 0, sizeof(other.current_schema_id_));
             std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
             std::memset(&other.attachment_id_, 0, sizeof(other.attachment_id_));
@@ -771,6 +943,144 @@ namespace scratchbird::core
                   current_xid_);
 
         return Status::OK;
+    }
+
+    Status ConnectionContext::persistRuntimeTransactionState(
+        uint8_t state_code,
+        uint64_t txid,
+        uint64_t end_time,
+        ErrorContext* ctx)
+    {
+        if (!db_ || txid == 0)
+        {
+            return Status::OK;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            return Status::OK;
+        }
+
+        CatalogManager::RuntimeTransactionCatalogInfo info{};
+        info.txid = txid;
+        info.database_id = db_->uuid();
+        info.session_id = session_id_;
+        info.connection_id = ID{};
+        info.user_id = current_user_id_;
+        info.role_id = active_role_id_;
+        info.emulation_engine = catalogEmulationEngineForMode(emulation_mode_);
+        info.isolation_level = static_cast<uint8_t>(isolation_level_);
+        info.read_only = is_read_only_;
+        info.autocommit = autocommit_mode_ && !autocommit_suspended_;
+        info.state = static_cast<CatalogManager::RuntimeTransactionState>(state_code);
+        info.start_time = static_cast<uint64_t>(xact_start_time_.count());
+        info.has_end_time = info.state != CatalogManager::RuntimeTransactionState::IN_PROGRESS;
+        info.end_time = info.has_end_time ? end_time : 0;
+        info.has_last_statement_hash = last_statement_hash_ != 0;
+        info.last_statement_hash = last_statement_hash_;
+        info.has_last_statement_time = last_statement_time_ != 0;
+        info.last_statement_time = last_statement_time_;
+        info.has_last_error_code = last_error_code_ != 0;
+        info.last_error_code = last_error_code_;
+        info.last_sqlstate = last_sqlstate_;
+        return catalog->upsertRuntimeTransactionCatalogEntry(info, ctx);
+    }
+
+    Status ConnectionContext::appendTransactionLineageBegin(ErrorContext* ctx)
+    {
+        if (!db_ || current_xid_ == 0 || isZeroUuidLocal(current_transaction_uuid_))
+        {
+            return Status::OK;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            return Status::OK;
+        }
+
+        CatalogManager::TransactionLineageEventCatalogInfo begin{};
+        begin.tx_uuid = current_transaction_uuid_;
+        begin.txid = current_xid_;
+        begin.event_kind = CatalogManager::TransactionLineageEventKind::TX_BEGIN;
+        begin.session_id = effectiveSessionId();
+        begin.connection_id = attachment_id_;
+        begin.user_id = current_user_id_;
+        begin.role_id = active_role_id_;
+        begin.payload_json = buildTransactionBeginPayload(db_, this);
+        return catalog->appendTransactionLineageEventCatalogEntry(begin, ctx);
+    }
+
+    Status ConnectionContext::appendTransactionLineageTerminal(bool committed,
+                                                               uint64_t txid,
+                                                               const ID& tx_uuid,
+                                                               uint64_t start_time,
+                                                               uint64_t end_time,
+                                                               ErrorContext* ctx)
+    {
+        if (!db_ || txid == 0 || isZeroUuidLocal(tx_uuid))
+        {
+            return Status::OK;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            return Status::OK;
+        }
+
+        CatalogManager::TransactionLineageEventCatalogInfo context{};
+        context.tx_uuid = tx_uuid;
+        context.txid = txid;
+        context.event_kind = CatalogManager::TransactionLineageEventKind::TX_CONTEXT_BOUND;
+        context.session_id = effectiveSessionId();
+        context.connection_id = attachment_id_;
+        context.user_id = current_user_id_;
+        context.role_id = active_role_id_;
+        context.payload_json = buildTransactionContextPayload(this);
+        Status status = catalog->appendTransactionLineageEventCatalogEntry(context, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        CatalogManager::TransactionLineageEventCatalogInfo terminal{};
+        terminal.tx_uuid = tx_uuid;
+        terminal.txid = txid;
+        terminal.event_kind = committed
+            ? CatalogManager::TransactionLineageEventKind::TX_COMMIT
+            : CatalogManager::TransactionLineageEventKind::TX_ROLLBACK;
+        terminal.session_id = effectiveSessionId();
+        terminal.connection_id = attachment_id_;
+        terminal.user_id = current_user_id_;
+        terminal.role_id = active_role_id_;
+        terminal.has_statement_hash = last_statement_hash_ != 0;
+        terminal.statement_hash = last_statement_hash_;
+        terminal.payload_json =
+            buildTransactionTerminalPayload(db_, this, committed, start_time, end_time);
+        return catalog->appendTransactionLineageEventCatalogEntry(terminal, ctx);
+    }
+
+    void ConnectionContext::refreshActiveTransactionAttribution()
+    {
+        if (current_xid_ == 0)
+        {
+            return;
+        }
+
+        ErrorContext ctx;
+        Status status = persistRuntimeTransactionState(
+            static_cast<uint8_t>(CatalogManager::RuntimeTransactionState::IN_PROGRESS),
+            current_xid_,
+            0,
+            &ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Failed to refresh runtime transaction attribution: proc_id=%u, xid=%lu, status=%d",
+                        proc_id_, current_xid_, static_cast<int>(status));
+        }
     }
 
     Status ConnectionContext::cleanupTempTablesOnCommit(ErrorContext *ctx)
@@ -1860,11 +2170,54 @@ namespace scratchbird::core
             }
         }
 
+        current_transaction_uuid_ = generateUuidV7();
+
+        auto rollback_begin = [this]() {
+            if (db_)
+            {
+                if (auto* catalog = db_->catalog_manager())
+                {
+                    ErrorContext cleanup_ctx;
+                    catalog->deleteRuntimeTransactionCatalogEntry(current_xid_, &cleanup_ctx);
+                }
+                if (auto* lock_mgr = db_->lock_manager())
+                {
+                    ErrorContext cleanup_ctx;
+                    lock_mgr->releaseAllLocks(proc_id_, &cleanup_ctx);
+                }
+            }
+            txn_manager_->rollbackTransaction(proc_id_, current_xid_, nullptr);
+            current_xid_ = 0;
+            std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
+            xact_start_time_ = std::chrono::microseconds(0);
+        };
+
+        s = persistRuntimeTransactionState(
+            static_cast<uint8_t>(CatalogManager::RuntimeTransactionState::IN_PROGRESS),
+            current_xid_,
+            0,
+            ctx);
+        if (s != Status::OK)
+        {
+            rollback_begin();
+            return s;
+        }
+
+        s = appendTransactionLineageBegin(ctx);
+        if (s != Status::OK)
+        {
+            rollback_begin();
+            return s;
+        }
+
         return Status::OK;
     }
 
     Status ConnectionContext::endCurrentTransaction(bool commit, ErrorContext *ctx)
     {
+        const uint64_t ended_xid = current_xid_;
+        const ID ended_tx_uuid = current_transaction_uuid_;
+        const uint64_t start_time = static_cast<uint64_t>(xact_start_time_.count());
         Status s;
 
         if (commit)
@@ -1897,13 +2250,34 @@ namespace scratchbird::core
         if (s == Status::OK)
         {
             CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
+            const uint64_t end_time = nowMicros();
+            Status runtime_status = persistRuntimeTransactionState(
+                static_cast<uint8_t>(commit ? CatalogManager::RuntimeTransactionState::COMMITTED
+                                            : CatalogManager::RuntimeTransactionState::ABORTED),
+                ended_xid,
+                end_time,
+                nullptr);
+            if (runtime_status != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Failed to persist terminal runtime transaction row: proc_id=%u, xid=%lu, status=%d",
+                            proc_id_, ended_xid, static_cast<int>(runtime_status));
+            }
+
+            Status lineage_status = appendTransactionLineageTerminal(
+                commit, ended_xid, ended_tx_uuid, start_time, end_time, nullptr);
+            if (lineage_status != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Failed to persist terminal transaction lineage: proc_id=%u, xid=%lu, status=%d",
+                            proc_id_, ended_xid, static_cast<int>(lineage_status));
+            }
+
             if (catalog)
             {
-                uint64_t start_time = static_cast<uint64_t>(xact_start_time_.count());
-                uint64_t end_time = nowMicros();
                 CatalogManager::TransactionHistoryEntry entry;
                 entry.thread_id = proc_id_;
-                entry.trx_id = current_xid_;
+                entry.trx_id = ended_xid;
                 entry.timer_start = start_time;
                 entry.timer_end = end_time;
                 entry.timer_wait = (start_time != 0 && end_time >= start_time) ? (end_time - start_time) : 0;
@@ -1911,7 +2285,7 @@ namespace scratchbird::core
                 entry.isolation_level = static_cast<uint8_t>(isolation_level_);
                 entry.autocommit = autocommit_mode_ && !autocommit_suspended_;
                 entry.committed = commit;
-                entry.event_id = start_time != 0 ? start_time : current_xid_;
+                entry.event_id = start_time != 0 ? start_time : ended_xid;
                 entry.end_event_id = end_time;
                 catalog->recordTransactionHistory(entry, nullptr);
             }
@@ -1942,6 +2316,7 @@ namespace scratchbird::core
         command_id_ = 0;
 
         // Clear transaction state (will be reset by beginNewTransaction)
+        std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
         current_xid_ = 0;
         xact_start_time_ = std::chrono::microseconds(0);
 
@@ -2497,6 +2872,7 @@ namespace scratchbird::core
             }
             LOG_DEBUG(TRANSACTION, "Set session context: proc_id=%u, session_id=%s, authkey_id=%s",
                       proc_id_, session_id.toString().c_str(), authkey_id.toString().c_str());
+            refreshActiveTransactionAttribution();
             return;
         }
 
@@ -2606,6 +2982,7 @@ namespace scratchbird::core
 
         LOG_DEBUG(TRANSACTION, "Set current user: proc_id=%u, user_id=%s, is_superuser=%d",
                   proc_id_, user_id.toString().c_str(), is_superuser);
+        refreshActiveTransactionAttribution();
     }
 
     void ConnectionContext::setActiveRole(const ID& role_id)
@@ -2626,6 +3003,7 @@ namespace scratchbird::core
 
         LOG_DEBUG(TRANSACTION, "Set active role: proc_id=%u, role_id=%s",
                   proc_id_, role_id.toString().c_str());
+        refreshActiveTransactionAttribution();
     }
 
     void ConnectionContext::clearActiveRole()
@@ -2645,6 +3023,7 @@ namespace scratchbird::core
                   proc_id_, active_role_id_.toString().c_str());
 
         std::memset(&active_role_id_, 0, sizeof(active_role_id_));
+        refreshActiveTransactionAttribution();
     }
 
     void ConnectionContext::setRoleSwitchPolicy(RoleSwitchPolicy policy)

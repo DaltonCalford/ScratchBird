@@ -953,6 +953,21 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSelect(parser::v3::SelectStmt*
     payload["distinct_on"] = toExprList(stmt->distinct_on);
 
     payload["select_items"] = toSelectItems(stmt->items);
+    Value select_aliases = toSelectItemAliases(stmt->items);
+    const auto* select_alias_list = std::get_if<Value::List>(&select_aliases.data);
+    if (select_alias_list != nullptr) {
+        bool has_alias = false;
+        for (const auto& entry : *select_alias_list) {
+            if (const auto* alias = std::get_if<std::string>(&entry.data);
+                alias != nullptr && !alias->empty()) {
+                has_alias = true;
+                break;
+            }
+        }
+        if (has_alias) {
+            payload["select_aliases"] = std::move(select_aliases);
+        }
+    }
     if (stmt->from) {
         payload["from"] = toTableRef(stmt->from);
     }
@@ -1439,6 +1454,18 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             Value::List inherits;
             for (const auto& p : s->inherits) inherits.push_back(toSchemaPath(p));
             payload["inherits"] = Value(std::move(inherits));
+            if (s->is_partitioned) {
+                if (s->partition_by != parser::v3::StringPool::INVALID_ID) {
+                    payload["partition_strategy"] = toIdent(s->partition_by);
+                }
+                Value::List partition_columns;
+                for (const auto& col : s->partition_columns) {
+                    if (col != parser::v3::StringPool::INVALID_ID) {
+                        partition_columns.push_back(toIdent(col));
+                    }
+                }
+                payload["partition_columns"] = Value(std::move(partition_columns));
+            }
             payload["has_query"] = Value(s->as_query != nullptr);
             if (s->as_query) {
                 payload["query"] = Value(makeInstr(emitSelect(s->as_query)));
@@ -5831,6 +5858,21 @@ Value V3Emitter::toSelectItems(const std::vector<parser::v3::SelectItem*>& items
             inst.flags = 0;
             inst.payload = Value(Value::Bytes{});
             list.push_back(Value(makeInstr(inst)));
+        }
+    }
+    return Value(std::move(list));
+}
+
+Value V3Emitter::toSelectItemAliases(const std::vector<parser::v3::SelectItem*>& items) {
+    Value::List list;
+    list.reserve(items.size());
+    for (auto* item : items) {
+        if (item != nullptr &&
+            item->has_alias &&
+            item->alias != parser::v3::StringPool::INVALID_ID) {
+            list.push_back(toIdent(item->alias));
+        } else {
+            list.push_back(Value(std::string()));
         }
     }
     return Value(std::move(list));

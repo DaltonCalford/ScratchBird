@@ -16,6 +16,7 @@
  */
 
 #include "scratchbird/optimizer/join_ordering.h"
+#include "scratchbird/optimizer/join_legality.h"
 #include "scratchbird/core/debug.h"
 #include <algorithm>
 #include <queue>
@@ -83,6 +84,7 @@ void JoinOrderingOptimizer::clear()
     relations_.clear();
     join_edges_.clear();
     dp_table_.clear();
+    last_strategy_used_ = controls_.strategy;
 }
 
 std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
@@ -97,17 +99,52 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
     if (relations_.size() == 1)
     {
         DEBUG_LOG_DB("JoinOrdering: Single relation, returning best path");
+        last_strategy_used_ = JoinSearchStrategy::AUTO;
         return relations_[0].best_path;
     }
 
-    // Too many relations for DP - fall back to greedy
-    if (relations_.size() > MAX_DP_RELATIONS)
+    if (hasJoinReorderBarrier())
     {
-        DEBUG_LOG_DB("JoinOrdering: " + std::to_string(relations_.size()) +
-                     " relations exceeds DP limit (" + std::to_string(MAX_DP_RELATIONS) +
-                     "), using greedy heuristic");
-        return optimizeGreedy(ctx);
+        DEBUG_LOG_DB("JoinOrdering: Reorder barrier detected, preserving input join order");
+        last_strategy_used_ = JoinSearchStrategy::INPUT_ORDER;
+        return optimizePreservingInputOrder(ctx);
     }
+
+    if (controls_.strategy == JoinSearchStrategy::INPUT_ORDER)
+    {
+        DEBUG_LOG_DB("JoinOrdering: Explicit input-order strategy requested");
+        last_strategy_used_ = JoinSearchStrategy::INPUT_ORDER;
+        return optimizePreservingInputOrder(ctx);
+    }
+
+    const size_t exhaustive_cap =
+        std::min(MAX_DP_RELATIONS, std::max<size_t>(1, controls_.max_exhaustive_relations));
+
+    if (controls_.strategy == JoinSearchStrategy::HYPERGRAPH_GREEDY)
+    {
+        DEBUG_LOG_DB("JoinOrdering: Explicit hypergraph-greedy strategy requested");
+        last_strategy_used_ = JoinSearchStrategy::HYPERGRAPH_GREEDY;
+        return optimizeHypergraphGreedy(ctx);
+    }
+
+    if (controls_.strategy == JoinSearchStrategy::EXHAUSTIVE_DP &&
+        relations_.size() > exhaustive_cap)
+    {
+        DEBUG_LOG_DB("JoinOrdering: Exhaustive DP requested but relation count exceeds cap; falling back to hypergraph-greedy");
+        last_strategy_used_ = JoinSearchStrategy::HYPERGRAPH_GREEDY;
+        return optimizeHypergraphGreedy(ctx);
+    }
+
+    if (controls_.strategy == JoinSearchStrategy::AUTO &&
+        relations_.size() > exhaustive_cap)
+    {
+        DEBUG_LOG_DB("JoinOrdering: Relation count exceeds exhaustive cap (" +
+                     std::to_string(exhaustive_cap) + "), using hypergraph-greedy heuristic");
+        last_strategy_used_ = JoinSearchStrategy::HYPERGRAPH_GREEDY;
+        return optimizeHypergraphGreedy(ctx);
+    }
+
+    last_strategy_used_ = JoinSearchStrategy::EXHAUSTIVE_DP;
 
     DEBUG_LOG_DB("JoinOrdering: Starting DP optimization for " +
                  std::to_string(relations_.size()) + " relations");
@@ -174,8 +211,9 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         return it->second.best_path;
     }
 
-    DEBUG_LOG_DB("JoinOrdering: DP failed to find plan for full set");
-    return nullptr;
+    DEBUG_LOG_DB("JoinOrdering: DP failed to find plan for full set, using greedy fallback");
+    last_strategy_used_ = JoinSearchStrategy::HYPERGRAPH_GREEDY;
+    return optimizeHypergraphGreedy(ctx);
 }
 
 std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* ctx)
@@ -188,6 +226,12 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
     if (relations_.size() == 1)
     {
         return relations_[0].best_path;
+    }
+
+    if (hasJoinReorderBarrier())
+    {
+        DEBUG_LOG_DB("JoinOrdering: Greedy path disabled by reorder barrier, preserving input join order");
+        return optimizePreservingInputOrder(ctx);
     }
 
     DEBUG_LOG_DB("JoinOrdering: Starting greedy optimization");
@@ -285,36 +329,40 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
 
         if (!best_join_path)
         {
-            // No connecting edge found - do cross join with next unjoined relation
+            // No connecting edge found - bridge the next disconnected component
+            // with the cheapest explicit cross join.
             for (size_t i = 0; i < relations_.size(); ++i)
             {
-                if (!joined[i])
+                if (joined[i]) continue;
+
+                double selectivity = 1.0;  // Cross join
+                uint64_t right_rows = relations_[i].rows;
+                uint64_t join_rows = current_rows * right_rows;
+
+                CostEstimate join_cost = cost_model_.costNestedLoopJoin(
+                    current_path ? current_path->cost() : CostEstimate{},
+                    relations_[i].best_path ? relations_[i].best_path->cost() : CostEstimate{},
+                    current_rows,
+                    right_rows,
+                    selectivity,
+                    parser::JoinType::CROSS,
+                    ctx);
+
+                if (join_cost.total_cost >= best_cost)
                 {
-                    best_rel = i;
-                    double selectivity = 1.0;  // Cross join
-                    uint64_t right_rows = relations_[i].rows;
-                    uint64_t join_rows = current_rows * right_rows;
-
-                    CostEstimate join_cost = cost_model_.costNestedLoopJoin(
-                        current_path ? current_path->cost() : CostEstimate{},
-                        relations_[i].best_path ? relations_[i].best_path->cost() : CostEstimate{},
-                        current_rows,
-                        right_rows,
-                        selectivity,
-                        parser::JoinType::CROSS,
-                        ctx);
-
-                    auto join_path = std::make_shared<NestedLoopJoinPath>(
-                        parser::JoinType::INNER,
-                        current_path,
-                        relations_[i].best_path,
-                        nullptr,  // No join condition for cross join
-                        selectivity,
-                        join_cost);
-                    best_join_path = join_path;
-                    best_join_rows = join_rows;
-                    break;
+                    continue;
                 }
+
+                best_cost = join_cost.total_cost;
+                best_rel = i;
+                best_join_rows = join_rows;
+                best_join_path = std::make_shared<NestedLoopJoinPath>(
+                    parser::JoinType::CROSS,
+                    current_path,
+                    relations_[i].best_path,
+                    nullptr,
+                    selectivity,
+                    join_cost);
             }
         }
 
@@ -326,6 +374,267 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
 
             DEBUG_LOG_DB("JoinOrdering: Greedy added " + relations_[best_rel].table_name +
                          ", total cost=" + std::to_string(best_join_path->totalCost()));
+        }
+    }
+
+    return current_path;
+}
+
+std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
+    core::ErrorContext* ctx)
+{
+    if (relations_.empty())
+    {
+        return nullptr;
+    }
+
+    if (relations_.size() == 1)
+    {
+        return relations_[0].best_path;
+    }
+
+    if (hasJoinReorderBarrier())
+    {
+        last_strategy_used_ = JoinSearchStrategy::INPUT_ORDER;
+        return optimizePreservingInputOrder(ctx);
+    }
+
+    struct Component
+    {
+        RelationSet relation_set = 0;
+        DPEntry entry;
+    };
+
+    std::vector<Component> components;
+    components.reserve(relations_.size());
+    for (size_t i = 0; i < relations_.size(); ++i)
+    {
+        Component component;
+        component.relation_set = 1ULL << i;
+        component.entry.best_path = relations_[i].best_path;
+        component.entry.cost = component.entry.best_path
+            ? component.entry.best_path->totalCost()
+            : 0.0;
+        component.entry.rows = relations_[i].rows;
+        components.push_back(std::move(component));
+    }
+
+    const size_t max_pair_evaluations =
+        std::max<size_t>(1, controls_.max_pair_evaluations);
+
+    while (components.size() > 1)
+    {
+        bool found_connected_merge = false;
+        size_t best_left = 0;
+        size_t best_right = 0;
+        DPEntry best_entry;
+        size_t pair_evaluations = 0;
+
+        for (size_t left = 0; left < components.size(); ++left)
+        {
+            for (size_t right = left + 1; right < components.size(); ++right)
+            {
+                if (pair_evaluations >= max_pair_evaluations)
+                {
+                    break;
+                }
+                ++pair_evaluations;
+
+                const auto connecting_edges =
+                    findConnectingEdges(components[left].relation_set,
+                                        components[right].relation_set);
+                if (connecting_edges.empty())
+                {
+                    continue;
+                }
+
+                for (size_t edge_idx : connecting_edges)
+                {
+                    const auto candidate =
+                        costJoin(components[left].entry,
+                                 components[right].entry,
+                                 join_edges_[edge_idx],
+                                 ctx);
+                    if (!candidate.best_path || candidate.cost >= best_entry.cost)
+                    {
+                        continue;
+                    }
+                    best_entry = candidate;
+                    best_left = left;
+                    best_right = right;
+                    found_connected_merge = true;
+                }
+            }
+            if (pair_evaluations >= max_pair_evaluations)
+            {
+                break;
+            }
+        }
+
+        if (!found_connected_merge)
+        {
+            best_entry = DPEntry{};
+            for (size_t left = 0; left < components.size(); ++left)
+            {
+                for (size_t right = left + 1; right < components.size(); ++right)
+                {
+                    const auto candidate =
+                        costCrossJoin(components[left].entry,
+                                      components[right].entry,
+                                      ctx);
+                    if (!candidate.best_path || candidate.cost >= best_entry.cost)
+                    {
+                        continue;
+                    }
+                    best_entry = candidate;
+                    best_left = left;
+                    best_right = right;
+                }
+            }
+        }
+
+        if (!best_entry.best_path || best_left == best_right)
+        {
+            return optimizeGreedy(ctx);
+        }
+
+        Component merged;
+        merged.relation_set =
+            components[best_left].relation_set | components[best_right].relation_set;
+        merged.entry = std::move(best_entry);
+
+        if (best_left > best_right)
+        {
+            std::swap(best_left, best_right);
+        }
+        components.erase(components.begin() + static_cast<std::ptrdiff_t>(best_right));
+        components.erase(components.begin() + static_cast<std::ptrdiff_t>(best_left));
+        components.push_back(std::move(merged));
+    }
+
+    last_strategy_used_ = JoinSearchStrategy::HYPERGRAPH_GREEDY;
+    return components.front().entry.best_path;
+}
+
+std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
+    core::ErrorContext* ctx)
+{
+    if (relations_.empty())
+    {
+        return nullptr;
+    }
+
+    if (relations_.size() == 1)
+    {
+        return relations_[0].best_path;
+    }
+
+    std::vector<bool> joined(relations_.size(), false);
+    joined[0] = true;
+    std::shared_ptr<Path> current_path = relations_[0].best_path;
+    uint64_t current_rows = relations_[0].rows;
+
+    auto currentEntry = [&]() -> DPEntry {
+        DPEntry entry;
+        entry.best_path = current_path;
+        entry.cost = current_path ? current_path->totalCost() : 0.0;
+        entry.rows = current_rows;
+        return entry;
+    };
+
+    while (true)
+    {
+        bool made_progress = false;
+        for (const auto &edge : join_edges_)
+        {
+            if (edge.left_rel_idx >= joined.size() || edge.right_rel_idx >= joined.size())
+            {
+                continue;
+            }
+
+            const auto legality = classifyJoinLegality(edge.join_type, false, false);
+            size_t candidate_rel = std::numeric_limits<size_t>::max();
+
+            if (joined[edge.left_rel_idx] && !joined[edge.right_rel_idx])
+            {
+                candidate_rel = edge.right_rel_idx;
+            }
+            else if (joined[edge.right_rel_idx] && !joined[edge.left_rel_idx])
+            {
+                if (!legality.reorderable)
+                {
+                    continue;
+                }
+                candidate_rel = edge.left_rel_idx;
+            }
+            else
+            {
+                continue;
+            }
+
+            DPEntry relation_entry;
+            relation_entry.best_path = relations_[candidate_rel].best_path;
+            relation_entry.cost = relation_entry.best_path
+                ? relation_entry.best_path->totalCost()
+                : 0.0;
+            relation_entry.rows = relations_[candidate_rel].rows;
+            DPEntry next_entry = costJoin(currentEntry(),
+                                         relation_entry,
+                                         edge,
+                                         ctx,
+                                         true);
+
+            if (!next_entry.best_path)
+            {
+                continue;
+            }
+
+            joined[candidate_rel] = true;
+            current_path = next_entry.best_path;
+            current_rows = next_entry.rows;
+            made_progress = true;
+            break;
+        }
+
+        if (!made_progress)
+        {
+            size_t best_rel = std::numeric_limits<size_t>::max();
+            DPEntry best_entry;
+            for (size_t i = 0; i < relations_.size(); ++i)
+            {
+                if (joined[i])
+                {
+                    continue;
+                }
+
+                DPEntry relation_entry;
+                relation_entry.best_path = relations_[i].best_path;
+                relation_entry.cost = relation_entry.best_path
+                    ? relation_entry.best_path->totalCost()
+                    : 0.0;
+                relation_entry.rows = relations_[i].rows;
+                auto join_entry = costCrossJoin(currentEntry(), relation_entry, ctx);
+                if (!join_entry.best_path || join_entry.cost >= best_entry.cost)
+                {
+                    continue;
+                }
+                best_entry = std::move(join_entry);
+                best_rel = i;
+            }
+
+            if (!best_entry.best_path || best_rel == std::numeric_limits<size_t>::max())
+            {
+                break;
+            }
+
+            joined[best_rel] = true;
+            current_path = best_entry.best_path;
+            current_rows = best_entry.rows;
+        }
+
+        if (std::all_of(joined.begin(), joined.end(), [](bool value) { return value; }))
+        {
+            break;
         }
     }
 
@@ -357,9 +666,15 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::generateSubsetPlan(
         // Find join edges connecting these sets
         std::vector<size_t> connecting_edges = findConnectingEdges(left_set, right_set);
 
-        // If no connecting edges, this partition is invalid (would be cross join)
-        // For now, skip cross joins in DP - only consider connected partitions
-        if (connecting_edges.empty()) continue;
+        if (connecting_edges.empty())
+        {
+            DPEntry join_entry = costCrossJoin(left_it->second, right_it->second, ctx);
+            if (join_entry.cost < best_entry.cost)
+            {
+                best_entry = std::move(join_entry);
+            }
+            continue;
+        }
 
         // Try each connecting edge
         for (size_t edge_idx : connecting_edges)
@@ -381,7 +696,8 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
     const DPEntry& left_entry,
     const DPEntry& right_entry,
     const JoinEdge& edge,
-    core::ErrorContext* ctx)
+    core::ErrorContext* ctx,
+    bool preserve_orientation)
 {
     DPEntry result;
 
@@ -432,12 +748,17 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
         result.cost = hash_cost.total_cost;
         result.rows = join_rows;
 
-        // Create HashJoinPath
-        // For hash join, use smaller relation as build side
-        std::shared_ptr<Path> build_path = (left_rows < right_rows)
-            ? left_entry.best_path : right_entry.best_path;
-        std::shared_ptr<Path> probe_path = (left_rows < right_rows)
-            ? right_entry.best_path : left_entry.best_path;
+        // Preserve outer-join semantics by keeping the syntactic left/right
+        // orientation for non-inner joins.
+        std::shared_ptr<Path> build_path = left_entry.best_path;
+        std::shared_ptr<Path> probe_path = right_entry.best_path;
+        if (edge.join_type == parser::JoinType::INNER && !preserve_orientation)
+        {
+            build_path = (left_rows < right_rows)
+                ? left_entry.best_path : right_entry.best_path;
+            probe_path = (left_rows < right_rows)
+                ? right_entry.best_path : left_entry.best_path;
+        }
 
         // Hash keys are Expression* vectors (V3)
         std::vector<parser::v3::Expression*> hash_keys_outer;
@@ -467,6 +788,38 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             nl_cost);
     }
 
+    return result;
+}
+
+JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costCrossJoin(
+    const DPEntry& left_entry,
+    const DPEntry& right_entry,
+    core::ErrorContext* ctx)
+{
+    DPEntry result;
+
+    const uint64_t left_rows = left_entry.rows;
+    const uint64_t right_rows = right_entry.rows;
+    const double selectivity = 1.0;
+
+    CostEstimate nl_cost = cost_model_.costNestedLoopJoin(
+        left_entry.best_path ? left_entry.best_path->cost() : CostEstimate{},
+        right_entry.best_path ? right_entry.best_path->cost() : CostEstimate{},
+        left_rows,
+        right_rows,
+        selectivity,
+        parser::JoinType::CROSS,
+        ctx);
+
+    result.cost = nl_cost.total_cost;
+    result.rows = left_rows * right_rows;
+    result.best_path = std::make_shared<NestedLoopJoinPath>(
+        parser::JoinType::CROSS,
+        left_entry.best_path,
+        right_entry.best_path,
+        nullptr,
+        selectivity,
+        nl_cost);
     return result;
 }
 
@@ -528,6 +881,15 @@ bool JoinOrderingOptimizer::isConnected(RelationSet set) const
     }
 
     return count == countBits(set);
+}
+
+bool JoinOrderingOptimizer::hasJoinReorderBarrier() const
+{
+    return std::any_of(join_edges_.begin(),
+                       join_edges_.end(),
+                       [](const JoinEdge &edge) {
+                           return !classifyJoinLegality(edge.join_type, false, false).reorderable;
+                       });
 }
 
 std::vector<std::vector<size_t>> JoinOrderingOptimizer::buildAdjacencyList() const

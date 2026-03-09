@@ -3,6 +3,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/status.h"
+#include "scratchbird/optimizer/join_legality.h"
 #include "scratchbird/optimizer/statistics_manager.h"
 #include "scratchbird/parser/ast_v3.h"
 
@@ -45,6 +46,7 @@ namespace scratchbird::optimizer
         bool resolved = false;
         bool derived = false;
         bool flattened_derived = false;
+        bool lateral = false;
         const parser::v3::TableRefNode *table_ref = nullptr;
         core::CatalogManager::TableInfo table_info{};
         std::vector<core::CatalogManager::ColumnInfo> columns;
@@ -74,6 +76,13 @@ namespace scratchbird::optimizer
         core::ID left_hash_column_id{};
         core::ID right_hash_column_id{};
         bool has_hash_column_ids = false;
+        JoinLegalityClass legality_class = JoinLegalityClass::INNER_REORDERABLE;
+        bool reorderable = true;
+        bool preserves_left_rows = false;
+        bool preserves_right_rows = false;
+        bool null_introduces_left = false;
+        bool null_introduces_right = false;
+        bool requires_original_order = false;
     };
 
     struct ResolvedSelectQuery
@@ -84,6 +93,7 @@ namespace scratchbird::optimizer
         std::vector<ResolvedJoin> joins;
         bool all_joins_inner = true;
         bool contains_outer_join = false;
+        bool has_join_reorder_barrier = false;
         bool has_unsupported_relation = false;
     };
 

@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -44,6 +45,25 @@ namespace scratchbird {
 namespace protocol {
 
 namespace {
+struct ConnectionContextGuard {
+    core::ConnectionContext* previous = nullptr;
+    bool changed = false;
+
+    explicit ConnectionContextGuard(core::ConnectionContext* current)
+        : previous(core::ConnectionContext::getCurrent()) {
+        if (current && current != previous) {
+            core::ConnectionContext::setCurrent(current);
+            changed = true;
+        }
+    }
+
+    ~ConnectionContextGuard() {
+        if (changed) {
+            core::ConnectionContext::setCurrent(previous);
+        }
+    }
+};
+
 const char* dialectTagForProtocol(network::ProtocolType type) {
     switch (type) {
         case network::ProtocolType::POSTGRESQL:
@@ -88,6 +108,70 @@ size_t countParameterPlaceholders(const std::string& sql) {
         i = j;
     }
     return max_index;
+}
+
+auto buildOptimizerParameterBindings(const std::vector<std::string>& parameter_values,
+                                     const std::vector<bool>& parameter_nulls)
+    -> optimizer::ParameterBindings {
+    optimizer::ParameterBindings bindings;
+    bindings.positional.reserve(parameter_values.size());
+    for (size_t index = 0; index < parameter_values.size(); ++index) {
+        optimizer::BoundParameterValue value;
+        value.is_null = index < parameter_nulls.size() && parameter_nulls[index];
+        if (!value.is_null) {
+            value.text = parameter_values[index];
+        }
+        bindings.positional.push_back(std::move(value));
+    }
+    return bindings;
+}
+
+auto buildOptimizerParameterSignature(const optimizer::ParameterBindings& bindings) -> std::string {
+    std::ostringstream signature;
+    for (const auto& value : bindings.positional) {
+        signature << (value.is_null ? 'N' : 'V') << ':';
+        if (!value.is_null) {
+            signature << sblr::v3::stableHash64(value.text);
+        }
+        signature << ';';
+    }
+    return signature.str();
+}
+
+auto compileScratchBirdQuery(core::Database* db,
+                             core::ConnectionContext* connection_ctx,
+                             const std::string& sql,
+                             const optimizer::ParameterBindings* parameter_bindings,
+                             sblr::detail::QueryCompilerV3PlanProfileMode plan_profile_mode,
+                             std::vector<uint8_t>& bytecode_out,
+                             std::string& error_out,
+                             sblr::QueryCompilerV3::CompileResult* compile_result_out = nullptr)
+    -> core::Status {
+    if (db == nullptr) {
+        error_out = "Database context is required for native compilation";
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    ConnectionContextGuard ctx_guard(connection_ctx);
+    sblr::QueryCompilerV3 compiler(db);
+    if (connection_ctx != nullptr) {
+        compiler.setCurrentSchema(connection_ctx->getCurrentSchemaId());
+    }
+
+    sblr::QueryCompilerV3::CompileResult compiled =
+        (parameter_bindings != nullptr && !parameter_bindings->empty())
+            ? compiler.compileWithParameters(sql, *parameter_bindings, plan_profile_mode)
+            : compiler.compile(sql);
+    if (!compiled.success()) {
+        error_out = compiled.errors().empty() ? "Compilation failed" : compiled.errors().front();
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    bytecode_out = compiled.bytecode();
+    if (compile_result_out != nullptr) {
+        *compile_result_out = std::move(compiled);
+    }
+    return core::Status::OK;
 }
 
 std::string buildNativeCompileDiagnostic(core::Database* db,
@@ -549,7 +633,29 @@ core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultCont
 
         std::vector<uint8_t> bytecode;
         std::string compile_error;
-        status = compileQuery(query.query, bytecode, compile_error);
+        const std::string dialect =
+            core::IdentifierUtils::toUpper(
+                std::string(dialectTagForProtocol(getProtocolType())));
+        if (dialect == "SCRATCHBIRD" && !query.parameter_values.empty()) {
+            const auto bindings =
+                buildOptimizerParameterBindings(query.parameter_values, query.parameter_nulls);
+            status = compileScratchBirdQuery(engineDatabase(),
+                                             connection_ctx_.get(),
+                                             query.query,
+                                             &bindings,
+                                             sblr::detail::QueryCompilerV3PlanProfileMode::CUSTOM,
+                                             bytecode,
+                                             compile_error,
+                                             nullptr);
+            if (status != core::Status::OK && engineDatabase() != nullptr) {
+                compile_error = buildNativeCompileDiagnostic(
+                    engineDatabase(),
+                    query.query,
+                    compile_error.empty() ? "Compilation failed" : compile_error);
+            }
+        } else {
+            status = compileQuery(query.query, bytecode, compile_error);
+        }
         if (status != core::Status::OK) {
             result.has_error = true;
             result.error_code = static_cast<uint32_t>(status);
@@ -612,7 +718,22 @@ core::Status ProtocolAdapter::prepareStatement(const std::string& name,
 
     std::vector<uint8_t> bytecode;
     std::string compile_error;
-    status = compileQuery(query, bytecode, compile_error);
+    sblr::QueryCompilerV3::CompileResult compile_result;
+    const std::string dialect =
+        core::IdentifierUtils::toUpper(
+            std::string(dialectTagForProtocol(getProtocolType())));
+    if (dialect == "SCRATCHBIRD") {
+        status = compileScratchBirdQuery(engineDatabase(),
+                                         connection_ctx_.get(),
+                                         query,
+                                         nullptr,
+                                         sblr::detail::QueryCompilerV3PlanProfileMode::GENERIC,
+                                         bytecode,
+                                         compile_error,
+                                         &compile_result);
+    } else {
+        status = compileQuery(query, bytecode, compile_error);
+    }
     if (status != core::Status::OK) {
         return status;
     }
@@ -622,6 +743,15 @@ core::Status ProtocolAdapter::prepareStatement(const std::string& name,
         status = connection_ctx_->prepareStatement(name, query, bytecode, param_types_u16, &ctx);
         if (status != core::Status::OK) {
             return status;
+        }
+
+        if (dialect == "SCRATCHBIRD") {
+            if (auto* prepared = connection_ctx_->getPreparedStatement(name)) {
+                prepared->optimizer_generic_plan_hash =
+                    compile_result.planProfile().runtime_plan_hash;
+                prepared->optimizer_plan_mode =
+                    core::ConnectionContext::PreparedStatement::OptimizerPlanMode::AUTO;
+            }
         }
     } else {
         prepared_statements_[name] = query;
@@ -655,9 +785,104 @@ core::Status ProtocolAdapter::executePrepared(const std::string& name,
                 if (metrics.statement_cache_hits_total) {
                     metrics.statement_cache_hits_total->inc(1.0);
                 }
+
                 QueryContext ctx = params;
                 ctx.query = prepared->sql_text;
-                auto status = executeBytecode(ctx.query, prepared->bytecode, result, nullptr);
+                std::vector<uint8_t> selected_bytecode = prepared->bytecode;
+                const std::string dialect =
+                    core::IdentifierUtils::toUpper(
+                        std::string(dialectTagForProtocol(getProtocolType())));
+                if (dialect == "SCRATCHBIRD" && !params.parameter_values.empty()) {
+                    const auto bindings = buildOptimizerParameterBindings(params.parameter_values,
+                                                                          params.parameter_nulls);
+                    const std::string parameter_signature =
+                        buildOptimizerParameterSignature(bindings);
+
+                    if (prepared->optimizer_plan_mode !=
+                        core::ConnectionContext::PreparedStatement::OptimizerPlanMode::GENERIC) {
+                        auto mapped_bucket =
+                            prepared->optimizer_parameter_signature_to_bucket.find(
+                                parameter_signature);
+                        if (mapped_bucket !=
+                            prepared->optimizer_parameter_signature_to_bucket.end()) {
+                            auto cached_variant =
+                                prepared->optimizer_bucketed_bytecode.find(
+                                    mapped_bucket->second);
+                            if (cached_variant !=
+                                prepared->optimizer_bucketed_bytecode.end()) {
+                                selected_bytecode = cached_variant->second;
+                            }
+                        } else {
+                            std::string compile_error;
+                            sblr::QueryCompilerV3::CompileResult compiled;
+                            auto compile_status = compileScratchBirdQuery(
+                                engineDatabase(),
+                                connection_ctx_.get(),
+                                prepared->sql_text,
+                                &bindings,
+                                sblr::detail::QueryCompilerV3PlanProfileMode::CUSTOM,
+                                selected_bytecode,
+                                compile_error,
+                                &compiled);
+                            if (compile_status != core::Status::OK) {
+                                result.has_error = true;
+                                result.error_code =
+                                    static_cast<uint32_t>(compile_status);
+                                result.sqlstate = "42000";
+                                result.error_message =
+                                    compile_error.empty() ? "Compilation failed"
+                                                          : compile_error;
+                                return core::Status::OK;
+                            }
+
+                            const auto& profile = compiled.planProfile();
+                            prepared->optimizer_parameter_signature_to_bucket
+                                [parameter_signature] = profile.signature;
+                            prepared->optimizer_bucketed_bytecode[profile.signature] =
+                                selected_bytecode;
+                            if (!profile.runtime_plan_hash.empty()) {
+                                prepared->optimizer_bucket_plan_hash[profile.signature] =
+                                    profile.runtime_plan_hash;
+                            }
+                            ++prepared->optimizer_custom_sample_count;
+
+                            if (prepared->optimizer_bucket_plan_hash.size() >= 2) {
+                                prepared->optimizer_plan_mode =
+                                    core::ConnectionContext::PreparedStatement::OptimizerPlanMode::
+                                        CUSTOM_BUCKETED;
+                            } else if (prepared->optimizer_custom_sample_count >= 3 &&
+                                       !prepared->optimizer_generic_plan_hash.empty() &&
+                                       prepared->optimizer_bucket_plan_hash.size() == 1 &&
+                                       prepared->optimizer_bucket_plan_hash.begin()->second ==
+                                           prepared->optimizer_generic_plan_hash) {
+                                prepared->optimizer_plan_mode =
+                                    core::ConnectionContext::PreparedStatement::OptimizerPlanMode::
+                                        GENERIC;
+                                selected_bytecode = prepared->bytecode;
+                            }
+                        }
+                    }
+                }
+
+                struct ParameterGuard {
+                    sblr::Executor* executor = nullptr;
+                    explicit ParameterGuard(sblr::Executor* exec,
+                                            const QueryContext& query_ctx)
+                        : executor(exec) {
+                        if (executor) {
+                            executor->setParameters(query_ctx.parameter_values,
+                                                    query_ctx.parameter_nulls);
+                        }
+                    }
+                    ~ParameterGuard() {
+                        if (executor) {
+                            executor->clearParameters();
+                        }
+                    }
+                } param_guard(executor_.get(), ctx);
+
+                auto status =
+                    executeBytecode(ctx.query, selected_bytecode, result, nullptr);
                 connection_ctx_->recordStatementExecution(name);
                 return status;
             }
@@ -915,30 +1140,6 @@ core::Status ProtocolAdapter::compileQuery(const std::string& sql,
                                            std::vector<uint8_t>& bytecode_out,
                                            std::string& error_out) {
     core::Database* db = engineDatabase();
-    struct ConnectionContextGuard
-    {
-        core::ConnectionContext* previous = nullptr;
-        bool changed = false;
-
-        explicit ConnectionContextGuard(core::ConnectionContext* current)
-            : previous(core::ConnectionContext::getCurrent())
-        {
-            if (current && current != previous)
-            {
-                core::ConnectionContext::setCurrent(current);
-                changed = true;
-            }
-        }
-
-        ~ConnectionContextGuard()
-        {
-            if (changed)
-            {
-                core::ConnectionContext::setCurrent(previous);
-            }
-        }
-    };
-
     ConnectionContextGuard ctx_guard(connection_ctx_.get());
     const char* dialect_tag = dialectTagForProtocol(getProtocolType());
     uint64_t schema_version = 0;
@@ -969,19 +1170,21 @@ core::Status ProtocolAdapter::compileQuery(const std::string& sql,
     }
 
     if (dialect == "SCRATCHBIRD") {
-        if (!compiler_v3_) {
-            // Remote listener mode can compile without a local ensureEngine() call.
-            compiler_v3_ = std::make_unique<parser::v3::Compiler>();
-        }
-        auto result = compiler_v3_->compile(sql);
-        if (!result.ok) {
+        auto status = compileScratchBirdQuery(db,
+                                              connection_ctx_.get(),
+                                              sql,
+                                              nullptr,
+                                              sblr::detail::QueryCompilerV3PlanProfileMode::GENERIC,
+                                              bytecode_out,
+                                              error_out,
+                                              nullptr);
+        if (status != core::Status::OK) {
             error_out = buildNativeCompileDiagnostic(
                 db,
                 sql,
-                result.error.empty() ? "Compilation failed" : result.error);
+                error_out.empty() ? "Compilation failed" : error_out);
             return core::Status::INVALID_ARGUMENT;
         }
-        bytecode_out = result.bytecode;
     } else if (dialect == "POSTGRESQL" || dialect == "POSTGRES" || dialect == "PG") {
         if (!compiler_pg_) {
             compiler_pg_ = std::make_unique<sblr::PostgreSQLQueryCompiler>(db);

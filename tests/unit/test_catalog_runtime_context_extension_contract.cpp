@@ -9,6 +9,7 @@
  */
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -253,9 +254,121 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
     std::vector<CatalogManager::RuntimeTransactionCatalogInfo> tx_rows;
     ASSERT_EQ(catalog_->listRuntimeTransactionCatalogEntries(db_->uuid(), tx_rows, &ctx), Status::OK)
         << ctx.message;
-    EXPECT_EQ(tx_rows.size(), 1u);
+    EXPECT_TRUE(std::any_of(tx_rows.begin(), tx_rows.end(),
+                            [](const CatalogManager::RuntimeTransactionCatalogInfo& row) {
+                                return row.txid == 200;
+                            }));
 
     ASSERT_EQ(catalog_->deleteRuntimeTransactionCatalogEntry(200, &ctx), Status::OK)
         << ctx.message;
     ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(200, loaded, &ctx), Status::NOT_FOUND);
+}
+
+TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionLineageContracts)
+{
+    ErrorContext ctx;
+
+    const ID tx_uuid = generateUuidV7();
+
+    CatalogManager::TransactionLineageEventCatalogInfo invalid_first{};
+    invalid_first.tx_uuid = tx_uuid;
+    invalid_first.txid = 700;
+    invalid_first.event_kind = CatalogManager::TransactionLineageEventKind::TX_CONTEXT_BOUND;
+    invalid_first.payload_json = "{\"transaction_outcome\":\"in_progress\"}";
+    EXPECT_EQ(catalog_->appendTransactionLineageEventCatalogEntry(invalid_first, &ctx),
+              Status::CONSTRAINT_VIOLATION);
+
+    CatalogManager::TransactionLineageEventCatalogInfo begin{};
+    begin.tx_uuid = tx_uuid;
+    begin.txid = 700;
+    begin.event_kind = CatalogManager::TransactionLineageEventKind::TX_BEGIN;
+    begin.payload_json = "{\"transaction_outcome\":\"in_progress\"}";
+    ASSERT_EQ(catalog_->appendTransactionLineageEventCatalogEntry(begin, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(begin.event_seq, 1u);
+
+    CatalogManager::TransactionLineageEventCatalogInfo context{};
+    context.tx_uuid = tx_uuid;
+    context.txid = 700;
+    context.event_kind = CatalogManager::TransactionLineageEventKind::TX_CONTEXT_BOUND;
+    context.connection_id = conn_->attachmentId();
+    context.payload_json = "{\"connection_uuid\":\"" + conn_->attachmentId().toString() + "\"}";
+    ASSERT_EQ(catalog_->appendTransactionLineageEventCatalogEntry(context, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(context.event_seq, 2u);
+
+    CatalogManager::TransactionLineageEventCatalogInfo commit{};
+    commit.tx_uuid = tx_uuid;
+    commit.txid = 700;
+    commit.event_kind = CatalogManager::TransactionLineageEventKind::TX_COMMIT;
+    commit.payload_json = "{\"transaction_outcome\":\"committed\"}";
+    ASSERT_EQ(catalog_->appendTransactionLineageEventCatalogEntry(commit, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(commit.event_seq, 3u);
+
+    CatalogManager::TransactionLineageEventCatalogInfo duplicate_terminal{};
+    duplicate_terminal.tx_uuid = tx_uuid;
+    duplicate_terminal.txid = 700;
+    duplicate_terminal.event_kind = CatalogManager::TransactionLineageEventKind::TX_ROLLBACK;
+    duplicate_terminal.payload_json = "{\"transaction_outcome\":\"aborted\"}";
+    EXPECT_EQ(catalog_->appendTransactionLineageEventCatalogEntry(duplicate_terminal, &ctx),
+              Status::CONSTRAINT_VIOLATION);
+
+    CatalogManager::TransactionLineageEventCatalogInfo loaded{};
+    ASSERT_EQ(catalog_->getTransactionLineageEventCatalogEntry(commit.lineage_event_id, loaded, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(loaded.event_kind, CatalogManager::TransactionLineageEventKind::TX_COMMIT);
+    EXPECT_EQ(loaded.event_seq, 3u);
+
+    std::vector<CatalogManager::TransactionLineageEventCatalogInfo> rows;
+    ASSERT_EQ(catalog_->listTransactionLineageEventCatalogEntries(tx_uuid, 700, rows, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(rows.size(), 3u);
+    EXPECT_EQ(rows[0].event_kind, CatalogManager::TransactionLineageEventKind::TX_BEGIN);
+    EXPECT_EQ(rows[1].event_kind, CatalogManager::TransactionLineageEventKind::TX_CONTEXT_BOUND);
+    EXPECT_EQ(rows[2].event_kind, CatalogManager::TransactionLineageEventKind::TX_COMMIT);
+}
+
+TEST_F(CatalogRuntimeContextExtensionContractTest, LiveTransactionPersistsRetainedLineage)
+{
+    ErrorContext ctx;
+
+    const ID system_user_id = catalog_->getSystemUserId(&ctx);
+    ASSERT_NE(system_user_id, ID{}) << ctx.message;
+
+    CatalogManager::SessionInfo session{};
+    ASSERT_EQ(catalog_->createSession(system_user_id, ID{}, "native", session, &ctx), Status::OK)
+        << ctx.message;
+
+    conn_->setSessionContext(session.session_id, ID{}, "native", 0, 0);
+    conn_->setCurrentUser(system_user_id, false);
+
+    const uint64_t txid = conn_->getCurrentXid();
+    const ID tx_uuid = conn_->getCurrentTransactionUuid();
+    ASSERT_NE(txid, 0u);
+    ASSERT_NE(tx_uuid, ID{});
+
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    CatalogManager::RuntimeTransactionCatalogInfo tx_row{};
+    ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(txid, tx_row, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(tx_row.state, CatalogManager::RuntimeTransactionState::COMMITTED);
+    EXPECT_EQ(tx_row.session_id, session.session_id);
+    EXPECT_EQ(tx_row.user_id, system_user_id);
+    EXPECT_TRUE(tx_row.has_end_time);
+    EXPECT_GE(tx_row.end_time, tx_row.start_time);
+
+    std::vector<CatalogManager::TransactionLineageEventCatalogInfo> rows;
+    ASSERT_EQ(catalog_->listTransactionLineageEventCatalogEntries(tx_uuid, txid, rows, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(rows.size(), 3u);
+    EXPECT_EQ(rows[0].event_kind, CatalogManager::TransactionLineageEventKind::TX_BEGIN);
+    EXPECT_EQ(rows[1].event_kind, CatalogManager::TransactionLineageEventKind::TX_CONTEXT_BOUND);
+    EXPECT_EQ(rows[2].event_kind, CatalogManager::TransactionLineageEventKind::TX_COMMIT);
+    EXPECT_EQ(rows[1].user_id, system_user_id);
+    EXPECT_EQ(rows[1].session_id, session.session_id);
+    EXPECT_EQ(rows[1].connection_id, conn_->attachmentId());
+    EXPECT_NE(rows[0].payload_json.find(db_->uuid().toString()), std::string::npos);
+    EXPECT_NE(rows[2].payload_json.find("committed"), std::string::npos);
 }

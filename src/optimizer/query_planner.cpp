@@ -15,13 +15,17 @@
  * - Chooses base access paths using statistics and cost model estimates
  * - Builds left-deep join plans with deterministic join-method selection
  * - Preserves outer/natural join order and fails closed to nested loops there
+ * - Bridges disconnected join graphs with explicit cross-join steps
  */
 
 #include "scratchbird/optimizer/query_planner.h"
 
 #include "scratchbird/core/debug.h"
+#include <array>
 #include <algorithm>
+#include <cctype>
 #include <limits>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <sstream>
 
@@ -49,7 +53,56 @@ namespace scratchbird::optimizer
             double selectivity = 1.0;
             double total_cost = std::numeric_limits<double>::max();
             uint64_t rows = 0;
+            bool runtime_filter_enabled = false;
+            std::string runtime_filter_column;
+            std::string runtime_filter_index_name;
+            std::string runtime_filter_index_id_text;
         };
+
+        struct PlannerPartitionBound
+        {
+            enum class Kind : uint8_t
+            {
+                NONE = 0,
+                LIST = 1,
+                RANGE = 2,
+                DEFAULT = 3
+            };
+
+            Kind kind = Kind::NONE;
+            std::vector<std::vector<std::string>> list_values;
+            std::vector<std::string> range_start;
+            std::vector<std::string> range_end;
+            bool has_start = false;
+            bool has_end = false;
+        };
+
+        struct PartitionPruningResult
+        {
+            bool available = false;
+            bool pruned = false;
+            std::string strategy;
+            std::string key_column;
+            std::vector<std::string> targets;
+            uint64_t rows = 0;
+            uint64_t pages = 0;
+        };
+
+        struct PredicateConstraint
+        {
+            bool valid = false;
+            bool has_lower = false;
+            std::string lower;
+            bool lower_inclusive = true;
+            bool has_upper = false;
+            std::string upper;
+            bool upper_inclusive = true;
+        };
+
+        auto isZeroId(const core::ID &id) -> bool
+        {
+            return id == core::ID{};
+        }
 
         auto planJoinTypeToString(parser::JoinType join_type) -> std::string
         {
@@ -110,6 +163,1312 @@ namespace scratchbird::optimizer
             return relation.table_path;
         }
 
+        auto trimWhitespace(std::string value) -> std::string
+        {
+            auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
+            value.erase(value.begin(),
+                        std::find_if(value.begin(), value.end(), not_space));
+            value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(),
+                        value.end());
+            return value;
+        }
+
+        auto stripStringLiteral(const std::string &input) -> std::string
+        {
+            if (input.size() >= 2 &&
+                ((input.front() == '\'' && input.back() == '\'') ||
+                 (input.front() == '"' && input.back() == '"')))
+            {
+                return input.substr(1, input.size() - 2);
+            }
+            return input;
+        }
+
+        auto normalizePartitionLiteral(const std::string &input) -> std::string
+        {
+            std::string trimmed = trimWhitespace(input);
+            std::string upper = core::IdentifierUtils::toUpper(trimmed);
+            if (upper.rfind("DATE", 0) == 0 ||
+                upper.rfind("TIME", 0) == 0 ||
+                upper.rfind("TIMESTAMP", 0) == 0)
+            {
+                const size_t quote_pos = trimmed.find('\'');
+                if (quote_pos != std::string::npos)
+                {
+                    return stripStringLiteral(trimmed.substr(quote_pos));
+                }
+                const size_t space = trimmed.find(' ');
+                if (space != std::string::npos)
+                {
+                    return stripStringLiteral(trimmed.substr(space + 1));
+                }
+            }
+            return stripStringLiteral(trimmed);
+        }
+
+        auto parseNumericLiteral(const std::string &input,
+                                 int64_t &value_out) -> bool
+        {
+            try
+            {
+                size_t index = 0;
+                const std::string trimmed = trimWhitespace(input);
+                const long long parsed = std::stoll(trimmed, &index, 10);
+                if (index != trimmed.size())
+                {
+                    return false;
+                }
+                value_out = static_cast<int64_t>(parsed);
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        auto parseDoubleLiteral(const std::string &input,
+                                double &value_out) -> bool
+        {
+            try
+            {
+                size_t index = 0;
+                const std::string trimmed = trimWhitespace(input);
+                const double parsed = std::stod(trimmed, &index);
+                if (index != trimmed.size())
+                {
+                    return false;
+                }
+                value_out = parsed;
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        auto splitTopLevel(const std::string &text) -> std::vector<std::string>
+        {
+            std::vector<std::string> parts;
+            std::string current;
+            int depth = 0;
+            bool in_quote = false;
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const char ch = text[i];
+                if (ch == '\'' && (i == 0 || text[i - 1] != '\\'))
+                {
+                    in_quote = !in_quote;
+                    current.push_back(ch);
+                    continue;
+                }
+                if (!in_quote)
+                {
+                    if (ch == '(')
+                    {
+                        ++depth;
+                    }
+                    else if (ch == ')' && depth > 0)
+                    {
+                        --depth;
+                    }
+                    else if (ch == ',' && depth == 0)
+                    {
+                        parts.push_back(trimWhitespace(current));
+                        current.clear();
+                        continue;
+                    }
+                }
+                current.push_back(ch);
+            }
+            if (!current.empty())
+            {
+                parts.push_back(trimWhitespace(current));
+            }
+            return parts;
+        }
+
+        auto parsePartitionBounds(const std::string &bounds_text,
+                                  PlannerPartitionBound &bound_out) -> bool
+        {
+            const std::string trimmed = trimWhitespace(bounds_text);
+            const std::string upper = core::IdentifierUtils::toUpper(trimmed);
+            if (upper.find("DEFAULT") != std::string::npos)
+            {
+                bound_out.kind = PlannerPartitionBound::Kind::DEFAULT;
+                return true;
+            }
+
+            auto extractParenContent =
+                [&](size_t start_pos, std::string &content_out) -> bool {
+                    const size_t open_pos = trimmed.find('(', start_pos);
+                    if (open_pos == std::string::npos)
+                    {
+                        return false;
+                    }
+                    int depth = 0;
+                    for (size_t i = open_pos; i < trimmed.size(); ++i)
+                    {
+                        if (trimmed[i] == '(')
+                        {
+                            ++depth;
+                        }
+                        else if (trimmed[i] == ')')
+                        {
+                            --depth;
+                            if (depth == 0)
+                            {
+                                content_out =
+                                    trimmed.substr(open_pos + 1, i - open_pos - 1);
+                                return true;
+                            }
+                        }
+                    }
+                    return false;
+                };
+
+            const size_t in_pos = upper.find("IN");
+            if (in_pos != std::string::npos)
+            {
+                std::string content;
+                if (!extractParenContent(in_pos, content))
+                {
+                    return false;
+                }
+                bound_out.kind = PlannerPartitionBound::Kind::LIST;
+                for (const auto &entry : splitTopLevel(content))
+                {
+                    if (entry.empty())
+                    {
+                        continue;
+                    }
+                    if (entry.front() == '(' && entry.back() == ')')
+                    {
+                        bound_out.list_values.push_back(
+                            splitTopLevel(entry.substr(1, entry.size() - 2)));
+                    }
+                    else
+                    {
+                        bound_out.list_values.push_back({entry});
+                    }
+                }
+                return true;
+            }
+
+            const size_t from_pos = upper.find("FROM");
+            const size_t to_pos = upper.find("TO");
+            if (from_pos != std::string::npos && to_pos != std::string::npos)
+            {
+                std::string start_content;
+                std::string end_content;
+                if (!extractParenContent(from_pos, start_content) ||
+                    !extractParenContent(to_pos, end_content))
+                {
+                    return false;
+                }
+                bound_out.kind = PlannerPartitionBound::Kind::RANGE;
+                bound_out.range_start = splitTopLevel(start_content);
+                bound_out.range_end = splitTopLevel(end_content);
+                bound_out.has_start = !bound_out.range_start.empty();
+                bound_out.has_end = !bound_out.range_end.empty();
+                return true;
+            }
+
+            return false;
+        }
+
+        auto comparePartitionLiteral(const std::string &left,
+                                     const std::string &right,
+                                     core::DataType type) -> int
+        {
+            if (type == core::DataType::INT8 ||
+                type == core::DataType::INT16 ||
+                type == core::DataType::INT32 ||
+                type == core::DataType::INT64 ||
+                type == core::DataType::UINT8 ||
+                type == core::DataType::UINT16 ||
+                type == core::DataType::UINT32 ||
+                type == core::DataType::UINT64)
+            {
+                int64_t left_value = 0;
+                int64_t right_value = 0;
+                if (parseNumericLiteral(left, left_value) &&
+                    parseNumericLiteral(right, right_value))
+                {
+                    if (left_value < right_value) return -1;
+                    if (left_value > right_value) return 1;
+                    return 0;
+                }
+            }
+            if (type == core::DataType::FLOAT32 ||
+                type == core::DataType::FLOAT64 ||
+                type == core::DataType::DECIMAL)
+            {
+                double left_value = 0.0;
+                double right_value = 0.0;
+                if (parseDoubleLiteral(left, left_value) &&
+                    parseDoubleLiteral(right, right_value))
+                {
+                    if (left_value < right_value) return -1;
+                    if (left_value > right_value) return 1;
+                    return 0;
+                }
+            }
+
+            const std::string normalized_left = normalizePartitionLiteral(left);
+            const std::string normalized_right = normalizePartitionLiteral(right);
+            if (normalized_left < normalized_right) return -1;
+            if (normalized_left > normalized_right) return 1;
+            return 0;
+        }
+
+        auto applyPredicateConstraint(PredicateConstraint &constraint,
+                                      const ResolvedScanPredicate &predicate,
+                                      core::DataType type) -> bool
+        {
+            if (predicate.literal_kind == "PARAMETER" ||
+                predicate.literal_text.empty())
+            {
+                return false;
+            }
+
+            auto strengthenLower =
+                [&](const std::string &candidate, bool inclusive) {
+                    if (!constraint.has_lower)
+                    {
+                        constraint.has_lower = true;
+                        constraint.lower = candidate;
+                        constraint.lower_inclusive = inclusive;
+                        return;
+                    }
+
+                    const int cmp =
+                        comparePartitionLiteral(candidate, constraint.lower, type);
+                    if (cmp > 0 ||
+                        (cmp == 0 && !inclusive && constraint.lower_inclusive))
+                    {
+                        constraint.lower = candidate;
+                        constraint.lower_inclusive = inclusive;
+                    }
+                };
+
+            auto strengthenUpper =
+                [&](const std::string &candidate, bool inclusive) {
+                    if (!constraint.has_upper)
+                    {
+                        constraint.has_upper = true;
+                        constraint.upper = candidate;
+                        constraint.upper_inclusive = inclusive;
+                        return;
+                    }
+
+                    const int cmp =
+                        comparePartitionLiteral(candidate, constraint.upper, type);
+                    if (cmp < 0 ||
+                        (cmp == 0 && !inclusive && constraint.upper_inclusive))
+                    {
+                        constraint.upper = candidate;
+                        constraint.upper_inclusive = inclusive;
+                    }
+                };
+
+            const std::string op =
+                core::IdentifierUtils::toUpper(predicate.operator_name);
+            if (op == "=")
+            {
+                strengthenLower(predicate.literal_text, true);
+                strengthenUpper(predicate.literal_text, true);
+                constraint.valid = true;
+                return true;
+            }
+            if (op == ">")
+            {
+                strengthenLower(predicate.literal_text, false);
+                constraint.valid = true;
+                return true;
+            }
+            if (op == ">=")
+            {
+                strengthenLower(predicate.literal_text, true);
+                constraint.valid = true;
+                return true;
+            }
+            if (op == "<")
+            {
+                strengthenUpper(predicate.literal_text, false);
+                constraint.valid = true;
+                return true;
+            }
+            if (op == "<=")
+            {
+                strengthenUpper(predicate.literal_text, true);
+                constraint.valid = true;
+                return true;
+            }
+            return false;
+        }
+
+        auto listValueMatchesConstraint(const std::string &value,
+                                        const PredicateConstraint &constraint,
+                                        core::DataType type) -> bool
+        {
+            if (constraint.has_lower)
+            {
+                const int cmp =
+                    comparePartitionLiteral(value, constraint.lower, type);
+                if (cmp < 0 || (cmp == 0 && !constraint.lower_inclusive))
+                {
+                    return false;
+                }
+            }
+            if (constraint.has_upper)
+            {
+                const int cmp =
+                    comparePartitionLiteral(value, constraint.upper, type);
+                if (cmp > 0 || (cmp == 0 && !constraint.upper_inclusive))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto rangeMatchesConstraint(const PlannerPartitionBound &bound,
+                                    const PredicateConstraint &constraint,
+                                    core::DataType type) -> bool
+        {
+            if (!constraint.valid)
+            {
+                return true;
+            }
+
+            if (constraint.has_lower && bound.has_end && !bound.range_end.empty())
+            {
+                const int cmp = comparePartitionLiteral(
+                    constraint.lower,
+                    bound.range_end.front(),
+                    type);
+                // Range partitions use an exclusive upper bound, so a predicate
+                // lower bound at the partition end cannot match this child.
+                if (cmp >= 0)
+                {
+                    return false;
+                }
+            }
+            if (constraint.has_upper && bound.has_start && !bound.range_start.empty())
+            {
+                const int cmp = comparePartitionLiteral(
+                    constraint.upper,
+                    bound.range_start.front(),
+                    type);
+                if (cmp < 0 || (cmp == 0 && !constraint.upper_inclusive))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto loadTableMetadata(core::CatalogManager *catalog,
+                               const core::CatalogManager::TableInfo &table_info,
+                               nlohmann::json &metadata_out,
+                               core::ErrorContext *ctx) -> bool
+        {
+            metadata_out = nlohmann::json::object();
+            if (catalog == nullptr || isZeroId(table_info.storage_params_oid))
+            {
+                return false;
+            }
+
+            std::string params;
+            if (catalog->loadStringFromToast(table_info.storage_params_oid,
+                                             0,
+                                             params,
+                                             ctx) != core::Status::OK ||
+                params.empty())
+            {
+                return false;
+            }
+
+            try
+            {
+                metadata_out = nlohmann::json::parse(params);
+                return true;
+            }
+            catch (...)
+            {
+                metadata_out = nlohmann::json::object();
+                return false;
+            }
+        }
+
+        auto splitSchemaComponents(const std::string &path)
+            -> std::vector<std::string>
+        {
+            std::vector<std::string> components;
+            size_t start = 0;
+            while (start < path.size())
+            {
+                const size_t dot = path.find('.', start);
+                const size_t end = dot == std::string::npos ? path.size() : dot;
+                if (end > start)
+                {
+                    components.emplace_back(path.substr(start, end - start));
+                }
+                if (dot == std::string::npos)
+                {
+                    break;
+                }
+                start = dot + 1;
+            }
+            return components;
+        }
+
+        auto joinSchemaComponents(const std::vector<std::string> &components)
+            -> std::string
+        {
+            std::string joined;
+            for (size_t i = 0; i < components.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    joined.push_back('.');
+                }
+                joined.append(components[i]);
+            }
+            return joined;
+        }
+
+        auto resolveQualifiedTable(core::CatalogManager *catalog,
+                                   const core::ID &default_schema_id,
+                                   const std::string &qualified_name,
+                                   core::CatalogManager::TableInfo &table_info_out,
+                                   core::ErrorContext *ctx) -> bool
+        {
+            if (catalog == nullptr)
+            {
+                return false;
+            }
+
+            const std::string normalized = qualified_name;
+            const auto components = splitSchemaComponents(normalized);
+            if (components.empty())
+            {
+                return false;
+            }
+
+            const std::string table_name = components.back();
+            if (components.size() == 1)
+            {
+                return catalog->getTable(default_schema_id,
+                                         table_name,
+                                         table_info_out,
+                                         ctx) == core::Status::OK;
+            }
+
+            std::vector<std::string> schema_components = components;
+            schema_components.pop_back();
+            const std::string schema_path = joinSchemaComponents(schema_components);
+            core::CatalogManager::SchemaInfo schema_info;
+            if (catalog->getSchema(schema_path, schema_info, ctx) != core::Status::OK)
+            {
+                return false;
+            }
+            return catalog->getTable(schema_info.schema_id,
+                                     table_name,
+                                     table_info_out,
+                                     ctx) == core::Status::OK;
+        }
+
+        auto analyzePartitionPruning(core::CatalogManager *catalog,
+                                     const ResolvedRelation &relation) -> PartitionPruningResult
+        {
+            PartitionPruningResult result;
+            if (catalog == nullptr ||
+                !relation.resolved ||
+                isZeroId(relation.table_info.table_id))
+            {
+                return result;
+            }
+
+            nlohmann::json metadata;
+            core::ErrorContext metadata_ctx;
+            if (!loadTableMetadata(catalog, relation.table_info, metadata, &metadata_ctx) ||
+                !metadata.contains("partition") ||
+                !metadata["partition"].is_object())
+            {
+                return result;
+            }
+
+            const auto &partition = metadata["partition"];
+            result.available = true;
+            if (partition.contains("strategy") && partition["strategy"].is_string())
+            {
+                result.strategy = partition["strategy"].get<std::string>();
+            }
+            if (!partition.contains("columns") || !partition["columns"].is_array() ||
+                partition["columns"].size() != 1 || !partition.contains("children") ||
+                !partition["children"].is_array())
+            {
+                return result;
+            }
+
+            result.key_column = partition["columns"][0].get<std::string>();
+            const auto column_it =
+                std::find_if(relation.columns.begin(),
+                             relation.columns.end(),
+                             [&](const core::CatalogManager::ColumnInfo &column) {
+                                 return core::IdentifierUtils::namesMatch(
+                                     column.column_name,
+                                     false,
+                                     result.key_column,
+                                     false);
+                             });
+            if (column_it == relation.columns.end())
+            {
+                return result;
+            }
+
+            PredicateConstraint constraint;
+            for (const auto &predicate : relation.local_predicates)
+            {
+                if (!core::IdentifierUtils::namesMatch(predicate.column_name,
+                                                       false,
+                                                       result.key_column,
+                                                       false))
+                {
+                    continue;
+                }
+                (void)applyPredicateConstraint(
+                    constraint,
+                    predicate,
+                    static_cast<core::DataType>(column_it->data_type));
+            }
+            if (!constraint.valid)
+            {
+                return result;
+            }
+
+            bool matched_any = false;
+            for (const auto &entry : partition["children"])
+            {
+                if (!entry.is_object() ||
+                    !entry.contains("name") ||
+                    !entry["name"].is_string())
+                {
+                    continue;
+                }
+
+                const std::string child_name = entry["name"].get<std::string>();
+                PlannerPartitionBound bound;
+                if (entry.contains("bounds") && entry["bounds"].is_string())
+                {
+                    if (!parsePartitionBounds(entry["bounds"].get<std::string>(), bound))
+                    {
+                        continue;
+                    }
+                }
+
+                bool matches = false;
+                if (bound.kind == PlannerPartitionBound::Kind::LIST)
+                {
+                    for (const auto &values : bound.list_values)
+                    {
+                        if (values.empty())
+                        {
+                            continue;
+                        }
+                        if (listValueMatchesConstraint(
+                                values.front(),
+                                constraint,
+                                static_cast<core::DataType>(column_it->data_type)))
+                        {
+                            matches = true;
+                            break;
+                        }
+                    }
+                }
+                else if (bound.kind == PlannerPartitionBound::Kind::RANGE)
+                {
+                    matches = rangeMatchesConstraint(
+                        bound,
+                        constraint,
+                        static_cast<core::DataType>(column_it->data_type));
+                }
+
+                if (!matches)
+                {
+                    continue;
+                }
+
+                core::CatalogManager::TableInfo child_info;
+                core::ErrorContext child_ctx;
+                if (!resolveQualifiedTable(catalog,
+                                           relation.table_info.schema_id,
+                                           child_name,
+                                           child_info,
+                                           &child_ctx))
+                {
+                    continue;
+                }
+
+                result.targets.push_back(child_name);
+                result.rows += child_info.row_count == 0 ? 0 : child_info.row_count;
+                result.pages +=
+                    std::max<uint64_t>(1,
+                                       (child_info.row_count == 0
+                                            ? 0
+                                            : child_info.row_count) /
+                                           100);
+                matched_any = true;
+            }
+
+            result.pruned = matched_any && !result.targets.empty();
+            return result;
+        }
+
+        auto annotateTopNSort(RuntimePlanNode &node,
+                              int64_t limit_count,
+                              int64_t offset_count) -> void
+        {
+            if (limit_count < 0)
+            {
+                return;
+            }
+
+            if (node.node_type == "Sort")
+            {
+                std::ostringstream detail;
+                detail << node.detail_text;
+                if (!node.detail_text.empty())
+                {
+                    detail << ' ';
+                }
+                detail << "topn=" << (limit_count + std::max<int64_t>(offset_count, 0));
+                node.detail_text = detail.str();
+                return;
+            }
+
+            for (auto &child : node.children)
+            {
+                annotateTopNSort(child, limit_count, offset_count);
+            }
+        }
+
+        enum class PlannerSpillPolicy : uint8_t
+        {
+            ALLOW = 0,
+            DISALLOW = 1
+        };
+
+        enum class PlannerJoinSearchMode : uint8_t
+        {
+            AUTO = 0,
+            GREEDY = 1,
+            INPUT_ORDER = 2
+        };
+
+        enum class PlannerJoinMethodControl : uint8_t
+        {
+            AUTO = 0,
+            NESTED_LOOP_ONLY = 1,
+            HASH_ONLY = 2,
+            MERGE_ONLY = 3
+        };
+
+        struct PlannerControlSurface
+        {
+            uint64_t work_mem_bytes = 0;
+            PlannerSpillPolicy spill_policy = PlannerSpillPolicy::ALLOW;
+            PlannerJoinSearchMode join_search = PlannerJoinSearchMode::AUTO;
+            size_t search_depth = 0;
+            PlannerJoinMethodControl join_method =
+                PlannerJoinMethodControl::AUTO;
+            std::vector<RuntimePlanControlEntry> runtime_controls;
+        };
+
+        auto plannerSpillPolicyName(PlannerSpillPolicy policy) -> const char *
+        {
+            return policy == PlannerSpillPolicy::DISALLOW ? "DISALLOW" : "ALLOW";
+        }
+
+        auto plannerJoinSearchName(PlannerJoinSearchMode mode) -> const char *
+        {
+            switch (mode)
+            {
+                case PlannerJoinSearchMode::GREEDY: return "GREEDY";
+                case PlannerJoinSearchMode::INPUT_ORDER: return "INPUT_ORDER";
+                case PlannerJoinSearchMode::AUTO:
+                default: return "AUTO";
+            }
+        }
+
+        auto plannerJoinMethodName(PlannerJoinMethodControl mode) -> const char *
+        {
+            switch (mode)
+            {
+                case PlannerJoinMethodControl::NESTED_LOOP_ONLY:
+                    return "NESTED_LOOP";
+                case PlannerJoinMethodControl::HASH_ONLY:
+                    return "HASH_JOIN";
+                case PlannerJoinMethodControl::MERGE_ONLY:
+                    return "MERGE_JOIN";
+                case PlannerJoinMethodControl::AUTO:
+                default:
+                    return "AUTO";
+            }
+        }
+
+        auto parsePlannerSizeBytes(const std::string &text,
+                                   uint64_t &bytes_out) -> bool
+        {
+            std::string trimmed = trimWhitespace(text);
+            if (trimmed.empty())
+            {
+                return false;
+            }
+
+            size_t split = 0;
+            while (split < trimmed.size() &&
+                   (std::isdigit(static_cast<unsigned char>(trimmed[split])) ||
+                    trimmed[split] == '.'))
+            {
+                ++split;
+            }
+            if (split == 0)
+            {
+                return false;
+            }
+
+            double magnitude = 0.0;
+            try
+            {
+                magnitude = std::stod(trimmed.substr(0, split));
+            }
+            catch (...)
+            {
+                return false;
+            }
+
+            std::string suffix =
+                core::IdentifierUtils::toUpper(trimWhitespace(trimmed.substr(split)));
+            uint64_t multiplier = 1;
+            if (suffix.empty() || suffix == "B")
+            {
+                multiplier = 1;
+            }
+            else if (suffix == "K" || suffix == "KB" || suffix == "KIB")
+            {
+                multiplier = 1024ULL;
+            }
+            else if (suffix == "M" || suffix == "MB" || suffix == "MIB")
+            {
+                multiplier = 1024ULL * 1024ULL;
+            }
+            else if (suffix == "G" || suffix == "GB" || suffix == "GIB")
+            {
+                multiplier = 1024ULL * 1024ULL * 1024ULL;
+            }
+            else if (suffix == "T" || suffix == "TB" || suffix == "TIB")
+            {
+                multiplier = 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+            }
+            else
+            {
+                return false;
+            }
+
+            bytes_out = static_cast<uint64_t>(magnitude * static_cast<double>(multiplier));
+            return bytes_out > 0;
+        }
+
+        auto readPlannerSessionSetting(core::ConnectionContext *conn_ctx,
+                                       std::string &value_out,
+                                       std::initializer_list<const char *> names) -> bool
+        {
+            if (conn_ctx == nullptr)
+            {
+                return false;
+            }
+            for (const char *name : names)
+            {
+                if (name != nullptr && conn_ctx->getSessionVariable(name, value_out))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        auto splitPlannerDirectiveAssignments(const std::string &text)
+            -> std::vector<std::string>
+        {
+            std::vector<std::string> parts;
+            std::string current;
+            bool in_quote = false;
+            for (size_t i = 0; i < text.size(); ++i)
+            {
+                const char ch = text[i];
+                if ((ch == '\'' || ch == '"') &&
+                    (i == 0 || text[i - 1] != '\\'))
+                {
+                    in_quote = !in_quote;
+                    current.push_back(ch);
+                    continue;
+                }
+                if (!in_quote && (ch == ';' || ch == ','))
+                {
+                    const std::string trimmed = trimWhitespace(current);
+                    if (!trimmed.empty())
+                    {
+                        parts.push_back(trimmed);
+                    }
+                    current.clear();
+                    continue;
+                }
+                current.push_back(ch);
+            }
+
+            const std::string trimmed = trimWhitespace(current);
+            if (!trimmed.empty())
+            {
+                parts.push_back(trimmed);
+            }
+            return parts;
+        }
+
+        auto parsePlannerJoinSearchMode(const std::string &value,
+                                        PlannerJoinSearchMode &mode_out) -> bool
+        {
+            const std::string upper =
+                core::IdentifierUtils::toUpper(trimWhitespace(value));
+            if (upper.empty() || upper == "AUTO")
+            {
+                mode_out = PlannerJoinSearchMode::AUTO;
+                return true;
+            }
+            if (upper == "GREEDY" || upper == "LEFT_DEEP")
+            {
+                mode_out = PlannerJoinSearchMode::GREEDY;
+                return true;
+            }
+            if (upper == "INPUT_ORDER" || upper == "PRESERVE")
+            {
+                mode_out = PlannerJoinSearchMode::INPUT_ORDER;
+                return true;
+            }
+            return false;
+        }
+
+        auto parsePlannerJoinMethodControl(const std::string &value,
+                                           PlannerJoinMethodControl &mode_out) -> bool
+        {
+            const std::string upper =
+                core::IdentifierUtils::toUpper(trimWhitespace(value));
+            if (upper.empty() || upper == "AUTO")
+            {
+                mode_out = PlannerJoinMethodControl::AUTO;
+                return true;
+            }
+            if (upper == "NESTED_LOOP" || upper == "NESTED_LOOP_ONLY" ||
+                upper == "NESTLOOP")
+            {
+                mode_out = PlannerJoinMethodControl::NESTED_LOOP_ONLY;
+                return true;
+            }
+            if (upper == "HASH" || upper == "HASH_JOIN" || upper == "HASH_ONLY")
+            {
+                mode_out = PlannerJoinMethodControl::HASH_ONLY;
+                return true;
+            }
+            if (upper == "MERGE" || upper == "MERGE_JOIN" || upper == "MERGE_ONLY")
+            {
+                mode_out = PlannerJoinMethodControl::MERGE_ONLY;
+                return true;
+            }
+            return false;
+        }
+
+        auto parsePlannerSearchDepth(const std::string &value,
+                                     size_t &depth_out) -> bool
+        {
+            const std::string trimmed = trimWhitespace(value);
+            if (trimmed.empty() || core::IdentifierUtils::toUpper(trimmed) == "AUTO")
+            {
+                depth_out = 0;
+                return true;
+            }
+
+            try
+            {
+                size_t index = 0;
+                const unsigned long parsed = std::stoul(trimmed, &index, 10);
+                if (index != trimmed.size())
+                {
+                    return false;
+                }
+                depth_out = static_cast<size_t>(parsed);
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        auto upsertPlannerControl(std::vector<RuntimePlanControlEntry> &controls,
+                                  const std::string &name,
+                                  const std::string &value,
+                                  const std::string &source) -> void
+        {
+            for (auto &entry : controls)
+            {
+                if (entry.name == name)
+                {
+                    entry.value = value;
+                    entry.source = source;
+                    entry.enforced = true;
+                    return;
+                }
+            }
+            controls.push_back(RuntimePlanControlEntry{name, value, source, true});
+        }
+
+        auto ensurePlannerControlDefault(std::vector<RuntimePlanControlEntry> &controls,
+                                         const std::string &name,
+                                         const std::string &value) -> void
+        {
+            for (const auto &entry : controls)
+            {
+                if (entry.name == name)
+                {
+                    return;
+                }
+            }
+            controls.push_back(RuntimePlanControlEntry{name, value, "DEFAULT", true});
+        }
+
+        auto resolvePlannerControlSurface(core::ConnectionContext *conn_ctx,
+                                          const CostParameters &base_params,
+                                          PlannerControlSurface &controls_out,
+                                          std::string &error_out) -> bool
+        {
+            controls_out = PlannerControlSurface{};
+            controls_out.work_mem_bytes =
+                std::max<uint64_t>(64 * 1024, base_params.work_mem_bytes);
+
+            std::string value;
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"WORK_MEM",
+                                           "OPTIMIZER.WORK_MEM",
+                                           "OPTIMIZER_WORK_MEM"}))
+            {
+                uint64_t parsed = 0;
+                if (!parsePlannerSizeBytes(value, parsed))
+                {
+                    error_out = "Invalid optimizer work_mem value: " + value;
+                    return false;
+                }
+                controls_out.work_mem_bytes = std::max<uint64_t>(64 * 1024, parsed);
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "WORK_MEM",
+                                     std::to_string(controls_out.work_mem_bytes),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"OPTIMIZER.SPILL_POLICY",
+                                           "OPTIMIZER_SPILL_POLICY",
+                                           "SPILL_POLICY"}))
+            {
+                const std::string upper =
+                    core::IdentifierUtils::toUpper(trimWhitespace(value));
+                if (upper == "DISALLOW" || upper == "DENY" || upper == "NO_SPILL" ||
+                    upper == "FAIL")
+                {
+                    controls_out.spill_policy = PlannerSpillPolicy::DISALLOW;
+                }
+                else if (upper == "ALLOW" || upper.empty())
+                {
+                    controls_out.spill_policy = PlannerSpillPolicy::ALLOW;
+                }
+                else
+                {
+                    error_out = "Invalid optimizer spill policy: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "SPILL_POLICY",
+                                     plannerSpillPolicyName(controls_out.spill_policy),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"OPTIMIZER.JOIN_SEARCH",
+                                           "OPTIMIZER_JOIN_SEARCH",
+                                           "JOIN_SEARCH"}))
+            {
+                if (!parsePlannerJoinSearchMode(value, controls_out.join_search))
+                {
+                    error_out = "Invalid optimizer join search mode: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "JOIN_SEARCH",
+                                     plannerJoinSearchName(controls_out.join_search),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"OPTIMIZER.SEARCH_DEPTH",
+                                           "OPTIMIZER_SEARCH_DEPTH",
+                                           "SEARCH_DEPTH"}))
+            {
+                if (!parsePlannerSearchDepth(value, controls_out.search_depth))
+                {
+                    error_out = "Invalid optimizer search depth: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "SEARCH_DEPTH",
+                                     std::to_string(controls_out.search_depth),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"OPTIMIZER.JOIN_METHOD",
+                                           "OPTIMIZER_JOIN_METHOD",
+                                           "JOIN_METHOD"}))
+            {
+                if (!parsePlannerJoinMethodControl(value, controls_out.join_method))
+                {
+                    error_out = "Invalid optimizer join method control: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "JOIN_METHOD",
+                                     plannerJoinMethodName(controls_out.join_method),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"OPTIMIZER.PLAN_DIRECTIVES",
+                                           "OPTIMIZER_PLAN_DIRECTIVES",
+                                           "PLAN_DIRECTIVES"}))
+            {
+                for (const auto &assignment : splitPlannerDirectiveAssignments(value))
+                {
+                    const size_t equals = assignment.find('=');
+                    if (equals == std::string::npos || equals == 0 ||
+                        equals + 1 >= assignment.size())
+                    {
+                        error_out = "Malformed optimizer directive: " + assignment;
+                        return false;
+                    }
+
+                    const std::string key = core::IdentifierUtils::toUpper(
+                        trimWhitespace(assignment.substr(0, equals)));
+                    const std::string raw_value =
+                        trimWhitespace(assignment.substr(equals + 1));
+
+                    if (key == "WORK_MEM")
+                    {
+                        uint64_t parsed = 0;
+                        if (!parsePlannerSizeBytes(raw_value, parsed))
+                        {
+                            error_out =
+                                "Invalid optimizer directive WORK_MEM: " + raw_value;
+                            return false;
+                        }
+                        controls_out.work_mem_bytes =
+                            std::max<uint64_t>(64 * 1024, parsed);
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "WORK_MEM",
+                                             std::to_string(controls_out.work_mem_bytes),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "SPILL_POLICY")
+                    {
+                        const std::string upper =
+                            core::IdentifierUtils::toUpper(trimWhitespace(raw_value));
+                        if (upper == "DISALLOW" || upper == "DENY" ||
+                            upper == "NO_SPILL" || upper == "FAIL")
+                        {
+                            controls_out.spill_policy = PlannerSpillPolicy::DISALLOW;
+                        }
+                        else if (upper == "ALLOW" || upper.empty())
+                        {
+                            controls_out.spill_policy = PlannerSpillPolicy::ALLOW;
+                        }
+                        else
+                        {
+                            error_out =
+                                "Invalid optimizer directive SPILL_POLICY: " + raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "SPILL_POLICY",
+                                             plannerSpillPolicyName(
+                                                 controls_out.spill_policy),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "JOIN_SEARCH")
+                    {
+                        if (!parsePlannerJoinSearchMode(raw_value,
+                                                        controls_out.join_search))
+                        {
+                            error_out =
+                                "Invalid optimizer directive JOIN_SEARCH: " + raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "JOIN_SEARCH",
+                                             plannerJoinSearchName(
+                                                 controls_out.join_search),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "SEARCH_DEPTH")
+                    {
+                        if (!parsePlannerSearchDepth(raw_value,
+                                                     controls_out.search_depth))
+                        {
+                            error_out =
+                                "Invalid optimizer directive SEARCH_DEPTH: " + raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "SEARCH_DEPTH",
+                                             std::to_string(controls_out.search_depth),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "JOIN_METHOD")
+                    {
+                        if (!parsePlannerJoinMethodControl(raw_value,
+                                                           controls_out.join_method))
+                        {
+                            error_out =
+                                "Invalid optimizer directive JOIN_METHOD: " + raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "JOIN_METHOD",
+                                             plannerJoinMethodName(
+                                                 controls_out.join_method),
+                                             "DIRECTIVE");
+                    }
+                    else if (key != "PLAN_PROFILE")
+                    {
+                        error_out = "Unsupported optimizer directive: " + key;
+                        return false;
+                    }
+                }
+            }
+
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "WORK_MEM",
+                                        std::to_string(controls_out.work_mem_bytes));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "SPILL_POLICY",
+                                        plannerSpillPolicyName(
+                                            controls_out.spill_policy));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "JOIN_SEARCH",
+                                        plannerJoinSearchName(
+                                            controls_out.join_search));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "SEARCH_DEPTH",
+                                        std::to_string(controls_out.search_depth));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "JOIN_METHOD",
+                                        plannerJoinMethodName(
+                                            controls_out.join_method));
+            return true;
+        }
+
+        auto planCostEstimate(const std::shared_ptr<PlanNode> &plan) -> CostEstimate
+        {
+            if (!plan)
+            {
+                return CostEstimate{};
+            }
+            const double startup = plan->startupCost();
+            const double total = plan->totalCost();
+            return CostEstimate(startup,
+                                total >= startup ? (total - startup) : 0.0,
+                                plan->rows());
+        }
+
+        auto derivedJoinSelectivity(parser::JoinType join_type,
+                                    uint64_t outer_rows,
+                                    uint64_t inner_rows,
+                                    uint64_t output_rows) -> double
+        {
+            if (join_type == parser::JoinType::CROSS)
+            {
+                return 1.0;
+            }
+            if (outer_rows == 0 || inner_rows == 0)
+            {
+                return 0.0;
+            }
+            const double denominator =
+                static_cast<double>(outer_rows) * static_cast<double>(inner_rows);
+            return std::clamp(static_cast<double>(output_rows) / denominator,
+                              0.0,
+                              1.0);
+        }
+
+        auto parseTopNCount(const std::string &detail_text,
+                            uint64_t &top_n_out) -> bool
+        {
+            const std::string key = "topn=";
+            const size_t pos = detail_text.find(key);
+            if (pos == std::string::npos)
+            {
+                return false;
+            }
+            size_t cursor = pos + key.size();
+            size_t end = cursor;
+            while (end < detail_text.size() &&
+                   std::isdigit(static_cast<unsigned char>(detail_text[end])))
+            {
+                ++end;
+            }
+            if (end == cursor)
+            {
+                return false;
+            }
+            try
+            {
+                top_n_out = static_cast<uint64_t>(
+                    std::stoull(detail_text.substr(cursor, end - cursor)));
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        auto applyResourceMetadata(RuntimePlanNode &node,
+                                   const CostEstimate &cost,
+                                   const std::string &spill_policy_text) -> void
+        {
+            node.estimated_memory_bytes = cost.memory_bytes;
+            node.memory_budget_bytes = cost.memory_budget_bytes;
+            node.spill_expected = cost.spill_expected;
+            node.spill_passes = cost.spill_passes;
+            node.spill_bytes = cost.spill_bytes;
+            node.spill_policy = spill_policy_text;
+        }
+
         auto stablePlanHash(const std::string &text) -> std::string
         {
             uint64_t hash = 1469598103934665603ULL;
@@ -121,11 +1480,6 @@ namespace scratchbird::optimizer
             std::ostringstream out;
             out << std::hex << hash;
             return out.str();
-        }
-
-        auto isZeroId(const core::ID &id) -> bool
-        {
-            return id == core::ID{};
         }
 
         auto relationOutputRows(uint64_t base_rows, double selectivity) -> uint64_t
@@ -141,6 +1495,200 @@ namespace scratchbird::optimizer
                 rows = 1;
             }
             return rows;
+        }
+
+        auto pathLikelyProvidesJoinOrder(const std::shared_ptr<Path> &path) -> bool
+        {
+            if (!path)
+            {
+                return false;
+            }
+
+            switch (path->type())
+            {
+                case PathType::INDEX_SCAN:
+                case PathType::INDEX_ONLY_SCAN:
+                case PathType::SORT:
+                case PathType::MERGE_JOIN:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        auto appendRuntimeTrace(std::vector<RuntimePlanTraceEntry> &entries,
+                                const std::string &phase,
+                                const std::string &subject,
+                                const std::string &candidate,
+                                const std::string &verdict,
+                                const std::string &reason,
+                                double startup_cost,
+                                double total_cost,
+                                uint64_t estimated_rows) -> void
+        {
+            RuntimePlanTraceEntry entry;
+            entry.phase = phase;
+            entry.subject = subject;
+            entry.candidate = candidate;
+            entry.verdict = verdict;
+            entry.reason = reason;
+            entry.startup_cost = startup_cost;
+            entry.total_cost = total_cost;
+            entry.estimated_rows = estimated_rows;
+            entries.push_back(std::move(entry));
+        }
+
+        auto appendStatsProvenance(
+            std::vector<RuntimePlanStatisticsProvenance> &entries,
+            const std::string &subject,
+            const std::string &source,
+            const std::string &detail) -> void
+        {
+            auto already_present = std::find_if(
+                entries.begin(),
+                entries.end(),
+                [&](const RuntimePlanStatisticsProvenance &existing) {
+                    return existing.subject == subject &&
+                           existing.source == source &&
+                           existing.detail == detail;
+                });
+            if (already_present != entries.end())
+            {
+                return;
+            }
+
+            RuntimePlanStatisticsProvenance entry;
+            entry.subject = subject;
+            entry.source = source;
+            entry.detail = detail;
+            entries.push_back(std::move(entry));
+        }
+
+        auto joinTraceSubject(const ResolvedSelectQuery &resolved,
+                              const ResolvedJoin &join) -> std::string
+        {
+            const auto &left_relation = resolved.relations[join.left_relation_index];
+            const auto &right_relation = resolved.relations[join.right_relation_index];
+            return relationLookupName(left_relation) + "->" +
+                   relationLookupName(right_relation);
+        }
+
+        auto accessTraceCandidateLabel(const std::string &scan_kind,
+                                       const std::string &index_name,
+                                       const std::string &bitmap_op) -> std::string
+        {
+            std::ostringstream out;
+            out << scan_kind;
+            if (!index_name.empty())
+            {
+                out << "[" << index_name << "]";
+            }
+            if (!bitmap_op.empty())
+            {
+                out << "(" << bitmap_op << ")";
+            }
+            return out.str();
+        }
+
+        auto predicateStatsSource(const ResolvedRelation &relation,
+                                  const ResolvedScanPredicate &predicate,
+                                  StatisticsManager *stats_manager) -> std::string
+        {
+            if (!relation.resolved || stats_manager == nullptr ||
+                isZeroId(relation.table_info.table_id) ||
+                isZeroId(predicate.column_id))
+            {
+                return "HEURISTIC_DEFAULT";
+            }
+
+            ColumnStatistics column_stats;
+            core::ErrorContext local_ctx;
+            if (stats_manager->getColumnStatistics(relation.table_info.table_id,
+                                                   predicate.column_id,
+                                                   column_stats,
+                                                   &local_ctx) != core::Status::OK)
+            {
+                return "HEURISTIC_DEFAULT";
+            }
+
+            std::vector<std::string> sources;
+            const std::string op_upper =
+                core::IdentifierUtils::toUpper(predicate.operator_name);
+            if ((op_upper == "=" || op_upper == "IN") &&
+                !column_stats.mcv_list.empty())
+            {
+                sources.push_back("MCV");
+            }
+            if ((op_upper == "=" || op_upper == "IN") &&
+                column_stats.num_distinct > 0)
+            {
+                sources.push_back("NDISTINCT");
+            }
+            if ((op_upper == "<" || op_upper == "<=" ||
+                 op_upper == ">" || op_upper == ">=" ||
+                 op_upper == "BETWEEN" || op_upper == "LIKE") &&
+                !column_stats.histogram_buckets.empty())
+            {
+                sources.push_back("HISTOGRAM");
+            }
+            if (sources.empty())
+            {
+                sources.push_back("COLUMN_STATS");
+            }
+            if (predicate.literal_kind == "PARAMETER")
+            {
+                sources.push_back("BOUND_PARAMETER");
+            }
+
+            std::ostringstream out;
+            for (size_t i = 0; i < sources.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    out << '+';
+                }
+                out << sources[i];
+            }
+            return out.str();
+        }
+
+        auto joinStatsSource(const ResolvedSelectQuery &resolved,
+                             const ResolvedJoin &join,
+                             StatisticsManager *stats_manager) -> std::string
+        {
+            if (!join.equi_join || !join.has_hash_column_ids || stats_manager == nullptr)
+            {
+                return "JOIN_HEURISTIC";
+            }
+
+            if (join.left_relation_index >= resolved.relations.size() ||
+                join.right_relation_index >= resolved.relations.size())
+            {
+                return "JOIN_HEURISTIC";
+            }
+
+            const auto &left_relation = resolved.relations[join.left_relation_index];
+            const auto &right_relation = resolved.relations[join.right_relation_index];
+            if (!left_relation.resolved || !right_relation.resolved)
+            {
+                return "JOIN_HEURISTIC";
+            }
+
+            ColumnStatistics left_stats;
+            ColumnStatistics right_stats;
+            core::ErrorContext local_ctx;
+            if (stats_manager->getColumnStatistics(left_relation.table_info.table_id,
+                                                   join.left_hash_column_id,
+                                                   left_stats,
+                                                   &local_ctx) == core::Status::OK &&
+                stats_manager->getColumnStatistics(right_relation.table_info.table_id,
+                                                   join.right_hash_column_id,
+                                                   right_stats,
+                                                   &local_ctx) == core::Status::OK)
+            {
+                return "JOIN_COLUMN_STATS";
+            }
+            return "JOIN_HEURISTIC";
         }
 
         auto toRuntimePlanNode(const std::shared_ptr<PlanNode> &plan) -> RuntimePlanNode
@@ -226,6 +1774,22 @@ namespace scratchbird::optimizer
                     }
                     break;
                 }
+                case PlanNodeType::MERGE_JOIN: {
+                    auto join = std::dynamic_pointer_cast<MergeJoinNode>(plan);
+                    node.node_type = "MergeJoin";
+                    if (join)
+                    {
+                        node.join_type = planJoinTypeToString(join->joinType());
+                        node.condition_text = join->joinCondString();
+                        node.detail_text =
+                            std::string(join->outerPresorted() ? "outer-presorted" : "sort-outer") +
+                            "," +
+                            std::string(join->innerPresorted() ? "inner-presorted" : "sort-inner");
+                        node.children.push_back(toRuntimePlanNode(join->outerPlan()));
+                        node.children.push_back(toRuntimePlanNode(join->innerPlan()));
+                    }
+                    break;
+                }
                 case PlanNodeType::AGGREGATE: {
                     auto aggregate = std::dynamic_pointer_cast<AggregateNode>(plan);
                     node.node_type = "Aggregate";
@@ -287,15 +1851,263 @@ namespace scratchbird::optimizer
             return node;
         }
 
+        auto annotateRuntimePlanResources(RuntimePlanNode &node,
+                                          const std::shared_ptr<PlanNode> &plan,
+                                          CostModel &cost_model,
+                                          uint64_t row_width,
+                                          const std::string &spill_policy_text) -> void
+        {
+            if (!plan)
+            {
+                return;
+            }
+
+            CostEstimate resource_cost;
+            bool have_resource_cost = false;
+
+            switch (plan->type())
+            {
+                case PlanNodeType::NESTED_LOOP_JOIN: {
+                    auto join = std::dynamic_pointer_cast<NestedLoopJoinNode>(plan);
+                    if (join)
+                    {
+                        if (node.children.size() >= 1)
+                        {
+                            annotateRuntimePlanResources(node.children[0],
+                                                         join->outerPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        if (node.children.size() >= 2)
+                        {
+                            annotateRuntimePlanResources(node.children[1],
+                                                         join->innerPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                    }
+                    break;
+                }
+                case PlanNodeType::HASH_JOIN: {
+                    auto join = std::dynamic_pointer_cast<HashJoinNode>(plan);
+                    if (join)
+                    {
+                        if (node.children.size() >= 1)
+                        {
+                            annotateRuntimePlanResources(node.children[0],
+                                                         join->outerPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        if (node.children.size() >= 2)
+                        {
+                            annotateRuntimePlanResources(node.children[1],
+                                                         join->innerPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        const auto outer_cost = planCostEstimate(join->outerPlan());
+                        const auto inner_cost = planCostEstimate(join->innerPlan());
+                        resource_cost = cost_model.costHashJoin(
+                            outer_cost,
+                            inner_cost,
+                            outer_cost.rows,
+                            inner_cost.rows,
+                            derivedJoinSelectivity(join->joinType(),
+                                                   outer_cost.rows,
+                                                   inner_cost.rows,
+                                                   plan->rows()),
+                            join->joinType(),
+                            nullptr);
+                        have_resource_cost = true;
+                    }
+                    break;
+                }
+                case PlanNodeType::MERGE_JOIN: {
+                    auto join = std::dynamic_pointer_cast<MergeJoinNode>(plan);
+                    if (join)
+                    {
+                        if (node.children.size() >= 1)
+                        {
+                            annotateRuntimePlanResources(node.children[0],
+                                                         join->outerPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        if (node.children.size() >= 2)
+                        {
+                            annotateRuntimePlanResources(node.children[1],
+                                                         join->innerPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        const auto outer_cost = planCostEstimate(join->outerPlan());
+                        const auto inner_cost = planCostEstimate(join->innerPlan());
+                        resource_cost = cost_model.costMergeJoin(
+                            outer_cost,
+                            inner_cost,
+                            outer_cost.rows,
+                            inner_cost.rows,
+                            derivedJoinSelectivity(join->joinType(),
+                                                   outer_cost.rows,
+                                                   inner_cost.rows,
+                                                   plan->rows()),
+                            join->outerPresorted(),
+                            join->innerPresorted(),
+                            join->joinType(),
+                            nullptr);
+                        have_resource_cost = true;
+                    }
+                    break;
+                }
+                case PlanNodeType::AGGREGATE: {
+                    auto aggregate = std::dynamic_pointer_cast<AggregateNode>(plan);
+                    if (aggregate)
+                    {
+                        if (node.children.size() >= 1)
+                        {
+                            annotateRuntimePlanResources(node.children[0],
+                                                         aggregate->childPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        resource_cost = cost_model.costAggregate(
+                            aggregate->childPlan() ? aggregate->childPlan()->rows() : plan->rows(),
+                            std::max<uint64_t>(1, plan->rows()),
+                            aggregate->aggregates().size(),
+                            nullptr);
+                        have_resource_cost = true;
+                    }
+                    break;
+                }
+                case PlanNodeType::SORT: {
+                    auto sort = std::dynamic_pointer_cast<SortNode>(plan);
+                    if (sort)
+                    {
+                        if (node.children.size() >= 1)
+                        {
+                            annotateRuntimePlanResources(node.children[0],
+                                                         sort->childPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        const uint64_t input_rows =
+                            sort->childPlan() ? sort->childPlan()->rows() : plan->rows();
+                        uint64_t top_n = 0;
+                        if (parseTopNCount(node.detail_text, top_n))
+                        {
+                            resource_cost = cost_model.costSort(
+                                input_rows,
+                                row_width,
+                                std::max<uint64_t>(1, sort->orderByItems().size()),
+                                top_n,
+                                nullptr);
+                        }
+                        else
+                        {
+                            resource_cost = cost_model.costSort(
+                                input_rows,
+                                row_width,
+                                std::max<uint64_t>(1, sort->orderByItems().size()),
+                                nullptr);
+                        }
+                        have_resource_cost = true;
+                    }
+                    break;
+                }
+                case PlanNodeType::LIMIT: {
+                    auto limit = std::dynamic_pointer_cast<LimitNode>(plan);
+                    if (limit)
+                    {
+                        if (node.children.size() >= 1)
+                        {
+                            annotateRuntimePlanResources(node.children[0],
+                                                         limit->childPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        const uint64_t input_rows =
+                            limit->childPlan() ? limit->childPlan()->rows() : plan->rows();
+                        resource_cost = cost_model.costLimit(input_rows,
+                                                             limit->limitCount(),
+                                                             limit->offsetCount(),
+                                                             nullptr);
+                        have_resource_cost = true;
+                    }
+                    break;
+                }
+                case PlanNodeType::WINDOW: {
+                    auto window = std::dynamic_pointer_cast<WindowNode>(plan);
+                    if (window)
+                    {
+                        if (node.children.size() >= 1)
+                        {
+                            annotateRuntimePlanResources(node.children[0],
+                                                         window->child(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        uint64_t partition_keys = 0;
+                        uint64_t order_keys = 0;
+                        for (const auto &func : window->windowFunctions())
+                        {
+                            if (func.window_spec == nullptr)
+                            {
+                                continue;
+                            }
+                            partition_keys += func.window_spec->partition_by.size();
+                            order_keys += func.window_spec->order_by.size();
+                        }
+                        resource_cost = cost_model.costWindow(
+                            window->child() ? window->child()->rows() : plan->rows(),
+                            row_width,
+                            partition_keys,
+                            order_keys,
+                            window->windowFunctions().size(),
+                            nullptr);
+                        have_resource_cost = true;
+                    }
+                    break;
+                }
+                default: {
+                    const auto &plan_children = plan->children();
+                    for (size_t i = 0; i < node.children.size() && i < plan_children.size(); ++i)
+                    {
+                        annotateRuntimePlanResources(node.children[i],
+                                                     plan_children[i],
+                                                     cost_model,
+                                                     row_width,
+                                                     spill_policy_text);
+                    }
+                    break;
+                }
+            }
+
+            if (have_resource_cost)
+            {
+                applyResourceMetadata(node, resource_cost, spill_policy_text);
+            }
+        }
+
         auto isJoinReorderSafe(const ResolvedSelectQuery &resolved) -> bool
         {
-            if (!resolved.all_joins_inner)
+            if (resolved.has_join_reorder_barrier)
             {
                 return false;
             }
             for (const auto &join : resolved.joins)
             {
-                if (join.natural || !join.using_columns.empty())
+                if (!join.reorderable)
                 {
                     return false;
                 }
@@ -678,7 +2490,8 @@ namespace scratchbird::optimizer
                                        PlannedSelectQuery &planned_out,
                                        core::ErrorContext *ctx,
                                        core::ConnectionContext *conn_ctx,
-                                       const core::ID &current_schema_id)
+                                       const core::ID &current_schema_id,
+                                       const ParameterBindings *parameter_bindings)
         -> core::Status
     {
         planned_out = PlannedSelectQuery{};
@@ -687,6 +2500,43 @@ namespace scratchbird::optimizer
         {
             return core::Status::INVALID_ARGUMENT;
         }
+
+        CostParameters planner_params = cost_model_.parameters();
+        PlannerControlSurface planner_controls;
+        std::string planner_control_error;
+        if (!resolvePlannerControlSurface(conn_ctx,
+                                          planner_params,
+                                          planner_controls,
+                                          planner_control_error))
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              core::Status::INVALID_ARGUMENT,
+                              planner_control_error.c_str());
+            return core::Status::INVALID_ARGUMENT;
+        }
+        planner_params.work_mem_bytes = planner_controls.work_mem_bytes;
+        const PlannerSpillPolicy spill_policy = planner_controls.spill_policy;
+        const std::string spill_policy_text = plannerSpillPolicyName(spill_policy);
+        CostModel active_cost_model(planner_params);
+
+        struct ParameterBindingScope
+        {
+            SelectivityEstimator &estimator;
+            const ParameterBindings *previous = nullptr;
+
+            ParameterBindingScope(SelectivityEstimator &target,
+                                  const ParameterBindings *bindings)
+                : estimator(target),
+                  previous(target.parameterBindings())
+            {
+                estimator.setParameterBindings(bindings);
+            }
+
+            ~ParameterBindingScope()
+            {
+                estimator.setParameterBindings(previous);
+            }
+        } parameter_scope(selectivity_estimator_, parameter_bindings);
 
         V3SemanticAnalyzer analyzer(db_, stats_manager_);
         core::Status status = analyzer.resolveSelect(select_stmt,
@@ -734,6 +2584,9 @@ namespace scratchbird::optimizer
                 functions.push_back(function);
             };
 
+        std::vector<RuntimePlanTraceEntry> considered_paths;
+        std::vector<RuntimePlanTraceEntry> rejected_paths;
+        std::vector<RuntimePlanStatisticsProvenance> statistics_provenance;
         std::vector<BaseAccessChoice> access_choices(planned_out.resolved_query.relations.size());
         for (size_t relation_index = 0;
              relation_index < planned_out.resolved_query.relations.size();
@@ -851,13 +2704,14 @@ namespace scratchbird::optimizer
                 };
 
             const std::string relation_name = displayRelationName(relation);
+            const std::string relation_subject = "relation:" + relation_name;
             double qual_cost = 0.0;
             const bool predicate_or =
                 core::IdentifierUtils::toUpper(relation.predicate_combination) == "OR";
             double selectivity = predicate_or ? 0.0 : 1.0;
             for (const auto &predicate : predicates)
             {
-                qual_cost += cost_model_.operatorCost(predicate.operator_name);
+                qual_cost += active_cost_model.operatorCost(predicate.operator_name);
                 const double predicate_selectivity = estimatePredicateSelectivity(predicate);
                 if (predicate_or)
                 {
@@ -873,13 +2727,87 @@ namespace scratchbird::optimizer
                 selectivity = std::max(0.0001, std::min(1.0, selectivity));
             }
 
-            const uint64_t base_rows =
+            const PartitionPruningResult pruning =
+                analyzePartitionPruning(db_ ? db_->catalog_manager() : nullptr,
+                                        relation);
+            const uint64_t unpruned_base_rows =
                 relation.estimated_rows == 0 ? 1000 : relation.estimated_rows;
+            const uint64_t unpruned_base_pages =
+                std::max<uint64_t>(1,
+                                   relation.estimated_pages == 0 ? 10
+                                                                 : relation.estimated_pages);
+            const uint64_t base_rows =
+                pruning.pruned && pruning.rows > 0 ? pruning.rows : unpruned_base_rows;
             const uint64_t base_pages =
-                std::max<uint64_t>(1, relation.estimated_pages == 0 ? 10 : relation.estimated_pages);
+                pruning.pruned && pruning.pages > 0 ? pruning.pages : unpruned_base_pages;
             const uint64_t seq_rows = relationOutputRows(base_rows, selectivity);
+            appendStatsProvenance(
+                statistics_provenance,
+                relation_subject,
+                pruning.pruned ? "PARTITION_PRUNED_STATS"
+                               : relation.estimated_rows == 0
+                                     ? "CARDINALITY_FALLBACK"
+                                     : "CATALOG_TABLE_STATS",
+                "base_rows=" + std::to_string(base_rows) +
+                    ", pages=" + std::to_string(base_pages));
+            if (pruning.available)
+            {
+                appendStatsProvenance(
+                    statistics_provenance,
+                    relation_subject,
+                    pruning.pruned ? "PARTITION_PRUNING" : "PARTITION_CATALOG",
+                    pruning.key_column.empty()
+                        ? pruning.strategy
+                        : pruning.strategy + " key=" + pruning.key_column);
+                appendRuntimeTrace(considered_paths,
+                                   "PARTITION_PRUNING",
+                                   relation_subject,
+                                   pruning.strategy.empty()
+                                       ? "PARTITIONED_RELATION"
+                                       : pruning.strategy,
+                                   pruning.pruned ? "CHOSEN" : "CONSIDERED",
+                                   pruning.pruned
+                                       ? "matched " +
+                                             std::to_string(pruning.targets.size()) +
+                                             " partition target(s)"
+                                       : "no single-target pruning proof",
+                                   0.0,
+                                   0.0,
+                                   base_rows);
+            }
+            for (const auto &predicate : predicates)
+            {
+                appendStatsProvenance(statistics_provenance,
+                                      relation_subject,
+                                      predicateStatsSource(relation,
+                                                           predicate,
+                                                           stats_manager_),
+                                      predicate.predicate_text);
+                if (!predicate.has_index_match && !relation.indexes.empty())
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "ACCESS_PATH",
+                                       relation_subject,
+                                       "INDEX_SCAN",
+                                       "REJECTED",
+                                       "no matching index for predicate " +
+                                           predicate.predicate_text,
+                                       0.0,
+                                       0.0,
+                                       seq_rows);
+                }
+            }
             CostEstimate best_cost =
-                cost_model_.costSeqScan(base_pages, seq_rows, qual_cost, ctx);
+                active_cost_model.costSeqScan(base_pages, seq_rows, qual_cost, ctx);
+            appendRuntimeTrace(considered_paths,
+                               "ACCESS_PATH",
+                               relation_subject,
+                               "SEQ_SCAN",
+                               "CONSIDERED",
+                               "baseline sequential scan",
+                               best_cost.startup_cost,
+                               best_cost.total_cost,
+                               best_cost.rows);
             std::shared_ptr<Path> best_path;
             auto seq_path = std::make_shared<SeqScanPath>(relation.table_info.table_id,
                                                           relation_name,
@@ -958,7 +2886,7 @@ namespace scratchbird::optimizer
                 std::string scan_kind = "INDEX_SCAN";
                 if (index.index_type == core::CatalogManager::IndexType::LSM)
                 {
-                    candidate_cost = cost_model_.costLSMScan(3,
+                    candidate_cost = active_cost_model.costLSMScan(3,
                                                              2,
                                                              expected_rows,
                                                              heap_pages,
@@ -970,7 +2898,7 @@ namespace scratchbird::optimizer
                 }
                 else if (covering_index)
                 {
-                    candidate_cost = cost_model_.costIndexOnlyScan(3,
+                    candidate_cost = active_cost_model.costIndexOnlyScan(3,
                                                                    index_pages,
                                                                    expected_rows,
                                                                    qual_cost,
@@ -980,7 +2908,7 @@ namespace scratchbird::optimizer
                 }
                 else
                 {
-                    candidate_cost = cost_model_.costIndexScan(3,
+                    candidate_cost = active_cost_model.costIndexScan(3,
                                                                index_pages,
                                                                expected_rows,
                                                                heap_pages,
@@ -990,8 +2918,31 @@ namespace scratchbird::optimizer
                                                                ctx);
                 }
 
+                appendRuntimeTrace(considered_paths,
+                                   "ACCESS_PATH",
+                                   relation_subject,
+                                   accessTraceCandidateLabel(scan_kind,
+                                                            index.index_name,
+                                                            std::string()),
+                                   "CONSIDERED",
+                                   predicate.predicate_text,
+                                   candidate_cost.startup_cost,
+                                   candidate_cost.total_cost,
+                                   candidate_cost.rows);
+
                 if (candidate_cost.total_cost > best_cost.total_cost)
                 {
+                    appendRuntimeTrace(rejected_paths,
+                                       "ACCESS_PATH",
+                                       relation_subject,
+                                       accessTraceCandidateLabel(scan_kind,
+                                                                index.index_name,
+                                                                std::string()),
+                                       "REJECTED",
+                                       "higher total cost than current best",
+                                       candidate_cost.startup_cost,
+                                       candidate_cost.total_cost,
+                                       candidate_cost.rows);
                     continue;
                 }
 
@@ -1101,13 +3052,27 @@ namespace scratchbird::optimizer
                                        static_cast<uint64_t>(static_cast<double>(base_pages) *
                                                              selectivity));
                 CostEstimate bitmap_cost =
-                    cost_model_.costBitmapScan(bitmap_index_ids.size(),
+                    active_cost_model.costBitmapScan(bitmap_index_ids.size(),
                                                std::max<uint64_t>(1, bitmap_total_index_pages),
                                                bitmap_heap_pages,
                                                bitmap_rows,
                                                qual_cost,
                                                predicate_or ? "OR" : "AND",
                                                ctx);
+                appendRuntimeTrace(considered_paths,
+                                   "ACCESS_PATH",
+                                   relation_subject,
+                                   accessTraceCandidateLabel("BITMAP_INDEX_SCAN",
+                                                            bitmap_index_names.empty()
+                                                                ? std::string()
+                                                                : bitmap_index_names.front(),
+                                                            predicate_or ? "OR" : "AND"),
+                                   "CONSIDERED",
+                                   "bitmap over " +
+                                       std::to_string(bitmap_index_ids.size()) + " indexes",
+                                   bitmap_cost.startup_cost,
+                                   bitmap_cost.total_cost,
+                                   bitmap_cost.rows);
                 const bool prefer_exact_bitmap =
                     !predicate_or &&
                     bitmap_exact_lookup &&
@@ -1150,6 +3115,22 @@ namespace scratchbird::optimizer
                                          bitmap_cost.rows);
                     best_plan = bitmap_plan;
                 }
+                else
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "ACCESS_PATH",
+                                       relation_subject,
+                                       accessTraceCandidateLabel("BITMAP_INDEX_SCAN",
+                                                                bitmap_index_names.empty()
+                                                                    ? std::string()
+                                                                    : bitmap_index_names.front(),
+                                                                predicate_or ? "OR" : "AND"),
+                                       "REJECTED",
+                                       "higher total cost than current best",
+                                       bitmap_cost.startup_cost,
+                                       bitmap_cost.total_cost,
+                                       bitmap_cost.rows);
+                }
             }
 
             choice.path = best_path;
@@ -1161,11 +3142,19 @@ namespace scratchbird::optimizer
             choice.runtime_relation.alias = relation.alias;
             choice.runtime_relation.table_id_text =
                 relation.resolved ? relation.table_info.table_id.toString() : std::string();
+            choice.runtime_relation.base_rows = base_rows;
+            choice.runtime_relation.selectivity = selectivity;
             choice.runtime_relation.scan_kind = best_scan_kind;
             choice.runtime_relation.bitmap_op = best_bitmap_op;
             choice.runtime_relation.covering_index = best_covering_index;
             choice.runtime_relation.exact_key_lookup = best_exact_key_lookup;
             choice.runtime_relation.flattened_derived = relation.flattened_derived;
+            choice.runtime_relation.lateral = relation.lateral;
+            choice.runtime_relation.parameterized = relation.lateral;
+            choice.runtime_relation.partition_pruned = pruning.pruned;
+            choice.runtime_relation.partition_strategy = pruning.strategy;
+            choice.runtime_relation.partition_key_column = pruning.key_column;
+            choice.runtime_relation.partition_targets = pruning.targets;
             choice.runtime_relation.startup_cost = best_cost.startup_cost;
             choice.runtime_relation.total_cost = best_cost.total_cost;
             choice.runtime_relation.estimated_rows = best_cost.rows;
@@ -1183,6 +3172,24 @@ namespace scratchbird::optimizer
             {
                 choice.runtime_relation.index_name = matched_index.index_name;
                 choice.runtime_relation.index_id_text = matched_index.index_id.toString();
+            }
+            appendRuntimeTrace(considered_paths,
+                               "ACCESS_PATH",
+                               relation_subject,
+                               accessTraceCandidateLabel(best_scan_kind,
+                                                        choice.runtime_relation.index_name,
+                                                        best_bitmap_op),
+                               "CHOSEN",
+                               "selected access path",
+                               best_cost.startup_cost,
+                               best_cost.total_cost,
+                               best_cost.rows);
+            if (relation.lateral)
+            {
+                appendStatsProvenance(statistics_provenance,
+                                      relation_subject,
+                                      "PARAMETERIZED_LATERAL",
+                                      "evaluated per outer row through nested loop parameterization");
             }
             access_choices[relation_index] = std::move(choice);
         }
@@ -1224,12 +3231,15 @@ namespace scratchbird::optimizer
                 uint64_t current_rows,
                 size_t candidate_relation_index,
                 const ResolvedJoin &join,
-                bool candidate_is_right_relation) -> JoinDecision {
+                bool candidate_is_right_relation,
+                bool disconnected_component_cross_join = false) -> JoinDecision {
                 JoinDecision decision;
                 decision.valid = true;
                 decision.join_index = join.source_join_index;
                 decision.candidate_relation_index = candidate_relation_index;
-                decision.selectivity = estimateJoinSelectivityFor(join);
+                decision.selectivity =
+                    join.join_type == parser::JoinType::CROSS ? 1.0
+                                                              : estimateJoinSelectivityFor(join);
                 if (decision.selectivity <= 0.0)
                 {
                     decision.selectivity = 0.01;
@@ -1238,23 +3248,88 @@ namespace scratchbird::optimizer
                 const auto &candidate_access = access_choices[candidate_relation_index];
                 const auto &candidate_relation =
                     planned_out.resolved_query.relations[candidate_relation_index];
+                const std::string join_subject =
+                    "join:" + joinTraceSubject(planned_out.resolved_query, join);
+                const bool parameterized_inner =
+                    candidate_access.runtime_relation.parameterized ||
+                    candidate_relation.lateral;
+                appendStatsProvenance(statistics_provenance,
+                                      join_subject,
+                                      joinStatsSource(planned_out.resolved_query,
+                                                      join,
+                                                      stats_manager_),
+                                      join.condition_text.empty()
+                                          ? planJoinTypeToString(join.join_type)
+                                          : join.condition_text);
                 const auto join_type = join.join_type;
-                CostEstimate nl_cost = cost_model_.costNestedLoopJoin(
-                    current_path ? current_path->cost() : CostEstimate{},
-                    candidate_access.path ? candidate_access.path->cost() : CostEstimate{},
-                    current_rows,
-                    candidate_access.path ? candidate_access.path->rows() : 0,
-                    decision.selectivity,
-                    join_type,
-                    ctx);
+                auto rejectForcedJoinMethod =
+                    [&](const char *requested_method,
+                        const std::string &reason) -> JoinDecision {
+                        SET_ERROR_CONTEXT(ctx,
+                                          core::Status::INVALID_ARGUMENT,
+                                          (std::string("Optimizer control requires ") +
+                                           requested_method + " for " + join_subject +
+                                           ", but " + reason)
+                                              .c_str());
+                        decision.valid = false;
+                        return decision;
+                    };
+
+                const bool allow_nested_loop =
+                    planner_controls.join_method !=
+                        PlannerJoinMethodControl::HASH_ONLY &&
+                    planner_controls.join_method !=
+                        PlannerJoinMethodControl::MERGE_ONLY;
+                CostEstimate nl_cost{};
+                if (allow_nested_loop)
+                {
+                    nl_cost = active_cost_model.costNestedLoopJoin(
+                        current_path ? current_path->cost() : CostEstimate{},
+                        candidate_access.path ? candidate_access.path->cost()
+                                              : CostEstimate{},
+                        current_rows,
+                        candidate_access.path ? candidate_access.path->rows() : 0,
+                        decision.selectivity,
+                        join_type,
+                        ctx);
+                    appendRuntimeTrace(considered_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "NESTED_LOOP",
+                                       "CONSIDERED",
+                                       "join candidate",
+                                       nl_cost.startup_cost,
+                                       nl_cost.total_cost,
+                                       nl_cost.rows);
+                }
+                else
+                {
+                    nl_cost.total_cost = std::numeric_limits<double>::max();
+                    appendRuntimeTrace(rejected_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "NESTED_LOOP",
+                                       "REJECTED",
+                                       std::string("optimizer control forces ") +
+                                           plannerJoinMethodName(
+                                               planner_controls.join_method),
+                                       0.0,
+                                       0.0,
+                                       0);
+                }
 
                 bool allow_hash =
                     (join_type == parser::JoinType::INNER || join_type == parser::JoinType::LEFT) &&
-                    join.equi_join;
+                    join.equi_join &&
+                    !parameterized_inner &&
+                    planner_controls.join_method !=
+                        PlannerJoinMethodControl::NESTED_LOOP_ONLY &&
+                    planner_controls.join_method !=
+                        PlannerJoinMethodControl::MERGE_ONLY;
                 CostEstimate hash_cost{};
                 if (allow_hash)
                 {
-                    hash_cost = cost_model_.costHashJoin(
+                    hash_cost = active_cost_model.costHashJoin(
                         current_path ? current_path->cost() : CostEstimate{},
                         candidate_access.path ? candidate_access.path->cost() : CostEstimate{},
                         current_rows,
@@ -1262,32 +3337,326 @@ namespace scratchbird::optimizer
                         decision.selectivity,
                         join_type,
                         ctx);
+                    appendRuntimeTrace(considered_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "HASH_JOIN",
+                                       "CONSIDERED",
+                                       "equi-join hash candidate",
+                                       hash_cost.startup_cost,
+                                       hash_cost.total_cost,
+                                       hash_cost.rows);
+                    if (spill_policy == PlannerSpillPolicy::DISALLOW &&
+                        hash_cost.spill_expected)
+                    {
+                        allow_hash = false;
+                        hash_cost.total_cost = std::numeric_limits<double>::max();
+                        appendRuntimeTrace(rejected_paths,
+                                           "JOIN_METHOD",
+                                           join_subject,
+                                           "HASH_JOIN",
+                                           "REJECTED",
+                                           "spill policy disallows hash-join temp spill",
+                                           0.0,
+                                           0.0,
+                                           0);
+                        if (planner_controls.join_method ==
+                            PlannerJoinMethodControl::HASH_ONLY)
+                        {
+                            return rejectForcedJoinMethod(
+                                "HASH_JOIN",
+                                "spill policy disallows hash-join temp spill");
+                        }
+                    }
                 }
                 else
                 {
                     hash_cost.total_cost = std::numeric_limits<double>::max();
+                    std::string reject_reason;
+                    if (planner_controls.join_method ==
+                            PlannerJoinMethodControl::NESTED_LOOP_ONLY ||
+                        planner_controls.join_method ==
+                            PlannerJoinMethodControl::MERGE_ONLY)
+                    {
+                        reject_reason = std::string("optimizer control forces ") +
+                            plannerJoinMethodName(planner_controls.join_method);
+                    }
+                    else
+                    {
+                        reject_reason = parameterized_inner
+                            ? "parameterized inner path requires nested loop"
+                            : join.equi_join
+                            ? "join type does not admit hash join"
+                            : "hash join requires equi-join keys";
+                    }
+                    appendRuntimeTrace(rejected_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "HASH_JOIN",
+                                       "REJECTED",
+                                       reject_reason,
+                                       0.0,
+                                       0.0,
+                                       0);
+                    if (planner_controls.join_method ==
+                            PlannerJoinMethodControl::HASH_ONLY)
+                    {
+                        return rejectForcedJoinMethod("HASH_JOIN", reject_reason);
+                    }
                 }
 
-                bool use_hash = allow_hash && hash_cost.total_cost < nl_cost.total_cost;
-                decision.total_cost = use_hash ? hash_cost.total_cost : nl_cost.total_cost;
-                decision.rows = use_hash ? hash_cost.rows : nl_cost.rows;
+                const bool outer_presorted = pathLikelyProvidesJoinOrder(current_path);
+                const bool inner_presorted = pathLikelyProvidesJoinOrder(candidate_access.path);
+                bool allow_merge =
+                    (join_type == parser::JoinType::INNER || join_type == parser::JoinType::LEFT) &&
+                    join.equi_join &&
+                    (outer_presorted || inner_presorted) &&
+                    !parameterized_inner &&
+                    planner_controls.join_method !=
+                        PlannerJoinMethodControl::NESTED_LOOP_ONLY &&
+                    planner_controls.join_method !=
+                        PlannerJoinMethodControl::HASH_ONLY;
+                CostEstimate merge_cost{};
+                if (allow_merge)
+                {
+                    merge_cost = active_cost_model.costMergeJoin(
+                        current_path ? current_path->cost() : CostEstimate{},
+                        candidate_access.path ? candidate_access.path->cost() : CostEstimate{},
+                        current_rows,
+                        candidate_access.path ? candidate_access.path->rows() : 0,
+                        decision.selectivity,
+                        outer_presorted,
+                        inner_presorted,
+                        join_type,
+                        ctx);
+                    appendRuntimeTrace(considered_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "MERGE_JOIN",
+                                       "CONSIDERED",
+                                       "ordered equi-join candidate",
+                                       merge_cost.startup_cost,
+                                       merge_cost.total_cost,
+                                       merge_cost.rows);
+                    if (spill_policy == PlannerSpillPolicy::DISALLOW &&
+                        merge_cost.spill_expected)
+                    {
+                        allow_merge = false;
+                        merge_cost.total_cost = std::numeric_limits<double>::max();
+                        appendRuntimeTrace(rejected_paths,
+                                           "JOIN_METHOD",
+                                           join_subject,
+                                           "MERGE_JOIN",
+                                           "REJECTED",
+                                           "spill policy disallows merge-join temp spill",
+                                           0.0,
+                                           0.0,
+                                           0);
+                        if (planner_controls.join_method ==
+                            PlannerJoinMethodControl::MERGE_ONLY)
+                        {
+                            return rejectForcedJoinMethod(
+                                "MERGE_JOIN",
+                                "spill policy disallows merge-join temp spill");
+                        }
+                    }
+                }
+                else
+                {
+                    merge_cost.total_cost = std::numeric_limits<double>::max();
+                    std::string reject_reason;
+                    if (planner_controls.join_method ==
+                            PlannerJoinMethodControl::NESTED_LOOP_ONLY ||
+                        planner_controls.join_method ==
+                            PlannerJoinMethodControl::HASH_ONLY)
+                    {
+                        reject_reason = std::string("optimizer control forces ") +
+                            plannerJoinMethodName(planner_controls.join_method);
+                    }
+                    else
+                    {
+                        reject_reason = parameterized_inner
+                            ? "parameterized inner path requires nested loop"
+                            : !join.equi_join
+                            ? "merge join requires equi-join keys"
+                            : "merge join requires presorted input";
+                    }
+                    appendRuntimeTrace(rejected_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "MERGE_JOIN",
+                                       "REJECTED",
+                                       reject_reason,
+                                       0.0,
+                                       0.0,
+                                       0);
+                    if (planner_controls.join_method ==
+                            PlannerJoinMethodControl::MERGE_ONLY)
+                    {
+                        return rejectForcedJoinMethod("MERGE_JOIN", reject_reason);
+                    }
+                }
+
+                enum class ChosenJoinMethod
+                {
+                    NESTED_LOOP,
+                    HASH_JOIN,
+                    MERGE_JOIN
+                };
+                ChosenJoinMethod chosen_method = ChosenJoinMethod::NESTED_LOOP;
+                decision.total_cost = nl_cost.total_cost;
+                decision.rows = nl_cost.rows;
+                if (!allow_nested_loop)
+                {
+                    chosen_method = allow_hash ? ChosenJoinMethod::HASH_JOIN
+                                               : ChosenJoinMethod::MERGE_JOIN;
+                    decision.total_cost =
+                        allow_hash ? hash_cost.total_cost : merge_cost.total_cost;
+                    decision.rows = allow_hash ? hash_cost.rows : merge_cost.rows;
+                }
+                if (allow_hash && hash_cost.total_cost < decision.total_cost)
+                {
+                    chosen_method = ChosenJoinMethod::HASH_JOIN;
+                    decision.total_cost = hash_cost.total_cost;
+                    decision.rows = hash_cost.rows;
+                }
+                if (allow_merge && merge_cost.total_cost < decision.total_cost)
+                {
+                    chosen_method = ChosenJoinMethod::MERGE_JOIN;
+                    decision.total_cost = merge_cost.total_cost;
+                    decision.rows = merge_cost.rows;
+                }
+                const char *chosen_method_name =
+                    chosen_method == ChosenJoinMethod::HASH_JOIN
+                        ? "HASH_JOIN"
+                        : chosen_method == ChosenJoinMethod::MERGE_JOIN
+                              ? "MERGE_JOIN"
+                              : "NESTED_LOOP";
+                if (allow_nested_loop &&
+                    chosen_method != ChosenJoinMethod::NESTED_LOOP)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "NESTED_LOOP",
+                                       "REJECTED",
+                                       std::string("higher total cost than chosen ") +
+                                           chosen_method_name,
+                                       nl_cost.startup_cost,
+                                       nl_cost.total_cost,
+                                       nl_cost.rows);
+                }
+                if (allow_hash && chosen_method != ChosenJoinMethod::HASH_JOIN)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "HASH_JOIN",
+                                       "REJECTED",
+                                       std::string("higher total cost than chosen ") +
+                                           chosen_method_name,
+                                       hash_cost.startup_cost,
+                                       hash_cost.total_cost,
+                                       hash_cost.rows);
+                }
+                if (allow_merge && chosen_method != ChosenJoinMethod::MERGE_JOIN)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "JOIN_METHOD",
+                                       join_subject,
+                                       "MERGE_JOIN",
+                                       "REJECTED",
+                                       std::string("higher total cost than chosen ") +
+                                           chosen_method_name,
+                                       merge_cost.startup_cost,
+                                       merge_cost.total_cost,
+                                       merge_cost.rows);
+                }
                 decision.runtime_join.source_join_index = join.source_join_index;
                 decision.runtime_join.right_relation_index = candidate_relation_index;
                 decision.runtime_join.join_type = planJoinTypeToString(join_type);
+                decision.runtime_join.disconnected_component =
+                    disconnected_component_cross_join;
+                decision.runtime_join.legality_class =
+                    std::string(joinLegalityClassName(join.legality_class));
+                decision.runtime_join.reorderable = join.reorderable;
                 decision.runtime_join.natural = join.natural;
                 decision.runtime_join.using_columns = join.using_columns;
                 decision.runtime_join.condition_text = join.condition_text;
+                decision.runtime_join.preserves_left_rows = join.preserves_left_rows;
+                decision.runtime_join.preserves_right_rows = join.preserves_right_rows;
+                decision.runtime_join.null_introduces_left =
+                    join.null_introduces_left;
+                decision.runtime_join.null_introduces_right =
+                    join.null_introduces_right;
+                decision.runtime_join.requires_original_order =
+                    join.requires_original_order;
+                if (decision.runtime_join.disconnected_component &&
+                    decision.runtime_join.condition_text.empty())
+                {
+                    decision.runtime_join.condition_text =
+                        "[disconnected component cross join]";
+                }
                 decision.runtime_join.startup_cost =
-                    use_hash ? hash_cost.startup_cost : nl_cost.startup_cost;
+                    chosen_method == ChosenJoinMethod::HASH_JOIN
+                        ? hash_cost.startup_cost
+                        : chosen_method == ChosenJoinMethod::MERGE_JOIN
+                              ? merge_cost.startup_cost
+                              : nl_cost.startup_cost;
                 decision.runtime_join.total_cost =
-                    use_hash ? hash_cost.total_cost : nl_cost.total_cost;
+                    chosen_method == ChosenJoinMethod::HASH_JOIN
+                        ? hash_cost.total_cost
+                        : chosen_method == ChosenJoinMethod::MERGE_JOIN
+                              ? merge_cost.total_cost
+                              : nl_cost.total_cost;
                 decision.runtime_join.estimated_rows =
-                    use_hash ? hash_cost.rows : nl_cost.rows;
-                decision.runtime_join.method = use_hash ? "HASH_JOIN" : "NESTED_LOOP";
+                    chosen_method == ChosenJoinMethod::HASH_JOIN
+                        ? hash_cost.rows
+                        : chosen_method == ChosenJoinMethod::MERGE_JOIN
+                              ? merge_cost.rows
+                              : nl_cost.rows;
+                const CostEstimate &chosen_cost =
+                    chosen_method == ChosenJoinMethod::HASH_JOIN
+                        ? hash_cost
+                        : chosen_method == ChosenJoinMethod::MERGE_JOIN
+                              ? merge_cost
+                              : nl_cost;
+                decision.runtime_join.estimated_memory_bytes =
+                    chosen_cost.memory_bytes;
+                decision.runtime_join.memory_budget_bytes =
+                    chosen_cost.memory_budget_bytes;
+                decision.runtime_join.spill_expected =
+                    chosen_cost.spill_expected;
+                decision.runtime_join.spill_passes =
+                    chosen_cost.spill_passes;
+                decision.runtime_join.spill_bytes =
+                    chosen_cost.spill_bytes;
+                decision.runtime_join.spill_policy = spill_policy_text;
+                decision.runtime_join.selectivity = decision.selectivity;
+                decision.runtime_join.method =
+                    chosen_method == ChosenJoinMethod::HASH_JOIN
+                        ? "HASH_JOIN"
+                        : chosen_method == ChosenJoinMethod::MERGE_JOIN
+                              ? "MERGE_JOIN"
+                              : "NESTED_LOOP";
+                appendRuntimeTrace(considered_paths,
+                                   "JOIN_METHOD",
+                                   join_subject,
+                                   decision.runtime_join.method,
+                                   "CHOSEN",
+                                   disconnected_component_cross_join
+                                       ? "selected disconnected-component bridge"
+                                       : "selected join method",
+                                   decision.runtime_join.startup_cost,
+                                   decision.runtime_join.total_cost,
+                                   decision.runtime_join.estimated_rows);
 
                 if (join.equi_join)
                 {
                     decision.runtime_join.has_hash_keys = true;
+                    decision.runtime_join.has_merge_keys = true;
+                    decision.runtime_join.merge_outer_presorted = outer_presorted;
+                    decision.runtime_join.merge_inner_presorted = inner_presorted;
                     if (candidate_is_right_relation)
                     {
                         decision.runtime_join.left_hash_key.qualifier =
@@ -1297,6 +3666,14 @@ namespace scratchbird::optimizer
                         decision.runtime_join.right_hash_key.qualifier =
                             join.right_hash_qualifier;
                         decision.runtime_join.right_hash_key.column_name =
+                            join.right_hash_column;
+                        decision.runtime_join.left_merge_key.qualifier =
+                            join.left_hash_qualifier;
+                        decision.runtime_join.left_merge_key.column_name =
+                            join.left_hash_column;
+                        decision.runtime_join.right_merge_key.qualifier =
+                            join.right_hash_qualifier;
+                        decision.runtime_join.right_merge_key.column_name =
                             join.right_hash_column;
                     }
                     else
@@ -1309,10 +3686,18 @@ namespace scratchbird::optimizer
                             join.left_hash_qualifier;
                         decision.runtime_join.right_hash_key.column_name =
                             join.left_hash_column;
+                        decision.runtime_join.left_merge_key.qualifier =
+                            join.right_hash_qualifier;
+                        decision.runtime_join.left_merge_key.column_name =
+                            join.right_hash_column;
+                        decision.runtime_join.right_merge_key.qualifier =
+                            join.left_hash_qualifier;
+                        decision.runtime_join.right_merge_key.column_name =
+                            join.left_hash_column;
                     }
                 }
 
-                if (use_hash)
+                if (chosen_method == ChosenJoinMethod::HASH_JOIN)
                 {
                     std::vector<parser::v3::Expression *> hash_keys_outer;
                     std::vector<parser::v3::Expression *> hash_keys_inner;
@@ -1323,7 +3708,7 @@ namespace scratchbird::optimizer
                                                                        join.condition),
                                                                    hash_keys_outer,
                                                                    hash_keys_inner);
-                    hash_plan->setJoinCondString(join.condition_text);
+                    hash_plan->setJoinCondString(decision.runtime_join.condition_text);
                     hash_plan->setCost(hash_cost.startup_cost,
                                        hash_cost.total_cost,
                                        hash_cost.rows);
@@ -1338,6 +3723,36 @@ namespace scratchbird::optimizer
                         decision.selectivity,
                         hash_cost);
                 }
+                else if (chosen_method == ChosenJoinMethod::MERGE_JOIN)
+                {
+                    std::vector<parser::v3::Expression *> merge_keys_outer;
+                    std::vector<parser::v3::Expression *> merge_keys_inner;
+                    auto merge_plan = std::make_shared<MergeJoinNode>(
+                        join_type,
+                        current_plan,
+                        candidate_access.plan,
+                        const_cast<parser::v3::Expression *>(join.condition),
+                        merge_keys_outer,
+                        merge_keys_inner,
+                        outer_presorted,
+                        inner_presorted);
+                    merge_plan->setJoinCondString(decision.runtime_join.condition_text);
+                    merge_plan->setCost(merge_cost.startup_cost,
+                                        merge_cost.total_cost,
+                                        merge_cost.rows);
+                    decision.plan = merge_plan;
+                    decision.path = std::make_shared<MergeJoinPath>(
+                        join_type,
+                        current_path,
+                        candidate_access.path,
+                        const_cast<parser::v3::Expression *>(join.condition),
+                        merge_keys_outer,
+                        merge_keys_inner,
+                        decision.selectivity,
+                        outer_presorted,
+                        inner_presorted,
+                        merge_cost);
+                }
                 else
                 {
                     auto nested_plan = std::make_shared<NestedLoopJoinNode>(
@@ -1345,7 +3760,7 @@ namespace scratchbird::optimizer
                         current_plan,
                         candidate_access.plan,
                         const_cast<parser::v3::Expression *>(join.condition));
-                    nested_plan->setJoinCondString(join.condition_text);
+                    nested_plan->setJoinCondString(decision.runtime_join.condition_text);
                     nested_plan->setCost(nl_cost.startup_cost,
                                          nl_cost.total_cost,
                                          nl_cost.rows);
@@ -1367,28 +3782,62 @@ namespace scratchbird::optimizer
                         candidate_relation);
                 }
 
+                if (candidate_is_right_relation &&
+                    join.equi_join &&
+                    !parameterized_inner &&
+                    !isZeroId(join.right_hash_column_id))
+                {
+                    const auto runtime_filter_index =
+                        std::find_if(candidate_relation.indexes.begin(),
+                                     candidate_relation.indexes.end(),
+                                     [&](const core::CatalogManager::IndexInfo &index) {
+                                         return index.index_type ==
+                                                    core::CatalogManager::IndexType::BTREE &&
+                                                !index.column_ids.empty() &&
+                                                index.column_ids.front() ==
+                                                    join.right_hash_column_id;
+                                     });
+                    if (runtime_filter_index != candidate_relation.indexes.end())
+                    {
+                        decision.runtime_filter_enabled = true;
+                        decision.runtime_filter_column = join.right_hash_column;
+                        decision.runtime_filter_index_name =
+                            runtime_filter_index->index_name;
+                        decision.runtime_filter_index_id_text =
+                            runtime_filter_index->index_id.toString();
+                        appendRuntimeTrace(considered_paths,
+                                           "RUNTIME_FILTER",
+                                           join_subject,
+                                           "INDEX_RUNTIME_FILTER[" +
+                                               runtime_filter_index->index_name + "]",
+                                           "CHOSEN",
+                                           "join-key filter on right relation",
+                                           0.0,
+                                           0.0,
+                                           candidate_access.path
+                                               ? candidate_access.path->rows()
+                                               : 0);
+                    }
+                    else
+                    {
+                        appendRuntimeTrace(rejected_paths,
+                                           "RUNTIME_FILTER",
+                                           join_subject,
+                                           "INDEX_RUNTIME_FILTER",
+                                           "REJECTED",
+                                           "no leading btree index on join key",
+                                           0.0,
+                                           0.0,
+                                           candidate_access.path
+                                               ? candidate_access.path->rows()
+                                               : 0);
+                    }
+                }
+
                 return decision;
             };
 
-        std::vector<size_t> relation_order;
-        std::vector<RuntimePlanRelation> runtime_relations;
-        std::vector<RuntimePlanJoinStep> runtime_joins;
-        std::shared_ptr<Path> current_path;
-        std::shared_ptr<PlanNode> current_plan;
-        uint64_t current_rows = 0;
-
-        if (planned_out.resolved_query.joins.empty())
-        {
-            relation_order.push_back(0);
-            runtime_relations.push_back(access_choices[0].runtime_relation);
-            current_path = access_choices[0].path;
-            current_plan = access_choices[0].plan;
-            current_rows = current_path ? current_path->rows() : 0;
-        }
-        else if (isJoinReorderSafe(planned_out.resolved_query))
-        {
-            planned_out.reordered_relations = true;
-            std::vector<bool> joined(planned_out.resolved_query.relations.size(), false);
+        auto chooseStartRelation = [&]() -> size_t {
             size_t start_relation = 0;
             double best_start_cost = std::numeric_limits<double>::max();
             for (size_t relation_index = 0;
@@ -1405,6 +3854,121 @@ namespace scratchbird::optimizer
                     start_relation = relation_index;
                 }
             }
+            return start_relation;
+        };
+
+        auto runtimeRelationForDecision =
+            [&](const JoinDecision &decision) -> RuntimePlanRelation {
+                RuntimePlanRelation relation =
+                    access_choices[decision.candidate_relation_index].runtime_relation;
+                if (decision.runtime_filter_enabled)
+                {
+                    relation.runtime_filter_enabled = true;
+                    relation.runtime_filter_column = decision.runtime_filter_column;
+                    relation.runtime_filter_index_name =
+                        decision.runtime_filter_index_name;
+                    relation.runtime_filter_index_id_text =
+                        decision.runtime_filter_index_id_text;
+                }
+                return relation;
+            };
+
+        auto chooseDisconnectedComponentCrossJoin =
+            [&](const std::vector<bool> &joined,
+                const std::shared_ptr<Path> &current_path,
+                const std::shared_ptr<PlanNode> &current_plan,
+                uint64_t current_rows,
+                size_t left_relation_index) -> JoinDecision {
+                JoinDecision best_join;
+                for (size_t candidate = 0; candidate < joined.size(); ++candidate)
+                {
+                    if (joined[candidate])
+                    {
+                        continue;
+                    }
+
+                    ResolvedJoin cross_join;
+                    cross_join.source_join_index = std::numeric_limits<size_t>::max();
+                    cross_join.left_relation_index = left_relation_index;
+                    cross_join.right_relation_index = candidate;
+                    cross_join.join_type = parser::JoinType::CROSS;
+                    cross_join.condition = nullptr;
+                    cross_join.condition_text.clear();
+                    const auto legality = classifyJoinLegality(cross_join.join_type,
+                                                               false,
+                                                               false);
+                    cross_join.legality_class = legality.legality_class;
+                    cross_join.reorderable = legality.reorderable;
+                    cross_join.preserves_left_rows = legality.preserves_left_rows;
+                    cross_join.preserves_right_rows = legality.preserves_right_rows;
+                    cross_join.null_introduces_left = legality.null_introduces_left;
+                    cross_join.null_introduces_right = legality.null_introduces_right;
+                    cross_join.requires_original_order =
+                        legality.requires_original_order;
+                    auto decision = buildJoinDecision(current_path,
+                                                      current_plan,
+                                                      current_rows,
+                                                      candidate,
+                                                      cross_join,
+                                                      true,
+                                                      true);
+                    if (!best_join.valid || decision.total_cost < best_join.total_cost)
+                    {
+                        best_join = std::move(decision);
+                    }
+                }
+                return best_join;
+            };
+
+        std::vector<size_t> relation_order;
+        std::vector<RuntimePlanRelation> runtime_relations;
+        std::vector<RuntimePlanJoinStep> runtime_joins;
+        std::shared_ptr<Path> current_path;
+        std::shared_ptr<PlanNode> current_plan;
+        uint64_t current_rows = 0;
+
+        if (planned_out.resolved_query.joins.empty())
+        {
+            const size_t start_relation = chooseStartRelation();
+            std::vector<bool> joined(planned_out.resolved_query.relations.size(), false);
+            joined[start_relation] = true;
+            relation_order.push_back(start_relation);
+            runtime_relations.push_back(access_choices[start_relation].runtime_relation);
+            current_path = access_choices[start_relation].path;
+            current_plan = access_choices[start_relation].plan;
+            current_rows = current_path ? current_path->rows() : 0;
+
+            while (relation_order.size() < planned_out.resolved_query.relations.size())
+            {
+                auto decision = chooseDisconnectedComponentCrossJoin(joined,
+                                                                    current_path,
+                                                                    current_plan,
+                                                                    current_rows,
+                                                                    relation_order.back());
+                if (!decision.valid)
+                {
+                    if (ctx != nullptr && ctx->code != core::Status::OK)
+                    {
+                        return ctx->code;
+                    }
+                    return core::Status::INTERNAL_ERROR;
+                }
+                planned_out.disconnected_join_graph = true;
+                joined[decision.candidate_relation_index] = true;
+                relation_order.push_back(decision.candidate_relation_index);
+                runtime_relations.push_back(runtimeRelationForDecision(decision));
+                runtime_joins.push_back(decision.runtime_join);
+                current_path = decision.path;
+                current_plan = decision.plan;
+                current_rows = decision.rows;
+            }
+        }
+        else if (planner_controls.join_search != PlannerJoinSearchMode::INPUT_ORDER &&
+                 isJoinReorderSafe(planned_out.resolved_query))
+        {
+            planned_out.reordered_relations = true;
+            std::vector<bool> joined(planned_out.resolved_query.relations.size(), false);
+            const size_t start_relation = chooseStartRelation();
 
             joined[start_relation] = true;
             relation_order.push_back(start_relation);
@@ -1416,6 +3980,7 @@ namespace scratchbird::optimizer
             while (relation_order.size() < planned_out.resolved_query.relations.size())
             {
                 JoinDecision best_join;
+                size_t candidate_joins_considered = 0;
                 for (const auto &join : planned_out.resolved_query.joins)
                 {
                     const bool left_joined = joined[join.left_relation_index];
@@ -1434,47 +3999,51 @@ namespace scratchbird::optimizer
                                                       candidate_relation_index,
                                                       join,
                                                       candidate_is_right);
+                    if (!decision.valid)
+                    {
+                        if (ctx != nullptr && ctx->code != core::Status::OK)
+                        {
+                            return ctx->code;
+                        }
+                        continue;
+                    }
+                    ++candidate_joins_considered;
                     if (!best_join.valid || decision.total_cost < best_join.total_cost)
                     {
                         best_join = std::move(decision);
+                    }
+                    if (planner_controls.search_depth > 0 &&
+                        candidate_joins_considered >= planner_controls.search_depth)
+                    {
+                        break;
                     }
                 }
 
                 if (!best_join.valid)
                 {
-                    size_t candidate = 0;
-                    for (; candidate < joined.size(); ++candidate)
+                    if (ctx != nullptr && ctx->code != core::Status::OK)
                     {
-                        if (!joined[candidate])
-                        {
-                            break;
-                        }
+                        return ctx->code;
                     }
-                    if (candidate >= joined.size())
+                    best_join = chooseDisconnectedComponentCrossJoin(joined,
+                                                                     current_path,
+                                                                     current_plan,
+                                                                     current_rows,
+                                                                     relation_order.back());
+                    if (!best_join.valid)
                     {
+                        if (ctx != nullptr && ctx->code != core::Status::OK)
+                        {
+                            return ctx->code;
+                        }
                         break;
                     }
-
-                    ResolvedJoin cross_join;
-                    cross_join.source_join_index = std::numeric_limits<size_t>::max();
-                    cross_join.left_relation_index = relation_order.back();
-                    cross_join.right_relation_index = candidate;
-                    cross_join.join_type = parser::JoinType::CROSS;
-                    cross_join.condition = nullptr;
-                    cross_join.condition_text.clear();
-                    auto decision = buildJoinDecision(current_path,
-                                                      current_plan,
-                                                      current_rows,
-                                                      candidate,
-                                                      cross_join,
-                                                      true);
-                    best_join = std::move(decision);
+                    planned_out.disconnected_join_graph = true;
                 }
 
                 joined[best_join.candidate_relation_index] = true;
                 relation_order.push_back(best_join.candidate_relation_index);
-                runtime_relations.push_back(
-                    access_choices[best_join.candidate_relation_index].runtime_relation);
+                runtime_relations.push_back(runtimeRelationForDecision(best_join));
                 runtime_joins.push_back(best_join.runtime_join);
                 current_path = best_join.path;
                 current_plan = best_join.plan;
@@ -1500,6 +4069,10 @@ namespace scratchbird::optimizer
                                                   true);
                 if (!decision.valid)
                 {
+                    if (ctx != nullptr && ctx->code != core::Status::OK)
+                    {
+                        return ctx->code;
+                    }
                     return core::Status::INTERNAL_ERROR;
                 }
                 if (join.join_type == parser::JoinType::RIGHT ||
@@ -1509,9 +4082,12 @@ namespace scratchbird::optimizer
                 {
                     decision.runtime_join.method = "NESTED_LOOP";
                     decision.runtime_join.has_hash_keys = false;
+                    decision.runtime_join.has_merge_keys = false;
+                    decision.runtime_join.merge_outer_presorted = false;
+                    decision.runtime_join.merge_inner_presorted = false;
                 }
                 relation_order.push_back(candidate_relation_index);
-                runtime_relations.push_back(access_choices[candidate_relation_index].runtime_relation);
+                runtime_relations.push_back(runtimeRelationForDecision(decision));
                 runtime_joins.push_back(decision.runtime_join);
                 current_path = decision.path;
                 current_plan = decision.plan;
@@ -1546,10 +4122,18 @@ namespace scratchbird::optimizer
             uint64_t estimated_groups = select_stmt->group_by.empty()
                 ? 1
                 : std::max<uint64_t>(1, current_rows / 10);
-            CostEstimate aggregate_cost = cost_model_.costAggregate(current_rows,
+            CostEstimate aggregate_cost = active_cost_model.costAggregate(current_rows,
                                                                     estimated_groups,
                                                                     query_aggregates.size(),
                                                                     ctx);
+            if (spill_policy == PlannerSpillPolicy::DISALLOW &&
+                aggregate_cost.spill_expected)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  core::Status::CONFIGURATION_LIMIT_EXCEEDED,
+                                  "Aggregate operator exceeds work_mem under spill-disallow policy");
+                return core::Status::CONFIGURATION_LIMIT_EXCEEDED;
+            }
             current_path = std::make_shared<AggregatePath>(current_path,
                                                            select_stmt->group_by,
                                                            query_aggregates,
@@ -1642,12 +4226,20 @@ namespace scratchbird::optimizer
                                               output_column);
             }
 
-            CostEstimate window_cost = cost_model_.costWindow(current_rows,
+            CostEstimate window_cost = active_cost_model.costWindow(current_rows,
                                                               row_width,
                                                               partition_keys,
                                                               order_keys,
                                                               window_functions.size(),
                                                               ctx);
+            if (spill_policy == PlannerSpillPolicy::DISALLOW &&
+                window_cost.spill_expected)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  core::Status::CONFIGURATION_LIMIT_EXCEEDED,
+                                  "Window operator exceeds work_mem under spill-disallow policy");
+                return core::Status::CONFIGURATION_LIMIT_EXCEEDED;
+            }
             current_path = std::make_shared<WindowPath>(current_path,
                                                         query_windows,
                                                         window_cost);
@@ -1657,24 +4249,6 @@ namespace scratchbird::optimizer
                                  window_cost.rows);
             current_plan = window_plan;
             current_rows = window_cost.rows;
-        }
-
-        if (!select_stmt->order_by.empty())
-        {
-            CostEstimate sort_cost = cost_model_.costSort(current_rows,
-                                                          row_width,
-                                                          select_stmt->order_by.size(),
-                                                          ctx);
-            current_path = std::make_shared<SortPath>(current_path,
-                                                      select_stmt->order_by,
-                                                      row_width,
-                                                      sort_cost);
-            auto sort_plan = std::make_shared<SortNode>(current_plan, select_stmt->order_by);
-            sort_plan->setCost(sort_cost.startup_cost,
-                               sort_cost.total_cost,
-                               sort_cost.rows);
-            current_plan = sort_plan;
-            current_rows = sort_cost.rows;
         }
 
         int64_t limit_count = -1;
@@ -1694,9 +4268,60 @@ namespace scratchbird::optimizer
             has_offset = extractConstantInt64(select_stmt->offset, offset_count);
         }
 
+        if (!select_stmt->order_by.empty())
+        {
+            const uint64_t top_n_rows =
+                has_limit
+                    ? static_cast<uint64_t>(std::max<int64_t>(
+                          1,
+                          limit_count + std::max<int64_t>(offset_count, 0)))
+                    : 0;
+            CostEstimate sort_cost =
+                has_limit
+                    ? active_cost_model.costSort(current_rows,
+                                           row_width,
+                                           select_stmt->order_by.size(),
+                                           top_n_rows,
+                                           ctx)
+                    : active_cost_model.costSort(current_rows,
+                                           row_width,
+                                           select_stmt->order_by.size(),
+                                           ctx);
+            if (spill_policy == PlannerSpillPolicy::DISALLOW &&
+                sort_cost.spill_expected)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  core::Status::CONFIGURATION_LIMIT_EXCEEDED,
+                                  "Sort operator exceeds work_mem under spill-disallow policy");
+                return core::Status::CONFIGURATION_LIMIT_EXCEEDED;
+            }
+            if (has_limit)
+            {
+                appendRuntimeTrace(considered_paths,
+                                   "SORT_STRATEGY",
+                                   "query:order_by",
+                                   "TOP_N_SORT",
+                                   "CHOSEN",
+                                   "top-N sort for ordered LIMIT/OFFSET",
+                                   sort_cost.startup_cost,
+                                   sort_cost.total_cost,
+                                   sort_cost.rows);
+            }
+            current_path = std::make_shared<SortPath>(current_path,
+                                                      select_stmt->order_by,
+                                                      row_width,
+                                                      sort_cost);
+            auto sort_plan = std::make_shared<SortNode>(current_plan, select_stmt->order_by);
+            sort_plan->setCost(sort_cost.startup_cost,
+                               sort_cost.total_cost,
+                               sort_cost.rows);
+            current_plan = sort_plan;
+            current_rows = sort_cost.rows;
+        }
+
         if (has_limit || has_offset)
         {
-            CostEstimate limit_cost = cost_model_.costLimit(current_rows,
+            CostEstimate limit_cost = active_cost_model.costLimit(current_rows,
                                                             has_limit ? limit_count : -1,
                                                             has_offset ? offset_count : -1,
                                                             ctx);
@@ -1718,12 +4343,36 @@ namespace scratchbird::optimizer
         planned_out.runtime_plan.version = 1;
         planned_out.runtime_plan.relations = std::move(runtime_relations);
         planned_out.runtime_plan.join_steps = std::move(runtime_joins);
+        planned_out.runtime_plan.considered_paths = std::move(considered_paths);
+        planned_out.runtime_plan.rejected_paths = std::move(rejected_paths);
+        planned_out.runtime_plan.statistics_provenance =
+            std::move(statistics_provenance);
+        planned_out.runtime_plan.optimizer_controls =
+            planner_controls.runtime_controls;
         planned_out.runtime_plan.root = toRuntimePlanNode(current_plan);
+        if (!select_stmt->order_by.empty() && has_limit)
+        {
+            annotateTopNSort(planned_out.runtime_plan.root,
+                             limit_count,
+                             has_offset ? offset_count : 0);
+        }
+        annotateRuntimePlanResources(planned_out.runtime_plan.root,
+                                     current_plan,
+                                     active_cost_model,
+                                     row_width,
+                                     spill_policy_text);
         planned_out.runtime_plan.explain_text =
             current_plan ? current_plan->toString() : std::string("Result");
 
         std::ostringstream hash_seed;
-        hash_seed << planned_out.runtime_plan.explain_text << '|';
+        hash_seed << planned_out.runtime_plan.explain_text << '|'
+                  << planner_params.work_mem_bytes << '|'
+                  << spill_policy_text << '|';
+        for (const auto &control : planned_out.runtime_plan.optimizer_controls)
+        {
+            hash_seed << control.name << '=' << control.value << '@'
+                      << control.source << '|';
+        }
         for (const auto &relation : planned_out.runtime_plan.relations)
         {
             hash_seed << relation.source_relation_index << ':'
@@ -1742,7 +4391,17 @@ namespace scratchbird::optimizer
         for (const auto &join : planned_out.runtime_plan.join_steps)
         {
             hash_seed << join.source_join_index << ':'
+                      << (join.disconnected_component ? 1 : 0) << ':'
+                      << join.legality_class << ':'
+                      << (join.reorderable ? 1 : 0) << ':'
                       << join.method << ':'
+                      << (join.has_merge_keys ? 1 : 0) << ':'
+                      << (join.merge_outer_presorted ? 1 : 0) << ':'
+                      << (join.merge_inner_presorted ? 1 : 0) << ':'
+                      << join.memory_budget_bytes << ':'
+                      << join.estimated_memory_bytes << ':'
+                      << (join.spill_expected ? 1 : 0) << ':'
+                      << join.spill_passes << ':'
                       << join.total_cost << '|';
         }
         planned_out.runtime_plan.plan_hash = stablePlanHash(hash_seed.str());

@@ -14,6 +14,81 @@
 
 namespace scratchbird::optimizer
 {
+    namespace
+    {
+        struct SpillEstimate
+        {
+            uint64_t working_set_bytes = 0;
+            uint64_t budget_bytes = 0;
+            bool spill_expected = false;
+            uint32_t spill_passes = 0;
+            uint64_t spill_bytes = 0;
+            double io_cost = 0.0;
+            double cpu_cost = 0.0;
+        };
+
+        auto safeBudgetBytes(uint64_t requested) -> uint64_t
+        {
+            constexpr uint64_t MIN_BUDGET_BYTES = 64 * 1024;
+            return std::max<uint64_t>(MIN_BUDGET_BYTES, requested);
+        }
+
+        auto ceilDivU64(uint64_t value, uint64_t divisor) -> uint64_t
+        {
+            if (divisor == 0)
+            {
+                return 0;
+            }
+            return (value + divisor - 1) / divisor;
+        }
+
+        auto estimateSpill(const CostParameters &params,
+                           uint64_t working_set_bytes,
+                           uint64_t budget_bytes,
+                           uint64_t touched_rows,
+                           double cpu_penalty_scale = 1.0) -> SpillEstimate
+        {
+            SpillEstimate spill;
+            spill.working_set_bytes = working_set_bytes;
+            spill.budget_bytes = safeBudgetBytes(budget_bytes);
+            if (working_set_bytes == 0 || working_set_bytes <= spill.budget_bytes)
+            {
+                return spill;
+            }
+
+            spill.spill_expected = true;
+            spill.spill_bytes = working_set_bytes;
+
+            const uint64_t runs = std::max<uint64_t>(
+                2, ceilDivU64(working_set_bytes, spill.budget_bytes));
+            spill.spill_passes = static_cast<uint32_t>(
+                std::max<uint64_t>(1, static_cast<uint64_t>(std::ceil(
+                                            std::log2(static_cast<double>(runs))))));
+
+            const uint64_t page_size =
+                std::max<uint64_t>(1024, params.planner_page_size_bytes);
+            const double spill_pages =
+                static_cast<double>(ceilDivU64(working_set_bytes, page_size));
+            spill.io_cost =
+                spill_pages * params.spill_page_cost *
+                static_cast<double>(2 * spill.spill_passes);
+            spill.cpu_cost =
+                static_cast<double>(touched_rows) * params.spill_cpu_tuple_cost *
+                static_cast<double>(std::max<uint32_t>(1, spill.spill_passes)) *
+                cpu_penalty_scale;
+            return spill;
+        }
+
+        auto applyResourceEstimate(CostEstimate &cost,
+                                   const SpillEstimate &spill) -> void
+        {
+            cost.memory_bytes = spill.working_set_bytes;
+            cost.memory_budget_bytes = spill.budget_bytes;
+            cost.spill_expected = spill.spill_expected;
+            cost.spill_passes = spill.spill_passes;
+            cost.spill_bytes = spill.spill_bytes;
+        }
+    } // namespace
 
     CostModel::CostModel(const CostParameters &params)
         : params_(params)
@@ -508,8 +583,19 @@ namespace scratchbird::optimizer
         double hash_build_cost = static_cast<double>(outer_rows) *
                                 params_.cpu_tuple_cost * HASH_BUILD_FACTOR;
 
+        const uint64_t hash_row_width =
+            params_.default_row_width_bytes + params_.hash_tuple_overhead_bytes;
+        const SpillEstimate spill = estimateSpill(
+            params_,
+            outer_rows * hash_row_width,
+            static_cast<uint64_t>(static_cast<double>(params_.work_mem_bytes) *
+                                  params_.hash_mem_multiplier),
+            outer_rows + inner_rows,
+            1.25);
+
         // Startup cost = build entire hash table
-        cost.startup_cost = outer_scan_cost + hash_build_cost;
+        cost.startup_cost =
+            outer_scan_cost + hash_build_cost + spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
 
         // Probe phase cost:
         // 1. Scan inner relation completely
@@ -565,9 +651,11 @@ namespace scratchbird::optimizer
         // Cost of materializing output tuples
         double output_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
 
-        cost.run_cost = inner_scan_cost + hash_probe_cost + join_qual_cost + output_cost;
+        cost.run_cost = inner_scan_cost + hash_probe_cost + join_qual_cost +
+                        output_cost + spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = output_rows;
+        applyResourceEstimate(cost, spill);
 
         DEBUG_LOG_DB("HashJoin cost: startup=" + std::to_string(cost.startup_cost) +
                      ", run=" + std::to_string(cost.run_cost) +
@@ -575,7 +663,127 @@ namespace scratchbird::optimizer
                      ", output_rows=" + std::to_string(cost.rows) +
                      " (hash_build=" + std::to_string(hash_build_cost) +
                      ", hash_probe=" + std::to_string(hash_probe_cost) +
-                     ", join_qual=" + std::to_string(join_qual_cost) + ")");
+                     ", join_qual=" + std::to_string(join_qual_cost) +
+                     ", spill=" + std::to_string(cost.spill_expected ? 1 : 0) + ")");
+
+        return cost;
+    }
+
+    auto CostModel::costMergeJoin(const CostEstimate& outer_cost,
+                                  const CostEstimate& inner_cost,
+                                  uint64_t outer_rows,
+                                  uint64_t inner_rows,
+                                  double selectivity,
+                                  bool outer_presorted,
+                                  bool inner_presorted,
+                                  parser::JoinType join_type,
+                                  core::ErrorContext* ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating merge join cost: outer_rows=" + std::to_string(outer_rows) +
+                     ", inner_rows=" + std::to_string(inner_rows) +
+                     ", selectivity=" + std::to_string(selectivity) +
+                     ", outer_presorted=" + std::to_string(outer_presorted) +
+                     ", inner_presorted=" + std::to_string(inner_presorted));
+
+        CostEstimate cost;
+
+        CostEstimate outer_sort_cost;
+        CostEstimate inner_sort_cost;
+        if (!outer_presorted)
+        {
+            outer_sort_cost = costSort(outer_rows, 64, 1, ctx);
+        }
+        if (!inner_presorted)
+        {
+            inner_sort_cost = costSort(inner_rows, 64, 1, ctx);
+        }
+
+        cost.startup_cost =
+            outer_cost.total_cost +
+            inner_cost.total_cost +
+            outer_sort_cost.total_cost +
+            inner_sort_cost.total_cost;
+
+        uint64_t output_rows = 0;
+        if (join_type == parser::JoinType::CROSS)
+        {
+            output_rows = outer_rows * inner_rows;
+        }
+        else
+        {
+            output_rows = static_cast<uint64_t>(
+                static_cast<double>(outer_rows) * static_cast<double>(inner_rows) * selectivity);
+        }
+        if (outer_rows > 0 && inner_rows > 0 && output_rows == 0 &&
+            join_type != parser::JoinType::LEFT &&
+            join_type != parser::JoinType::RIGHT &&
+            join_type != parser::JoinType::FULL)
+        {
+            output_rows = 1;
+        }
+        if (join_type == parser::JoinType::LEFT)
+        {
+            output_rows = std::max<uint64_t>(outer_rows, output_rows);
+        }
+        else if (join_type == parser::JoinType::RIGHT)
+        {
+            output_rows = std::max<uint64_t>(inner_rows, output_rows);
+        }
+        else if (join_type == parser::JoinType::FULL)
+        {
+            output_rows = std::max<uint64_t>(std::max<uint64_t>(outer_rows, inner_rows),
+                                             output_rows);
+        }
+
+        constexpr double MERGE_COMPARE_FACTOR = 1.2;
+        double merge_compare_cost =
+            static_cast<double>(outer_rows + inner_rows) *
+            params_.cpu_operator_cost *
+            MERGE_COMPARE_FACTOR;
+        double output_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
+
+        const uint64_t merge_buffer_bytes =
+            std::max<uint64_t>(1, outer_rows + inner_rows) *
+            std::max<uint64_t>(16, params_.hash_tuple_overhead_bytes / 2);
+        const SpillEstimate merge_buffer = estimateSpill(
+            params_,
+            merge_buffer_bytes,
+            static_cast<uint64_t>(static_cast<double>(params_.work_mem_bytes) *
+                                  params_.merge_mem_multiplier),
+            outer_rows + inner_rows,
+            0.25);
+
+        cost.run_cost = merge_compare_cost + output_cost +
+                        merge_buffer.io_cost + merge_buffer.cpu_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = output_rows;
+        cost.memory_bytes = std::max<uint64_t>(
+            merge_buffer.working_set_bytes,
+            std::max<uint64_t>(outer_sort_cost.memory_bytes, inner_sort_cost.memory_bytes));
+        cost.memory_budget_bytes = std::max<uint64_t>(
+            merge_buffer.budget_bytes,
+            std::max<uint64_t>(outer_sort_cost.memory_budget_bytes,
+                               inner_sort_cost.memory_budget_bytes));
+        cost.spill_expected = outer_sort_cost.spill_expected ||
+                              inner_sort_cost.spill_expected ||
+                              merge_buffer.spill_expected;
+        cost.spill_passes = std::max<uint32_t>(
+            merge_buffer.spill_passes,
+            std::max<uint32_t>(outer_sort_cost.spill_passes,
+                               inner_sort_cost.spill_passes));
+        cost.spill_bytes =
+            merge_buffer.spill_bytes + outer_sort_cost.spill_bytes +
+            inner_sort_cost.spill_bytes;
+
+        DEBUG_LOG_DB("MergeJoin cost: startup=" + std::to_string(cost.startup_cost) +
+                     ", run=" + std::to_string(cost.run_cost) +
+                     ", total=" + std::to_string(cost.total_cost) +
+                     ", output_rows=" + std::to_string(cost.rows) +
+                     " (outer_sort=" + std::to_string(outer_sort_cost.total_cost) +
+                     ", inner_sort=" + std::to_string(inner_sort_cost.total_cost) +
+                     ", merge_compare=" + std::to_string(merge_compare_cost) +
+                     ", spill=" + std::to_string(cost.spill_expected ? 1 : 0) + ")");
 
         return cost;
     }
@@ -602,7 +810,19 @@ namespace scratchbird::optimizer
         double hash_build_cost = static_cast<double>(input_rows) *
                                 params_.cpu_tuple_cost * HASH_AGG_FACTOR;
 
-        cost.startup_cost = hash_build_cost;
+        const uint64_t aggregate_row_width =
+            params_.default_row_width_bytes +
+            (std::max<uint64_t>(1, num_aggregates) * sizeof(double)) +
+            params_.hash_tuple_overhead_bytes;
+        const SpillEstimate spill = estimateSpill(
+            params_,
+            std::max<uint64_t>(1, num_groups) * aggregate_row_width,
+            static_cast<uint64_t>(static_cast<double>(params_.work_mem_bytes) *
+                                  params_.aggregate_mem_multiplier),
+            input_rows,
+            1.1);
+
+        cost.startup_cost = hash_build_cost + spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
 
         // Run cost: finalize aggregates for each group
         // For each group, we need to compute final aggregate values
@@ -614,9 +834,10 @@ namespace scratchbird::optimizer
         // Output cost: materialize result rows
         double output_cost = static_cast<double>(num_groups) * params_.cpu_tuple_cost;
 
-        cost.run_cost = finalize_cost + output_cost;
+        cost.run_cost = finalize_cost + output_cost + spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = num_groups;
+        applyResourceEstimate(cost, spill);
 
         DEBUG_LOG_DB("Aggregate cost: startup=" + std::to_string(cost.startup_cost) +
                      ", run=" + std::to_string(cost.run_cost) +
@@ -634,9 +855,20 @@ namespace scratchbird::optimizer
                             core::ErrorContext* ctx)
         -> CostEstimate
     {
+        return costSort(num_rows, row_width, num_sort_keys, 0, ctx);
+    }
+
+    auto CostModel::costSort(uint64_t num_rows,
+                             uint64_t row_width,
+                             uint64_t num_sort_keys,
+                             uint64_t top_n_count,
+                             core::ErrorContext* ctx)
+        -> CostEstimate
+    {
         DEBUG_LOG_DB("Estimating sort cost: num_rows=" + std::to_string(num_rows) +
                      ", row_width=" + std::to_string(row_width) +
-                     ", num_sort_keys=" + std::to_string(num_sort_keys));
+                     ", num_sort_keys=" + std::to_string(num_sort_keys) +
+                     ", top_n=" + std::to_string(top_n_count));
 
         CostEstimate cost;
 
@@ -650,13 +882,17 @@ namespace scratchbird::optimizer
             return cost;
         }
 
-        // Sort algorithm: in-memory quicksort
-        // Time complexity: O(n log n) comparisons
-        // Each comparison evaluates num_sort_keys expressions
+        const bool bounded_top_n =
+            top_n_count > 0 && top_n_count < num_rows;
+        const uint64_t sort_work_rows = bounded_top_n ? top_n_count : num_rows;
 
-        // Number of comparisons for quicksort: n * log2(n)
-        double num_comparisons = static_cast<double>(num_rows) *
-                                std::log2(static_cast<double>(num_rows));
+        // In-memory quicksort or bounded heap-style top-N sort.
+        // Top-N still touches all input rows, but maintains only N rows in sort memory.
+        double num_comparisons = bounded_top_n
+            ? static_cast<double>(num_rows) *
+                  std::log2(static_cast<double>(std::max<uint64_t>(2, top_n_count)))
+            : static_cast<double>(num_rows) *
+                  std::log2(static_cast<double>(num_rows));
 
         // Cost per comparison: evaluate all sort key expressions
         double comparison_cost = static_cast<double>(num_sort_keys) * params_.cpu_operator_cost;
@@ -666,17 +902,29 @@ namespace scratchbird::optimizer
 
         // Memory cost: if data doesn't fit in memory, external sort is needed
         // For now, assume in-memory sort (external sort would add I/O cost)
-        uint64_t memory_bytes = num_rows * row_width;
-        double memory_cost = static_cast<double>(memory_bytes) * params_.sort_mem_cost;
+        uint64_t memory_bytes =
+            sort_work_rows *
+            std::max<uint64_t>(16, row_width + params_.sort_tuple_overhead_bytes);
+        const SpillEstimate spill = estimateSpill(
+            params_,
+            memory_bytes,
+            static_cast<uint64_t>(static_cast<double>(params_.work_mem_bytes) *
+                                  params_.merge_mem_multiplier),
+            num_rows,
+            bounded_top_n ? 0.4 : 1.0);
+        double memory_cost = static_cast<double>(
+                                 std::min<uint64_t>(memory_bytes, spill.budget_bytes)) *
+                             params_.sort_mem_cost;
 
         // Startup cost: perform the sort
-        cost.startup_cost = sort_cost + memory_cost;
+        cost.startup_cost = sort_cost + memory_cost + spill.io_cost + spill.cpu_cost;
 
         // Run cost: output sorted rows (sequential scan)
         cost.run_cost = static_cast<double>(num_rows) * params_.cpu_tuple_cost;
 
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = num_rows;
+        applyResourceEstimate(cost, spill);
 
         DEBUG_LOG_DB("Sort cost: startup=" + std::to_string(cost.startup_cost) +
                      ", run=" + std::to_string(cost.run_cost) +
@@ -684,7 +932,9 @@ namespace scratchbird::optimizer
                      ", output_rows=" + std::to_string(cost.rows) +
                      " (sort=" + std::to_string(sort_cost) +
                      ", comparisons=" + std::to_string(num_comparisons) +
-                     ", memory=" + std::to_string(memory_cost) + ")");
+                     ", memory=" + std::to_string(memory_cost) +
+                     ", spill=" + std::to_string(cost.spill_expected ? 1 : 0) +
+                     ", bounded_top_n=" + std::to_string(bounded_top_n ? 1 : 0) + ")");
 
         return cost;
     }
@@ -728,6 +978,7 @@ namespace scratchbird::optimizer
 
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = output_rows;
+        cost.memory_budget_bytes = safeBudgetBytes(params_.work_mem_bytes);
 
         DEBUG_LOG_DB("Limit cost: startup=" + std::to_string(cost.startup_cost) +
                      ", run=" + std::to_string(cost.run_cost) +
@@ -767,6 +1018,11 @@ namespace scratchbird::optimizer
                                        std::max<uint64_t>(1, num_partition_keys + num_order_keys),
                                        ctx);
             sort_cost = sort.total_cost;
+            cost.memory_bytes = sort.memory_bytes;
+            cost.memory_budget_bytes = sort.memory_budget_bytes;
+            cost.spill_expected = sort.spill_expected;
+            cost.spill_passes = sort.spill_passes;
+            cost.spill_bytes = sort.spill_bytes;
         }
 
         const double partition_cpu =
@@ -782,6 +1038,10 @@ namespace scratchbird::optimizer
         cost.run_cost = partition_cpu + function_cpu;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = input_rows;
+        if (cost.memory_budget_bytes == 0)
+        {
+            cost.memory_budget_bytes = safeBudgetBytes(params_.work_mem_bytes);
+        }
         return cost;
     }
 

@@ -40,6 +40,7 @@ namespace scratchbird::optimizer
         RTREE_SCAN,        // R-tree spatial index scan (Phase 2, Task 9.2)
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
         HASH_JOIN,         // Hash join (Phase 1, Task 3.2)
+        MERGE_JOIN,        // Merge join (NCW-040C)
         AGGREGATE,         // Aggregation (Phase 1, Task 4.1)
         SORT,              // Sort operation (Phase 1, Task 5.1)
         LIMIT,             // Limit/offset (Phase 1, Task 5.2)
@@ -713,6 +714,91 @@ namespace scratchbird::optimizer
         std::vector<parser::v3::Expression*> hash_keys_outer_;
         std::vector<parser::v3::Expression*> hash_keys_inner_;
         double selectivity_;
+    };
+
+    /**
+     * MergeJoinPath - Merge join access path
+     *
+     * Represents decision to join two relations using sorted merge.
+     *
+     * Merge joins are only considered for equi-joins. Inputs may already be
+     * ordered or may require an implicit sort that is accounted for in cost.
+     */
+    class MergeJoinPath : public Path
+    {
+    public:
+        /**
+         * Constructor
+         *
+         * @param join_type Type of join (INNER, LEFT)
+         * @param outer_path Outer (left) relation path
+         * @param inner_path Inner (right) relation path
+         * @param join_condition Join condition expression (V3)
+         * @param merge_keys_outer Merge key expressions from outer relation
+         * @param merge_keys_inner Merge key expressions from inner relation
+         * @param selectivity Estimated selectivity of join condition
+         * @param outer_presorted True when the outer input is already ordered
+         * @param inner_presorted True when the inner input is already ordered
+         * @param cost Cost estimate
+         */
+        MergeJoinPath(parser::JoinType join_type,
+                      std::shared_ptr<Path> outer_path,
+                      std::shared_ptr<Path> inner_path,
+                      parser::v3::Expression* join_condition,
+                      const std::vector<parser::v3::Expression*>& merge_keys_outer,
+                      const std::vector<parser::v3::Expression*>& merge_keys_inner,
+                      double selectivity,
+                      bool outer_presorted,
+                      bool inner_presorted,
+                      const CostEstimate& cost)
+            : Path(PathType::MERGE_JOIN, cost),
+              join_type_(join_type),
+              outer_path_(std::move(outer_path)),
+              inner_path_(std::move(inner_path)),
+              join_condition_(join_condition),
+              merge_keys_outer_(merge_keys_outer),
+              merge_keys_inner_(merge_keys_inner),
+              selectivity_(selectivity),
+              outer_presorted_(outer_presorted),
+              inner_presorted_(inner_presorted)
+        {
+        }
+
+        parser::JoinType joinType() const { return join_type_; }
+        const std::shared_ptr<Path>& outerPath() const { return outer_path_; }
+        const std::shared_ptr<Path>& innerPath() const { return inner_path_; }
+        parser::v3::Expression* joinCondition() const { return join_condition_; }
+        const std::vector<parser::v3::Expression*>& mergeKeysOuter() const
+        {
+            return merge_keys_outer_;
+        }
+        const std::vector<parser::v3::Expression*>& mergeKeysInner() const
+        {
+            return merge_keys_inner_;
+        }
+        double selectivity() const { return selectivity_; }
+        bool outerPresorted() const { return outer_presorted_; }
+        bool innerPresorted() const { return inner_presorted_; }
+
+        auto toString() const -> std::string override
+        {
+            return "MergeJoinPath(cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) +
+                   ", presorted=" +
+                   std::string(outer_presorted_ ? "outer" : "sort_outer") + "/" +
+                   std::string(inner_presorted_ ? "inner" : "sort_inner") + ")";
+        }
+
+    private:
+        parser::JoinType join_type_;
+        std::shared_ptr<Path> outer_path_;
+        std::shared_ptr<Path> inner_path_;
+        parser::v3::Expression* join_condition_;
+        std::vector<parser::v3::Expression*> merge_keys_outer_;
+        std::vector<parser::v3::Expression*> merge_keys_inner_;
+        double selectivity_;
+        bool outer_presorted_;
+        bool inner_presorted_;
     };
 
     /**

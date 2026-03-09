@@ -652,6 +652,24 @@ bool isValidEmulationEngine(CatalogManager::EmulationEngine engine)
            engine == EE::DUCKDB;
 }
 
+bool isValidTransactionLineageEventKind(CatalogManager::TransactionLineageEventKind kind)
+{
+    using TLEK = CatalogManager::TransactionLineageEventKind;
+    return kind == TLEK::TX_BEGIN ||
+           kind == TLEK::TX_CONTEXT_BOUND ||
+           kind == TLEK::TX_MUTATION_BATCH ||
+           kind == TLEK::TX_DDL_BATCH ||
+           kind == TLEK::TX_COMMIT ||
+           kind == TLEK::TX_ROLLBACK ||
+           kind == TLEK::TX_ARCHIVE_TRANSFERRED;
+}
+
+bool isTerminalTransactionLineageEventKind(CatalogManager::TransactionLineageEventKind kind)
+{
+    using TLEK = CatalogManager::TransactionLineageEventKind;
+    return kind == TLEK::TX_COMMIT || kind == TLEK::TX_ROLLBACK;
+}
+
 bool isValidStorageProfile(CatalogManager::StorageProfile profile)
 {
     using SP = CatalogManager::StorageProfile;
@@ -4825,8 +4843,9 @@ bool hasTriggerNameConflictInTable(
         uint32_t settings_binding_page; // Page containing settings_binding table
         uint32_t audit_sink_profile_page; // Page containing audit_sink_profile table
         uint32_t audit_export_segment_page; // Page containing audit_export_segment table
+        uint32_t transaction_lineage_event_page; // Page containing transaction_lineage_event table
 
-        uint8_t reserved[2912];       // Padding for 4KB page
+        uint8_t reserved[2908];       // Padding for 4KB page
     };
 
     // Database record on disk
@@ -9641,6 +9660,27 @@ bool hasTriggerNameConflictInTable(
         uint8_t hash_curr[32];
         uint8_t is_valid;
         uint8_t reserved0[7];
+        uint64_t created_time;
+        uint32_t padding;
+    };
+
+    struct TransactionLineageEventRecord
+    {
+        ID lineage_event_id;
+        ID tx_uuid;
+        uint64_t txid;
+        uint32_t event_seq;
+        uint8_t event_kind;
+        uint8_t has_statement_hash;
+        uint8_t has_payload_oid;
+        uint8_t is_valid;
+        ID session_id;
+        ID connection_id;
+        ID user_id;
+        ID role_id;
+        ID object_id;
+        uint64_t statement_hash;
+        ID payload_oid;
         uint64_t created_time;
         uint32_t padding;
     };
@@ -20177,6 +20217,7 @@ bool hasTriggerNameConflictInTable(
         root->policy_toast_table_id = policy_toast_table_id_;
         root->audit_sink_profile_page = audit_sink_profile_table_page_;
         root->audit_export_segment_page = audit_export_segment_table_page_;
+        root->transaction_lineage_event_page = transaction_lineage_event_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -20505,6 +20546,7 @@ bool hasTriggerNameConflictInTable(
         policy_toast_table_id_ = root->policy_toast_table_id;
         audit_sink_profile_table_page_ = root->audit_sink_profile_page;
         audit_export_segment_table_page_ = root->audit_export_segment_page;
+        transaction_lineage_event_table_page_ = root->transaction_lineage_event_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
@@ -22282,48 +22324,38 @@ bool hasTriggerNameConflictInTable(
     {
         // Update TableRecord.column_count (used by ALTER TABLE ADD/DROP COLUMN)
         // MGA-compliant: Updates column_count in-place
+        std::lock_guard<CatalogMutex> lock(mutex_);
 
-        BufferPool *bp = db_->buffer_pool();
-        void *page_data;
-        Status status = bp->pinPage(tables_table_page_, &page_data, ctx);
+        auto predicate = [&table_id](const TableRecord& record) {
+            return record.table_id == table_id && record.is_valid == 1;
+        };
+
+        auto result = findRecordInHeapPage<TableRecord>(tables_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+
+        TableRecord updated = result.record;
+        updated.column_count = new_count;
+        updated.last_modified_time =
+            std::chrono::system_clock::now().time_since_epoch().count();
+
+        Status status = updateRecordInHeapPage<TableRecord>(
+            tables_table_page_, predicate, updated, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-        auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-        bool found = false;
-
-        for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+        auto it = table_cache_.find(table_id);
+        if (it != table_cache_.end())
         {
-            const uint8_t *tuple_data;
-            uint32_t tuple_size;
-
-            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-            {
-                if (tuple_size >= sizeof(TupleHeader) + sizeof(TableRecord))
-                {
-                    const ptrdiff_t offset =
-                        tuple_data - static_cast<const uint8_t *>(page_data);
-                    uint8_t *mutable_tuple_data = mutable_page_data + offset;
-                    auto *record = reinterpret_cast<TableRecord *>(mutable_tuple_data +
-                                                                    sizeof(TupleHeader));
-
-                    if (record->table_id == table_id && record->is_valid == 1)
-                    {
-                        record->column_count = new_count;
-                        record->last_modified_time =
-                            std::chrono::system_clock::now().time_since_epoch().count();
-                        found = true;
-                        break;
-                    }
-                }
-            }
+            it->second.column_count = new_count;
+            it->second.last_modified_time = updated.last_modified_time;
         }
 
-        bp->unpinPage(tables_table_page_, found, ctx);
-        return found ? Status::OK : Status::NOT_FOUND;
+        return Status::OK;
     }
 
     auto CatalogManager::updateTableStorageParams(const ID& table_id,
@@ -22331,68 +22363,48 @@ bool hasTriggerNameConflictInTable(
                                                   ErrorContext* ctx) -> Status
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
+        ID new_oid{};
+        uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
 
-        BufferPool* bp = db_->buffer_pool();
-        void* page_data;
-        Status status = bp->pinPage(tables_table_page_, &page_data, ctx);
+        auto predicate = [&table_id](const TableRecord& record) {
+            return record.table_id == table_id && record.is_valid == 1;
+        };
+
+        auto result = findRecordInHeapPage<TableRecord>(tables_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+
+        if (!storage_params.empty())
+        {
+            uint64_t xmin = 0;
+            Status status = storeStringInToast(storage_params, xmin, new_oid, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        TableRecord updated = result.record;
+        updated.storage_params_oid = new_oid;
+        updated.last_modified_time = now;
+
+        Status status = updateRecordInHeapPage<TableRecord>(
+            tables_table_page_, predicate, updated, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        HeapPage heap_page(static_cast<uint8_t*>(page_data), db_->page_size());
-        auto* mutable_page_data = static_cast<uint8_t*>(page_data);
-        bool found = false;
-        ID new_oid{};
-        uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
-
-        for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+        auto it = table_cache_.find(table_id);
+        if (it != table_cache_.end())
         {
-            const uint8_t* tuple_data;
-            uint32_t tuple_size;
-
-            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-            {
-                if (tuple_size >= sizeof(TupleHeader) + sizeof(TableRecord))
-                {
-                    const ptrdiff_t offset =
-                        tuple_data - static_cast<const uint8_t*>(page_data);
-                    auto* record = reinterpret_cast<TableRecord*>(
-                        mutable_page_data + offset + sizeof(TupleHeader));
-
-                    if (record->table_id == table_id && record->is_valid == 1)
-                    {
-                        if (!storage_params.empty())
-                        {
-                            uint64_t xmin = 0;
-                            status = storeStringInToast(storage_params, xmin, new_oid, ctx);
-                            if (status != Status::OK)
-                            {
-                                bp->unpinPage(tables_table_page_, false, ctx);
-                                return status;
-                            }
-                        }
-                        record->storage_params_oid = new_oid;
-                        record->last_modified_time = now;
-                        found = true;
-                        break;
-                    }
-                }
-            }
+            it->second.storage_params_oid = new_oid;
+            it->second.last_modified_time = now;
         }
 
-        bp->unpinPage(tables_table_page_, found, ctx);
-        if (found)
-        {
-            auto it = table_cache_.find(table_id);
-            if (it != table_cache_.end())
-            {
-                it->second.storage_params_oid = new_oid;
-                it->second.last_modified_time = now;
-            }
-        }
-
-        return found ? Status::OK : Status::NOT_FOUND;
+        return Status::OK;
     }
 
     auto CatalogManager::updateIndexParams(const ID &index_id,
@@ -22400,65 +22412,45 @@ bool hasTriggerNameConflictInTable(
                                            ErrorContext *ctx) -> Status
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
+        ID new_oid{};
 
-        BufferPool *bp = db_->buffer_pool();
-        void *page_data;
-        Status status = bp->pinPage(indexes_table_page_, &page_data, ctx);
+        auto predicate = [&index_id](const IndexRecord& record) {
+            return record.index_id == index_id && record.is_valid == 1;
+        };
+
+        auto result = findRecordInHeapPage<IndexRecord>(indexes_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+
+        if (!index_params.empty())
+        {
+            uint64_t xmin = 0;
+            Status status = storeStringInToast(index_params, xmin, new_oid, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        IndexRecord updated = result.record;
+        updated.index_params_oid = new_oid;
+
+        Status status = updateRecordInHeapPage<IndexRecord>(
+            indexes_table_page_, predicate, updated, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        HeapPage heap_page(static_cast<uint8_t*>(page_data), db_->page_size());
-        auto *mutable_page_data = static_cast<uint8_t*>(page_data);
-        bool found = false;
-        ID new_oid{};
-
-        for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
+        auto it = index_cache_.find(index_id);
+        if (it != index_cache_.end())
         {
-            const uint8_t *tuple_data;
-            uint32_t tuple_size;
-
-            if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-            {
-                if (tuple_size >= sizeof(TupleHeader) + sizeof(IndexRecord))
-                {
-                    const ptrdiff_t offset =
-                        tuple_data - static_cast<const uint8_t*>(page_data);
-                    auto *record = reinterpret_cast<IndexRecord*>(
-                        mutable_page_data + offset + sizeof(TupleHeader));
-
-                    if (record->index_id == index_id && record->is_valid == 1)
-                    {
-                        if (!index_params.empty())
-                        {
-                            uint64_t xmin = 0;
-                            status = storeStringInToast(index_params, xmin, new_oid, ctx);
-                            if (status != Status::OK)
-                            {
-                                bp->unpinPage(indexes_table_page_, false, ctx);
-                                return status;
-                            }
-                        }
-                        record->index_params_oid = new_oid;
-                        found = true;
-                        break;
-                    }
-                }
-            }
+            it->second.index_params_oid = new_oid;
         }
 
-        bp->unpinPage(indexes_table_page_, found, ctx);
-        if (found)
-        {
-            auto it = index_cache_.find(index_id);
-            if (it != index_cache_.end())
-            {
-                it->second.index_params_oid = new_oid;
-            }
-        }
-
-        return found ? Status::OK : Status::NOT_FOUND;
+        return Status::OK;
     }
 
     auto CatalogManager::readTableRecords(ErrorContext *ctx) -> Status
@@ -62107,6 +62099,315 @@ auto CatalogManager::listAuditExportSegmentCatalogEntries(
     std::sort(rows_out.begin(), rows_out.end(),
               [](const AuditExportSegmentCatalogInfo& lhs, const AuditExportSegmentCatalogInfo& rhs) {
                   return lhs.segment_seq < rhs.segment_seq;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::appendTransactionLineageEventCatalogEntry(
+    TransactionLineageEventCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.tx_uuid))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "transaction_lineage_event.tx_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.txid == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "transaction_lineage_event.txid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidTransactionLineageEventKind(info.event_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "transaction_lineage_event.event_kind is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (isZeroUuidLocal(info.lineage_event_id))
+    {
+        info.lineage_event_id = generateUuidV7();
+    }
+
+    if (transaction_lineage_event_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(transaction_lineage_event_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_id = [&info](const TransactionLineageEventRecord& row) {
+        return row.is_valid == 1 && row.lineage_event_id == info.lineage_event_id;
+    };
+    auto existing_id = findRecordInHeapPage<TransactionLineageEventRecord>(
+        transaction_lineage_event_table_page_, duplicate_id, ctx);
+    if (existing_id.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "transaction_lineage_event rows are immutable");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing_id.status != Status::NOT_FOUND)
+    {
+        return existing_id.status;
+    }
+
+    uint32_t last_seq = 0;
+    bool saw_terminal = false;
+    uint64_t existing_txid = 0;
+    BufferPool* bp = db_->buffer_pool();
+    if (!bp)
+    {
+        return Status::INVALID_ARGUMENT;
+    }
+    uint32_t current_page_id = transaction_lineage_event_table_page_;
+    while (current_page_id != 0)
+    {
+        void* page_buffer = nullptr;
+        Status pin_status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (pin_status != Status::OK)
+        {
+            return pin_status;
+        }
+
+        auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            const auto* prior = reinterpret_cast<const TransactionLineageEventRecord*>(
+                reinterpret_cast<const uint8_t*>(page_buffer) + offset);
+            offset += sizeof(TransactionLineageEventRecord);
+
+            if (prior->is_valid != 1 || prior->tx_uuid != info.tx_uuid)
+            {
+                continue;
+            }
+
+            existing_txid = prior->txid;
+            if (prior->event_seq >= last_seq)
+            {
+                last_seq = prior->event_seq;
+            }
+            const auto prior_kind =
+                static_cast<TransactionLineageEventKind>(prior->event_kind);
+            if (!isValidTransactionLineageEventKind(prior_kind))
+            {
+                bp->unpinPage(current_page_id, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "transaction_lineage_event.event_kind is invalid on disk");
+                return Status::PAGE_CORRUPT;
+            }
+            if (isTerminalTransactionLineageEventKind(prior_kind))
+            {
+                saw_terminal = true;
+            }
+        }
+
+        const uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
+    if (existing_txid != 0 && existing_txid != info.txid)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "transaction_lineage_event.txid must match prior tx_uuid events");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (saw_terminal)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "transaction_lineage_event terminal event already exists");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    const uint32_t expected_seq = last_seq + 1;
+    if (info.event_seq == 0)
+    {
+        info.event_seq = expected_seq;
+    }
+    else if (info.event_seq != expected_seq)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "transaction_lineage_event.event_seq must be contiguous");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    if (last_seq == 0 && info.event_kind != TransactionLineageEventKind::TX_BEGIN)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "transaction_lineage_event must start with TX_BEGIN");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (last_seq != 0 && info.event_kind == TransactionLineageEventKind::TX_BEGIN)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "transaction_lineage_event cannot append a second TX_BEGIN");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    TransactionLineageEventRecord rec{};
+    rec.lineage_event_id = info.lineage_event_id;
+    rec.tx_uuid = info.tx_uuid;
+    rec.txid = info.txid;
+    rec.event_seq = info.event_seq;
+    rec.event_kind = static_cast<uint8_t>(info.event_kind);
+    rec.has_statement_hash = info.has_statement_hash ? 1 : 0;
+    rec.statement_hash = info.has_statement_hash ? info.statement_hash : 0;
+    rec.has_payload_oid = (!info.payload_json.empty()) ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.session_id = info.session_id;
+    rec.connection_id = info.connection_id;
+    rec.user_id = info.user_id;
+    rec.role_id = info.role_id;
+    rec.object_id = info.object_id;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+
+    if (!info.payload_json.empty())
+    {
+        uint64_t xmin = 0;
+        Status status = storeStringInToast(info.payload_json, xmin, rec.payload_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    info.created_time = rec.created_time;
+    return writeRecordToHeapPage(transaction_lineage_event_table_page_, rec, ctx);
+}
+
+auto CatalogManager::getTransactionLineageEventCatalogEntry(
+    const ID& lineage_event_id,
+    TransactionLineageEventCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (transaction_lineage_event_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&lineage_event_id](const TransactionLineageEventRecord& rec) {
+        return rec.is_valid == 1 && rec.lineage_event_id == lineage_event_id;
+    };
+    auto result = findRecordInHeapPage<TransactionLineageEventRecord>(
+        transaction_lineage_event_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = TransactionLineageEventCatalogInfo{};
+    info_out.lineage_event_id = result.record.lineage_event_id;
+    info_out.tx_uuid = result.record.tx_uuid;
+    info_out.txid = result.record.txid;
+    info_out.event_seq = result.record.event_seq;
+    info_out.event_kind = static_cast<TransactionLineageEventKind>(result.record.event_kind);
+    if (!isValidTransactionLineageEventKind(info_out.event_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                          "transaction_lineage_event.event_kind is invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    info_out.session_id = result.record.session_id;
+    info_out.connection_id = result.record.connection_id;
+    info_out.user_id = result.record.user_id;
+    info_out.role_id = result.record.role_id;
+    info_out.object_id = result.record.object_id;
+    info_out.has_statement_hash = result.record.has_statement_hash != 0;
+    info_out.statement_hash = result.record.statement_hash;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    if (result.record.has_payload_oid != 0)
+    {
+        uint64_t xmin = 0;
+        return loadStringFromToast(result.record.payload_oid, xmin, info_out.payload_json, ctx);
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listTransactionLineageEventCatalogEntries(
+    const ID& tx_uuid,
+    uint64_t txid,
+    std::vector<TransactionLineageEventCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (transaction_lineage_event_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [&tx_uuid, txid](const TransactionLineageEventRecord& rec) {
+        if (rec.is_valid != 1)
+        {
+            return false;
+        }
+        const bool uuid_matches = isZeroUuidLocal(tx_uuid) || rec.tx_uuid == tx_uuid;
+        const bool txid_matches = txid == 0 || rec.txid == txid;
+        return uuid_matches && txid_matches;
+    };
+    auto converter = [this, ctx](const TransactionLineageEventRecord& rec,
+                                 TransactionLineageEventCatalogInfo& info) {
+        info = TransactionLineageEventCatalogInfo{};
+        info.lineage_event_id = rec.lineage_event_id;
+        info.tx_uuid = rec.tx_uuid;
+        info.txid = rec.txid;
+        info.event_seq = rec.event_seq;
+        info.event_kind = static_cast<TransactionLineageEventKind>(rec.event_kind);
+        info.session_id = rec.session_id;
+        info.connection_id = rec.connection_id;
+        info.user_id = rec.user_id;
+        info.role_id = rec.role_id;
+        info.object_id = rec.object_id;
+        info.has_statement_hash = rec.has_statement_hash != 0;
+        info.statement_hash = rec.statement_hash;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        if (rec.has_payload_oid != 0)
+        {
+            uint64_t xmin = 0;
+            std::string payload;
+            if (loadStringFromToast(rec.payload_oid, xmin, payload, ctx) == Status::OK)
+            {
+                info.payload_json = std::move(payload);
+            }
+        }
+    };
+    Status status = readRecordsToVector<TransactionLineageEventRecord,
+                                        TransactionLineageEventCatalogInfo>(
+        transaction_lineage_event_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (const auto& row : rows_out)
+    {
+        if (!isValidTransactionLineageEventKind(row.event_kind))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "transaction_lineage_event.event_kind is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const TransactionLineageEventCatalogInfo& lhs,
+                 const TransactionLineageEventCatalogInfo& rhs) {
+                  if (lhs.txid != rhs.txid)
+                  {
+                      return lhs.txid < rhs.txid;
+                  }
+                  return lhs.event_seq < rhs.event_seq;
               });
     return Status::OK;
 }

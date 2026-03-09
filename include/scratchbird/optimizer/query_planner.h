@@ -25,6 +25,7 @@
 #include "scratchbird/optimizer/plan_node.h"
 #include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/cost_model.h"
+#include "scratchbird/optimizer/parameter_bindings.h"
 #include "scratchbird/optimizer/statistics_manager.h"
 #include "scratchbird/optimizer/selectivity_estimator.h"
 #include "scratchbird/optimizer/v3_semantic_analyzer.h"
@@ -46,6 +47,7 @@ namespace scratchbird::optimizer
         RuntimePlan runtime_plan;
         ResolvedSelectQuery resolved_query;
         bool reordered_relations = false;
+        bool disconnected_join_graph = false;
     };
 
     /**
@@ -90,7 +92,8 @@ namespace scratchbird::optimizer
                              PlannedSelectQuery &planned_out,
                              core::ErrorContext *ctx = nullptr,
                              core::ConnectionContext *conn_ctx = nullptr,
-                             const core::ID &current_schema_id = core::ID{})
+                             const core::ID &current_schema_id = core::ID{},
+                             const ParameterBindings *parameter_bindings = nullptr)
             -> core::Status;
 
         /**

@@ -72,6 +72,45 @@ TEST(CostModelTest, EffectiveRandomPageCostUsesCacheModel)
     EXPECT_NEAR(model.effectiveRandomPageCost(200), 2.5, 1e-9);
 }
 
+TEST(CostModelTest, TopNSortCostsLessThanFullSort)
+{
+    auto model = defaultModel();
+
+    const auto full_sort = model.costSort(3200, 64, 2);
+    const auto top_n_sort = model.costSort(3200, 64, 2, 25, nullptr);
+
+    EXPECT_EQ(full_sort.rows, top_n_sort.rows);
+    EXPECT_LT(top_n_sort.total_cost, full_sort.total_cost);
+    EXPECT_LT(top_n_sort.startup_cost, full_sort.startup_cost);
+}
+
+TEST(CostModelTest, SortCostMarksSpillWhenWorkMemTooSmall)
+{
+    CostParameters small_params;
+    small_params.seq_page_cost = 1.0;
+    small_params.random_page_cost = 4.0;
+    small_params.cpu_tuple_cost = 0.01;
+    small_params.cpu_index_tuple_cost = 0.005;
+    small_params.cpu_operator_cost = 0.0025;
+    small_params.effective_cache_size = 128.0;
+    small_params.work_mem_bytes = 64 * 1024;
+
+    CostParameters large_params = small_params;
+    large_params.work_mem_bytes = 16 * 1024 * 1024;
+
+    CostModel spill_model(small_params);
+    CostModel in_memory_model(large_params);
+
+    const auto spilled = spill_model.costSort(8192, 256, 2);
+    const auto in_memory = in_memory_model.costSort(8192, 256, 2);
+
+    EXPECT_TRUE(spilled.spill_expected);
+    EXPECT_GT(spilled.spill_passes, 0u);
+    EXPECT_GT(spilled.spill_bytes, 0u);
+    EXPECT_GT(spilled.total_cost, in_memory.total_cost);
+    EXPECT_LT(spilled.memory_budget_bytes, spilled.memory_bytes);
+}
+
 TEST(CostModelTest, HashJoinComparisonBeatsNestedLoopForLargeEquiJoin)
 {
     auto model = defaultModel();
@@ -86,6 +125,70 @@ TEST(CostModelTest, HashJoinComparisonBeatsNestedLoopForLargeEquiJoin)
 
     EXPECT_EQ(nested.rows, hash.rows);
     EXPECT_LT(hash.total_cost, nested.total_cost);
+}
+
+TEST(CostModelTest, MergeJoinComparisonBeatsHashJoinWhenInputsAreAlreadyOrdered)
+{
+    auto model = defaultModel();
+
+    const auto outer =
+        model.costIndexOnlyScan(3, 2, 256, 0.0, 1.0);
+    const auto inner =
+        model.costIndexOnlyScan(3, 2, 256, 0.0, 1.0);
+
+    const auto hash =
+        model.costHashJoin(outer, inner, 256, 256, 0.01, scratchbird::parser::JoinType::INNER);
+    const auto merge =
+        model.costMergeJoin(outer,
+                            inner,
+                            256,
+                            256,
+                            0.01,
+                            true,
+                            true,
+                            scratchbird::parser::JoinType::INNER);
+
+    EXPECT_EQ(hash.rows, merge.rows);
+    EXPECT_LT(merge.total_cost, hash.total_cost);
+}
+
+TEST(CostModelTest, HashJoinCostMarksSpillWhenBuildSideExceedsBudget)
+{
+    CostParameters small_params;
+    small_params.seq_page_cost = 1.0;
+    small_params.random_page_cost = 4.0;
+    small_params.cpu_tuple_cost = 0.01;
+    small_params.cpu_index_tuple_cost = 0.005;
+    small_params.cpu_operator_cost = 0.0025;
+    small_params.effective_cache_size = 128.0;
+    small_params.work_mem_bytes = 64 * 1024;
+
+    CostParameters large_params = small_params;
+    large_params.work_mem_bytes = 16 * 1024 * 1024;
+
+    CostModel spill_model(small_params);
+    CostModel in_memory_model(large_params);
+
+    const auto outer = spill_model.costSeqScan(256, 20000, 0.0);
+    const auto inner = spill_model.costSeqScan(256, 20000, 0.0);
+    const auto spilled = spill_model.costHashJoin(
+        outer, inner, 20000, 20000, 0.01, scratchbird::parser::JoinType::INNER);
+
+    const auto outer_large = in_memory_model.costSeqScan(256, 20000, 0.0);
+    const auto inner_large = in_memory_model.costSeqScan(256, 20000, 0.0);
+    const auto in_memory = in_memory_model.costHashJoin(
+        outer_large,
+        inner_large,
+        20000,
+        20000,
+        0.01,
+        scratchbird::parser::JoinType::INNER);
+
+    EXPECT_TRUE(spilled.spill_expected);
+    EXPECT_GT(spilled.spill_passes, 0u);
+    EXPECT_GT(spilled.spill_bytes, 0u);
+    EXPECT_GT(spilled.total_cost, in_memory.total_cost);
+    EXPECT_LT(spilled.memory_budget_bytes, spilled.memory_bytes);
 }
 
 TEST(CostModelTest, OuterJoinPaddingKeepsOutputRowsAtLeastInputSide)

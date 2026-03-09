@@ -22,8 +22,12 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <chrono>
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/garbage_collector.h"
+#include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
@@ -68,6 +72,48 @@ protected:
         }
 
         return true;
+    }
+
+    bool createCommittedRetainedTransaction(Database& db,
+                                            ID& tx_uuid_out,
+                                            uint64_t& txid_out)
+    {
+        ErrorContext ctx;
+        std::unique_ptr<ConnectionContext> conn;
+        if (db.connect(conn, &ctx) != Status::OK)
+        {
+            return false;
+        }
+
+        txid_out = conn->getCurrentXid();
+        tx_uuid_out = conn->getCurrentTransactionUuid();
+        if (txid_out == 0 || tx_uuid_out == ID{})
+        {
+            return false;
+        }
+
+        return conn->commit(&ctx) == Status::OK;
+    }
+
+    bool createRolledBackRetainedTransaction(Database& db,
+                                             ID& tx_uuid_out,
+                                             uint64_t& txid_out)
+    {
+        ErrorContext ctx;
+        std::unique_ptr<ConnectionContext> conn;
+        if (db.connect(conn, &ctx) != Status::OK)
+        {
+            return false;
+        }
+
+        txid_out = conn->getCurrentXid();
+        tx_uuid_out = conn->getCurrentTransactionUuid();
+        if (txid_out == 0 || tx_uuid_out == ID{})
+        {
+            return false;
+        }
+
+        return conn->rollback(&ctx) == Status::OK;
     }
 
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_;
@@ -509,6 +555,285 @@ TEST_F(GarbageCollectorTest, SweepIntegration)
     // Verify GC ran
     auto stats = gc->getStatistics();
     EXPECT_GT(stats.background_runs, 0);
+}
+
+TEST_F(GarbageCollectorTest, SweepPolicyResolutionDeterministicByScopeChain)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+
+    const ID schema_id = generateUuidV7();
+    const ID table_id = generateUuidV7();
+
+    SweepPolicyBinding db_binding{};
+    db_binding.scope_kind = SweepScopeKind::DATABASE;
+    db_binding.scope_id = db.uuid();
+    db_binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION};
+
+    SweepPolicyBinding schema_binding{};
+    schema_binding.scope_kind = SweepScopeKind::SCHEMA;
+    schema_binding.scope_id = schema_id;
+    schema_binding.lanes = {SweepPolicyLane::OBJECT_TOUCH_AUDIT};
+
+    SweepPolicyBinding table_binding{};
+    table_binding.scope_kind = SweepScopeKind::TABLE;
+    table_binding.scope_id = table_id;
+    table_binding.lanes = {SweepPolicyLane::SHADOW_CAPTURE, SweepPolicyLane::WAL_AFTER_EXPORT};
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({db_binding, schema_binding, table_binding}, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    SweepPolicyBinding resolved{};
+    ASSERT_EQ(sweep_mgr->resolvePolicyBinding({{SweepScopeKind::TABLE, table_id},
+                                               {SweepScopeKind::SCHEMA, schema_id},
+                                               {SweepScopeKind::DATABASE, db.uuid()}},
+                                              resolved,
+                                              &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(resolved.scope_kind, SweepScopeKind::TABLE);
+    ASSERT_EQ(resolved.lanes.size(), 2u);
+    EXPECT_EQ(resolved.lanes[0], SweepPolicyLane::SHADOW_CAPTURE);
+    EXPECT_EQ(resolved.lanes[1], SweepPolicyLane::WAL_AFTER_EXPORT);
+
+    ASSERT_EQ(sweep_mgr->resolvePolicyBinding({{SweepScopeKind::TABLE, generateUuidV7()},
+                                               {SweepScopeKind::SCHEMA, schema_id},
+                                               {SweepScopeKind::DATABASE, db.uuid()}},
+                                              resolved,
+                                              &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(resolved.scope_kind, SweepScopeKind::SCHEMA);
+    ASSERT_EQ(resolved.lanes.size(), 1u);
+    EXPECT_EQ(resolved.lanes[0], SweepPolicyLane::OBJECT_TOUCH_AUDIT);
+
+    ASSERT_EQ(sweep_mgr->resolvePolicyBinding({{SweepScopeKind::TABLE, generateUuidV7()},
+                                               {SweepScopeKind::SCHEMA, generateUuidV7()},
+                                               {SweepScopeKind::DATABASE, db.uuid()}},
+                                              resolved,
+                                              &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(resolved.scope_kind, SweepScopeKind::DATABASE);
+    ASSERT_EQ(resolved.lanes.size(), 1u);
+    EXPECT_EQ(resolved.lanes[0], SweepPolicyLane::LINEAGE_RETENTION);
+}
+
+TEST_F(GarbageCollectorTest, SweepPersistsLocalEvidenceManifestBeforePruneHandoff)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    auto gc = db.garbage_collector();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_NE(gc, nullptr);
+
+    ID tx_uuid{};
+    uint64_t txid = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION, SweepPolicyLane::WAL_AFTER_EXPORT};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+    EXPECT_FALSE(gc->isSweepPruneBlocked());
+
+    auto stats = sweep_mgr->getStatistics();
+    EXPECT_EQ(stats.last_evidence_items_emitted, 1u);
+    EXPECT_FALSE(stats.prune_blocked);
+
+    std::vector<SweepEvidenceWorkItem> items;
+    ASSERT_EQ(sweep_mgr->listEvidenceWorkItems(items, &ctx), Status::OK) << ctx.message;
+    auto it = std::find_if(items.begin(), items.end(),
+                           [txid](const SweepEvidenceWorkItem& item) { return item.txid == txid; });
+    ASSERT_NE(it, items.end());
+    EXPECT_EQ(it->delivery_state, "REMOTE_PENDING");
+    EXPECT_EQ(it->tx_uuid, tx_uuid);
+    EXPECT_TRUE(std::filesystem::exists(it->spool_path));
+
+    std::ifstream in(it->spool_path, std::ios::binary);
+    ASSERT_TRUE(in.is_open());
+    std::string manifest((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+    EXPECT_NE(manifest.find("tx_uuid=" + tx_uuid.toString()), std::string::npos);
+    EXPECT_NE(manifest.find("txid=" + std::to_string(txid)), std::string::npos);
+    EXPECT_NE(manifest.find("policy_lanes=LINEAGE_RETENTION,WAL_AFTER_EXPORT"),
+              std::string::npos);
+}
+
+TEST_F(GarbageCollectorTest, SweepBlocksPruneWhenLocalEvidencePersistenceFails)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    auto gc = db.garbage_collector();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_NE(gc, nullptr);
+
+    ID tx_uuid{};
+    uint64_t txid = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+
+    std::filesystem::path blocking_path(db.path());
+    blocking_path += ".forensics";
+    {
+        std::ofstream out(blocking_path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(out.is_open());
+        out << "blocked";
+    }
+
+    EXPECT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::IO_ERROR);
+    EXPECT_TRUE(gc->isSweepPruneBlocked());
+
+    auto stats = sweep_mgr->getStatistics();
+    EXPECT_EQ(stats.evidence_persist_failures, 1u);
+    EXPECT_TRUE(stats.prune_blocked);
+
+    ErrorContext query_ctx;
+    std::vector<SweepEvidenceWorkItem> items;
+    ASSERT_EQ(sweep_mgr->listEvidenceWorkItems(items, &query_ctx), Status::OK)
+        << query_ctx.message;
+    EXPECT_TRUE(std::none_of(items.begin(), items.end(),
+                             [txid](const SweepEvidenceWorkItem& item) {
+                                 return item.txid == txid;
+                             }));
+}
+
+TEST_F(GarbageCollectorTest, SweepExportsWalAfterLogForCommittedTransactionsOnly)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    auto gc = db.garbage_collector();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_NE(gc, nullptr);
+
+    ID committed_tx_uuid_1{};
+    uint64_t committed_txid_1 = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, committed_tx_uuid_1, committed_txid_1));
+
+    ID rolled_back_tx_uuid{};
+    uint64_t rolled_back_txid = 0;
+    ASSERT_TRUE(createRolledBackRetainedTransaction(db, rolled_back_tx_uuid, rolled_back_txid));
+
+    ID committed_tx_uuid_2{};
+    uint64_t committed_txid_2 = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, committed_tx_uuid_2, committed_txid_2));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION, SweepPolicyLane::WAL_AFTER_EXPORT};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+    EXPECT_FALSE(gc->isSweepPruneBlocked());
+
+    auto stats = sweep_mgr->getStatistics();
+    EXPECT_GE(stats.last_evidence_items_emitted, 3u);
+    EXPECT_EQ(stats.last_wal_after_segments_emitted, 2u);
+    EXPECT_EQ(stats.wal_after_backlog_depth, 0u);
+    EXPECT_EQ(stats.wal_after_export_failures, 0u);
+
+    std::vector<SweepWalAfterLogSegment> segments;
+    ASSERT_EQ(sweep_mgr->listWalAfterLogSegments(segments, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(segments.size(), 2u);
+    EXPECT_EQ(segments[0].stream_seq, 1u);
+    EXPECT_EQ(segments[0].txid, committed_txid_1);
+    EXPECT_EQ(segments[1].stream_seq, 2u);
+    EXPECT_EQ(segments[1].txid, committed_txid_2);
+    EXPECT_TRUE(std::none_of(segments.begin(), segments.end(),
+                             [rolled_back_txid](const SweepWalAfterLogSegment& item) {
+                                 return item.txid == rolled_back_txid;
+                             }));
+
+    ASSERT_TRUE(std::filesystem::exists(segments[0].segment_path));
+    std::ifstream in(segments[0].segment_path, std::ios::binary);
+    ASSERT_TRUE(in.is_open());
+    std::string manifest((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+    EXPECT_NE(manifest.find("tx_uuid=" + committed_tx_uuid_1.toString()), std::string::npos);
+    EXPECT_NE(manifest.find("txid=" + std::to_string(committed_txid_1)), std::string::npos);
+    EXPECT_NE(manifest.find("shipping_mode=DEBUG"), std::string::npos);
+    EXPECT_NE(manifest.find("commit_time="), std::string::npos);
+}
+
+TEST_F(GarbageCollectorTest, SweepWalAfterLogFailureDoesNotBlockPrune)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    auto gc = db.garbage_collector();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_NE(gc, nullptr);
+
+    ID tx_uuid{};
+    uint64_t txid = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION, SweepPolicyLane::WAL_AFTER_EXPORT};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+
+    std::filesystem::path blocking_path(db.path());
+    blocking_path += ".forensics";
+    std::filesystem::create_directories(blocking_path);
+    blocking_path /= "wal_after_log";
+    {
+        std::ofstream out(blocking_path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(out.is_open());
+        out << "blocked";
+    }
+
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+    EXPECT_FALSE(gc->isSweepPruneBlocked());
+
+    auto stats = sweep_mgr->getStatistics();
+    EXPECT_GE(stats.last_evidence_items_emitted, 1u);
+    EXPECT_EQ(stats.last_wal_after_segments_emitted, 0u);
+    EXPECT_EQ(stats.wal_after_backlog_depth, 1u);
+    EXPECT_EQ(stats.wal_after_export_failures, 1u);
+
+    std::vector<SweepEvidenceWorkItem> items;
+    ASSERT_EQ(sweep_mgr->listEvidenceWorkItems(items, &ctx), Status::OK) << ctx.message;
+    EXPECT_TRUE(std::any_of(items.begin(), items.end(),
+                            [txid](const SweepEvidenceWorkItem& item) {
+                                return item.txid == txid;
+                            }));
+
+    std::vector<SweepWalAfterLogSegment> segments;
+    ASSERT_EQ(sweep_mgr->listWalAfterLogSegments(segments, &ctx), Status::OK) << ctx.message;
+    EXPECT_TRUE(segments.empty());
 }
 
 TEST_F(GarbageCollectorTest, ConcurrentAccess)

@@ -4685,6 +4685,36 @@ public:
             uint64_t created_time = 0;
         };
 
+        enum class TransactionLineageEventKind : uint8_t
+        {
+            TX_BEGIN = 1,
+            TX_CONTEXT_BOUND = 2,
+            TX_MUTATION_BATCH = 3,
+            TX_DDL_BATCH = 4,
+            TX_COMMIT = 5,
+            TX_ROLLBACK = 6,
+            TX_ARCHIVE_TRANSFERRED = 7
+        };
+
+        struct TransactionLineageEventCatalogInfo
+        {
+            ID lineage_event_id;
+            ID tx_uuid;
+            uint64_t txid = 0;
+            uint32_t event_seq = 0;
+            TransactionLineageEventKind event_kind = TransactionLineageEventKind::TX_BEGIN;
+            ID session_id;
+            ID connection_id;
+            ID user_id;
+            ID role_id;
+            ID object_id;
+            bool has_statement_hash = false;
+            uint64_t statement_hash = 0;
+            std::string payload_json;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+        };
+
         struct RuntimeConnectionCatalogInfo
         {
             ID connection_id;
@@ -8204,6 +8234,17 @@ public:
         auto listAuditExportSegmentCatalogEntries(const ID& audit_sink_profile_id,
                                                   std::vector<AuditExportSegmentCatalogInfo>& rows_out,
                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto appendTransactionLineageEventCatalogEntry(TransactionLineageEventCatalogInfo& info,
+                                                       ErrorContext* ctx = nullptr) -> Status;
+        auto getTransactionLineageEventCatalogEntry(const ID& lineage_event_id,
+                                                    TransactionLineageEventCatalogInfo& info_out,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listTransactionLineageEventCatalogEntries(
+            const ID& tx_uuid,
+            uint64_t txid,
+            std::vector<TransactionLineageEventCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
 
         // ============================================================================
         // Canonical runtime context catalog operations (CAT-019)
@@ -13180,6 +13221,7 @@ public:
         uint32_t backup_history_table_page_ = 0; // Backup history catalog (CAT-018)
         uint32_t audit_sink_profile_table_page_ = 0; // Audit sink profile catalog (NCW-034)
         uint32_t audit_export_segment_table_page_ = 0; // Audit export segment catalog (NCW-034)
+        uint32_t transaction_lineage_event_table_page_ = 0; // Retained transaction lineage catalog (NCW-040)
         uint32_t connection_table_page_ = 0; // Runtime connection attribution catalog (CAT-019)
         uint32_t transaction_table_page_ = 0; // Runtime transaction attribution catalog (CAT-019)
         uint32_t principal_account_table_page_ = 0; // Principal account catalog (CAT-020)

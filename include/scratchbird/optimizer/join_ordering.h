@@ -16,8 +16,9 @@
  * It provides cost-based join ordering optimization using dynamic programming
  * for small join counts and greedy optimization for larger queries.
  *
- * NOTE: This optimizer is NOT in the main client execution path.
- * QueryPlanner uses JoinOrderingOptimizer for EXPLAIN functionality.
+ * Join reordering is only applied to reorderable inner/cross join graphs.
+ * Outer/natural/other barrier joins fall back to input-order planning so
+ * legality constraints are preserved even off the main execution path.
  */
 
 #ifndef SCRATCHBIRD_OPTIMIZER_JOIN_ORDERING_H
@@ -70,6 +71,21 @@ struct JoinEdge
     double selectivity;
 };
 
+enum class JoinSearchStrategy
+{
+    AUTO,
+    EXHAUSTIVE_DP,
+    HYPERGRAPH_GREEDY,
+    INPUT_ORDER
+};
+
+struct JoinPlanningControls
+{
+    JoinSearchStrategy strategy = JoinSearchStrategy::AUTO;
+    size_t max_exhaustive_relations = 8;
+    size_t max_pair_evaluations = 64;
+};
+
 /**
  * JoinOrderingOptimizer - Finds optimal join order (V3)
  *
@@ -98,9 +114,17 @@ public:
 
     std::shared_ptr<Path> optimize(core::ErrorContext* ctx = nullptr);
     std::shared_ptr<Path> optimizeGreedy(core::ErrorContext* ctx = nullptr);
+    std::shared_ptr<Path> optimizeHypergraphGreedy(core::ErrorContext* ctx = nullptr);
 
     size_t numRelations() const { return relations_.size(); }
     size_t numJoinEdges() const { return join_edges_.size(); }
+
+    void setPlanningControls(const JoinPlanningControls& controls)
+    {
+        controls_ = controls;
+    }
+    const JoinPlanningControls& planningControls() const { return controls_; }
+    JoinSearchStrategy lastStrategyUsed() const { return last_strategy_used_; }
 
     void clear();
 
@@ -119,8 +143,13 @@ private:
     // DP helper methods
     DPEntry generateSubsetPlan(RelationSet subset, core::ErrorContext* ctx);
     DPEntry costJoin(const DPEntry& left_entry, const DPEntry& right_entry,
-                     const JoinEdge& edge, core::ErrorContext* ctx);
+                     const JoinEdge& edge, core::ErrorContext* ctx,
+                     bool preserve_orientation = false);
+    DPEntry costCrossJoin(const DPEntry& left_entry, const DPEntry& right_entry,
+                          core::ErrorContext* ctx);
+    std::shared_ptr<Path> optimizePreservingInputOrder(core::ErrorContext* ctx);
     std::vector<size_t> findConnectingEdges(RelationSet left_set, RelationSet right_set) const;
+    bool hasJoinReorderBarrier() const;
     bool isConnected(RelationSet set) const;
     std::vector<std::vector<size_t>> buildAdjacencyList() const;
     std::string setToString(RelationSet set) const;
@@ -133,6 +162,8 @@ private:
 
     CostModel& cost_model_;
     SelectivityEstimator& selectivity_estimator_;
+    JoinPlanningControls controls_;
+    JoinSearchStrategy last_strategy_used_ = JoinSearchStrategy::AUTO;
     std::vector<RelationInfo> relations_;
     std::vector<JoinEdge> join_edges_;
     std::unordered_map<RelationSet, DPEntry> dp_table_;

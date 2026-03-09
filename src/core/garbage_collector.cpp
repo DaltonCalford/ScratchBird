@@ -214,6 +214,13 @@ namespace scratchbird::core
             return; // Cooperative disabled in BACKGROUND-only mode
         }
 
+        if (sweep_prune_blocked_.load(std::memory_order_acquire))
+        {
+            LOG_DEBUG(VACUUM,
+                      "Cooperative GC skipped because sweep prune is blocked pending local evidence");
+            return;
+        }
+
         // Rate limiting - don't run on every page read
         if (!shouldRunCooperativeGC())
         {
@@ -377,6 +384,8 @@ namespace scratchbird::core
 
     void GarbageCollector::notifySweepComplete(uint64_t old_oit, uint64_t new_oit)
     {
+        sweep_prune_blocked_.store(false, std::memory_order_release);
+
         // Sweep has advanced OIT - more tuples may now be garbage
         LOG_INFO(VACUUM, "Sweep completed: OIT advanced from %lu to %lu", old_oit, new_oit);
 
@@ -385,6 +394,29 @@ namespace scratchbird::core
         {
             wakeBackgroundThread();
         }
+    }
+
+    void GarbageCollector::notifySweepEvidenceBlocked(uint64_t old_oit, uint64_t new_oit)
+    {
+        sweep_prune_blocked_.store(true, std::memory_order_release);
+        LOG_WARNING(VACUUM,
+                    "Sweep evidence handoff blocked prune after OIT advance from %lu to %lu",
+                    old_oit, new_oit);
+        wakeBackgroundThread();
+    }
+
+    void GarbageCollector::setSweepPruneBlocked(bool blocked)
+    {
+        sweep_prune_blocked_.store(blocked, std::memory_order_release);
+        if (blocked)
+        {
+            wakeBackgroundThread();
+        }
+    }
+
+    bool GarbageCollector::isSweepPruneBlocked() const
+    {
+        return sweep_prune_blocked_.load(std::memory_order_acquire);
     }
 
     // Private methods
@@ -396,6 +428,19 @@ namespace scratchbird::core
         while (!shutdown_requested_.load(std::memory_order_acquire))
         {
             auto start_time = std::chrono::steady_clock::now();
+
+            if (sweep_prune_blocked_.load(std::memory_order_acquire))
+            {
+                std::unique_lock<std::mutex> wake_lock(bg_wake_mutex_);
+                bg_wake_cv_.wait_for(
+                    wake_lock,
+                    std::chrono::milliseconds(background_interval_ms_),
+                    [this] {
+                        return shutdown_requested_.load(std::memory_order_acquire) ||
+                               !sweep_prune_blocked_.load(std::memory_order_acquire);
+                    });
+                continue;
+            }
 
             // Get dirty pages to clean (sorted by priority)
             std::vector<DirtyPageInfo> pages_to_clean;

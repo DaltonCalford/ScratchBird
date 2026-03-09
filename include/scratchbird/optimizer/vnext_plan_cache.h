@@ -88,6 +88,7 @@ namespace scratchbird::optimizer
         auto get(const sblr::v3::PlanCacheKeyInput &key) -> VNextPlanCacheGetResult;
 
         auto invalidateAll() -> uint64_t;
+        auto invalidateByPayloadHash(const std::string &payload_hash) -> uint64_t;
         auto invalidateByCatalogEpoch(uint64_t expected_epoch) -> uint64_t;
         auto invalidateBySecurityEpoch(uint64_t expected_epoch) -> uint64_t;
         auto invalidateByCapabilitySetHash(const std::string &hash) -> uint64_t;

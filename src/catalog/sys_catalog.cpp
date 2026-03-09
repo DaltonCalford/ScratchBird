@@ -73,6 +73,23 @@ std::string joinNames(const std::vector<std::string>& values) {
     return joined;
 }
 
+std::string extractPartitionParentName(const json& metadata) {
+    if (!metadata.is_object() || !metadata.contains("partition_parent")) {
+        return {};
+    }
+    const auto& parent = metadata["partition_parent"];
+    if (parent.is_string()) {
+        return parent.get<std::string>();
+    }
+    if (parent.is_object()) {
+        auto it_name = parent.find("name");
+        if (it_name != parent.end() && it_name->is_string()) {
+            return it_name->get<std::string>();
+        }
+    }
+    return {};
+}
+
 std::string indexStateToString(uint8_t state) {
     switch (static_cast<core::CatalogManager::IndexState>(state)) {
         case core::CatalogManager::IndexState::BUILDING: return "BUILDING";
@@ -1288,10 +1305,8 @@ Status SysCatalogHandler::queryTables(VirtualResultSet& results, ErrorContext* c
                         partition_columns = joinNames(cols);
                     }
                 }
-                if (meta.contains("partition_parent") && meta["partition_parent"].is_string()) {
-                    partition_parent = meta["partition_parent"].get<std::string>();
-                    is_partition_child = !partition_parent.empty();
-                }
+                partition_parent = extractPartitionParentName(meta);
+                is_partition_child = !partition_parent.empty();
             }
 
             VirtualRow row;

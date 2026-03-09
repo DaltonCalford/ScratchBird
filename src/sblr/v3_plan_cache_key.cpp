@@ -48,6 +48,7 @@ std::string buildPlanCacheKey(const PlanCacheKeyInput& input) {
     oss << "|opt=" << input.optimization_level;
     oss << "|norm=" << input.normalization_rule_set_id;
     oss << "|obj=" << input.object_ref_digest;
+    oss << "|plan_profile=" << input.plan_profile_signature;
 
     const std::string prehash = oss.str();
     const uint64_t h = stableHash64(prehash);

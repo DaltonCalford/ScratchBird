@@ -149,6 +149,14 @@ const Instruction* firstSelectItemExpr(const EmittedRoot& emitted) {
     return ptr->get();
 }
 
+const Value::List* selectAliases(const EmittedRoot& emitted) {
+    const auto* payload = payloadObject(emitted);
+    if (!payload) {
+        return nullptr;
+    }
+    return payloadListField(*payload, "select_aliases");
+}
+
 }  // namespace
 
 TEST(ParserV3NoSqlEmitterContractTest, MapsCanonicalRedisKvAndStreamCommandsToBridgeOpcodes) {
@@ -188,6 +196,28 @@ TEST(ParserV3NoSqlEmitterContractTest, MapsCanonicalRedisKvAndStreamCommandsToBr
         ASSERT_NE(nullptr, options) << c.sql;
         EXPECT_TRUE(options->empty()) << c.sql;
     }
+}
+
+TEST(ParserV3NoSqlEmitterContractTest, PreservesSelectItemAliasesInSelectPayload) {
+    EmittedRoot emitted;
+    std::string err;
+    ASSERT_TRUE(emitRootFromSql(
+        "SELECT id AS order_id, name FROM users",
+        emitted,
+        err)) << err;
+    ASSERT_EQ(static_cast<uint16_t>(Opcode::SBLR3_SELECT), emitted.opcode);
+
+    const auto* aliases = selectAliases(emitted);
+    ASSERT_NE(aliases, nullptr);
+    ASSERT_EQ(aliases->size(), 2u);
+
+    const auto* first_alias = std::get_if<std::string>(&(*aliases)[0].data);
+    ASSERT_NE(first_alias, nullptr);
+    EXPECT_EQ(*first_alias, "order_id");
+
+    const auto* second_alias = std::get_if<std::string>(&(*aliases)[1].data);
+    ASSERT_NE(second_alias, nullptr);
+    EXPECT_TRUE(second_alias->empty());
 }
 
 TEST(ParserV3NoSqlEmitterContractTest, RejectsRemovedEnginePrefixedAliasesBeforeEmission) {

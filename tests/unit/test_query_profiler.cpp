@@ -14,6 +14,7 @@
 
 using scratchbird::optimizer::QueryProfile;
 using scratchbird::optimizer::QueryProfiler;
+using scratchbird::optimizer::CardinalityFeedbackPolicy;
 using scratchbird::optimizer::RegressionPolicy;
 using scratchbird::optimizer::RegressionSeverity;
 
@@ -25,13 +26,17 @@ protected:
         profiler_.setEnabled(true);
         profiler_.clearProfiles();
         profiler_.clearProtectedWorkloads();
+        profiler_.clearCardinalityFeedback();
         profiler_.setRegressionPolicy(RegressionPolicy{});
+        profiler_.setCardinalityFeedbackPolicy(CardinalityFeedbackPolicy{});
     }
 
     void TearDown() override {
         profiler_.clearProfiles();
         profiler_.clearProtectedWorkloads();
+        profiler_.clearCardinalityFeedback();
         profiler_.setRegressionPolicy(RegressionPolicy{});
+        profiler_.setCardinalityFeedbackPolicy(CardinalityFeedbackPolicy{});
         profiler_.setEnabled(false);
     }
 
@@ -126,6 +131,45 @@ TEST_F(QueryProfilerTest, LeavesUnprotectedWorkloadsOutOfRegressionGate) {
     EXPECT_FALSE(latest->protected_workload);
     EXPECT_FALSE(latest->regression_detected);
     EXPECT_EQ(latest->severity, RegressionSeverity::NONE);
+}
+
+TEST_F(QueryProfilerTest, CardinalityFeedbackRequestsBoundedReplanAndAcknowledgesAction) {
+    CardinalityFeedbackPolicy policy;
+    policy.enabled = true;
+    policy.min_observations = 1;
+    policy.max_estimation_error_ratio = 4.0;
+    policy.max_replan_actions = 2;
+    profiler_.setCardinalityFeedbackPolicy(policy);
+
+    const auto first = profiler_.recordCardinalityFeedback(
+        "feedback:select_users",
+        "plan-a",
+        4,
+        128);
+    EXPECT_TRUE(first.available);
+    EXPECT_TRUE(first.replan_required);
+    EXPECT_TRUE(first.stats_refresh_requested);
+    EXPECT_EQ(first.observation_count, 1u);
+    EXPECT_EQ(first.last_plan_hash, "plan-a");
+    EXPECT_GT(first.estimation_error_ratio, 4.0);
+
+    auto acknowledged =
+        profiler_.acknowledgeCardinalityFeedback("feedback:select_users", true);
+    ASSERT_TRUE(acknowledged.has_value());
+    EXPECT_FALSE(acknowledged->replan_required);
+    EXPECT_FALSE(acknowledged->stats_refresh_requested);
+    EXPECT_TRUE(acknowledged->stats_refresh_applied);
+    EXPECT_EQ(acknowledged->replan_action_count, 1u);
+
+    const auto second = profiler_.recordCardinalityFeedback(
+        "feedback:select_users",
+        "plan-b",
+        8,
+        256);
+    EXPECT_TRUE(second.replan_required);
+    EXPECT_EQ(second.replan_action_count, 1u);
+    EXPECT_EQ(second.observation_count, 2u);
+    EXPECT_EQ(second.last_plan_hash, "plan-b");
 }
 
 } // namespace

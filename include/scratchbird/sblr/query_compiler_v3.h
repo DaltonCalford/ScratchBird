@@ -53,17 +53,23 @@ public:
         const std::vector<std::string>& errors() const { return errors_; }
         const std::vector<std::string>& warnings() const { return warnings_; }
         const CompilationStats& stats() const { return stats_; }
+        const detail::QueryCompilerV3PlanProfile& planProfile() const { return plan_profile_; }
 
         void setBytecode(std::vector<uint8_t> bc) { bytecode_ = std::move(bc); }
         void addError(const std::string& err) { errors_.push_back(err); }
         void addWarning(const std::string& warn) { warnings_.push_back(warn); }
         void setStats(const CompilationStats& stats) { stats_ = stats; }
+        void setPlanProfile(detail::QueryCompilerV3PlanProfile profile)
+        {
+            plan_profile_ = std::move(profile);
+        }
 
     private:
         std::vector<uint8_t> bytecode_;
         std::vector<std::string> errors_;
         std::vector<std::string> warnings_;
         CompilationStats stats_{};
+        detail::QueryCompilerV3PlanProfile plan_profile_{};
     };
 
     struct TraceDigest {
@@ -111,7 +117,22 @@ public:
         detail::resetQueryCompilerV3PlanCacheStats();
     }
 
+    CompileResult compileWithParameters(
+        const std::string& sql,
+        const optimizer::ParameterBindings& parameter_bindings,
+        detail::QueryCompilerV3PlanProfileMode plan_profile_mode =
+            detail::QueryCompilerV3PlanProfileMode::CUSTOM) {
+        return compileInternal(sql, &parameter_bindings, plan_profile_mode);
+    }
+
     CompileResult compile(const std::string& sql) {
+        return compileInternal(sql, nullptr, detail::QueryCompilerV3PlanProfileMode::GENERIC);
+    }
+
+    CompileResult compileInternal(
+        const std::string& sql,
+        const optimizer::ParameterBindings* parameter_bindings,
+        detail::QueryCompilerV3PlanProfileMode plan_profile_mode) {
         CompileResult result;
         if (db_ == nullptr) {
             result.addError("Database context is required for QueryCompilerV3");
@@ -145,7 +166,9 @@ public:
                                                                     parser.stringPool(),
                                                                     current_schema_,
                                                                     optimizations_enabled_,
-                                                                    container);
+                                                                    container,
+                                                                    parameter_bindings,
+                                                                    plan_profile_mode);
         for (const auto& warning : finalized.warnings) {
             result.addWarning(warning);
         }
@@ -156,6 +179,7 @@ public:
             return result;
         }
         result.setBytecode(std::move(finalized.bytecode));
+        result.setPlanProfile(finalized.plan_profile);
         if (stats_enabled_) {
             CompilationStats stats;
             stats.bytecode_size = result.bytecode().size();
@@ -210,7 +234,9 @@ public:
                                                                     parser.stringPool(),
                                                                     current_schema_,
                                                                     optimizations_enabled_,
-                                                                    container);
+                                                                    container,
+                                                                    nullptr,
+                                                                    detail::QueryCompilerV3PlanProfileMode::GENERIC);
         for (const auto& warning : finalized.warnings) {
             trace.addWarning(warning);
         }

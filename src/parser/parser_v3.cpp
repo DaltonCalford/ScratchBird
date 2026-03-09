@@ -8596,7 +8596,9 @@ AlterTableStmt* Parser::parseAlterTable() {
         stmt->partition_path = parseSchemaPath(state_);
         if (matchContextual("FOR")) {
             size_t bounds_start = previous().span.start.offset;
-            expectContextual("VALUES", "Expected VALUES after FOR");
+            if (!(match(TokenType::KW_VALUES) || matchContextual("VALUES"))) {
+                error("Expected VALUES after FOR");
+            }
 
             while (!isAtEnd() && !check(TokenType::SEMICOLON)) {
                 advance();

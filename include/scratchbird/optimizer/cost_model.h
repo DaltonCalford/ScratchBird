@@ -39,6 +39,16 @@ namespace scratchbird::optimizer
 
         // Memory/sorting costs
         double sort_mem_cost = 0.0001;      // Cost per byte of sort memory
+        uint64_t work_mem_bytes = 4 * 1024 * 1024; // Memory budget per operator
+        uint64_t planner_page_size_bytes = 8192;   // Spill planning page size
+        double spill_page_cost = 1.5;              // Cost per spilled temp page
+        double spill_cpu_tuple_cost = 0.02;        // Extra CPU cost per spilled tuple
+        double hash_mem_multiplier = 1.25;         // Hash joins may use a larger grant
+        double merge_mem_multiplier = 1.0;         // Merge/sort operators use work_mem
+        double aggregate_mem_multiplier = 1.0;     // Hash aggregate memory multiplier
+        uint64_t default_row_width_bytes = 64;     // Fallback row width when unknown
+        uint64_t hash_tuple_overhead_bytes = 24;   // Hash table bucket/entry overhead
+        uint64_t sort_tuple_overhead_bytes = 16;   // Sort tuple pointer/metadata overhead
 
         // Parallelism (future use)
         double parallel_setup_cost = 1000.0;  // Cost of starting parallel workers
@@ -59,6 +69,11 @@ namespace scratchbird::optimizer
         double run_cost = 0.0;      // Per-execution cost
         double total_cost = 0.0;    // startup_cost + run_cost
         uint64_t rows = 0;          // Estimated rows returned
+        uint64_t memory_bytes = 0;  // Estimated working-set memory
+        uint64_t memory_budget_bytes = 0; // Memory budget used for this operator
+        bool spill_expected = false; // Whether temp spill is expected
+        uint32_t spill_passes = 0;   // Estimated spill/repartition passes
+        uint64_t spill_bytes = 0;    // Estimated temp footprint written to disk
 
         // Constructor for convenience
         CostEstimate() = default;
@@ -302,6 +317,33 @@ namespace scratchbird::optimizer
             -> CostEstimate;
 
         /**
+         * costMergeJoin - Estimate cost of merge join
+         *
+         * Accounts for optional input sorting plus a linear merge pass.
+         *
+         * @param outer_cost Cost of scanning the outer relation
+         * @param inner_cost Cost of scanning the inner relation
+         * @param outer_rows Number of outer rows
+         * @param inner_rows Number of inner rows
+         * @param selectivity Selectivity of join condition (0.0-1.0)
+         * @param outer_presorted True when outer input is already ordered on the join key
+         * @param inner_presorted True when inner input is already ordered on the join key
+         * @param join_type Type of join (currently INNER or LEFT)
+         * @param ctx Error context
+         * @return Cost estimate with startup, run, and total costs
+         */
+        auto costMergeJoin(const CostEstimate& outer_cost,
+                           const CostEstimate& inner_cost,
+                           uint64_t outer_rows,
+                           uint64_t inner_rows,
+                           double selectivity,
+                           bool outer_presorted,
+                           bool inner_presorted,
+                           parser::JoinType join_type = parser::JoinType::INNER,
+                           core::ErrorContext* ctx = nullptr)
+            -> CostEstimate;
+
+        /**
          * costAggregate - Estimate cost of aggregation with GROUP BY
          *
          * Cost formula:
@@ -354,6 +396,19 @@ namespace scratchbird::optimizer
                      uint64_t row_width,
                      uint64_t num_sort_keys,
                      core::ErrorContext* ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costSort - Estimate cost of bounded top-N sort
+         *
+         * Uses a heap-style top-N model when a LIMIT/OFFSET bound is known.
+         * `top_n_count` should be `limit + offset`.
+         */
+        auto costSort(uint64_t num_rows,
+                      uint64_t row_width,
+                      uint64_t num_sort_keys,
+                      uint64_t top_n_count,
+                      core::ErrorContext *ctx)
             -> CostEstimate;
 
         /**

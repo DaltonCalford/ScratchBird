@@ -125,6 +125,23 @@ auto medianExecutionTimeUs(const std::deque<QueryHistoryEntry>& history) -> uint
     return samples[mid];
 }
 
+auto estimationErrorRatio(uint64_t estimated_rows, uint64_t actual_rows) -> double {
+    if (estimated_rows == 0 && actual_rows == 0) {
+        return 1.0;
+    }
+
+    const double safe_estimated = static_cast<double>(estimated_rows == 0 ? 1 : estimated_rows);
+    const double safe_actual = static_cast<double>(actual_rows == 0 ? 1 : actual_rows);
+    return std::max(safe_actual / safe_estimated, safe_estimated / safe_actual);
+}
+
+auto correctionFactor(uint64_t estimated_rows, uint64_t actual_rows) -> double {
+    if (estimated_rows == 0) {
+        return actual_rows == 0 ? 1.0 : static_cast<double>(actual_rows);
+    }
+    return static_cast<double>(actual_rows) / static_cast<double>(estimated_rows);
+}
+
 } // namespace
 
 // ============================================================================
@@ -727,6 +744,90 @@ std::optional<RegressionSignal> QueryProfiler::latestRegressionForFingerprint(
 std::optional<RegressionSignal> QueryProfiler::latestRegressionForQuery(
     std::string_view sql) const {
     return latestRegressionForFingerprint(normalizeSqlFingerprint(sql));
+}
+
+void QueryProfiler::setCardinalityFeedbackPolicy(
+    const CardinalityFeedbackPolicy& policy) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cardinality_feedback_policy_ = policy;
+}
+
+CardinalityFeedbackPolicy QueryProfiler::cardinalityFeedbackPolicy() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return cardinality_feedback_policy_;
+}
+
+CardinalityFeedbackSignal QueryProfiler::recordCardinalityFeedback(
+    std::string_view feedback_key,
+    std::string_view plan_hash,
+    uint64_t estimated_rows,
+    uint64_t actual_rows) {
+    CardinalityFeedbackSignal signal;
+    if (feedback_key.empty()) {
+        return signal;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& state = cardinality_feedback_[std::string(feedback_key)];
+    signal = state.signal;
+    signal.available = true;
+    signal.last_estimated_rows = estimated_rows;
+    signal.last_actual_rows = actual_rows;
+    signal.estimation_error_ratio = estimationErrorRatio(estimated_rows, actual_rows);
+    signal.correction_factor = correctionFactor(estimated_rows, actual_rows);
+    signal.observation_count += 1;
+    signal.last_plan_hash = std::string(plan_hash);
+    signal.stats_refresh_applied = false;
+
+    const bool mismatch_exceeds_threshold =
+        signal.estimation_error_ratio >=
+        cardinality_feedback_policy_.max_estimation_error_ratio;
+    const bool can_replan =
+        cardinality_feedback_policy_.enabled &&
+        signal.observation_count >= cardinality_feedback_policy_.min_observations &&
+        signal.replan_action_count < cardinality_feedback_policy_.max_replan_actions &&
+        signal.observation_count > state.last_consumed_observation;
+    signal.replan_required = mismatch_exceeds_threshold && can_replan;
+    signal.stats_refresh_requested = signal.replan_required;
+
+    state.signal = signal;
+    return signal;
+}
+
+std::optional<CardinalityFeedbackSignal> QueryProfiler::latestCardinalityFeedback(
+    std::string_view feedback_key) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = cardinality_feedback_.find(std::string(feedback_key));
+    if (it == cardinality_feedback_.end()) {
+        return std::nullopt;
+    }
+    return it->second.signal;
+}
+
+std::optional<CardinalityFeedbackSignal> QueryProfiler::acknowledgeCardinalityFeedback(
+    std::string_view feedback_key,
+    bool stats_refresh_applied) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = cardinality_feedback_.find(std::string(feedback_key));
+    if (it == cardinality_feedback_.end()) {
+        return std::nullopt;
+    }
+
+    auto& state = it->second;
+    if (state.signal.available &&
+        state.signal.observation_count > state.last_consumed_observation) {
+        state.last_consumed_observation = state.signal.observation_count;
+        state.signal.replan_required = false;
+        state.signal.stats_refresh_requested = false;
+        state.signal.stats_refresh_applied = stats_refresh_applied;
+        state.signal.replan_action_count += 1;
+    }
+    return state.signal;
+}
+
+void QueryProfiler::clearCardinalityFeedback() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cardinality_feedback_.clear();
 }
 
 RegressionSignal QueryProfiler::evaluateRegressionLocked(

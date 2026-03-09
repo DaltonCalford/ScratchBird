@@ -73,6 +73,7 @@ private:
     scratchbird::sblr::v3::Value toSchemaPath(const parser::v3::SchemaPath& path);
     scratchbird::sblr::v3::Value toExprList(const std::vector<parser::v3::Expression*>& exprs);
     scratchbird::sblr::v3::Value toSelectItems(const std::vector<parser::v3::SelectItem*>& items);
+    scratchbird::sblr::v3::Value toSelectItemAliases(const std::vector<parser::v3::SelectItem*>& items);
     scratchbird::sblr::v3::Value toOrderBy(const std::vector<parser::v3::OrderByItem*>& items);
     scratchbird::sblr::v3::Value toWindowSpec(parser::v3::WindowSpec* spec);
     scratchbird::sblr::v3::Value toTableRef(parser::v3::TableRefNode* node);

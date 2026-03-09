@@ -259,6 +259,30 @@ namespace scratchbird::optimizer
         return removed;
     }
 
+    auto VNextPlanCache::invalidateByPayloadHash(const std::string &payload_hash) -> uint64_t
+    {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        uint64_t removed = 0;
+        for (auto it = entries_.begin(); it != entries_.end();)
+        {
+            if (it->second.key.payload_hash == payload_hash)
+            {
+                it = entries_.erase(it);
+                ++removed;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        stats_.invalidations += removed;
+        stats_.entries = entries_.size();
+        core::VNextMetricsEventModel::recordOptimizerEvent(
+            "plan_cache_invalidate_payload_hash", "ok", "NONE",
+            static_cast<double>(removed));
+        return removed;
+    }
+
     auto VNextPlanCache::invalidateByCatalogEpoch(uint64_t expected_epoch) -> uint64_t
     {
         std::unique_lock<std::shared_mutex> lock(mutex_);

@@ -141,6 +141,10 @@ namespace scratchbird::core
         {
             return current_xid_;
         }
+        const ID& getCurrentTransactionUuid() const
+        {
+            return current_transaction_uuid_;
+        }
         uint32_t getProcId() const
         {
             return proc_id_;
@@ -460,11 +464,25 @@ namespace scratchbird::core
                              ErrorContext *ctx = nullptr);
 
     private:
+        Status persistRuntimeTransactionState(uint8_t state_code,
+                                             uint64_t txid,
+                                             uint64_t end_time,
+                                             ErrorContext* ctx);
+        Status appendTransactionLineageBegin(ErrorContext* ctx);
+        Status appendTransactionLineageTerminal(bool committed,
+                                               uint64_t txid,
+                                               const ID& tx_uuid,
+                                               uint64_t start_time,
+                                               uint64_t end_time,
+                                               ErrorContext* ctx);
+        void refreshActiveTransactionAttribution();
+
         // Core state
         Database *db_;
         TransactionManager *txn_manager_;
         uint32_t proc_id_;                          // Process ID from ProcArray
         uint64_t current_xid_;                      // Current transaction XID (NEVER 0)
+        ID current_transaction_uuid_;               // Stable UUID lineage identity for current transaction
         std::chrono::microseconds xact_start_time_; // Transaction start time
 
         // Security context (Phase 2 - Security System)
@@ -758,6 +776,13 @@ namespace scratchbird::core
          */
         struct PreparedStatement
         {
+            enum class OptimizerPlanMode : uint8_t
+            {
+                AUTO = 0,
+                GENERIC = 1,
+                CUSTOM_BUCKETED = 2
+            };
+
             std::string name;                           // Statement name/handle
             std::string sql_text;                       // Original SQL text
             std::vector<uint8_t> bytecode;              // Compiled SBLR bytecode
@@ -768,6 +793,15 @@ namespace scratchbird::core
             int64_t created_at_micros = 0;              // Wall clock time (micros)
             int64_t last_used_micros = 0;               // Wall clock time (micros)
             uint64_t execution_count;                   // Times executed
+            OptimizerPlanMode optimizer_plan_mode = OptimizerPlanMode::AUTO;
+            std::string optimizer_generic_plan_hash;
+            uint64_t optimizer_custom_sample_count = 0;
+            std::unordered_map<std::string, std::vector<uint8_t>>
+                optimizer_bucketed_bytecode;
+            std::unordered_map<std::string, std::string>
+                optimizer_parameter_signature_to_bucket;
+            std::unordered_map<std::string, std::string>
+                optimizer_bucket_plan_hash;
         };
 
         struct PreparedStatementInfo

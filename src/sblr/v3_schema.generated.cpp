@@ -232,6 +232,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
     {"SCHEMA_SELECT", SchemaDef{"SCHEMA_SELECT", {
         FieldDef{"flags", FieldType::U16, ""},
         FieldDef{"select_items", FieldType::LIST, "expr"},
+        FieldDef{"select_aliases", FieldType::OPT, "list<string>"},
         FieldDef{"from", FieldType::OPT, "TABLE_REF"},
         FieldDef{"joins", FieldType::LIST, "JOIN"},
         FieldDef{"plan", FieldType::OPT, "bytes"},
@@ -303,6 +304,8 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"columns", FieldType::LIST, "COLUMN_DEF"},
         FieldDef{"constraints", FieldType::LIST, "TABLE_CONSTRAINT"},
         FieldDef{"inherits", FieldType::LIST, "schema_path"},
+        FieldDef{"partition_strategy", FieldType::OPT, "ident"},
+        FieldDef{"partition_columns", FieldType::LIST, "ident"},
         FieldDef{"partitioning", FieldType::OPT, "expr"},
         FieldDef{"tablespace", FieldType::OPT, "schema_path"},
         FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},

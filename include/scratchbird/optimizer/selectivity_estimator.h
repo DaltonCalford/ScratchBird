@@ -21,6 +21,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
+#include "scratchbird/optimizer/parameter_bindings.h"
 #include "scratchbird/optimizer/statistics_manager.h"
 #include <string>
 #include <vector>
@@ -62,6 +63,16 @@ namespace scratchbird::optimizer
                                       core::Database *db = nullptr)
             : stats_manager_(stats_manager), db_(db)
         {
+        }
+
+        void setParameterBindings(const ParameterBindings *bindings)
+        {
+            parameter_bindings_ = bindings;
+        }
+
+        auto parameterBindings() const -> const ParameterBindings *
+        {
+            return parameter_bindings_;
         }
 
         /**
@@ -335,6 +346,7 @@ namespace scratchbird::optimizer
     private:
         core::Database *db_ = nullptr;
         StatisticsManager *stats_manager_;
+        const ParameterBindings *parameter_bindings_ = nullptr;
 
         /**
          * compareValues - Compare two byte vectors as column values

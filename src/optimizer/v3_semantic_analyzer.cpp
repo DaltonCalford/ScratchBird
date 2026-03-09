@@ -317,17 +317,58 @@ namespace scratchbird::optimizer
             return match;
         }
 
-        auto literalToText(const parser::v3::Expression *expr,
-                           const parser::v3::StringPool &pool,
-                           std::string &kind_out,
-                           std::string &text_out) -> bool
+        auto unwrapSimpleExpression(const parser::v3::Expression *expr)
+            -> const parser::v3::Expression *
         {
-            if (expr == nullptr || expr->kind() != parser::v3::ASTKind::LiteralExpr)
+            const auto *current = expr;
+            while (current != nullptr &&
+                   current->kind() == parser::v3::ASTKind::CastExpr)
+            {
+                current = static_cast<const parser::v3::CastExpr *>(current)->expr;
+            }
+            return current;
+        }
+
+        auto predicateValueToText(const parser::v3::Expression *expr,
+                                  const parser::v3::StringPool &pool,
+                                  std::string &kind_out,
+                                  std::string &text_out) -> bool
+        {
+            const auto *current = unwrapSimpleExpression(expr);
+            if (current == nullptr)
             {
                 return false;
             }
 
-            const auto *literal = static_cast<const parser::v3::LiteralExpr *>(expr);
+            if (current->kind() == parser::v3::ASTKind::ParameterExpr)
+            {
+                const auto *param = static_cast<const parser::v3::ParameterExpr *>(current);
+                if (param->is_named)
+                {
+                    if (param->name == parser::v3::StringPool::INVALID_ID)
+                    {
+                        return false;
+                    }
+                    kind_out = "PARAMETER";
+                    text_out = ":" + std::string(pool.get(param->name));
+                    return true;
+                }
+
+                if (param->index == 0)
+                {
+                    return false;
+                }
+                kind_out = "PARAMETER";
+                text_out = "$" + std::to_string(param->index);
+                return true;
+            }
+
+            if (current->kind() != parser::v3::ASTKind::LiteralExpr)
+            {
+                return false;
+            }
+
+            const auto *literal = static_cast<const parser::v3::LiteralExpr *>(current);
             switch (literal->literal_type)
             {
                 case parser::v3::LiteralType::INTEGER:
@@ -436,11 +477,17 @@ namespace scratchbird::optimizer
                 std::string literal_kind;
                 std::string literal_text;
                 bool column_on_left = collectColumnToken(binary->left, pool, token) &&
-                                      literalToText(binary->right, pool, literal_kind, literal_text);
+                                      predicateValueToText(binary->right,
+                                                           pool,
+                                                           literal_kind,
+                                                           literal_text);
                 if (!column_on_left)
                 {
                     column_on_left = collectColumnToken(binary->right, pool, token) &&
-                                     literalToText(binary->left, pool, literal_kind, literal_text);
+                                     predicateValueToText(binary->left,
+                                                          pool,
+                                                          literal_kind,
+                                                          literal_text);
                 }
                 if (!column_on_left)
                 {
@@ -483,14 +530,21 @@ namespace scratchbird::optimizer
                 std::string literal_kind;
                 std::string literal_text;
                 if (!collectColumnToken(like_expr->expr, pool, token) ||
-                    !literalToText(like_expr->pattern, pool, literal_kind, literal_text))
+                    !predicateValueToText(like_expr->pattern, pool, literal_kind, literal_text))
                 {
                     return false;
                 }
 
-                if (literal_kind != "STRING" || literal_text.empty() ||
-                    literal_text.front() == '%' ||
-                    literal_text.find('%') == std::string::npos)
+                if (literal_kind == "STRING")
+                {
+                    if (literal_text.empty() ||
+                        literal_text.front() == '%' ||
+                        literal_text.find('%') == std::string::npos)
+                    {
+                        return false;
+                    }
+                }
+                else if (literal_kind != "PARAMETER")
                 {
                     return false;
                 }
@@ -575,6 +629,7 @@ namespace scratchbird::optimizer
             relation_out.source_relation_index = relation_index;
             relation_out.table_ref = table_ref;
             relation_out.alias = defaultAliasForTable(table_ref, pool);
+            relation_out.lateral = table_ref != nullptr && table_ref->lateral;
 
             if (table_ref == nullptr)
             {
@@ -1033,16 +1088,43 @@ namespace scratchbird::optimizer
                 }
             }
 
+            const auto legality = classifyJoinLegality(
+                resolved_join.join_type,
+                resolved_join.natural,
+                !resolved_join.using_columns.empty());
+            resolved_join.legality_class = legality.legality_class;
+            resolved_join.reorderable = legality.reorderable;
+            resolved_join.preserves_left_rows = legality.preserves_left_rows;
+            resolved_join.preserves_right_rows = legality.preserves_right_rows;
+            resolved_join.null_introduces_left = legality.null_introduces_left;
+            resolved_join.null_introduces_right = legality.null_introduces_right;
+            resolved_join.requires_original_order = legality.requires_original_order;
+
             switch (join->join_type)
             {
                 case parser::JoinType::INNER:
                 case parser::JoinType::CROSS:
-                case parser::JoinType::NATURAL:
                     break;
                 default:
-                    out.contains_outer_join = true;
                     out.all_joins_inner = false;
                     break;
+            }
+            switch (join->join_type)
+            {
+                case parser::JoinType::LEFT:
+                case parser::JoinType::RIGHT:
+                case parser::JoinType::FULL:
+                case parser::JoinType::NATURAL_LEFT:
+                case parser::JoinType::NATURAL_RIGHT:
+                case parser::JoinType::NATURAL_FULL:
+                    out.contains_outer_join = true;
+                    break;
+                default:
+                    break;
+            }
+            if (!resolved_join.reorderable)
+            {
+                out.has_join_reorder_barrier = true;
             }
 
             if (!resolved_join.using_columns.empty())

@@ -441,6 +441,10 @@ namespace scratchbird
             const std::vector<core::CatalogManager::ColumnInfo> *current_row_columns_ = nullptr;
             bool current_row_case_insensitive_ = false;
             std::unordered_map<std::string, size_t> current_row_alias_map_;
+            const std::vector<Value> *outer_row_values_ = nullptr;
+            const std::vector<core::CatalogManager::ColumnInfo> *outer_row_columns_ = nullptr;
+            bool outer_row_case_insensitive_ = false;
+            std::unordered_map<std::string, size_t> outer_row_alias_map_;
             // Insert-row context (for VALUES(col) in ON CONFLICT updates)
             const std::vector<Value> *current_insert_values_ = nullptr;
             const std::vector<core::CatalogManager::ColumnInfo> *current_insert_columns_ = nullptr;

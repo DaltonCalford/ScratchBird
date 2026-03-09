@@ -153,6 +153,9 @@ namespace scratchbird::core
 
         // Integration with sweep
         void notifySweepComplete(uint64_t old_oit, uint64_t new_oit);
+        void notifySweepEvidenceBlocked(uint64_t old_oit, uint64_t new_oit);
+        void setSweepPruneBlocked(bool blocked);
+        bool isSweepPruneBlocked() const;
 
         // Phase 4: TOAST Garbage Collection
         // Detect orphaned TOAST chunks (referenced by no heap tuples)
@@ -210,6 +213,7 @@ namespace scratchbird::core
         // Background GC wake mechanism
         std::mutex bg_wake_mutex_;
         std::condition_variable bg_wake_cv_;
+        std::atomic<bool> sweep_prune_blocked_{false};
 
         // Dirty page tracking (priority-based)
         mutable std::mutex dirty_pages_mutex_;

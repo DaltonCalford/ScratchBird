@@ -103,3 +103,31 @@ TEST(SBLRV3PlanCacheKey, StableHashConsistency) {
     EXPECT_EQ(stableHash64(payload), stableHash64(payload));
     EXPECT_NE(stableHash64(payload), stableHash64(payload + "|x"));
 }
+
+TEST(SBLRV3PlanCacheKey, ChangesWhenPlanProfileChanges) {
+    PlanCacheKeyInput base;
+    base.profile_id = "native";
+    base.profile_version = "3.0";
+    base.payload_format = "SQL_TEXT";
+    base.payload_hash = "p:def456";
+    base.session_option_signature = "sess:aa";
+    base.role_context_signature = "role:bb";
+    base.canonical_opcode_symbol = "OP_STMT_DML_SELECT";
+    base.catalog_epoch = 1;
+    base.security_epoch = 2;
+    base.capability_set_hash = "cap:123";
+    base.module_version = 5;
+    base.translation_rule_version = 7;
+    base.host_api_abi_version = "abi-1";
+    base.target_triples_hash = "triples:xyz";
+    base.artifact_preference = "NATIVE_PREFERRED";
+    base.optimization_level = "O2";
+    base.normalization_rule_set_id = 0x1301;
+    base.object_ref_digest = "o:abc123";
+    base.plan_profile_signature = "GENERIC";
+
+    PlanCacheKeyInput changed = base;
+    changed.plan_profile_signature = "CUSTOM:rels=0:INDEX_SCAN:LOW;";
+
+    EXPECT_NE(buildPlanCacheKey(base), buildPlanCacheKey(changed));
+}

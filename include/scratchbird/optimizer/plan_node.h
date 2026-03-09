@@ -1188,6 +1188,127 @@ namespace scratchbird::optimizer
     };
 
     /**
+     * MergeJoinNode - Merge join plan node
+     *
+     * Joins two relations by walking sorted inputs in lock-step. The planner
+     * tracks whether either side is already ordered or needs an implicit sort.
+     */
+    class MergeJoinNode : public PlanNode
+    {
+    public:
+        MergeJoinNode(parser::JoinType join_type,
+                      std::shared_ptr<PlanNode> outer_plan,
+                      std::shared_ptr<PlanNode> inner_plan,
+                      parser::v3::Expression* join_condition,
+                      const std::vector<parser::v3::Expression*>& merge_keys_outer,
+                      const std::vector<parser::v3::Expression*>& merge_keys_inner,
+                      bool outer_presorted,
+                      bool inner_presorted)
+            : PlanNode(PlanNodeType::MERGE_JOIN),
+              join_type_(join_type),
+              outer_plan_(std::move(outer_plan)),
+              inner_plan_(std::move(inner_plan)),
+              join_condition_(join_condition),
+              merge_keys_outer_(merge_keys_outer),
+              merge_keys_inner_(merge_keys_inner),
+              outer_presorted_(outer_presorted),
+              inner_presorted_(inner_presorted)
+        {
+        }
+
+        parser::JoinType joinType() const { return join_type_; }
+        const std::shared_ptr<PlanNode>& outerPlan() const { return outer_plan_; }
+        const std::shared_ptr<PlanNode>& innerPlan() const { return inner_plan_; }
+        parser::v3::Expression* joinCondition() const { return join_condition_; }
+        const std::vector<parser::v3::Expression*>& mergeKeysOuter() const
+        {
+            return merge_keys_outer_;
+        }
+        const std::vector<parser::v3::Expression*>& mergeKeysInner() const
+        {
+            return merge_keys_inner_;
+        }
+        bool outerPresorted() const { return outer_presorted_; }
+        bool innerPresorted() const { return inner_presorted_; }
+
+        void setJoinCondString(const std::string& join_cond_str)
+        {
+            join_cond_str_ = join_cond_str;
+        }
+
+        const std::string& joinCondString() const { return join_cond_str_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "Merge ";
+            switch (join_type_)
+            {
+                case parser::JoinType::INNER:
+                    result += "Join";
+                    break;
+                case parser::JoinType::LEFT:
+                    result += "Left Join";
+                    break;
+                case parser::JoinType::RIGHT:
+                    result += "Right Join";
+                    break;
+                case parser::JoinType::FULL:
+                    result += "Full Outer Join";
+                    break;
+                case parser::JoinType::CROSS:
+                    result += "Join (ERROR: CROSS join not applicable)";
+                    break;
+            }
+
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+
+            if (!join_cond_str_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Merge Cond: " + join_cond_str_;
+            }
+
+            result += "\n";
+            result += std::string((indent + 1) * 2, ' ');
+            result += "Input Order: ";
+            result += outer_presorted_ ? "outer-presorted" : "sort-outer";
+            result += ", ";
+            result += inner_presorted_ ? "inner-presorted" : "sort-inner";
+
+            if (outer_plan_)
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "-> " + outer_plan_->toString(indent + 2);
+            }
+
+            if (inner_plan_)
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "-> " + inner_plan_->toString(indent + 2);
+            }
+
+            return result;
+        }
+
+    private:
+        parser::JoinType join_type_;
+        std::shared_ptr<PlanNode> outer_plan_;
+        std::shared_ptr<PlanNode> inner_plan_;
+        parser::v3::Expression* join_condition_;
+        std::vector<parser::v3::Expression*> merge_keys_outer_;
+        std::vector<parser::v3::Expression*> merge_keys_inner_;
+        bool outer_presorted_;
+        bool inner_presorted_;
+        std::string join_cond_str_;
+    };
+
+    /**
      * AggregateNode - Aggregation with optional grouping (Phase 1, Task 4.2)
      *
      * Implements GROUP BY and aggregate functions (COUNT, SUM, AVG, MIN, MAX).

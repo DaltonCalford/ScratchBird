@@ -16,6 +16,7 @@
 #include "scratchbird/protocol/sbwp_protocol.h"
 #include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/network/socket.h"
+#include "scratchbird/optimizer/statistics_manager.h"
 
 #include <filesystem>
 #include <map>
@@ -116,6 +117,79 @@ public:
 
     void setClientCapabilitiesForTest(uint32_t capabilities) {
         T::setClientCapabilitiesForTest(capabilities);
+    }
+
+    core::ConnectionContext::PreparedStatement* preparedStatementForTest(
+        const std::string& name) {
+        if (!T::connection_ctx_) {
+            return nullptr;
+        }
+        return T::connection_ctx_->getPreparedStatement(name);
+    }
+
+    core::Database* engineDatabaseForTest() {
+        return T::engineDatabase();
+    }
+
+    core::Status assumePublicSuperuserForTest(core::ErrorContext* ctx) {
+        if (!T::connection_ctx_) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Connection context is not available");
+            return core::Status::INTERNAL_ERROR;
+        }
+        auto* db = T::engineDatabase();
+        if (db == nullptr || db->catalog_manager() == nullptr) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Database/catalog is not available");
+            return core::Status::INTERNAL_ERROR;
+        }
+
+        core::CatalogManager::SchemaInfo public_schema;
+        auto status = db->catalog_manager()->getSchema("public", public_schema, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        T::connection_ctx_->setCurrentSchemaId(public_schema.schema_id);
+        T::connection_ctx_->set_current_schema("public");
+        T::connection_ctx_->set_search_path({"public", "sys"});
+        T::connection_ctx_->setCurrentUser(db->catalog_manager()->getSystemUserId(ctx), true);
+        return core::Status::OK;
+    }
+
+    core::Status executeQueryForTest(const QueryContext& query, ResultContext& result) {
+        core::ErrorContext ctx;
+        auto status = assumePublicSuperuserForTest(&ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.error_message = ctx.message;
+            return status;
+        }
+        return T::executeQuery(query, result);
+    }
+
+    core::Status prepareStatementForTest(const std::string& name,
+                                         const std::string& query,
+                                         std::vector<int32_t>& param_types) {
+        core::ErrorContext ctx;
+        auto status = assumePublicSuperuserForTest(&ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        return T::prepareStatement(name, query, param_types);
+    }
+
+    core::Status executePreparedForTest(const std::string& name,
+                                        const QueryContext& params,
+                                        ResultContext& result) {
+        core::ErrorContext ctx;
+        auto status = assumePublicSuperuserForTest(&ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.error_message = ctx.message;
+            return status;
+        }
+        return T::executePrepared(name, params, result);
     }
 };
 
@@ -1338,6 +1412,7 @@ TEST(ProtocolAdapterDialectsNative, NativeCompileRejectIncludesDeterministicSqlC
     AdapterHarness<NativeAdapter> adapter(cfg);
     core::ErrorContext ctx;
     ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+    ASSERT_EQ(adapter.assumePublicSuperuserForTest(&ctx), core::Status::OK) << ctx.message;
     adapter.primeNativeScratchbirdCompiler();
 
     std::vector<uint8_t> first_bytecode;
@@ -1354,6 +1429,84 @@ TEST(ProtocolAdapterDialectsNative, NativeCompileRejectIncludesDeterministicSqlC
     EXPECT_NE(first_error.find("SQL_CONTEXT:"), std::string::npos);
     EXPECT_NE(second_error.find("SQL_CONTEXT:"), std::string::npos);
     EXPECT_EQ(first_error, second_error);
+}
+
+TEST(ProtocolAdapterDialectsNative, PreparedStatementsCacheBucketedCustomPlansForScratchBird) {
+    cleanupDb("test_native_prepared_bucketed_optimizer.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_prepared_bucketed_optimizer.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    auto run_query = [&](const std::string& sql) {
+        QueryContext query;
+        query.query = sql;
+        ResultContext result;
+        auto status = adapter.executeQueryForTest(query, result);
+        EXPECT_EQ(status, core::Status::OK);
+        EXPECT_FALSE(result.has_error) << result.error_message;
+    };
+
+    run_query("CREATE TABLE users (id INTEGER, name VARCHAR(32), email VARCHAR(64), age INTEGER)");
+    run_query("CREATE INDEX idx_users_id ON users (id)");
+    run_query("GRANT SELECT ON users TO PUBLIC");
+
+    for (int i = 1; i <= 256; ++i) {
+        run_query("INSERT INTO users (id, name, email, age) VALUES (" +
+                  std::to_string(i) + ", 'u" + std::to_string(i) + "', 'u" +
+                  std::to_string(i) + "@x', " + std::to_string(20 + (i % 10)) + ")");
+    }
+
+    auto* db = adapter.engineDatabaseForTest();
+    ASSERT_NE(db, nullptr);
+
+    core::CatalogManager::SchemaInfo public_schema;
+    ASSERT_EQ(db->catalog_manager()->getSchema("public", public_schema, &ctx),
+              core::Status::OK)
+        << ctx.message;
+    core::CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db->catalog_manager()->getTable(public_schema.schema_id, "users", table_info, &ctx),
+              core::Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db->statistics_manager()->analyzeTable(table_info.table_id, 1.0, &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    std::vector<int32_t> param_types;
+    ASSERT_EQ(adapter.prepareStatementForTest("q_bucketed",
+                                              "SELECT id FROM users WHERE id < $1",
+                                              param_types),
+              core::Status::OK);
+
+    QueryContext selective;
+    selective.parameter_values = {"5"};
+    selective.parameter_nulls = {false};
+    ResultContext selective_result;
+    ASSERT_EQ(adapter.executePreparedForTest("q_bucketed", selective, selective_result),
+              core::Status::OK);
+    ASSERT_FALSE(selective_result.has_error) << selective_result.error_message;
+
+    auto* prepared = adapter.preparedStatementForTest("q_bucketed");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_EQ(prepared->optimizer_parameter_signature_to_bucket.size(), 1u);
+
+    QueryContext broad;
+    broad.parameter_values = {"250"};
+    broad.parameter_nulls = {false};
+    ResultContext broad_result;
+    ASSERT_EQ(adapter.executePreparedForTest("q_bucketed", broad, broad_result),
+              core::Status::OK);
+    ASSERT_FALSE(broad_result.has_error) << broad_result.error_message;
+
+    prepared = adapter.preparedStatementForTest("q_bucketed");
+    ASSERT_NE(prepared, nullptr);
+    EXPECT_EQ(prepared->optimizer_parameter_signature_to_bucket.size(), 2u);
+    EXPECT_EQ(prepared->optimizer_bucketed_bytecode.size(), 2u);
+    EXPECT_EQ(prepared->optimizer_plan_mode,
+              core::ConnectionContext::PreparedStatement::OptimizerPlanMode::CUSTOM_BUCKETED);
 }
 
 TEST(ProtocolAdapterDialectsC3, MySQLNativePasswordAuth) {

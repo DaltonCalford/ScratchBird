@@ -12,7 +12,9 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/debug.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 
@@ -24,6 +26,7 @@ namespace scratchbird::optimizer
         {
             core::ID column_id{};
             std::string column_name;
+            uint16_t data_type = 0;
         };
 
         auto isZeroId(const core::ID &id) -> bool
@@ -50,14 +53,176 @@ namespace scratchbird::optimizer
             std::memcpy(out.data(), value, value_size);
         }
 
+        auto trimAsciiCopy(std::string_view text) -> std::string
+        {
+            size_t start = 0;
+            while (start < text.size() &&
+                   std::isspace(static_cast<unsigned char>(text[start])) != 0)
+            {
+                ++start;
+            }
+
+            size_t end = text.size();
+            while (end > start &&
+                   std::isspace(static_cast<unsigned char>(text[end - 1])) != 0)
+            {
+                --end;
+            }
+            return std::string(text.substr(start, end - start));
+        }
+
+        auto parseBoolText(std::string_view text, bool &value_out) -> bool
+        {
+            std::string normalized = core::IdentifierUtils::toUpper(trimAsciiCopy(text));
+            if (normalized == "TRUE" || normalized == "T" || normalized == "1" ||
+                normalized == "YES" || normalized == "ON")
+            {
+                value_out = true;
+                return true;
+            }
+            if (normalized == "FALSE" || normalized == "F" || normalized == "0" ||
+                normalized == "NO" || normalized == "OFF")
+            {
+                value_out = false;
+                return true;
+            }
+            return false;
+        }
+
+        auto parameterValueToBytes(const BoundParameterValue &binding,
+                                   uint16_t data_type,
+                                   std::vector<uint8_t> &value_out) -> bool
+        {
+            if (binding.is_null)
+            {
+                value_out.clear();
+                return true;
+            }
+
+            const std::string text = trimAsciiCopy(binding.text);
+            try
+            {
+                switch (static_cast<core::DataType>(data_type))
+                {
+                    case core::DataType::INT8: {
+                        const auto value = static_cast<int8_t>(std::stoi(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::INT16: {
+                        const auto value = static_cast<int16_t>(std::stoi(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::INT32:
+                    case core::DataType::MEDIUMINT: {
+                        const auto value = static_cast<int32_t>(std::stol(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::INT64: {
+                        const auto value = static_cast<int64_t>(std::stoll(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::UINT8: {
+                        const auto value = static_cast<uint8_t>(std::stoul(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::UINT16: {
+                        const auto value = static_cast<uint16_t>(std::stoul(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::UINT32: {
+                        const auto value = static_cast<uint32_t>(std::stoul(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::UINT64: {
+                        const auto value = static_cast<uint64_t>(std::stoull(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::FLOAT32: {
+                        const auto value = static_cast<float>(std::stof(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::FLOAT64:
+                    case core::DataType::DECIMAL:
+                    case core::DataType::MONEY: {
+                        const auto value = static_cast<double>(std::stod(text));
+                        encodeScalarValueToBytes(&value, sizeof(value), value_out);
+                        return true;
+                    }
+                    case core::DataType::BOOLEAN: {
+                        bool value = false;
+                        if (!parseBoolText(text, value))
+                        {
+                            return false;
+                        }
+                        value_out = {static_cast<uint8_t>(value ? 1 : 0)};
+                        return true;
+                    }
+                    default:
+                        value_out.assign(text.begin(), text.end());
+                        return true;
+                }
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        auto parameterExprToBytes(const parser::v3::Expression *expr,
+                                  const ParameterBindings *bindings,
+                                  uint16_t data_type,
+                                  std::vector<uint8_t> &value_out) -> bool
+        {
+            if (bindings == nullptr)
+            {
+                return false;
+            }
+
+            const auto *current = unwrapCasts(expr);
+            if (current == nullptr ||
+                current->kind() != parser::v3::ASTKind::ParameterExpr)
+            {
+                return false;
+            }
+
+            const auto *param = static_cast<const parser::v3::ParameterExpr *>(current);
+            if (param->is_named)
+            {
+                return false;
+            }
+
+            BoundParameterValue value;
+            if (!bindings->getPositional(param->index, value))
+            {
+                return false;
+            }
+            return parameterValueToBytes(value, data_type, value_out);
+        }
+
         auto literalExprToBytes(const parser::v3::Expression *expr,
                                 const parser::v3::StringPool *pool,
+                                const ParameterBindings *bindings,
+                                uint16_t data_type,
                                 std::vector<uint8_t> &value_out) -> bool
         {
             const auto *current = unwrapCasts(expr);
             if (current == nullptr)
             {
                 return false;
+            }
+
+            if (parameterExprToBytes(current, bindings, data_type, value_out))
+            {
+                return true;
             }
 
             switch (current->kind())
@@ -146,12 +311,32 @@ namespace scratchbird::optimizer
 
         auto literalExprToString(const parser::v3::Expression *expr,
                                  const parser::v3::StringPool *pool,
+                                 const ParameterBindings *bindings,
                                  std::string &value_out) -> bool
         {
             const auto *current = unwrapCasts(expr);
             if (current == nullptr)
             {
                 return false;
+            }
+            if (current->kind() == parser::v3::ASTKind::ParameterExpr)
+            {
+                if (bindings == nullptr)
+                {
+                    return false;
+                }
+                const auto *param = static_cast<const parser::v3::ParameterExpr *>(current);
+                if (param->is_named)
+                {
+                    return false;
+                }
+                BoundParameterValue value;
+                if (!bindings->getPositional(param->index, value) || value.is_null)
+                {
+                    return false;
+                }
+                value_out = value.text;
+                return true;
             }
             if (current->kind() != parser::v3::ASTKind::LiteralExpr || pool == nullptr)
             {
@@ -248,7 +433,9 @@ namespace scratchbird::optimizer
                                                       wanted,
                                                       false))
                 {
-                    return ResolvedColumnRef{column.column_id, column.column_name};
+                    return ResolvedColumnRef{column.column_id,
+                                             column.column_name,
+                                             column.data_type};
                 }
             }
 
@@ -385,7 +572,10 @@ namespace scratchbird::optimizer
                         }
 
                         std::string literal_text;
-                        if (!literalExprToString(literal_expr, pool, literal_text))
+                        if (!literalExprToString(literal_expr,
+                                                 pool,
+                                                 parameter_bindings_,
+                                                 literal_text))
                         {
                             return std::nullopt;
                         }
@@ -446,7 +636,11 @@ namespace scratchbird::optimizer
                     }
 
                     std::vector<uint8_t> literal_bytes;
-                    if (!literalExprToBytes(literal_expr, pool, literal_bytes))
+                    if (!literalExprToBytes(literal_expr,
+                                            pool,
+                                            parameter_bindings_,
+                                            column->data_type,
+                                            literal_bytes))
                     {
                         return std::nullopt;
                     }
@@ -533,8 +727,16 @@ namespace scratchbird::optimizer
             std::vector<uint8_t> lower_value;
             std::vector<uint8_t> upper_value;
             if (!column.has_value() ||
-                !literalExprToBytes(between->low, pool, lower_value) ||
-                !literalExprToBytes(between->high, pool, upper_value))
+                !literalExprToBytes(between->low,
+                                    pool,
+                                    parameter_bindings_,
+                                    column->data_type,
+                                    lower_value) ||
+                !literalExprToBytes(between->high,
+                                    pool,
+                                    parameter_bindings_,
+                                    column->data_type,
+                                    upper_value))
             {
                 return DEFAULT_RANGE_SEL;
             }
@@ -548,7 +750,10 @@ namespace scratchbird::optimizer
             auto column = resolveColumnRef(db_, table_id, like->expr, pool, ctx);
             std::string pattern;
             if (!column.has_value() ||
-                !literalExprToString(like->pattern, pool, pattern))
+                !literalExprToString(like->pattern,
+                                     pool,
+                                     parameter_bindings_,
+                                     pattern))
             {
                 return DEFAULT_LIKE_CONTAINS_SEL;
             }
@@ -570,7 +775,11 @@ namespace scratchbird::optimizer
             for (const auto *entry : in_expr->values)
             {
                 std::vector<uint8_t> bytes;
-                if (literalExprToBytes(entry, pool, bytes))
+                if (literalExprToBytes(entry,
+                                       pool,
+                                       parameter_bindings_,
+                                       column->data_type,
+                                       bytes))
                 {
                     values.push_back(std::move(bytes));
                 }
