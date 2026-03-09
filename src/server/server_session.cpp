@@ -604,6 +604,16 @@ bool pluginMethodIdToAuthMethod(const std::string& method_id,
         method_out = protocol::AuthMethod::TOKEN;
         return true;
     }
+    if (normalized == "scratchbird.auth.ldap_bind") {
+        method_out = protocol::AuthMethod::PASSWORD;
+        return true;
+    }
+    if (normalized == "scratchbird.auth.kerberos_gssapi" ||
+        normalized == "scratchbird.auth.jwt_bearer" ||
+        normalized == "scratchbird.auth.oidc_id_token") {
+        method_out = protocol::AuthMethod::TOKEN;
+        return true;
+    }
     if (normalized == "scratchbird.auth.peer_uid") {
         method_out = protocol::AuthMethod::PEER;
         return true;
@@ -2538,6 +2548,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         }
     }
 
+    std::string selected_plugin_method_id = authMethodToPluginMethodId(auth_method);
     if (registry_capable_client) {
         uint16_t selected_slot = 0;
         std::vector<uint8_t> selected_payload;
@@ -2557,6 +2568,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             slot_it->legacy_wire_code != static_cast<uint32_t>(auth_method)) {
             return send_auth_policy_error(kAuthMethodNotAllowedCode);
         }
+        selected_plugin_method_id = slot_it->method_id;
         auth_payload = std::move(selected_payload);
     }
 
@@ -2734,18 +2746,46 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         }
 
         if (auth_error.empty()) {
-            MySqlWireAuthProofRequest mysql_proof;
-            if (parseMySqlWireAuthProofPayload(auth_payload, mysql_proof)) {
-                if (!provider) {
-                    auth_error = "Authentication failed";
+            if (selected_plugin_method_id == "scratchbird.auth.ldap_bind" && provider) {
+                core::AuthResult auth_result = provider->authenticatePluginPayload(
+                    selected_plugin_method_id,
+                    username,
+                    auth_payload,
+                    user_info,
+                    auth_error);
+                if (auth_result == core::AuthResult::SUCCESS) {
+                    if (auto mfa_status = issue_mfa_challenge_if_required(
+                            user_info, auth_method, {}); mfa_status.has_value()) {
+                        return *mfa_status;
+                    }
+                    return finish_auth(user_info, {});
+                }
+            } else {
+                MySqlWireAuthProofRequest mysql_proof;
+                if (parseMySqlWireAuthProofPayload(auth_payload, mysql_proof)) {
+                    if (!provider) {
+                        auth_error = "Authentication failed";
+                    } else {
+                        core::AuthResult auth_result = provider->authenticateMySqlWireProof(
+                            username,
+                            mysql_proof.plugin_name,
+                            std::vector<uint8_t>(mysql_proof.scramble.begin(), mysql_proof.scramble.end()),
+                            mysql_proof.response,
+                            user_info,
+                            auth_error);
+
+                        if (auth_result == core::AuthResult::SUCCESS) {
+                            if (auto mfa_status = issue_mfa_challenge_if_required(
+                                    user_info, auth_method, {}); mfa_status.has_value()) {
+                                return *mfa_status;
+                            }
+                            return finish_auth(user_info, {});
+                        }
+                    }
                 } else {
-                    core::AuthResult auth_result = provider->authenticateMySqlWireProof(
-                        username,
-                        mysql_proof.plugin_name,
-                        std::vector<uint8_t>(mysql_proof.scramble.begin(), mysql_proof.scramble.end()),
-                        mysql_proof.response,
-                        user_info,
-                        auth_error);
+                    std::string password(reinterpret_cast<const char*>(auth_payload.data()),
+                                         auth_payload.size());
+                    core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
 
                     if (auth_result == core::AuthResult::SUCCESS) {
                         if (auto mfa_status = issue_mfa_challenge_if_required(
@@ -2754,18 +2794,6 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
                         }
                         return finish_auth(user_info, {});
                     }
-                }
-            } else {
-                std::string password(reinterpret_cast<const char*>(auth_payload.data()),
-                                     auth_payload.size());
-                core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
-
-                if (auth_result == core::AuthResult::SUCCESS) {
-                    if (auto mfa_status = issue_mfa_challenge_if_required(
-                            user_info, auth_method, {}); mfa_status.has_value()) {
-                        return *mfa_status;
-                    }
-                    return finish_auth(user_info, {});
                 }
             }
         }
@@ -2827,6 +2855,22 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
     } else if (auth_method == protocol::AuthMethod::TOKEN) {
         if (!provider) {
             auth_error = "Authentication failed";
+        } else if (selected_plugin_method_id == "scratchbird.auth.kerberos_gssapi" ||
+                   selected_plugin_method_id == "scratchbird.auth.jwt_bearer" ||
+                   selected_plugin_method_id == "scratchbird.auth.oidc_id_token") {
+            core::AuthResult auth_result = provider->authenticatePluginPayload(
+                selected_plugin_method_id,
+                username,
+                auth_payload,
+                user_info,
+                auth_error);
+            if (auth_result == core::AuthResult::SUCCESS) {
+                if (auto mfa_status = issue_mfa_challenge_if_required(
+                        user_info, auth_method, {}); mfa_status.has_value()) {
+                    return *mfa_status;
+                }
+                return finish_auth(user_info, {});
+            }
         } else {
             uint8_t authkey_id_bytes[16]{};
             std::vector<uint8_t> proof;

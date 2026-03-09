@@ -1,48 +1,117 @@
 # CREATE PROCEDURE
 
-[Prev](./03_drop_function.md) | [Next](./05_alter_procedure.md) | [Topic README](./README.md) | [Language Reference README](../../../README.md) | [Documentation Workspace README](../../../../README.md)
+[Prev](./03_drop_function.md) | [Next](./05_alter_procedure.md) | [Topic README](./README.md) | [DDL README](../README.md) | [Syntax Guide README](../../README.md)
 
-## Coverage and Evidence Status
+## Synopsis
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Creates a procedure - similar to a function but can use transaction control and doesn't return a value.
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
+## Syntax
 
-## Intent
+```sql
+CREATE [ OR REPLACE ] PROCEDURE procedure_name ( [ argmode ] [ argname ] argtype [ { DEFAULT | = } default_expr ] [, ...] )
+    { LANGUAGE lang_name
+      | TRANSFORM { FOR TYPE type_name } [, ... ]
+      | [ EXTERNAL ] SECURITY INVOKER | [ EXTERNAL ] SECURITY DEFINER
+      | SET configuration_parameter { TO value | = value | FROM CURRENT }
+      | AS 'definition'
+      | AS 'obj_file', 'link_symbol'
+    } ...
+```
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+## Function vs Procedure
 
-## Canonical Syntax Forms To Document
-
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
-
-## Clause and Option Matrix
-
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
-
-## Parser Acceptance and Rejection Cases
-
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+| Aspect | Function | Procedure |
+|--------|----------|-----------|
+| Returns value | Yes | No |
+| Transaction control | No | Yes (COMMIT/ROLLBACK) |
+| Can be called in SQL | Yes | No (CALL only) |
+| Use case | Calculations, queries | Business logic, ETL |
 
 ## Examples
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+### Basic Procedure
 
-## Completion Checklist
+```sql
+-- Simple procedure
+CREATE PROCEDURE update_user_status(user_id UUID, new_status TEXT)
+LANGUAGE SQL AS $$
+    UPDATE users SET status = new_status WHERE id = user_id;
+$$;
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+-- Call it
+CALL update_user_status('550e8400...', 'active');
+```
+
+### Procedure with Transaction Control
+
+```sql
+-- Multi-step process with commits
+CREATE PROCEDURE process_batch_orders()
+LANGUAGE plpgsql AS $$
+DECLARE
+    order_rec RECORD;
+BEGIN
+    FOR order_rec IN SELECT * FROM pending_orders LOOP
+        BEGIN
+            -- Process order
+            INSERT INTO processed_orders SELECT * FROM orders WHERE id = order_rec.id;
+            DELETE FROM pending_orders WHERE id = order_rec.id;
+            
+            -- Commit each order separately
+            COMMIT;
+        EXCEPTION WHEN OTHERS THEN
+            -- Log error and continue
+            INSERT INTO error_log (order_id, error) VALUES (order_rec.id, SQLERRM);
+            ROLLBACK;
+        END;
+    END LOOP;
+END;
+$$;
+```
+
+### ETL Procedure
+
+```sql
+CREATE PROCEDURE etl_daily_sales()
+LANGUAGE plpgsql AS $$
+BEGIN
+    -- Truncate and load pattern
+    TRUNCATE TABLE staging_sales;
+    
+    -- Load from external source
+    COPY staging_sales FROM '/data/daily_sales.csv' WITH CSV;
+    
+    -- Transform and insert
+    INSERT INTO sales_fact (date, product_id, amount)
+    SELECT date, product_id, SUM(amount)
+    FROM staging_sales
+    GROUP BY date, product_id;
+    
+    COMMIT;
+END;
+$$;
+```
+
+### INOUT Parameters
+
+```sql
+CREATE PROCEDURE get_and_update_counter(
+    IN counter_name TEXT,
+    INOUT current_value INTEGER
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+    SELECT value INTO current_value FROM counters WHERE name = counter_name;
+    UPDATE counters SET value = value + 1 WHERE name = counter_name;
+END;
+$$;
+
+-- Usage:
+-- CALL get_and_update_counter('page_views', 0);
+```
+
+## See Also
+
+- [CREATE FUNCTION](01_create_function.md)
+- [CALL Statement](../../dml/README.md)

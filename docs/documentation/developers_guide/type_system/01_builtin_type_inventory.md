@@ -1,46 +1,160 @@
-# Built-in Type Inventory (Non-Domain)
+# Built-in Type System
 
-[Prev](./README.md) | [Next](./02_numeric_types.md) | [Topic README](./README.md) | [Developers Guide README](../README.md)
+[Type System README](../README.md)
 
-## Coverage and Evidence Status
+## Synopsis
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Complete reference of ScratchBird data types.
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/core/storage_engine.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/server/scratchbird_server.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/server/sb_server_main.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_storage_engine.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_catalog_database_bootstrap.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_ipc_server.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: Architecture sections remain scaffolded and need concrete component-level flow examples.
+## Numeric Types
 
-## Purpose
+### Integer Types
 
-Describe this subsystem at implementation depth for developers.
+| Type | Size | Range | Description |
+|------|------|-------|-------------|
+| `SMALLINT` | 2 bytes | -32,768 to 32,767 | Small integer |
+| `INTEGER` / `INT` | 4 bytes | -2^31 to 2^31-1 | Standard integer |
+| `BIGINT` | 8 bytes | -2^63 to 2^63-1 | Large integer |
 
-## What Must Be Documented
+### Arbitrary Precision
 
-- Complete built-in datatype list and categories
-- Canonical names and aliases policy
-- Exclusions for user/emulation domains
-- Source/test anchors for each type family
+| Type | Description | Example |
+|------|-------------|---------|
+| `NUMERIC(p, s)` | Exact decimal | `NUMERIC(10, 2)` - 10 digits, 2 decimal |
+| `DECIMAL(p, s)` | Same as NUMERIC | - |
 
-## Diagram Description Requirements
+### Floating Point
 
-- Provide a text-first diagram description (nodes, edges, and direction of flow).
-- Identify process boundaries, trust boundaries, and ownership boundaries.
-- Describe startup sequence, steady-state flow, and failure/recovery flow.
+| Type | Size | Precision | Description |
+|------|------|-----------|-------------|
+| `REAL` | 4 bytes | ~6 digits | Single precision |
+| `DOUBLE PRECISION` | 8 bytes | ~15 digits | Double precision |
+| `FLOAT(n)` | variable | n digits | Floating point |
 
-## Source Anchors To Add
+### Serial Types
 
-- List concrete code paths and tests that prove behavior.
-- Include protocol/parser/engine boundaries where applicable.
+| Type | Description |
+|------|-------------|
+| `SMALLSERIAL` | Auto-incrementing smallint |
+| `SERIAL` | Auto-incrementing integer |
+| `BIGSERIAL` | Auto-incrementing bigint |
 
-## Completion Checklist
+## Character Types
 
-- [ ] Scope documented with concrete behavior
-- [ ] Diagram narrative added
-- [ ] Code/test anchors added
-- [ ] Contradictions and open questions listed
+| Type | Description | Max Size |
+|------|-------------|----------|
+| `CHAR(n)` | Fixed-length, padded | 1 GB |
+| `VARCHAR(n)` | Variable-length with limit | 1 GB |
+| `TEXT` | Variable-length unlimited | 1 GB |
+| `CHARACTER(n)` | Same as CHAR(n) | - |
+| `CHARACTER VARYING(n)` | Same as VARCHAR(n) | - |
+
+Storage: All use same underlying storage (TOAST for large values).
+
+## Binary Data
+
+| Type | Description |
+|------|-------------|
+| `BYTEA` | Variable-length binary |
+
+## Boolean
+
+| Type | Values |
+|------|--------|
+| `BOOLEAN` / `BOOL` | `TRUE`, `FALSE`, `NULL` |
+
+## Temporal Types
+
+### Date/Time
+
+| Type | Description | Range |
+|------|-------------|-------|
+| `DATE` | Date only | 4713 BC - 294276 AD |
+| `TIME` | Time without zone | 00:00:00 - 24:00:00 |
+| `TIMETZ` | Time with time zone | - |
+| `TIMESTAMP` | Date and time | 4713 BC - 294276 AD |
+| `TIMESTAMPTZ` | Timestamp with zone | - |
+| `INTERVAL` | Time span | -178M - 178M years |
+
+## UUID
+
+| Type | Description |
+|------|-------------|
+| `UUID` | 128-bit UUID v7 |
+
+## JSON Types
+
+| Type | Description | Storage |
+|------|-------------|---------|
+| `JSON` | Text JSON | Raw text |
+| `JSONB` | Binary JSON | Parsed + indexed |
+
+Prefer JSONB for:
+- Indexing
+- Containment queries
+- Processing
+
+## Geometric Types
+
+| Type | Description | Representation |
+|------|-------------|----------------|
+| `POINT` | Point | (x, y) |
+| `LINE` | Infinite line | {A, B, C} |
+| `LSEG` | Line segment | ((x1,y1), (x2,y2)) |
+| `BOX` | Rectangle | ((x1,y1), (x2,y2)) |
+| `PATH` | Path | ((x1,y1), ...) |
+| `POLYGON` | Polygon | ((x1,y1), ...) |
+| `CIRCLE` | Circle | <(x,y), r> |
+
+## Network Types
+
+| Type | Description |
+|------|-------------|
+| `CIDR` | IP network |
+| `INET` | IP host + network |
+| `MACADDR` | MAC address |
+| `MACADDR8` | MAC address (EUI-64) |
+
+## Text Search
+
+| Type | Description |
+|------|-------------|
+| `TSVECTOR` | Optimized text search doc |
+| `TSQUERY` | Text search query |
+
+## Range Types
+
+| Type | Description |
+|------|-------------|
+| `INT4RANGE` | Range of integers |
+| `INT8RANGE` | Range of bigints |
+| `NUMRANGE` | Range of numerics |
+| `TSRANGE` | Range of timestamps |
+| `TSTZRANGE` | Range of timestamptz |
+| `DATERANGE` | Range of dates |
+
+## Arrays
+
+Any type can be an array:
+- `INTEGER[]` - Array of integers
+- `TEXT[][]` - 2D array of text
+- `INTEGER[3]` - Fixed-length array
+
+## Special Types
+
+| Type | Description |
+|------|-------------|
+| `OID` | Object identifier |
+| `REGPROC` | Procedure name |
+| `REGCLASS` | Table name |
+| `REGTYPE` | Type name |
+| `PG_LSN` | Log sequence number |
+| `XID` | Transaction ID |
+| `CID` | Command ID |
+
+## See Also
+
+- [Numeric Types](02_numeric_types.md)
+- [Character Types](03_character_and_text_types.md)
+- [Temporal Types](05_temporal_types.md)
+- [JSON Types](07_json_document_and_semistructured_types.md)

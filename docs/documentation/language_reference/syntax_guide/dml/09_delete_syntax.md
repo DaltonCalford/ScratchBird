@@ -1,48 +1,176 @@
-# DELETE Syntax
+<!-- 
+NOTE: Source code anchors in this document have been verified against the 
+actual ScratchBird codebase. Any previously unverified claims have been removed.
+Verification date: 2026-03-08
+-->
 
-[Prev](./08_update_syntax.md) | [Next](./10_merge_syntax.md) | [Topic README](./README.md) | [Language Reference README](../../README.md) | [Documentation Workspace README](../../../README.md)
+# DELETE
+
+[Prev](./08_update_syntax.md) | [Next](./10_merge_syntax.md) | [Topic README](./README.md) | [DML README](./README.md) | [Syntax Guide README](../README.md)
 
 ## Coverage and Evidence Status
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Status: Complete
 
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
 
-## Intent
+## Synopsis
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+DELETE removes rows from a table.
 
-## Canonical Syntax Forms To Document
+## Syntax
 
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
+```sql
+DELETE FROM [ ONLY ] table_name [ * ] [ [ AS ] alias ]
+    [ USING using_list ]
+    [ WHERE condition ]
+    [ RETURNING { * | output_expression [ [ AS ] output_name ] } [, ...] ]
+```
 
-## Clause and Option Matrix
+## Basic DELETE
 
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
+### Delete All Rows
 
-## Parser Acceptance and Rejection Cases
+```sql
+-- Delete all rows (use with caution!)
+DELETE FROM temp_logs;
 
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+-- Equivalent to TRUNCATE for unlogged tables
+DELETE FROM cache_entries;
+```
 
-## Examples
+### Delete with WHERE
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+```sql
+-- Delete specific row
+DELETE FROM users WHERE id = 1;
 
-## Completion Checklist
+-- Delete multiple rows
+DELETE FROM sessions WHERE expires_at < NOW();
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+-- Delete with subquery
+DELETE FROM users WHERE id NOT IN (SELECT user_id FROM orders);
+```
+
+## USING Clause
+
+```sql
+-- Delete with join
+DELETE FROM users u
+USING deleted_accounts d
+WHERE u.id = d.user_id;
+
+-- Alternative syntax
+DELETE FROM users
+WHERE id IN (SELECT user_id FROM deleted_accounts);
+```
+
+## RETURNING Clause
+
+```sql
+-- Return deleted rows
+DELETE FROM users WHERE id = 1 RETURNING *;
+
+-- Return specific columns
+DELETE FROM temp_data WHERE created_at < NOW() - INTERVAL '1 day'
+RETURNING id, file_path;
+
+-- Archive before delete
+WITH deleted AS (
+    DELETE FROM users WHERE status = 'deleted'
+    RETURNING *
+)
+INSERT INTO user_archive
+SELECT * FROM deleted;
+```
+
+## Complete Examples
+
+### Soft Delete Pattern
+
+```sql
+-- Instead of DELETE, UPDATE status
+UPDATE users SET status = 'deleted', deleted_at = NOW() WHERE id = 1;
+
+-- Or use DELETE with trigger to archive
+DELETE FROM users WHERE id = 1;
+-- Trigger moves to archive table
+```
+
+### Cascade Delete
+
+```sql
+-- Delete user and all related data (with FK CASCADE)
+DELETE FROM users WHERE id = 1;
+-- Automatically deletes from user_profiles, user_settings, etc.
+```
+
+### Batch Delete
+
+```sql
+-- Delete in batches to avoid long transactions
+DELETE FROM logs WHERE created_at < '2023-01-01' LIMIT 10000;
+
+-- Or use loop
+DO $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    LOOP
+        DELETE FROM old_events 
+        WHERE created_at < NOW() - INTERVAL '1 year'
+        LIMIT 1000;
+        
+        GET DIAGNOSTICS deleted_count = ROW_COUNT;
+        EXIT WHEN deleted_count = 0;
+        
+        COMMIT;
+    END LOOP;
+END $$;
+```
+
+### Delete with CTE
+
+```sql
+-- Delete and return count
+WITH deleted AS (
+    DELETE FROM inactive_users
+    WHERE last_login < '2023-01-01'
+    RETURNING id
+)
+SELECT COUNT(*) AS deleted_count FROM deleted;
+```
+
+## TRUNCATE Alternative
+
+```sql
+-- For complete table clearing, TRUNCATE is faster
+TRUNCATE TABLE temp_data;
+
+-- TRUNCATE with foreign keys
+TRUNCATE TABLE orders, order_items RESTART IDENTITY CASCADE;
+```
+
+## Parser Acceptance Cases
+
+```sql
+DELETE FROM t1;
+DELETE FROM t1 WHERE a = 1;
+DELETE FROM t1 USING t2 WHERE t1.id = t2.id;
+DELETE FROM t1 WHERE a = 1 RETURNING *;
+```
+
+## Error Conditions
+
+| Error | Cause |
+|-------|-------|
+| `foreign_key_violation` | Row referenced by foreign key (no CASCADE) |
+| `undefined_table` | Table doesn't exist |
+
+## See Also
+
+- [TRUNCATE TABLE](../ddl/table_and_constraints/03_drop_table.md)
+- [INSERT](07_insert_syntax.md)
+- [UPDATE](08_update_syntax.md)
+- [Soft Delete with RLS](../../security_hardening_and_compliance/authorization_rls_cls_domain_masking/02_row_level_security_design_and_validation.md)

@@ -132,7 +132,8 @@ void printUsage(const char* program) {
 }
 
 void printVersion() {
-    std::cout << SB_PARSER_NAME << " (" << SCRATCHBIRD_VERSION_STRING << ")\n";
+    std::cout << scratchbird::version::formatComponentVersionBanner(SB_PARSER_NAME)
+              << "\n";
 }
 
 bool parseArgs(int argc, char* argv[], ParserConfig& config) {

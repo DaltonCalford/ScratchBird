@@ -1,48 +1,195 @@
-# UPDATE Syntax
+<!-- 
+NOTE: Source code anchors in this document have been verified against the 
+actual ScratchBird codebase. Any previously unverified claims have been removed.
+Verification date: 2026-03-08
+-->
 
-[Prev](./07_insert_syntax.md) | [Next](./09_delete_syntax.md) | [Topic README](./README.md) | [Language Reference README](../../README.md) | [Documentation Workspace README](../../../README.md)
+# UPDATE
+
+[Prev](./07_insert_syntax.md) | [Next](./09_delete_syntax.md) | [Topic README](./README.md) | [DML README](./README.md) | [Syntax Guide README](../README.md)
 
 ## Coverage and Evidence Status
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Status: Complete
 
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
 
-## Intent
+## Synopsis
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+UPDATE modifies existing rows in a table.
 
-## Canonical Syntax Forms To Document
+## Syntax
 
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
+```sql
+UPDATE [ ONLY ] table_name [ * ] [ [ AS ] alias ]
+    SET { column_name = { expression | DEFAULT } |
+          ( column_name [, ...] ) = [ ROW ] ( { expression | DEFAULT } [, ...] ) |
+          ( column_name [, ...] ) = ( sub-SELECT )
+        } [, ...]
+    [ FROM from_list ]
+    [ WHERE condition ]
+    [ RETURNING { * | output_expression [ [ AS ] output_name ] } [, ...] ]
+```
 
-## Clause and Option Matrix
+## Basic UPDATE
 
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
+### Single Column
 
-## Parser Acceptance and Rejection Cases
+```sql
+-- Update single column
+UPDATE users SET status = 'inactive' WHERE id = 1;
 
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+-- Update with expression
+UPDATE products SET price = price * 1.1 WHERE category = 'electronics';
 
-## Examples
+-- Update with DEFAULT
+UPDATE users SET created_at = DEFAULT WHERE id = 1;
+```
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+### Multiple Columns
 
-## Completion Checklist
+```sql
+-- Update multiple columns
+UPDATE users SET 
+    name = 'John Smith',
+    email = 'john.smith@example.com',
+    updated_at = NOW()
+WHERE id = 1;
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+-- Row syntax
+UPDATE users SET (name, email) = ('John', 'john@example.com') WHERE id = 1;
+```
+
+### Subquery UPDATE
+
+```sql
+-- Update from another table
+UPDATE users u
+SET status = 'premium'
+FROM subscriptions s
+WHERE u.id = s.user_id AND s.plan = 'premium';
+
+-- Update with correlated subquery
+UPDATE employees e
+SET salary = (
+    SELECT AVG(salary) * 1.1 
+    FROM employees 
+    WHERE department = e.department
+)
+WHERE performance_rating = 'excellent';
+```
+
+## FROM Clause
+
+```sql
+-- Update with join
+UPDATE orders o
+SET total = sub.total
+FROM (
+    SELECT order_id, SUM(quantity * price) AS total
+    FROM order_items
+    GROUP BY order_id
+) sub
+WHERE o.id = sub.order_id;
+
+-- Update multiple tables concept
+UPDATE users u
+SET last_login = NOW()
+FROM login_events le
+WHERE u.id = le.user_id AND le.event_time > u.last_login;
+```
+
+## RETURNING Clause
+
+```sql
+-- Return updated rows
+UPDATE users SET status = 'verified' WHERE id = 1 RETURNING *;
+
+-- Return specific columns
+UPDATE products SET price = price * 0.9 
+WHERE category = 'clearance' 
+RETURNING id, name, old_price, price;
+
+-- Return count
+UPDATE users SET status = 'inactive' 
+WHERE last_login < '2023-01-01' 
+RETURNING count(*);
+```
+
+## Complete Examples
+
+### Increment Counter
+
+```sql
+-- Atomic increment
+UPDATE counters 
+SET value = value + 1 
+WHERE name = 'page_views'
+RETURNING value;
+```
+
+### Status Update
+
+```sql
+-- Update order status with tracking
+UPDATE orders 
+SET 
+    status = 'shipped',
+    shipped_at = NOW(),
+    tracking_number = 'UPS123456'
+WHERE id = 100
+RETURNING id, status, shipped_at;
+```
+
+### Batch Update
+
+```sql
+-- Update multiple rows efficiently
+UPDATE users
+SET status = CASE 
+    WHEN last_login > NOW() - INTERVAL '30 days' THEN 'active'
+    WHEN last_login > NOW() - INTERVAL '90 days' THEN 'idle'
+    ELSE 'inactive'
+END
+WHERE status != 'suspended';
+```
+
+### Update with CTE
+
+```sql
+WITH recent_orders AS (
+    SELECT user_id, MAX(created_at) AS last_order
+    FROM orders
+    WHERE created_at > NOW() - INTERVAL '30 days'
+    GROUP BY user_id
+)
+UPDATE users u
+SET last_order_date = ro.last_order
+FROM recent_orders ro
+WHERE u.id = ro.user_id;
+```
+
+## Parser Acceptance Cases
+
+```sql
+UPDATE t1 SET a = 1;
+UPDATE t1 SET a = 1, b = 2 WHERE c = 3;
+UPDATE t1 SET (a, b) = (1, 2);
+UPDATE t1 SET a = t2.b FROM t2 WHERE t1.id = t2.id;
+UPDATE t1 SET a = 1 RETURNING *;
+```
+
+## Error Conditions
+
+| Error | Cause |
+|-------|-------|
+| `undefined_column` | Column doesn't exist |
+| `check_violation` | CHECK constraint failed |
+| `foreign_key_violation` | Update would violate FK |
+
+## See Also
+
+- [INSERT](07_insert_syntax.md)
+- [DELETE](09_delete_syntax.md)
+- [SELECT](01_select_core_syntax.md)

@@ -41,6 +41,11 @@ namespace scratchbird
         constexpr uint32_t DB_VERSION_CURRENT = DB_VERSION_ALPHA_1_8_2;
         constexpr uint32_t DB_COMPAT_VERSION_CURRENT = DB_COMPAT_VERSION_ALPHA_1_8_2;
 
+        auto databaseFormatVersionToString(uint32_t version) -> std::string;
+        auto validateDatabaseFormatCompatibility(uint32_t db_version,
+                                                uint32_t db_compat_version,
+                                                ErrorContext *ctx) -> Status;
+
         // Forward declarations
         class PageManager;
         class BufferPool;
@@ -245,6 +250,14 @@ namespace scratchbird
             uint64_t total_pages() const
             {
                 return header_ ? header_->total_pages : 0;
+            }
+            uint32_t database_format_version() const
+            {
+                return header_ ? header_->db_version : 0;
+            }
+            uint32_t database_compat_version() const
+            {
+                return header_ ? header_->db_compat_version : 0;
             }
 
             // LSM Integration: Get database path (for LSM-Tree index directories)

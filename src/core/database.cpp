@@ -58,6 +58,7 @@
 #include <iomanip>
 #include <sstream>
 #include <climits>
+#include <limits>
 #include <unordered_set>
 #include <cstdlib>
 #if defined(_WIN32)
@@ -75,6 +76,110 @@ namespace scratchbird::core
                 ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
             }
             return value;
+        }
+
+        std::string trimAscii(std::string value)
+        {
+            const auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
+            value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), is_space));
+            value.erase(std::find_if_not(value.rbegin(), value.rend(), is_space).base(), value.end());
+            return value;
+        }
+
+        bool parseUnsignedIntegerStrict(const std::string &value, uint64_t *out_value)
+        {
+            if (out_value == nullptr)
+            {
+                return false;
+            }
+
+            const std::string trimmed = trimAscii(value);
+            if (trimmed.empty())
+            {
+                return false;
+            }
+
+            size_t consumed = 0;
+            try
+            {
+                const auto parsed = std::stoull(trimmed, &consumed, 10);
+                if (consumed != trimmed.size())
+                {
+                    return false;
+                }
+                *out_value = parsed;
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool parseBinarySizeBytes(const std::string &value, uint64_t *out_bytes)
+        {
+            if (out_bytes == nullptr)
+            {
+                return false;
+            }
+
+            const std::string trimmed = trimAscii(value);
+            if (trimmed.empty())
+            {
+                return false;
+            }
+
+            size_t suffix_start = 0;
+            while (suffix_start < trimmed.size() &&
+                   std::isdigit(static_cast<unsigned char>(trimmed[suffix_start])) != 0)
+            {
+                ++suffix_start;
+            }
+            if (suffix_start == 0 || suffix_start == trimmed.size())
+            {
+                return false;
+            }
+
+            uint64_t magnitude = 0;
+            if (!parseUnsignedIntegerStrict(trimmed.substr(0, suffix_start), &magnitude))
+            {
+                return false;
+            }
+
+            const std::string suffix = toLowerAscii(trimAscii(trimmed.substr(suffix_start)));
+            uint64_t multiplier = 0;
+            if (suffix == "b")
+            {
+                multiplier = 1;
+            }
+            else if (suffix == "k" || suffix == "kb")
+            {
+                multiplier = 1024ULL;
+            }
+            else if (suffix == "m" || suffix == "mb")
+            {
+                multiplier = 1024ULL * 1024ULL;
+            }
+            else if (suffix == "g" || suffix == "gb")
+            {
+                multiplier = 1024ULL * 1024ULL * 1024ULL;
+            }
+            else if (suffix == "t" || suffix == "tb")
+            {
+                multiplier = 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+            }
+            else
+            {
+                return false;
+            }
+
+            if (magnitude > (std::numeric_limits<uint64_t>::max() / multiplier))
+            {
+                return false;
+            }
+
+            *out_bytes = magnitude * multiplier;
+            return true;
         }
 
         bool preadFully(int fd, void* buffer, size_t size, off_t offset,
@@ -189,6 +294,134 @@ namespace scratchbird::core
                 *recognized = false;
             }
             return BufferPool::PoolLayout::Single;
+        }
+
+        Status loadBufferPoolConfig(uint32_t database_page_size,
+                                    BufferPool::Config *config_out,
+                                    ErrorContext *ctx)
+        {
+            if (config_out == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Buffer pool config output cannot be null");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            BufferPool::Config config;
+            Config &settings = Config::getInstance();
+
+            const std::string pool_size_value =
+                settings.getString("memory", "buffer_pool_size", std::to_string(config.pool_size));
+            uint64_t pool_pages = 0;
+            if (!parseUnsignedIntegerStrict(pool_size_value, &pool_pages))
+            {
+                uint64_t pool_bytes = 0;
+                if (!parseBinarySizeBytes(pool_size_value, &pool_bytes))
+                {
+                    const std::string message =
+                        "Invalid buffer_pool_size '" + pool_size_value +
+                        "': use a page count or a size suffix such as 128MB";
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                    return Status::INVALID_ARGUMENT;
+                }
+                pool_pages =
+                    std::max<uint64_t>(1, (pool_bytes + database_page_size - 1) / database_page_size);
+            }
+            if (pool_pages == 0 || pool_pages > std::numeric_limits<uint32_t>::max())
+            {
+                const std::string message =
+                    "buffer_pool_size resolves to an out-of-range page count";
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+
+            config.pool_size = static_cast<uint32_t>(pool_pages);
+            config.page_size = database_page_size;
+
+            if (settings.hasKey("memory", "buffer_pool_page_size"))
+            {
+                const std::string configured_page_size =
+                    settings.getString("memory", "buffer_pool_page_size", "");
+                uint64_t page_size_value = 0;
+                if (!parseUnsignedIntegerStrict(configured_page_size, &page_size_value))
+                {
+                    const std::string message =
+                        "Invalid buffer_pool_page_size '" + configured_page_size +
+                        "': page size overrides must be numeric";
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                    return Status::INVALID_ARGUMENT;
+                }
+                if (page_size_value != database_page_size)
+                {
+                    const std::string message =
+                        "buffer_pool_page_size is fixed by the database page size (" +
+                        std::to_string(database_page_size) + ")";
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                    return Status::INVALID_ARGUMENT;
+                }
+            }
+
+            const std::string layout_value =
+                settings.getString("memory", "buffer_pool_layout", "single");
+            bool layout_recognized = false;
+            config.layout = parseBufferPoolLayout(layout_value, &layout_recognized);
+            if (!layout_recognized)
+            {
+                const std::string message =
+                    "Unknown buffer_pool_layout '" + layout_value + "'";
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, message.c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+            if (config.layout != BufferPool::PoolLayout::Single)
+            {
+                const std::string message =
+                    "buffer_pool_layout '" + layout_value +
+                    "' is not supported; only 'single' is implemented";
+                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, message.c_str());
+                return Status::NOT_IMPLEMENTED;
+            }
+
+            config.enable_background_writer = settings.getBool(
+                "memory", "buffer_pool_bgwriter_enabled", config.enable_background_writer);
+
+            const uint64_t bgwriter_delay_ms = settings.getUInt(
+                "memory", "buffer_pool_bgwriter_delay_ms", config.bgwriter_delay_ms);
+            const uint64_t bgwriter_max_pages = settings.getUInt(
+                "memory", "buffer_pool_bgwriter_max_pages", config.bgwriter_max_pages);
+            if (bgwriter_delay_ms > std::numeric_limits<uint32_t>::max() ||
+                bgwriter_max_pages > std::numeric_limits<uint32_t>::max())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "buffer_pool_bgwriter settings exceed supported range");
+                return Status::INVALID_ARGUMENT;
+            }
+            config.bgwriter_delay_ms = static_cast<uint32_t>(bgwriter_delay_ms);
+            config.bgwriter_max_pages = static_cast<uint32_t>(bgwriter_max_pages);
+
+            config.dirty_ratio_low = settings.getDouble(
+                "memory", "buffer_pool_dirty_ratio_low", config.dirty_ratio_low);
+            config.dirty_ratio_high = settings.getDouble(
+                "memory", "buffer_pool_dirty_ratio_high", config.dirty_ratio_high);
+            config.dirty_ratio_checkpoint = settings.getDouble(
+                "memory", "buffer_pool_dirty_ratio_checkpoint", config.dirty_ratio_checkpoint);
+
+            const bool low_valid =
+                (config.dirty_ratio_low >= 0.0 && config.dirty_ratio_low <= 1.0);
+            const bool high_valid =
+                (config.dirty_ratio_high >= 0.0 && config.dirty_ratio_high <= 1.0);
+            const bool checkpoint_valid =
+                (config.dirty_ratio_checkpoint >= 0.0 && config.dirty_ratio_checkpoint <= 1.0);
+            if (!low_valid || !high_valid || !checkpoint_valid ||
+                config.dirty_ratio_low > config.dirty_ratio_high ||
+                config.dirty_ratio_high > config.dirty_ratio_checkpoint)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "buffer_pool dirty ratios must satisfy 0 <= low <= high <= checkpoint <= 1");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            *config_out = config;
+            return Status::OK;
         }
 
         bool readVersionFile(const std::string& path, std::string& out)
@@ -818,6 +1051,74 @@ namespace scratchbird::core
     }
     } // namespace
 
+    auto databaseFormatVersionToString(uint32_t version) -> std::string
+    {
+        std::ostringstream out;
+        out << ((version >> 24) & 0xFFu) << '.'
+            << ((version >> 16) & 0xFFu) << '.'
+            << ((version >> 8) & 0xFFu) << '.'
+            << (version & 0xFFu);
+        return out.str();
+    }
+
+    auto validateDatabaseFormatCompatibility(uint32_t db_version,
+                                             uint32_t db_compat_version,
+                                             ErrorContext *ctx) -> Status
+    {
+        if (db_version == 0u || db_compat_version == 0u)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::PAGE_CORRUPT,
+                              "Database format version fields must be non-zero");
+            return Status::PAGE_CORRUPT;
+        }
+
+        const auto is_known_version = [](uint32_t version) {
+            return version == DB_VERSION_ALPHA_1_0_1 || version == DB_VERSION_CURRENT;
+        };
+
+        if (db_version > DB_VERSION_CURRENT)
+        {
+            const std::string message =
+                "Database on-disk format version " + databaseFormatVersionToString(db_version) +
+                " is newer than engine baseline " +
+                databaseFormatVersionToString(DB_VERSION_CURRENT);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, message.c_str());
+            return Status::NOT_SUPPORTED;
+        }
+
+        if (!is_known_version(db_version))
+        {
+            const std::string message =
+                "Database on-disk format version " + databaseFormatVersionToString(db_version) +
+                " is not recognized in the compatibility matrix";
+            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, message.c_str());
+            return Status::NOT_SUPPORTED;
+        }
+
+        if (db_compat_version > DB_VERSION_CURRENT)
+        {
+            const std::string message =
+                "Database requires engine version at least " +
+                databaseFormatVersionToString(db_compat_version) +
+                "; current on-disk baseline is " +
+                databaseFormatVersionToString(DB_VERSION_CURRENT);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, message.c_str());
+            return Status::NOT_SUPPORTED;
+        }
+
+        if (!is_known_version(db_compat_version))
+        {
+            const std::string message =
+                "Database compatibility floor " + databaseFormatVersionToString(db_compat_version) +
+                " is not recognized in the compatibility matrix";
+            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, message.c_str());
+            return Status::NOT_SUPPORTED;
+        }
+
+        return Status::OK;
+    }
+
     Database::Database()
     {
         table_stats_manager_ = std::make_unique<TableStatsManager>(this);
@@ -879,6 +1180,7 @@ namespace scratchbird::core
 
         // Shut down domain manager
         domain_manager_.reset();
+        clearDomainControlPlaneReplicaCatalog(db_uuid_);
 
         // Shut down encryption key manager
         encryption_key_manager_.reset();
@@ -1834,8 +2136,8 @@ namespace scratchbird::core
                               "Out of memory extracting database name from path");
             return Status::OOM;
         }
-        header->db_version = DB_VERSION_ALPHA_1_0_1;
-        header->db_compat_version = DB_COMPAT_VERSION_ALPHA_1_0_1;
+        header->db_version = DB_VERSION_CURRENT;
+        header->db_compat_version = DB_COMPAT_VERSION_CURRENT;
 
         // Get current time in microseconds
         uint64_t micros = defaultTimeSource().nowMicros();
@@ -2231,16 +2533,11 @@ namespace scratchbird::core
 
         // Initialize buffer pool
         BufferPool::Config bp_config;
-        bp_config.pool_size = Config::getInstance().getUInt("memory", "buffer_pool_size", 128);
-        bp_config.page_size = page_size_;
-        std::string layout_value = Config::getInstance().getString("memory", "buffer_pool_layout",
-                                                                   "single");
-        bool layout_recognized = false;
-        bp_config.layout = parseBufferPoolLayout(layout_value, &layout_recognized);
-        if (!layout_recognized && !layout_value.empty())
+        status = loadBufferPoolConfig(page_size_, &bp_config, ctx);
+        if (status != Status::OK)
         {
-            LOG_WARNING(GENERAL, "Unknown buffer_pool_layout '%s'; using single pool",
-                        layout_value.c_str());
+            close();
+            return status;
         }
         try
         {
@@ -2542,6 +2839,12 @@ namespace scratchbird::core
             close();
             return status;
         }
+        status = encryption_key_manager_->validateDatabaseEncryptionPolicy(ctx);
+        if (status != Status::OK)
+        {
+            close();
+            return status;
+        }
 
         // Initialize optimizer runtime components (Phase 1, Task 1.3)
         try
@@ -2751,6 +3054,15 @@ namespace scratchbird::core
         {
             SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH, "Database header checksum validation failed");
             return Status::CHECKSUM_MISMATCH;
+        }
+
+        const Status format_status =
+            validateDatabaseFormatCompatibility(header_->db_version,
+                                                header_->db_compat_version,
+                                                ctx);
+        if (format_status != Status::OK)
+        {
+            return format_status;
         }
 
         return Status::OK;

@@ -284,6 +284,16 @@ std::vector<std::string> OAuthAuthMethod::mapClaimsToRoles(const JwtClaims& clai
 
 core::Status OAuthAuthMethod::verifyJwtSignature(const JwtToken& token,
                                                  const OAuthProviderConfig& provider) {
+    if (token.header.alg == JwtAlgorithm::HS256 ||
+        token.header.alg == JwtAlgorithm::HS384 ||
+        token.header.alg == JwtAlgorithm::HS512) {
+        std::string message_str = token.raw.substr(0, token.raw.rfind('.'));
+        std::vector<uint8_t> message(message_str.begin(), message_str.end());
+        const bool valid = verifyHmacSignature(
+            message, token.signature, provider.client_secret, token.header.alg);
+        return valid ? core::Status::OK : core::Status::PERMISSION_DENIED;
+    }
+
     // Find key by kid
     const JsonWebKey* key = findKey(provider.provider_id, token.header.kid);
 
@@ -341,13 +351,6 @@ core::Status OAuthAuthMethod::verifyJwtSignature(const JwtToken& token,
         case JwtAlgorithm::ES384:
         case JwtAlgorithm::ES512:
             valid = verifyEcSignature(message, token.signature, *key, token.header.alg);
-            break;
-
-        case JwtAlgorithm::HS256:
-        case JwtAlgorithm::HS384:
-        case JwtAlgorithm::HS512:
-            valid = verifyHmacSignature(message, token.signature,
-                                        provider.client_secret, token.header.alg);
             break;
 
         default:

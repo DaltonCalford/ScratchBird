@@ -22,6 +22,7 @@
 
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/index_factory.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/posix_compat.h"
 #include <sys/stat.h>
@@ -166,6 +167,8 @@ Status LSMTreeIndex::create(ErrorContext *ctx)
 
     // Initialize compaction manager
     compaction_mgr_ = std::make_unique<LSMCompactionManager>(txn_mgr_);
+    compaction_mgr_->setIndexPath(index_path_);
+    compaction_mgr_->setBlockSize(block_size_);
     Status status = compaction_mgr_->initialize(ctx);
     if (status != Status::OK)
     {
@@ -191,6 +194,8 @@ Status LSMTreeIndex::open(ErrorContext *ctx)
 
     // Initialize compaction manager
     compaction_mgr_ = std::make_unique<LSMCompactionManager>(txn_mgr_);
+    compaction_mgr_->setIndexPath(index_path_);
+    compaction_mgr_->setBlockSize(block_size_);
     Status status = compaction_mgr_->initialize(ctx);
     if (status != Status::OK)
     {
@@ -227,10 +232,9 @@ std::unique_ptr<LSMTreeIndex> LSMTreeIndex::open(Database* db,
         return nullptr;
     }
 
-    // Construct LSM tree path: <db_directory>/indexes/lsm/<index_uuid>
-    // For now, use a temporary directory pattern since Database doesn't expose its directory
-    // This should be updated when Database provides a getIndexDirectory() method
-    std::string index_path = "/tmp/scratchbird/indexes/lsm/" + index_uuid.toString();
+    // Reuse the same file-based path contract used by index creation.
+    std::string index_path = IndexFactory::generateIndexPath(
+        db->path(), index_uuid, CatalogManager::IndexType::LSM);
 
     // Get transaction manager from database
     TransactionManager* txn_mgr = db->transaction_manager();

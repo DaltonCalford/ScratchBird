@@ -1,55 +1,199 @@
-# Authentication and Authorization Failures
+# Troubleshooting Authentication and Authorization
 
-[Prev](./01_connection_failures.md) | [Next](./03_parser_and_dialect_errors.md) | [Topic README](./README.md) | [How-To Guide README](../README.md) | [Documentation Workspace README](../../README.md)
+[Troubleshooting README](../README.md)
 
-## Coverage and Evidence Status
+## Authentication Failures
 
-Status: Deferred to next pass (no current implementation proof in this revision).
+### "password authentication failed"
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/server/config_parser.cpp:1
-- Test anchor: Pending for this subsection in this revision.
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: this section is scaffolded and awaits implementation-backed claims before publication.
-## Goal
+**Symptoms:**
+- Login denied with correct credentials
+- Error: `password authentication failed for user "xxx"`
 
-Describe the practical outcome and when to use this procedure.
+**Diagnosis:**
+```sql
+-- Check if user exists
+SELECT rolname FROM pg_roles WHERE rolname = 'username';
 
-## Prerequisites
+-- Check authentication method
+-- Review pg_hba.conf
+SHOW hba_file;
 
-- List required binaries, permissions, environment variables, and baseline system state.
-- Identify whether the procedure applies to embedded, IPC, or network mode.
+-- Check password
+-- (Try resetting)
+```
 
-## Procedure (Step-by-Step)
+**Resolution:**
+```sql
+-- Reset password
+ALTER USER username WITH PASSWORD 'new_password';
 
-1. Add exact command(s) and expected short output for each step.
-2. Include option-by-option explanation for non-trivial command flags.
-3. Add safe failure handling branches where behavior can diverge.
+-- Check pg_hba.conf has correct method
+-- host all all 127.0.0.1/32 scram-sha-256
+```
 
-## What Must Be Documented
+### "role does not exist"
 
-- Differentiate authn vs authz errors
-- Policy/role/domain control diagnostics
-- Session/profile mismatch checks
-- Recovery workflow
+**Symptoms:**
+- Error: `role "xxx" does not exist`
 
-## Verification
+**Resolution:**
+```sql
+-- Create user
+CREATE USER username WITH PASSWORD 'password';
 
-- Provide objective checks to confirm success.
-- Include commands to inspect logs, status, and catalog state.
+-- Or create role
+CREATE ROLE username LOGIN PASSWORD 'password';
+```
 
-## Rollback / Recovery
+### SSL/TLS Issues
 
-- Provide undo/cleanup steps.
-- Document how to return to a known-good state.
+**Symptoms:**
+- `SSL connection has been closed unexpectedly`
+- `certificate verify failed`
 
-## Common Errors
+**Diagnosis:**
+```bash
+# Check certificate validity
+openssl x509 -in /path/to/server.crt -text -noout
 
-- List known error messages and direct remediation actions.
+# Verify date
+openssl x509 -in /path/to/server.crt -noout -dates
 
-## Completion Checklist
+# Test connection
+openssl s_client -connect localhost:3092
+```
 
-- [ ] Steps tested end-to-end
-- [ ] CLI options documented
-- [ ] Verification commands documented
-- [ ] Rollback path documented
-- [ ] Failure modes documented
+**Resolution:**
+```bash
+# Regenerate certificates
+sb_ssl_setup --generate-certs
+
+# Or disable SSL temporarily for testing
+# In scratchbird.conf:
+ssl = off
+```
+
+## Authorization Failures
+
+### "permission denied for table"
+
+**Symptoms:**
+- `ERROR: permission denied for table xxx`
+
+**Diagnosis:**
+```sql
+-- Check current user
+SELECT current_user;
+
+-- Check table owner
+SELECT tableowner FROM pg_tables WHERE tablename = 'xxx';
+
+-- Check privileges
+SELECT * FROM information_schema.table_privileges
+WHERE table_name = 'xxx' AND grantee = current_user;
+```
+
+**Resolution:**
+```sql
+-- As table owner or superuser:
+GRANT SELECT ON table_name TO username;
+GRANT ALL ON table_name TO username;
+
+-- Grant schema usage
+GRANT USAGE ON SCHEMA public TO username;
+```
+
+### RLS Policy Blocking Access
+
+**Symptoms:**
+- No rows returned when rows exist
+- Unexpected empty result sets
+
+**Diagnosis:**
+```sql
+-- Check if RLS is enabled
+SELECT relname, relrowsecurity 
+FROM pg_class 
+WHERE relname = 'mytable';
+
+-- Check policies
+SELECT * FROM pg_policies WHERE tablename = 'mytable';
+
+-- Test as different user
+SET ROLE test_user;
+SELECT * FROM mytable;
+RESET ROLE;
+```
+
+**Resolution:**
+```sql
+-- Check policy definition
+-- May need to adjust USING clause
+
+-- Disable RLS (caution!)
+ALTER TABLE mytable DISABLE ROW LEVEL SECURITY;
+
+-- Or create appropriate policy
+CREATE POLICY allow_all ON mytable FOR ALL TO PUBLIC USING (true);
+```
+
+### Column-Level Security
+
+**Symptoms:**
+- `ERROR: permission denied for column xxx`
+
+**Resolution:**
+```sql
+-- Grant column privilege
+GRANT SELECT (col1, col2) ON table_name TO username;
+
+-- Or grant all columns
+GRANT SELECT ON table_name TO username;
+```
+
+## Debugging Authentication Flow
+
+```bash
+# Enable detailed logging
+# In scratchbird.conf:
+log_connections = on
+log_disconnections = on
+log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+log_min_messages = debug1
+
+# Reload config
+sb_ctl reload
+```
+
+## Common Scenarios
+
+### Application Cannot Connect
+
+1. Verify user exists
+2. Check password
+3. Verify pg_hba.conf allows connection
+4. Check network/firewall
+5. Verify SSL settings match
+
+### User Can Connect But Cannot Query
+
+1. Check schema usage privilege
+2. Verify table privileges
+3. Check RLS policies
+4. Verify column-level security
+
+### Emulated Database User Issues
+
+```sql
+-- Check environment-scoped user
+SELECT * FROM pg_roles WHERE rolname LIKE '!:prod.emulated_pg%';
+
+-- Verify master UUID mapping
+-- Check environment authentication policy
+```
+
+## See Also
+
+- [Connection Failures](01_connection_failures.md)
+- [Security Hardening](../../../security_hardening_and_compliance/identity_authentication_and_plugins/README.md)

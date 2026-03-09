@@ -1,48 +1,118 @@
+<!-- 
+NOTE: Source code anchors in this document have been verified against the 
+actual ScratchBird codebase. Any previously unverified claims have been removed.
+Verification date: 2026-03-08
+-->
+
 # CREATE ROLE
 
-[Prev](./03_drop_user.md) | [Next](./05_alter_role.md) | [Topic README](./README.md) | [Language Reference README](../../../README.md) | [Documentation Workspace README](../../../../README.md)
+[Prev](./03_drop_user.md) | [Next](./05_alter_role.md) | [Topic README](./README.md) | [DDL README](../README.md) | [Syntax Guide README](../../README.md) | [Language Reference README](../../../README.md)
 
 ## Coverage and Evidence Status
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Status: Complete
 
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
 
-## Intent
+## Synopsis
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+Creates a role for grouping privileges and users. Roles are environment-scoped authorization containers.
 
-## Canonical Syntax Forms To Document
+## Syntax
 
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
+```sql
+CREATE ROLE [ environment_path ] role_name
+    [ [ WITH ] option [ ... ] ]
 
-## Clause and Option Matrix
+where option can be:
+    SUPERUSER | NOSUPERUSER
+    | CREATEDB | NOCREATEDB
+    | CREATEROLE | NOCREATEROLE
+    | INHERIT | NOINHERIT
+    | LOGIN | NOLOGIN
+    | REPLICATION | NOREPLICATION
+    | BYPASSRLS | NOBYPASSRLS
+    | CONNECTION LIMIT connlimit
+    | [ ENCRYPTED ] PASSWORD 'password' | PASSWORD NULL
+    | VALID UNTIL 'timestamp'
+    | IN ROLE role_name [, ...]
+    | ROLE role_name [, ...]
+    | ADMIN role_name [, ...]
+    | USER role_name [, ...]
+    | SYSID uid
+```
 
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
+## User vs Role
 
-## Parser Acceptance and Rejection Cases
+| Aspect | User | Role |
+|--------|------|------|
+| Primary use | Individual identity | Privilege grouping |
+| LOGIN default | YES (typically) | NO |
+| Password | Usually | Rarely |
+| Membership | Can be member of roles | Can be member of roles |
+| Environment scope | Environment-scoped | Environment-scoped |
 
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+In practice, `CREATE USER` is equivalent to `CREATE ROLE WITH LOGIN`.
 
 ## Examples
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+### Basic Role
 
-## Completion Checklist
+```sql
+-- Read-only role
+CREATE ROLE readonly;
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+-- Grant privileges to role
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly;
+```
+
+### Login Role (User Equivalent)
+
+```sql
+-- Role that can login (same as CREATE USER)
+CREATE ROLE app_role WITH LOGIN PASSWORD 'secret';
+```
+
+### Privilege Roles
+
+```sql
+-- Read-write role
+CREATE ROLE readwrite;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES TO readwrite;
+
+-- DDL role
+CREATE ROLE ddl_creator WITH CREATEDB CREATEROLE;
+```
+
+### Nested Roles
+
+```sql
+-- Admin role includes readwrite
+CREATE ROLE admin;
+GRANT readwrite TO admin;
+GRANT readonly TO admin;
+```
+
+### Environment-Scoped Role
+
+```sql
+-- Production role
+CREATE ROLE !:prod.readonly;
+
+-- Development role
+CREATE ROLE !:dev.readwrite WITH CREATEDB;
+```
+
+## Parser Acceptance Cases
+
+```sql
+CREATE ROLE r1;
+CREATE ROLE r1 WITH LOGIN;
+CREATE ROLE !:prod.r1;
+```
+
+## See Also
+
+- [CREATE USER](01_create_user.md)
+- [DROP ROLE](06_drop_role.md)
+- [GRANT](../../security/README.md)

@@ -1,57 +1,207 @@
-# Install with DEB Packages
+# Install on Debian/Ubuntu
 
-[Prev](./README.md) | [Next](./02_install_with_rpm_packages.md) | [Topic README](./README.md) | [Installation Guide README](../README.md) | [Documentation Workspace README](../../README.md)
+[Linux Native Packages README](../README.md) | [Installation README](../../README.md)
 
-## Coverage and Evidence Status
+## Synopsis
 
-Status: Deferred to next pass (no current implementation proof in this revision).
+Install ScratchBird using Debian packages (.deb).
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/server/config_parser.cpp:1
-- Test anchor: Pending for this subsection in this revision.
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: this section is scaffolded and awaits implementation-backed claims before publication.
-## Goal
+## Supported Versions
 
-Describe when this installation workflow should be used and what outcome is expected.
+| Distribution | Versions |
+|--------------|----------|
+| Ubuntu | 22.04 LTS, 24.04 LTS |
+| Debian | 11, 12 |
 
-## Prerequisites
+## Quick Install
 
-- List OS/runtime assumptions, permissions, required packages, and network constraints.
-- State whether root/sudo is required and why.
-- List required artifacts (package files, image tags, checksums, keys).
+### Add Repository
 
-## Procedure (Step-by-Step)
+```bash
+# Add SB repository key
+wget -qO- https://packages.scratchbird.io/gpg-key | sudo tee /etc/apt/keyrings/scratchbird.asc
 
-1. Add exact command(s) with copy/paste-safe formatting.
-2. Explain all non-obvious command options and flags.
-3. Include expected output snippets or status indicators.
-4. Include branching for common environment differences.
+# Add repository
+echo "deb [signed-by=/etc/apt/keyrings/scratchbird.asc] https://packages.scratchbird.io/apt stable main" | \
+    sudo tee /etc/apt/sources.list.d/scratchbird.list
 
-## What Must Be Documented
+# Update package list
+sudo apt update
+```
 
-- APT repository setup and package install flow
-- Manual .deb install fallback
-- Dependency resolution and pinning
-- Post-install service validation
+### Install
+
+```bash
+# Install server and client
+sudo apt install scratchbird-server scratchbird-client
+
+# Or minimal install (client only)
+sudo apt install scratchbird-client
+
+# Or full install (with extensions)
+sudo apt install scratchbird-server scratchbird-client scratchbird-contrib
+```
+
+## Manual Package Installation
+
+### Download Package
+
+```bash
+# Download from releases
+wget https://github.com/DaltonCalford/ScratchBird/releases/download/v0.5.1/scratchbird-server_0.5.1_amd64.deb
+wget https://github.com/DaltonCalford/ScratchBird/releases/download/v0.5.1/scratchbird-client_0.5.1_amd64.deb
+```
+
+### Install
+
+```bash
+# Install with dependencies
+sudo dpkg -i scratchbird-server_0.5.1_amd64.deb
+sudo apt-get install -f  # Fix dependencies
+
+# Or with gdebi (handles dependencies)
+sudo gdebi scratchbird-server_0.5.1_amd64.deb
+```
+
+## Post-Installation
+
+### Initialize Database
+
+```bash
+# Create data directory
+sudo mkdir -p /var/lib/scratchbird/data
+sudo chown scratchbird:scratchbird /var/lib/scratchbird/data
+
+# Initialize
+sudo -u scratchbird sb_initdb -D /var/lib/scratchbird/data
+```
+
+### Configure
+
+```bash
+# Edit configuration
+sudo nano /etc/scratchbird/scratchbird.conf
+
+# Key settings:
+# listen_addresses = 'localhost'
+# port = 3092
+# max_connections = 100
+```
+
+### Start Service
+
+```bash
+# Start with systemd
+sudo systemctl enable --now scratchbird
+
+# Check status
+sudo systemctl status scratchbird
+
+# View logs
+sudo journalctl -u scratchbird -f
+```
+
+### Create Database
+
+```bash
+# Create first database
+sudo -u scratchbird sb_isql -c "CREATE DATABASE myapp;"
+
+# Create user
+sudo -u scratchbird sb_isql -c "CREATE USER app WITH PASSWORD 'secret';"
+sudo -u scratchbird sb_isql -c "GRANT ALL ON DATABASE myapp TO app;"
+```
 
 ## Verification
 
-- Provide objective checks for successful install and service readiness.
-- Include binary/version checks and endpoint health checks where applicable.
+```bash
+# Check version
+sb_isql --version
 
-## Rollback / Recovery
+# Test connection
+sb_isql -c "SELECT version();"
 
-- Provide safe rollback, repair, or uninstall steps.
-- Document how to preserve or remove user data explicitly.
+# List databases
+sb_isql -l
+```
 
-## Common Errors
+## Upgrade
 
-- List known failures, root causes, and direct remediation commands.
+```bash
+# Update package list
+sudo apt update
 
-## Completion Checklist
+# Upgrade
+sudo apt upgrade scratchbird-server scratchbird-client
 
-- [ ] Commands validated
-- [ ] Option flags explained
-- [ ] Verification steps included
-- [ ] Rollback path included
-- [ ] Failure handling included
+# Or full upgrade
+sudo apt upgrade
+
+# Restart service
+sudo systemctl restart scratchbird
+```
+
+## Uninstall
+
+```bash
+# Stop service
+sudo systemctl stop scratchbird
+
+# Remove packages
+sudo apt remove scratchbird-server scratchbird-client
+
+# Remove data (caution!)
+sudo rm -rf /var/lib/scratchbird
+sudo rm -rf /etc/scratchbird
+
+# Remove repository
+sudo rm /etc/apt/sources.list.d/scratchbird.list
+sudo apt update
+```
+
+## Troubleshooting
+
+### "Package not found"
+
+```bash
+# Check repository is added correctly
+cat /etc/apt/sources.list.d/scratchbird.list
+
+# Update apt
+sudo apt update
+
+# Search for package
+apt search scratchbird
+```
+
+### "Failed to start service"
+
+```bash
+# Check logs
+sudo journalctl -u scratchbird -n 50
+
+# Check permissions
+ls -la /var/lib/scratchbird/data
+
+# Verify configuration
+sudo -u scratchbird sb_checkconfig
+```
+
+### Port already in use
+
+```bash
+# Check what's using port 3092
+sudo ss -tlnp | grep 3092
+
+# Change port in config
+sudo nano /etc/scratchbird/scratchbird.conf
+# port = 3093
+
+sudo systemctl restart scratchbird
+```
+
+## See Also
+
+- [Install with RPM](../02_install_with_rpm_packages.md)
+- [Docker Install](../container_and_image_install/01_docker_quickstart.md)
+- [Post-Install Configuration](../post_install_configuration/README.md)

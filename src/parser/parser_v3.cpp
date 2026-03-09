@@ -16798,6 +16798,12 @@ Statement* Parser::parseDropClusterControl() {
     StringPool::StringId object_name = expectIdentifier("Expected cluster object name");
     std::string name = std::string(stringPool().get(object_name));
     std::string payload = captureStatementBody();
+    if (if_exists) {
+        if (!payload.empty()) {
+            payload.insert(0, ";");
+        }
+        payload.insert(0, "IF_EXISTS=1");
+    }
 
     stmt->name = stringPool().intern("cluster." + family + ".drop." + name);
     if (!payload.empty()) {

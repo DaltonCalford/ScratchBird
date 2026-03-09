@@ -17,6 +17,7 @@
 #include "scratchbird/core/job_scheduler_utils.h"
 #include "scratchbird/core/posix_compat.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/core/workload_governance.h"
 #include "scratchbird/sblr/executor.h"
 
 #include <chrono>
@@ -1061,12 +1062,14 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                     }
                 }
 
-                if (!isZeroId(job.run_as_role_uuid)) {
-                    conn_ctx->setActiveRole(job.run_as_role_uuid);
-                }
+	                if (!isZeroId(job.run_as_role_uuid)) {
+	                    conn_ctx->setActiveRole(job.run_as_role_uuid);
+	                }
 
-                conn_ctx->setSessionVariable("job_uuid", job.job_id.toString());
-                conn_ctx->setSessionVariable("job_run_uuid", run.job_run_id.toString());
+	                conn_ctx->setSessionVariable("APPLICATION_NAME", "job_scheduler");
+	                conn_ctx->setSessionVariable("RESOURCE_TAG", "scheduler");
+	                conn_ctx->setSessionVariable("job_uuid", job.job_id.toString());
+	                conn_ctx->setSessionVariable("job_run_uuid", run.job_run_id.toString());
 
                 std::string procedure_name;
                 if (!isZeroId(job.procedure_uuid)) {
@@ -1081,9 +1084,9 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                     }
                 }
 
-                if (!procedure_name.empty()) {
-                    auto executor = std::make_shared<scratchbird::sblr::Executor>(db_);
-                    executor->setConnectionContext(conn_ctx.get());
+	                if (!procedure_name.empty()) {
+	                    auto executor = std::make_shared<scratchbird::sblr::Executor>(db_);
+	                    executor->setConnectionContext(conn_ctx.get());
                     uint32_t timeout_seconds = job.timeout_seconds;
                     if (timeout_seconds == 0) {
                         timeout_seconds = cfg.job_timeout_seconds;
@@ -1093,24 +1096,50 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                         auto limits = executor->getQueryLimits();
                         limits.max_execution_time_ms =
                             static_cast<uint64_t>(timeout_seconds) * 1000ULL;
-                        executor->setQueryLimits(limits);
-                    }
-                    {
-                        std::lock_guard<std::mutex> lock(active_runs_mutex_);
-                        auto it = active_runs_.find(run_id);
-                        if (it != active_runs_.end()) {
-                            it->second.executor = executor;
-                        }
-                    }
-                    auto exec_result = executor->callProcedureByName(procedure_name);
-                    if (!exec_result.success()) {
-                        run_success = false;
-                        run_message = exec_result.error();
-                        run_error_code = -1;
-                    } else {
-                        rows_affected = executor->getLastAffectedRows();
-                    }
-                } else if (!job.job_sql.empty()) {
+	                        executor->setQueryLimits(limits);
+	                    }
+
+	                    WorkloadGovernance::AdmissionLease admission_lease;
+	                    if (db_->workload_governance() != nullptr) {
+	                        WorkloadGovernance::QueryDescriptor descriptor;
+	                        descriptor.connection = conn_ctx.get();
+	                        descriptor.sql = "CALL " + procedure_name;
+	                        descriptor.schema_name = conn_ctx->current_schema();
+	                        descriptor.client_app = "job_scheduler";
+	                        descriptor.resource_tag = "scheduler";
+
+	                        ErrorContext governance_ctx;
+	                        auto decision = db_->workload_governance()->acquire(
+	                            descriptor, admission_lease, &governance_ctx);
+	                        if (!decision.admitted) {
+	                            run_success = false;
+	                            run_message = decision.detail.empty()
+	                                ? (governance_ctx.message.empty()
+	                                    ? "Workload governance rejected scheduled job"
+	                                    : governance_ctx.message)
+	                                : decision.detail;
+	                            run_error_code = static_cast<int32_t>(decision.status);
+	                        }
+	                    }
+
+	                    if (run_success) {
+	                        std::lock_guard<std::mutex> lock(active_runs_mutex_);
+	                        auto it = active_runs_.find(run_id);
+	                        if (it != active_runs_.end()) {
+	                            it->second.executor = executor;
+	                        }
+	                    }
+	                    if (run_success) {
+	                        auto exec_result = executor->callProcedureByName(procedure_name);
+	                        if (!exec_result.success()) {
+	                            run_success = false;
+	                            run_message = exec_result.error();
+	                            run_error_code = -1;
+	                        } else {
+	                            rows_affected = executor->getLastAffectedRows();
+	                        }
+	                    }
+	                } else if (!job.job_sql.empty()) {
                     run_success = false;
                     run_message = "Job SQL text execution is disabled in engine; use stored procedure jobs";
                     run_error_code = static_cast<int32_t>(Status::NOT_SUPPORTED);

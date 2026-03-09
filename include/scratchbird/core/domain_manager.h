@@ -38,6 +38,9 @@ namespace scratchbird::core
 
     using ID = UuidV7Bytes;
 
+    // Clear per-process domain control-plane replica state for a closed database UUID.
+    void clearDomainControlPlaneReplicaCatalog(const ID& database_id);
+
     /**
      * DomainType - Type of domain
      */

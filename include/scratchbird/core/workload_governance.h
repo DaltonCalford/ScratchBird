@@ -78,7 +78,7 @@ public:
         void moveFrom(AdmissionLease&& other) noexcept;
 
         WorkloadGovernance* owner_ = nullptr;
-        uint32_t proc_id_ = 0;
+        uint32_t proc_id_ = UINT32_MAX;
         ID class_id_{};
         ID policy_id_{};
         std::string class_name_;

@@ -16,6 +16,9 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/security/scram_auth.h"
+#include "scratchbird/security/oauth_auth.h"
+#include "scratchbird/security/providers/kerberos_provider.h"
+#include "scratchbird/security/providers/ldap_provider.h"
 
 #include <nlohmann/json.hpp>
 #include <openssl/crypto.h>
@@ -115,6 +118,397 @@ bool equalsIgnoreCaseAscii(std::string_view lhs, std::string_view rhs) {
         }
     }
     return true;
+}
+
+struct EnterpriseResolvedPrincipal {
+    bool resolved = false;
+    AuthUserInfo user_info;
+    std::string auth_source;
+    std::string external_subject;
+    std::vector<std::string> external_groups;
+};
+
+struct EnterpriseProviderAttempt {
+    ID provider_id{};
+    CatalogManager::AuthAdapterOutcome outcome =
+        CatalogManager::AuthAdapterOutcome::REJECT;
+    EnterpriseResolvedPrincipal principal;
+};
+
+std::string trimAsciiCopy(std::string value) {
+    auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    return value;
+}
+
+std::string toLowerAsciiCopy(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+bool parseBoolAscii(std::string value, bool& out) {
+    value = toLowerAsciiCopy(trimAsciiCopy(std::move(value)));
+    if (value == "1" || value == "true" || value == "yes" || value == "on") {
+        out = true;
+        return true;
+    }
+    if (value == "0" || value == "false" || value == "no" || value == "off") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+bool parseUInt32Ascii(const std::string& value, uint32_t& out) {
+    try {
+        out = static_cast<uint32_t>(std::stoul(trimAsciiCopy(value)));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::vector<std::string> splitCsvTrimmed(const std::string& value) {
+    std::vector<std::string> out;
+    std::istringstream input(value);
+    std::string token;
+    while (std::getline(input, token, ',')) {
+        token = trimAsciiCopy(std::move(token));
+        if (!token.empty()) {
+            out.push_back(token);
+        }
+    }
+    return out;
+}
+
+std::map<std::string, std::string> parseConfigPayloadMap(const std::string& payload) {
+    std::map<std::string, std::string> out;
+    std::istringstream input(payload);
+    std::string token;
+    while (std::getline(input, token, ';')) {
+        token = trimAsciiCopy(std::move(token));
+        if (token.empty()) {
+            continue;
+        }
+        const size_t eq = token.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        std::string key = toLowerAsciiCopy(trimAsciiCopy(token.substr(0, eq)));
+        std::string value = trimAsciiCopy(token.substr(eq + 1));
+        if (!key.empty()) {
+            out[key] = value;
+        }
+    }
+    return out;
+}
+
+std::string expandBindDnTemplate(const std::string& bind_dn_template,
+                                 const std::string& username) {
+    std::string expanded = bind_dn_template;
+    const std::string marker = "{user}";
+    size_t pos = 0;
+    while ((pos = expanded.find(marker, pos)) != std::string::npos) {
+        expanded.replace(pos, marker.size(), username);
+        pos += username.size();
+    }
+    return expanded;
+}
+
+bool isPluginMethodId(std::string_view method_id, std::string_view expected) {
+    return equalsIgnoreCaseAscii(method_id, expected);
+}
+
+bool isLdapPluginMethod(std::string_view method_id) {
+    return isPluginMethodId(method_id, "scratchbird.auth.ldap_bind");
+}
+
+bool isKerberosPluginMethod(std::string_view method_id) {
+    return isPluginMethodId(method_id, "scratchbird.auth.kerberos_gssapi");
+}
+
+bool isOidcPluginMethod(std::string_view method_id) {
+    return isPluginMethodId(method_id, "scratchbird.auth.jwt_bearer") ||
+           isPluginMethodId(method_id, "scratchbird.auth.oidc_id_token");
+}
+
+bool providerKindMatchesPluginMethod(CatalogManager::AuthProviderKind provider_kind,
+                                     std::string_view method_id) {
+    using AK = CatalogManager::AuthProviderKind;
+    if (isLdapPluginMethod(method_id)) {
+        return provider_kind == AK::LDAP_SIMPLE_BIND;
+    }
+    if (isKerberosPluginMethod(method_id)) {
+        return provider_kind == AK::KERBEROS_GSSAPI;
+    }
+    if (isOidcPluginMethod(method_id)) {
+        return provider_kind == AK::OIDC_JWT;
+    }
+    return false;
+}
+
+CatalogManager::CredentialKind credentialKindForPluginMethod(std::string_view method_id) {
+    using CK = CatalogManager::CredentialKind;
+    if (isKerberosPluginMethod(method_id)) {
+        return CK::KERBEROS_PRINCIPAL;
+    }
+    if (isOidcPluginMethod(method_id)) {
+        return CK::OIDC_SUBJECT;
+    }
+    return CK::PASSWORD_ARGON2ID;
+}
+
+CatalogManager::AuthProviderKind providerKindForPluginMethod(std::string_view method_id) {
+    using AK = CatalogManager::AuthProviderKind;
+    if (isLdapPluginMethod(method_id)) {
+        return AK::LDAP_SIMPLE_BIND;
+    }
+    if (isKerberosPluginMethod(method_id)) {
+        return AK::KERBEROS_GSSAPI;
+    }
+    return AK::OIDC_JWT;
+}
+
+CatalogManager::AuthMethod authMappingMethodForPluginMethod(std::string_view method_id) {
+    using AM = CatalogManager::AuthMethod;
+    if (isLdapPluginMethod(method_id)) {
+        return AM::LDAP;
+    }
+    if (isKerberosPluginMethod(method_id)) {
+        return AM::KERBEROS;
+    }
+    return AM::ACTIVE_DIRECTORY;
+}
+
+struct EnterpriseLdapConfig {
+    std::string ldap_uri;
+    std::string bind_dn_template;
+    uint32_t connect_timeout_ms = 3000;
+    bool require_starttls = true;
+    std::vector<std::string> allowed_ldap_endpoints;
+};
+
+struct EnterpriseKerberosConfig {
+    std::string service_principal;
+    std::string keytab_path;
+    bool allow_delegation = false;
+    uint32_t max_replay_window_ms = 30000;
+    std::string kdc_endpoint;
+    std::vector<std::string> allowed_kdc_endpoints;
+};
+
+struct EnterpriseOidcConfig {
+    std::string provider_id;
+    std::string issuer;
+    std::string audience;
+    std::string client_secret;
+    std::string username_claim = "preferred_username";
+};
+
+bool loadEnterpriseLdapConfig(const CatalogManager::AuthProviderCatalogInfo& provider,
+                              EnterpriseLdapConfig& config_out,
+                              std::string& error_out) {
+    error_out.clear();
+    const auto values = parseConfigPayloadMap(provider.config_payload);
+    auto server_it = values.find("server_uri");
+    auto bind_it = values.find("bind_dn_template");
+    auto tls_it = values.find("tls_mode");
+    if (server_it == values.end() || bind_it == values.end() || tls_it == values.end()) {
+        error_out = "ldap provider config missing server_uri/bind_dn_template/tls_mode";
+        return false;
+    }
+
+    config_out = EnterpriseLdapConfig{};
+    config_out.ldap_uri = trimAsciiCopy(server_it->second);
+    config_out.bind_dn_template = trimAsciiCopy(bind_it->second);
+    config_out.connect_timeout_ms = provider.timeout_ms == 0 ? 3000 : provider.timeout_ms;
+    const std::string tls_mode = toLowerAsciiCopy(trimAsciiCopy(tls_it->second));
+    if (tls_mode == "starttls") {
+        config_out.require_starttls = true;
+    } else if (tls_mode == "ldaps" || tls_mode == "tls") {
+        config_out.require_starttls = false;
+    } else {
+        error_out = "ldap provider tls_mode unsupported";
+        return false;
+    }
+
+    auto timeout_it = values.find("connect_timeout_ms");
+    if (timeout_it != values.end() &&
+        !parseUInt32Ascii(timeout_it->second, config_out.connect_timeout_ms)) {
+        error_out = "ldap provider connect_timeout_ms invalid";
+        return false;
+    }
+
+    auto allowlist_it = values.find("allowed_ldap_endpoints");
+    if (allowlist_it != values.end()) {
+        config_out.allowed_ldap_endpoints = splitCsvTrimmed(allowlist_it->second);
+    }
+    return true;
+}
+
+bool loadEnterpriseKerberosConfig(const CatalogManager::AuthProviderCatalogInfo& provider,
+                                  EnterpriseKerberosConfig& config_out,
+                                  std::string& error_out) {
+    error_out.clear();
+    const auto values = parseConfigPayloadMap(provider.config_payload);
+    auto spn_it = values.find("service_principal");
+    auto keytab_it = values.find("keytab_ref");
+    if (spn_it == values.end()) {
+        spn_it = values.find("service_principal");
+    }
+    if (keytab_it == values.end()) {
+        keytab_it = values.find("keytab_path");
+    }
+    if (spn_it == values.end() || keytab_it == values.end()) {
+        error_out = "kerberos provider config missing service_principal/keytab_ref";
+        return false;
+    }
+
+    config_out = EnterpriseKerberosConfig{};
+    config_out.service_principal = trimAsciiCopy(spn_it->second);
+    config_out.keytab_path = trimAsciiCopy(keytab_it->second);
+    config_out.max_replay_window_ms = provider.timeout_ms == 0 ? 30000 : provider.timeout_ms;
+
+    auto delegation_it = values.find("allow_delegation");
+    if (delegation_it != values.end() &&
+        !parseBoolAscii(delegation_it->second, config_out.allow_delegation)) {
+        error_out = "kerberos provider allow_delegation invalid";
+        return false;
+    }
+
+    auto replay_it = values.find("max_replay_window_ms");
+    if (replay_it != values.end() &&
+        !parseUInt32Ascii(replay_it->second, config_out.max_replay_window_ms)) {
+        error_out = "kerberos provider max_replay_window_ms invalid";
+        return false;
+    }
+    auto clock_skew_it = values.find("clock_skew_ms");
+    if (clock_skew_it != values.end() &&
+        !parseUInt32Ascii(clock_skew_it->second, config_out.max_replay_window_ms)) {
+        error_out = "kerberos provider clock_skew_ms invalid";
+        return false;
+    }
+
+    auto endpoint_it = values.find("kdc_endpoint");
+    if (endpoint_it != values.end()) {
+        config_out.kdc_endpoint = trimAsciiCopy(endpoint_it->second);
+    }
+    auto allowlist_it = values.find("allowed_kdc_endpoints");
+    if (allowlist_it != values.end()) {
+        config_out.allowed_kdc_endpoints = splitCsvTrimmed(allowlist_it->second);
+    }
+    return true;
+}
+
+bool loadEnterpriseOidcConfig(const CatalogManager::AuthProviderCatalogInfo& provider,
+                              EnterpriseOidcConfig& config_out,
+                              std::string& error_out) {
+    error_out.clear();
+    const auto values = parseConfigPayloadMap(provider.config_payload);
+    auto issuer_it = values.find("iss");
+    if (issuer_it == values.end()) {
+        issuer_it = values.find("issuer");
+    }
+    if (issuer_it == values.end()) {
+        error_out = "oidc provider config missing issuer";
+        return false;
+    }
+
+    config_out = EnterpriseOidcConfig{};
+    config_out.provider_id = provider.provider_name.empty() ? "default" : provider.provider_name;
+    config_out.issuer = trimAsciiCopy(issuer_it->second);
+
+    auto audience_it = values.find("aud");
+    if (audience_it == values.end()) {
+        audience_it = values.find("audience");
+    }
+    if (audience_it != values.end()) {
+        config_out.audience = trimAsciiCopy(audience_it->second);
+    }
+
+    auto secret_it = values.find("client_secret");
+    if (secret_it == values.end()) {
+        secret_it = values.find("signing_secret");
+    }
+    if (secret_it != values.end()) {
+        config_out.client_secret = trimAsciiCopy(secret_it->second);
+    }
+    if (config_out.client_secret.empty()) {
+        error_out = "oidc provider config missing client_secret";
+        return false;
+    }
+
+    auto username_claim_it = values.find("username_claim");
+    if (username_claim_it != values.end()) {
+        config_out.username_claim = trimAsciiCopy(username_claim_it->second);
+    }
+
+    return true;
+}
+
+std::string stripBearerPrefix(std::string value) {
+    value = trimAsciiCopy(std::move(value));
+    if (value.size() > 7 && equalsIgnoreCaseAscii(value.substr(0, 7), "Bearer ")) {
+        return trimAsciiCopy(value.substr(7));
+    }
+    return value;
+}
+
+bool parseKerberosPluginPayload(const std::vector<uint8_t>& payload,
+                                const std::string& fallback_username,
+                                std::string& subject_out,
+                                std::string& ticket_out) {
+    subject_out.clear();
+    ticket_out.clear();
+    const std::string text(reinterpret_cast<const char*>(payload.data()), payload.size());
+    const auto values = parseConfigPayloadMap(text);
+    auto ticket_it = values.find("ticket");
+    auto principal_it = values.find("principal");
+    if (ticket_it != values.end()) {
+        ticket_out = trimAsciiCopy(ticket_it->second);
+        if (principal_it != values.end()) {
+            subject_out = trimAsciiCopy(principal_it->second);
+        }
+    } else {
+        ticket_out = trimAsciiCopy(text);
+    }
+    if (subject_out.empty()) {
+        subject_out = fallback_username;
+    }
+    return !subject_out.empty() && !ticket_out.empty();
+}
+
+CatalogManager::AuthProviderRuntimeRequest makeEnterpriseRuntimeRequest(
+    const CatalogAuthContext& catalog_auth_ctx,
+    std::string_view method_id,
+    const std::vector<EnterpriseProviderAttempt>& attempts) {
+    CatalogManager::AuthProviderRuntimeRequest request{};
+    request.account_id = catalog_auth_ctx.account.account_id;
+    request.connection_id = generateUuidV7();
+    if (isLdapPluginMethod(method_id)) {
+        request.credential_kinds = {
+            CatalogManager::CredentialKind::PASSWORD_ARGON2ID,
+            CatalogManager::CredentialKind::PASSWORD_SCRAM_SHA256};
+    } else {
+        request.credential_kinds = {credentialKindForPluginMethod(method_id)};
+    }
+    request.client_capabilities = {providerKindForPluginMethod(method_id)};
+    request.has_required_provider_kind = true;
+    request.required_provider_kind = providerKindForPluginMethod(method_id);
+    request.mfa_completed = true;
+    request.adapter_results.reserve(attempts.size());
+    for (const auto& attempt : attempts) {
+        request.adapter_results.push_back(
+            CatalogManager::AuthProviderAdapterResult{attempt.provider_id, attempt.outcome});
+    }
+    return request;
 }
 
 uint64_t catalogNowTicks() {
@@ -380,6 +774,157 @@ bool persistPrincipalAccount(CatalogManager* catalog,
     }
     ErrorContext ctx;
     return catalog->upsertPrincipalAccountCatalogEntry(account, &ctx) == Status::OK;
+}
+
+bool selectEnterpriseAuthMapping(
+    CatalogManager* catalog,
+    CatalogManager::AuthMethod auth_method,
+    const std::string& auth_source,
+    const std::string& external_subject,
+    const ID& database_id,
+    CatalogManager::AuthMappingCatalogInfo& mapping_out) {
+    mapping_out = CatalogManager::AuthMappingCatalogInfo{};
+    if (!catalog || auth_source.empty() || external_subject.empty()) {
+        return false;
+    }
+
+    std::vector<CatalogManager::AuthMappingCatalogInfo> mappings;
+    ErrorContext ctx;
+    if (catalog->listAuthMappingCatalogEntries(mappings, &ctx) != Status::OK) {
+        return false;
+    }
+
+    const CatalogManager::AuthMappingCatalogInfo* selected = nullptr;
+    for (const auto& row : mappings) {
+        if (!row.is_enabled || row.auth_method != auth_method) {
+            continue;
+        }
+        if (!equalsIgnoreCaseAscii(row.auth_source, auth_source)) {
+            continue;
+        }
+        if (row.external_subject != external_subject) {
+            continue;
+        }
+        if (!isZeroUuidLocal(row.database_id) && row.database_id != database_id) {
+            continue;
+        }
+        if (selected == nullptr ||
+            row.priority < selected->priority ||
+            (row.priority == selected->priority &&
+             std::memcmp(row.mapping_id.bytes.data(),
+                         selected->mapping_id.bytes.data(),
+                         row.mapping_id.bytes.size()) < 0)) {
+            selected = &row;
+        }
+    }
+
+    if (selected == nullptr) {
+        return false;
+    }
+
+    mapping_out = *selected;
+    return true;
+}
+
+bool loadEnterpriseUserInfo(CatalogManager* catalog,
+                            const CatalogManager::AuthMappingCatalogInfo* mapping,
+                            const std::string& fallback_username,
+                            AuthUserInfo& user_info_out,
+                            std::string& error_msg_out) {
+    error_msg_out.clear();
+    user_info_out = AuthUserInfo{};
+    if (!catalog) {
+        error_msg_out = "Authentication catalog unavailable";
+        return false;
+    }
+
+    CatalogManager::UserInfo user{};
+    ErrorContext ctx;
+    Status status = Status::NOT_FOUND;
+    if (mapping != nullptr && !isZeroUuidLocal(mapping->user_id)) {
+        status = catalog->getUser(mapping->user_id, user, &ctx);
+    } else if (!fallback_username.empty()) {
+        status = catalog->getUserByName(fallback_username, user, &ctx);
+    }
+    if (status != Status::OK) {
+        error_msg_out = "Invalid username or password";
+        return false;
+    }
+    if (!user.is_active) {
+        error_msg_out = "Invalid username or password";
+        return false;
+    }
+
+    user_info_out.user_id = user.user_id;
+    user_info_out.username = user.username;
+    user_info_out.display_name = user.username;
+    user_info_out.email.clear();
+    user_info_out.is_disabled = false;
+    user_info_out.is_locked = false;
+    user_info_out.is_superuser = user.is_superuser;
+    return true;
+}
+
+bool finalizeEnterprisePrincipal(CatalogManager* catalog,
+                                 const CatalogManager::AuthProviderCatalogInfo& provider,
+                                 std::string_view method_id,
+                                 const std::string& fallback_username,
+                                 const std::string& external_subject,
+                                 const std::vector<std::string>& external_groups,
+                                 const std::string& display_name,
+                                 const std::string& email,
+                                 EnterpriseResolvedPrincipal& principal_out,
+                                 std::string& error_msg_out) {
+    principal_out = EnterpriseResolvedPrincipal{};
+    CatalogManager::AuthMappingCatalogInfo mapping{};
+    const ID database_id =
+        (catalog && catalog->database() != nullptr) ? catalog->database()->uuid() : ID{};
+    CatalogManager::AuthMappingCatalogInfo* mapping_ptr = nullptr;
+    if (selectEnterpriseAuthMapping(catalog,
+                                    authMappingMethodForPluginMethod(method_id),
+                                    provider.provider_name,
+                                    external_subject,
+                                    database_id,
+                                    mapping)) {
+        mapping_ptr = &mapping;
+    }
+
+    AuthUserInfo user_info;
+    if (!loadEnterpriseUserInfo(catalog, mapping_ptr, fallback_username, user_info, error_msg_out)) {
+        return false;
+    }
+
+    principal_out.resolved = true;
+    principal_out.user_info = std::move(user_info);
+    principal_out.auth_source = provider.provider_name;
+    principal_out.external_subject = external_subject;
+    principal_out.external_groups = external_groups;
+    principal_out.user_info.external_groups = external_groups;
+    principal_out.user_info.external_id = external_subject;
+    if (!display_name.empty()) {
+        principal_out.user_info.display_name = display_name;
+    }
+    if (!email.empty()) {
+        principal_out.user_info.email = email;
+    }
+    return true;
+}
+
+bool issueLoginSessionAuthKey(CatalogManager* catalog,
+                              const std::string& issuer,
+                              ID& authkey_id_out) {
+    authkey_id_out = ID{};
+    if (!catalog) {
+        return false;
+    }
+
+    CatalogManager::AuthKeyInfo authkey_info{};
+    authkey_info.issuer = issuer.empty() ? "enterprise" : issuer;
+    authkey_info.status = CatalogManager::AuthKeyStatus::ACTIVE;
+    authkey_info.usage_type = CatalogManager::AuthKeyUsage::UNLIMITED;
+    authkey_info.scope = CatalogManager::AuthKeyScope::LOGIN_SESSION;
+    ErrorContext ctx;
+    return catalog->createAuthKey(authkey_info, authkey_id_out, &ctx) == Status::OK;
 }
 
 bool isCatalogAccountLocked(CatalogManager* catalog,
@@ -2709,6 +3254,358 @@ uint32_t LocalAuthProvider::getFailedAttemptCount(const std::string& username)
     return 0;
 }
 
+namespace {
+
+AuthResult mapEnterpriseRuntimeFailure(Status status,
+                                       const ErrorContext& ctx,
+                                       std::string& error_msg_out) {
+    switch (status) {
+        case Status::INVALID_AUTHORIZATION:
+            if (ctx.vnext_code == "SEC_1215") {
+                error_msg_out = "Account locked due to too many failed attempts.";
+                return AuthResult::USER_LOCKED;
+            }
+            error_msg_out = "Invalid username or password";
+            return AuthResult::INVALID_CREDENTIALS;
+        case Status::CONNECTION_FAILURE:
+            error_msg_out = "Authentication provider unavailable";
+            return AuthResult::NETWORK_ERROR;
+        default:
+            error_msg_out = ctx.message.empty() ? "Authentication failed" : ctx.message;
+            return AuthResult::PROVIDER_ERROR;
+    }
+}
+
+class PolicyBoundAuthProvider final : public LocalAuthProvider {
+public:
+    explicit PolicyBoundAuthProvider(CatalogManager* catalog,
+                                     AuditLogger* audit_logger = nullptr)
+        : LocalAuthProvider(catalog, audit_logger) {}
+
+    AuthResult authenticatePluginPayload(const std::string& method_id,
+                                         const std::string& username,
+                                         const std::vector<uint8_t>& payload,
+                                         AuthUserInfo& user_info_out,
+                                         std::string& error_msg_out) override {
+        user_info_out = AuthUserInfo{};
+        error_msg_out.clear();
+
+        CatalogManager* catalog = catalogHandle();
+        if (!catalog) {
+            error_msg_out = "Authentication catalog unavailable";
+            return AuthResult::PROVIDER_ERROR;
+        }
+
+        CatalogAuthContext catalog_auth_ctx;
+        if (!resolveCatalogAuthContext(catalog, username, authDatabaseContextPtr(), catalog_auth_ctx) ||
+            !catalog_auth_ctx.has_policy) {
+            error_msg_out = "Invalid username or password";
+            return AuthResult::INVALID_CREDENTIALS;
+        }
+
+        const AuthAttemptScope auth_scope =
+            makeAuthAttemptScope(peerIdentityContext(), AuthRateBucket::GENERAL);
+        uint32_t remaining_minutes = 0;
+        if (isCatalogAccountLocked(catalog, catalog_auth_ctx, auth_scope, remaining_minutes)) {
+            if (remaining_minutes == 0) {
+                error_msg_out = "Account locked due to too many failed attempts.";
+            } else {
+                error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                                std::to_string(remaining_minutes) + " minute(s)";
+            }
+            return AuthResult::USER_LOCKED;
+        }
+
+        std::vector<CatalogManager::AuthProviderCatalogInfo> providers;
+        ErrorContext ctx;
+        const Status provider_status = catalog->listAuthProviderCatalogEntries(providers, &ctx);
+        if (provider_status != Status::OK) {
+            error_msg_out = ctx.message.empty() ? "Authentication provider catalog unavailable"
+                                                : ctx.message;
+            return AuthResult::PROVIDER_ERROR;
+        }
+
+        std::vector<EnterpriseProviderAttempt> attempts;
+        attempts.reserve(catalog_auth_ctx.policy.provider_chain.size());
+        for (const auto& provider_id : catalog_auth_ctx.policy.provider_chain) {
+            const auto provider_it = std::find_if(
+                providers.begin(),
+                providers.end(),
+                [&provider_id](const CatalogManager::AuthProviderCatalogInfo& row) {
+                    return row.provider_id == provider_id;
+                });
+            if (provider_it == providers.end()) {
+                continue;
+            }
+            if (provider_it->provider_state != CatalogManager::AuthProviderState::ENABLED) {
+                continue;
+            }
+            if (!providerKindMatchesPluginMethod(provider_it->provider_kind, method_id)) {
+                continue;
+            }
+
+            EnterpriseProviderAttempt attempt{};
+            attempt.provider_id = provider_it->provider_id;
+            attempt.outcome = executeAttempt(*provider_it,
+                                             method_id,
+                                             username,
+                                             payload,
+                                             attempt.principal,
+                                             error_msg_out);
+            attempts.push_back(attempt);
+            if (attempt.outcome == CatalogManager::AuthAdapterOutcome::ACCEPT) {
+                break;
+            }
+        }
+
+        CatalogManager::AuthProviderRuntimeRequest runtime_request =
+            makeEnterpriseRuntimeRequest(catalog_auth_ctx, method_id, attempts);
+        CatalogManager::AuthProviderRuntimeDecision runtime_decision{};
+        ErrorContext runtime_ctx;
+        const Status runtime_status = catalog->evaluateAuthProviderRuntime(
+            runtime_request, runtime_decision, &runtime_ctx);
+        if (runtime_status != Status::OK) {
+            return mapEnterpriseRuntimeFailure(runtime_status, runtime_ctx, error_msg_out);
+        }
+
+        const auto selected_it = std::find_if(
+            attempts.begin(),
+            attempts.end(),
+            [&runtime_decision](const EnterpriseProviderAttempt& attempt) {
+                return attempt.provider_id == runtime_decision.selected_provider_id &&
+                       attempt.outcome == CatalogManager::AuthAdapterOutcome::ACCEPT &&
+                       attempt.principal.resolved;
+            });
+        if (selected_it == attempts.end()) {
+            error_msg_out = "Authentication failed";
+            return AuthResult::PROVIDER_ERROR;
+        }
+
+        ID authkey_id{};
+        if (!issueLoginSessionAuthKey(catalog, selected_it->principal.auth_source, authkey_id)) {
+            error_msg_out = "Authentication failed";
+            return AuthResult::PROVIDER_ERROR;
+        }
+
+        user_info_out = selected_it->principal.user_info;
+        user_info_out.authkey_id = authkey_id;
+        return AuthResult::SUCCESS;
+    }
+
+private:
+    CatalogManager::AuthAdapterOutcome executeAttempt(
+        const CatalogManager::AuthProviderCatalogInfo& provider,
+        const std::string& method_id,
+        const std::string& username,
+        const std::vector<uint8_t>& payload,
+        EnterpriseResolvedPrincipal& principal_out,
+        std::string& error_msg_out) {
+        if (isLdapPluginMethod(method_id)) {
+            return executeLdapAttempt(provider, username, payload, principal_out, error_msg_out);
+        }
+        if (isKerberosPluginMethod(method_id)) {
+            return executeKerberosAttempt(provider, username, payload, principal_out, error_msg_out);
+        }
+        if (isOidcPluginMethod(method_id)) {
+            return executeOidcAttempt(provider, username, payload, principal_out, error_msg_out);
+        }
+        error_msg_out = "Requested authentication method is not supported";
+        return CatalogManager::AuthAdapterOutcome::REJECT;
+    }
+
+    CatalogManager::AuthAdapterOutcome executeLdapAttempt(
+        const CatalogManager::AuthProviderCatalogInfo& provider,
+        const std::string& username,
+        const std::vector<uint8_t>& payload,
+        EnterpriseResolvedPrincipal& principal_out,
+        std::string& error_msg_out) {
+        EnterpriseLdapConfig config{};
+        if (!loadEnterpriseLdapConfig(provider, config, error_msg_out)) {
+            return CatalogManager::AuthAdapterOutcome::UNAVAILABLE;
+        }
+
+        auto ldap_provider = security::providers::createDefaultLdapProvider();
+        security::providers::LdapAuthRequest request{};
+        request.username = username;
+        request.password.assign(reinterpret_cast<const char*>(payload.data()), payload.size());
+        request.ldap_uri = config.ldap_uri;
+        request.bind_dn_template = config.bind_dn_template;
+        request.connect_timeout_ms = config.connect_timeout_ms;
+        request.require_starttls = config.require_starttls;
+        request.allowed_ldap_endpoints = config.allowed_ldap_endpoints;
+
+        const auto response = ldap_provider->authenticate(request);
+        switch (response.result) {
+            case security::providers::LdapProviderResult::SUCCESS: {
+                const std::string external_subject =
+                    expandBindDnTemplate(config.bind_dn_template, username);
+                if (!finalizeEnterprisePrincipal(catalogHandle(),
+                                                 provider,
+                                                 "scratchbird.auth.ldap_bind",
+                                                 username,
+                                                 external_subject,
+                                                 response.mapped_roles,
+                                                 username,
+                                                 "",
+                                                 principal_out,
+                                                 error_msg_out)) {
+                    return CatalogManager::AuthAdapterOutcome::REJECT;
+                }
+                return CatalogManager::AuthAdapterOutcome::ACCEPT;
+            }
+            case security::providers::LdapProviderResult::AUTH_LDAP_TIMEOUT:
+                error_msg_out = response.error_message;
+                return CatalogManager::AuthAdapterOutcome::TIMEOUT;
+            case security::providers::LdapProviderResult::AUTH_LDAP_BIND_FAILED:
+            case security::providers::LdapProviderResult::AUTH_PLUGIN_POLICY_DENIED:
+                error_msg_out = response.error_message;
+                return CatalogManager::AuthAdapterOutcome::REJECT;
+            case security::providers::LdapProviderResult::AUTH_LDAP_CONFIG_INVALID:
+            case security::providers::LdapProviderResult::AUTH_LDAP_TRANSPORT_ERROR:
+            case security::providers::LdapProviderResult::INTERNAL_ERROR:
+            default:
+                error_msg_out = response.error_message;
+                return CatalogManager::AuthAdapterOutcome::UNAVAILABLE;
+        }
+    }
+
+    CatalogManager::AuthAdapterOutcome executeKerberosAttempt(
+        const CatalogManager::AuthProviderCatalogInfo& provider,
+        const std::string& username,
+        const std::vector<uint8_t>& payload,
+        EnterpriseResolvedPrincipal& principal_out,
+        std::string& error_msg_out) {
+        EnterpriseKerberosConfig config{};
+        if (!loadEnterpriseKerberosConfig(provider, config, error_msg_out)) {
+            return CatalogManager::AuthAdapterOutcome::UNAVAILABLE;
+        }
+
+        std::string subject;
+        std::string ticket;
+        if (!parseKerberosPluginPayload(payload, username, subject, ticket)) {
+            error_msg_out = "Invalid Kerberos authentication payload";
+            return CatalogManager::AuthAdapterOutcome::REJECT;
+        }
+
+        auto kerberos_provider = security::providers::createDefaultKerberosProvider();
+        security::providers::KerberosAuthRequest request{};
+        request.username = subject;
+        request.ticket_b64 = ticket;
+        request.service_principal = config.service_principal;
+        request.keytab_path = config.keytab_path;
+        request.allow_delegation = config.allow_delegation;
+        request.max_replay_window_ms = config.max_replay_window_ms;
+        request.connect_timeout_ms = provider.timeout_ms == 0 ? 3000 : provider.timeout_ms;
+        request.kdc_endpoint = config.kdc_endpoint;
+        request.allowed_kdc_endpoints = config.allowed_kdc_endpoints;
+
+        const auto response = kerberos_provider->authenticate(request);
+        switch (response.result) {
+            case security::providers::KerberosProviderResult::SUCCESS: {
+                const std::string external_subject =
+                    response.resolved_principal.empty() ? subject : response.resolved_principal;
+                if (!finalizeEnterprisePrincipal(catalogHandle(),
+                                                 provider,
+                                                 "scratchbird.auth.kerberos_gssapi",
+                                                 username,
+                                                 external_subject,
+                                                 {},
+                                                 username,
+                                                 "",
+                                                 principal_out,
+                                                 error_msg_out)) {
+                    return CatalogManager::AuthAdapterOutcome::REJECT;
+                }
+                return CatalogManager::AuthAdapterOutcome::ACCEPT;
+            }
+            case security::providers::KerberosProviderResult::AUTH_KERBEROS_TIMEOUT:
+                error_msg_out = response.error_message;
+                return CatalogManager::AuthAdapterOutcome::TIMEOUT;
+            case security::providers::KerberosProviderResult::AUTH_KERBEROS_TICKET_INVALID:
+            case security::providers::KerberosProviderResult::AUTH_KERBEROS_REPLAY_DETECTED:
+            case security::providers::KerberosProviderResult::AUTH_PLUGIN_POLICY_DENIED:
+            case security::providers::KerberosProviderResult::AUTH_KERBEROS_SPN_MISMATCH:
+                error_msg_out = response.error_message;
+                return CatalogManager::AuthAdapterOutcome::REJECT;
+            case security::providers::KerberosProviderResult::INTERNAL_ERROR:
+            default:
+                error_msg_out = response.error_message;
+                return CatalogManager::AuthAdapterOutcome::UNAVAILABLE;
+        }
+    }
+
+    CatalogManager::AuthAdapterOutcome executeOidcAttempt(
+        const CatalogManager::AuthProviderCatalogInfo& provider,
+        const std::string& username,
+        const std::vector<uint8_t>& payload,
+        EnterpriseResolvedPrincipal& principal_out,
+        std::string& error_msg_out) {
+        EnterpriseOidcConfig config{};
+        if (!loadEnterpriseOidcConfig(provider, config, error_msg_out)) {
+            return CatalogManager::AuthAdapterOutcome::UNAVAILABLE;
+        }
+
+        const std::string token =
+            stripBearerPrefix(std::string(reinterpret_cast<const char*>(payload.data()), payload.size()));
+        if (token.empty()) {
+            error_msg_out = "OIDC token payload is empty";
+            return CatalogManager::AuthAdapterOutcome::REJECT;
+        }
+
+        security::OAuthAuthMethod oauth;
+        std::map<std::string, std::string> oauth_config{
+            {"provider_id", config.provider_id},
+            {"issuer", config.issuer},
+            {"client_secret", config.client_secret},
+            {"username_claim", config.username_claim},
+        };
+        if (!config.audience.empty()) {
+            oauth_config["audience"] = config.audience;
+        }
+
+        ErrorContext oauth_ctx;
+        if (oauth.initialize(oauth_config, &oauth_ctx) != Status::OK) {
+            error_msg_out = oauth_ctx.message.empty() ? "OIDC provider initialization failed"
+                                                      : oauth_ctx.message;
+            return CatalogManager::AuthAdapterOutcome::UNAVAILABLE;
+        }
+
+        security::JwtClaims claims;
+        if (oauth.validateToken(token, claims, &oauth_ctx) != Status::OK) {
+            error_msg_out = oauth_ctx.message.empty() ? "OIDC token validation failed"
+                                                      : oauth_ctx.message;
+            return CatalogManager::AuthAdapterOutcome::REJECT;
+        }
+
+        const std::string fallback_username =
+            username.empty()
+                ? (!claims.preferred_username.empty()
+                       ? claims.preferred_username
+                       : (!claims.email.empty() ? claims.email : claims.sub))
+                : username;
+        const std::string display_name =
+            !claims.name.empty() ? claims.name
+                                 : (!claims.preferred_username.empty()
+                                        ? claims.preferred_username
+                                        : fallback_username);
+        if (!finalizeEnterprisePrincipal(catalogHandle(),
+                                         provider,
+                                         "scratchbird.auth.oidc_id_token",
+                                         fallback_username,
+                                         claims.sub,
+                                         {},
+                                         display_name,
+                                         claims.email,
+                                         principal_out,
+                                         error_msg_out)) {
+            return CatalogManager::AuthAdapterOutcome::REJECT;
+        }
+        return CatalogManager::AuthAdapterOutcome::ACCEPT;
+    }
+};
+
+}  // namespace
+
 // ============================================================================
 // LDAPAuthProvider Stub Implementation (Beta - Infrastructure Only)
 // ============================================================================
@@ -2819,7 +3716,7 @@ std::unique_ptr<AuthProvider> AuthProviderFactory::create(
                 LOG_ERROR(GENERAL, "Cannot create LocalAuthProvider: catalog is null");
                 return nullptr;
             }
-            return std::make_unique<LocalAuthProvider>(catalog, audit_logger);
+            return std::make_unique<PolicyBoundAuthProvider>(catalog, audit_logger);
 
         case AuthProviderType::LDAP:
             LOG_WARNING(GENERAL, "LDAP auth provider requested but not implemented (Beta feature)");
@@ -2850,7 +3747,7 @@ std::unique_ptr<AuthProvider> AuthProviderFactory::create(
 std::unique_ptr<AuthProvider> AuthProviderFactory::createDefault(CatalogManager* catalog,
                                                                   AuditLogger* audit_logger)
 {
-    return std::make_unique<LocalAuthProvider>(catalog, audit_logger);
+    return std::make_unique<PolicyBoundAuthProvider>(catalog, audit_logger);
 }
 
 } // namespace core

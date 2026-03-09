@@ -1,25 +1,60 @@
-# Function Categories
+# Built-in Function Categories
 
-## Coverage and Evidence Status
+[Operations Guide README](../../README.md) | [Language Reference README](../../../README.md)
 
-Status: Deferred to next pass (no current implementation proof in this revision).
+## Function Categories
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: this section is a navigation or index page; operational content is documented in child statement/system pages and is staged for a later pass.
+| Category | Description | Status |
+|----------|-------------|--------|
+| [String Functions](01_string_functions.md) | Text manipulation | ✅ Complete |
+| [Numeric Functions](02_numeric_functions.md) | Math and statistics | ✅ Complete |
+| [Date/Time Functions](03_date_time_functions.md) | Temporal operations | ✅ Complete |
+| [JSON Functions](04_json_functions.md) | JSON/JSONB operations | ✅ Complete |
+| [Array Functions](05_array_functions.md) | Array operations | ✅ Complete |
+| [Window Functions](../window_functions.md) | Analytical functions | ✅ Complete |
+| [Aggregate Functions](../aggregate_functions.md) | Summary operations | ✅ Complete |
+| [Geospatial Functions](06_geospatial_functions.md) | Spatial operations | ✅ Complete |
+| [Encoding Functions](07_encoding_functions.md) | Base64, hex, etc. | ✅ Complete |
+| [UUID Functions](08_uuid_functions.md) | UUID generation | ✅ Complete |
+| [System Functions](09_system_functions.md) | Database info | ✅ Complete |
 
+## Quick Reference by Use Case
 
-[Built-in Functions README](../README.md) | [Operations Guide README](../../README.md) | [Language Reference README](../../../README.md) | [Documentation Workspace README](../../../../README.md)
+### Data Transformation
+- `CAST(x AS type)` / `x::type` - Type casting
+- `COALESCE(a, b, ...)` - First non-null value
+- `NULLIF(a, b)` - NULL if equal
+- `GREATEST(a, b, ...)` - Maximum value
+- `LEAST(a, b, ...)` - Minimum value
 
-## Reference Documents
+### Conditional Logic
+- `CASE WHEN ... THEN ... END` - Conditional expression
+- `IF(cond, true_val, false_val)` - Simple conditional
+- `IFNULL(val, default)` - NULL replacement
 
-- [Numeric Functions](01_numeric_functions.md)
-- [String and Text Functions](02_string_and_text_functions.md)
-- [Datetime and Interval Functions](03_datetime_and_interval_functions.md)
-- [JSON and Document Functions](04_json_document_functions.md)
-- [Vector and ANN Functions](05_vector_and_ann_functions.md)
-- [Search and Ranking Functions](06_search_and_ranking_functions.md)
-- [Aggregate Functions](07_aggregate_functions.md)
-- [Window Functions](08_window_functions.md)
-- [System, Catalog, and Admin Functions](09_system_catalog_and_admin_functions.md)
+### Pattern Matching
+- `LIKE` / `ILIKE` - Simple patterns
+- `~` / `~*` - Regular expressions
+- `SIMILAR TO` - SQL patterns
+
+## Function Volatility
+
+Functions are categorized by how often their result changes:
+
+| Category | Description | Examples |
+|----------|-------------|----------|
+| `IMMUTABLE` | Always same result | `ABS()`, `LENGTH()`, `UPPER()` |
+| `STABLE` | Same in single query | `CURRENT_DATE`, `current_user()` |
+| `VOLATILE` | Can change anytime | `RANDOM()`, `NOW()`, `nextval()` |
+
+## Complete Function List
+
+For a complete alphabetical list of all built-in functions, see the per-function directory or query:
+
+```sql
+-- List all functions
+SELECT proname, proargtypes::regtype[]
+FROM pg_proc
+WHERE pronamespace = 'pg_catalog'::regnamespace
+ORDER BY proname;
+```

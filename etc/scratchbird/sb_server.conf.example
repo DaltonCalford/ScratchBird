@@ -159,11 +159,11 @@ require_client_cert = false
 #==============================================================================
 [memory]
 # Buffer pool size
-# Format: 128MB, 1GB, etc.
+# Format: page count or a size suffix such as 128MB, 1GB, etc.
 buffer_pool_size = 128MB
 
-# Buffer pool page size (bytes)
-buffer_pool_page_size = 8192
+# Only the single buffer pool layout is currently implemented.
+buffer_pool_layout = single
 
 # Background writer controls
 buffer_pool_bgwriter_enabled = true

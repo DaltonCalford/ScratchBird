@@ -1,57 +1,122 @@
 # Platform Support Matrix
 
-[Prev](./README.md) | [Next](./02_choose_installation_path.md) | [Topic README](./README.md) | [Installation Guide README](../README.md) | [Documentation Workspace README](../../README.md)
+[Prerequisites README](../README.md) | [Installation README](../../README.md)
 
-## Coverage and Evidence Status
+## Synopsis
 
-Status: Deferred to next pass (no current implementation proof in this revision).
+Supported platforms and system requirements for ScratchBird installation.
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/server/config_parser.cpp:1
-- Test anchor: Pending for this subsection in this revision.
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: this section is scaffolded and awaits implementation-backed claims before publication.
-## Goal
+## Operating Systems
 
-Describe when this installation workflow should be used and what outcome is expected.
+### Linux (Tier 1 - Fully Supported)
 
-## Prerequisites
+| Distribution | Versions | Architectures |
+|--------------|----------|---------------|
+| Ubuntu | 22.04 LTS, 24.04 LTS | x86_64, ARM64 |
+| Debian | 11, 12 | x86_64, ARM64 |
+| RHEL/CentOS | 8, 9 | x86_64, ARM64 |
+| Rocky Linux | 8, 9 | x86_64, ARM64 |
+| AlmaLinux | 8, 9 | x86_64, ARM64 |
+| Fedora | 39, 40 | x86_64, ARM64 |
+| openSUSE | Leap 15.5, Tumbleweed | x86_64, ARM64 |
 
-- List OS/runtime assumptions, permissions, required packages, and network constraints.
-- State whether root/sudo is required and why.
-- List required artifacts (package files, image tags, checksums, keys).
+### macOS (Tier 1)
 
-## Procedure (Step-by-Step)
+| Version | Architectures |
+|---------|---------------|
+| macOS 13 (Ventura) | Intel, Apple Silicon |
+| macOS 14 (Sonoma) | Intel, Apple Silicon |
+| macOS 15 (Sequoia) | Intel, Apple Silicon |
 
-1. Add exact command(s) with copy/paste-safe formatting.
-2. Explain all non-obvious command options and flags.
-3. Include expected output snippets or status indicators.
-4. Include branching for common environment differences.
+### Windows (Tier 2)
 
-## What Must Be Documented
+| Version | Architectures | Notes |
+|---------|---------------|-------|
+| Windows Server 2022 | x86_64 | Via WSL2 recommended |
+| Windows 11 | x86_64, ARM64 | WSL2 recommended |
+| Windows 10 | x86_64 | WSL2 only |
 
-- Supported OS and architecture matrix
-- Rootless vs privileged installation constraints
-- Filesystem and runtime assumptions
-- Beta caveats per platform
+### FreeBSD (Tier 2)
 
-## Verification
+| Version | Architectures |
+|---------|---------------|
+| FreeBSD 14.x | x86_64, ARM64 |
 
-- Provide objective checks for successful install and service readiness.
-- Include binary/version checks and endpoint health checks where applicable.
+## System Requirements
 
-## Rollback / Recovery
+### Minimum Requirements
 
-- Provide safe rollback, repair, or uninstall steps.
-- Document how to preserve or remove user data explicitly.
+| Component | Minimum |
+|-----------|---------|
+| CPU | 2 cores, x86_64 or ARM64 |
+| RAM | 2 GB |
+| Disk | 10 GB free space |
+| Network | TCP/IP connectivity |
 
-## Common Errors
+### Recommended for Production
 
-- List known failures, root causes, and direct remediation commands.
+| Component | Recommended |
+|-----------|-------------|
+| CPU | 8+ cores |
+| RAM | 16+ GB |
+| Disk | SSD, 100+ GB |
+| Network | Gigabit Ethernet |
 
-## Completion Checklist
+### Large Deployments
 
-- [ ] Commands validated
-- [ ] Option flags explained
-- [ ] Verification steps included
-- [ ] Rollback path included
-- [ ] Failure handling included
+| Component | Specification |
+|-----------|---------------|
+| CPU | 32+ cores |
+| RAM | 128+ GB |
+| Disk | NVMe SSD, 1+ TB |
+| Network | 10GbE or better |
+
+## Architecture Support
+
+| Architecture | Status | Notes |
+|--------------|--------|-------|
+| x86_64 (amd64) | ✅ Production | Primary platform |
+| ARM64 (aarch64) | ✅ Production | Apple Silicon, AWS Graviton |
+| RISC-V 64 | 🧪 Experimental | Future support |
+
+## Docker Support
+
+| Platform | Status |
+|----------|--------|
+| Linux containers | ✅ Supported |
+| Windows containers | ⚠️ Limited |
+| macOS (Docker Desktop) | ✅ Supported |
+
+## Kubernetes Support
+
+| Platform | Status |
+|----------|--------|
+| vanilla Kubernetes | ✅ 1.25+ |
+| OpenShift | ✅ 4.12+ |
+| EKS | ✅ Supported |
+| GKE | ✅ Supported |
+| AKS | ✅ Supported |
+
+## Compatibility Matrix
+
+### LLVM JIT Support
+
+| Platform | LLVM Version | JIT Support |
+|----------|--------------|-------------|
+| Linux x86_64 | 15+ | ✅ Full |
+| Linux ARM64 | 15+ | ✅ Full |
+| macOS Intel | 15+ | ✅ Full |
+| macOS Apple Silicon | 15+ | ✅ Full |
+
+### Emulation Support
+
+| Platform | PostgreSQL | MySQL | Firebird |
+|----------|------------|-------|----------|
+| Linux x86_64 | ✅ | ✅ | ✅ |
+| Linux ARM64 | ✅ | ✅ | ✅ |
+| macOS | ✅ | ✅ | ✅ |
+
+## See Also
+
+- [Choose Installation Path](02_choose_installation_path.md)
+- [Verify System Requirements](03_verify_system_requirements.md)

@@ -2657,7 +2657,7 @@ void printHelp(const char* program_name) {
 }
 
 void printVersion() {
-    std::cout << "sb_server (ScratchBird) " << SCRATCHBIRD_VERSION_STRING << "\n"
+    std::cout << scratchbird::version::formatComponentVersionBanner("sb_server") << "\n"
               << "Protocol versions:\n"
               << "  - ScratchBird Native: 1.0\n"
               << "  - PostgreSQL: 3.0\n"

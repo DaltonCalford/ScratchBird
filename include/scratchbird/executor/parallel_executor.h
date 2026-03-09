@@ -39,16 +39,16 @@
 #include <functional>
 #include <future>
 
-namespace scratchbird::executor {
-
 // Forward declarations
 namespace scratchbird::core {
     class Database;
     class ConnectionContext;
 }
 
-using core::ID;
-using core::GPID;
+namespace scratchbird::executor {
+
+using scratchbird::core::ID;
+using scratchbird::core::GPID;
 
 // Parallel execution configuration
 struct ParallelConfig {

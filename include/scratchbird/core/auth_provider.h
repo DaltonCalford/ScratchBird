@@ -260,6 +260,27 @@ public:
     }
 
     /**
+     * Authenticate using a negotiated plugin method payload.
+     *
+     * Used by the native auth registry path for enterprise methods whose
+     * payload contract does not match the legacy local PASSWORD/TOKEN forms.
+     */
+    virtual AuthResult authenticatePluginPayload(
+        const std::string& method_id,
+        const std::string& username,
+        const std::vector<uint8_t>& payload,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out)
+    {
+        (void)method_id;
+        (void)username;
+        (void)payload;
+        (void)user_info_out;
+        error_msg_out = "Plugin payload authentication not supported";
+        return AuthResult::NOT_IMPLEMENTED;
+    }
+
+    /**
      * Authenticate via OS peer identity mapping (local IPC only)
      */
     virtual AuthResult authenticatePeer(
@@ -411,13 +432,17 @@ public:
     void clearAuthDatabaseContext();
 
 private:
-    const std::string* authDatabaseContextPtr() const;
-
     class CatalogManager* catalog_;
     class LoginAttemptTracker* login_tracker_;  // P0-2: Brute-force protection
     class AuditLogger* audit_logger_;           // P0-3: Security audit logging (non-owning)
     PeerIdentityContext peer_identity_context_{};
     std::string auth_database_context_;
+
+protected:
+    class CatalogManager* catalogHandle() const { return catalog_; }
+    class AuditLogger* auditLoggerHandle() const { return audit_logger_; }
+    const PeerIdentityContext& peerIdentityContext() const { return peer_identity_context_; }
+    const std::string* authDatabaseContextPtr() const;
 };
 
 /**

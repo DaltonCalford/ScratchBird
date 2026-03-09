@@ -54,6 +54,8 @@ namespace scratchbird::core
                            ID &key_id_out, ErrorContext *ctx = nullptr);
         Status rotateKey(const ID &domain_id, ErrorContext *ctx = nullptr);
         Status deleteKey(const ID &key_id, ErrorContext *ctx = nullptr);
+        Status validateDatabaseEncryptionPolicy(ErrorContext *ctx = nullptr);
+        Status rotateDatabaseKey(const ID &key_id, ErrorContext *ctx = nullptr);
 
         Status getActiveKey(const ID &domain_id, EncryptionKey &key_out,
                             ErrorContext *ctx = nullptr);

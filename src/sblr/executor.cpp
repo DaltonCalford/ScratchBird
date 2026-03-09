@@ -64,6 +64,7 @@
 #include "scratchbird/core/vnext_metrics_event_model.h"
 #include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/password_policy.h"  // P0-1: Password policy enforcement
+#include "scratchbird/core/backup_manager.h"
 #include "scratchbird/core/permission_cache.h"  // Security Phase 3.2.3: Global cache
 #include "scratchbird/security/scram_auth.h"
 #include "scratchbird/core/lock_manager.h"
@@ -119,6 +120,7 @@
 #include <iomanip>
 #include <iostream>
 #include <fstream>
+#include <filesystem>
 #include <algorithm>
 #include <cstring>
 #include <chrono>
@@ -534,6 +536,637 @@ namespace scratchbird
                 }
 
                 return false;
+            }
+
+            enum class AdminSqlCommandKind : uint8_t
+            {
+                NONE = 0,
+                BACKUP_EXECUTE,
+                BACKUP_STATUS,
+                RESTORE_EXECUTE,
+                VALIDATE_BACKUP,
+                VALIDATE_RESTORE,
+                VALIDATE_REHEARSAL
+            };
+
+            struct AdminSqlCommand
+            {
+                AdminSqlCommandKind kind = AdminSqlCommandKind::NONE;
+                std::string primary_path;
+                std::string target_path;
+                std::vector<std::string> backup_chain;
+                std::unordered_map<std::string, std::string> options;
+            };
+
+            static std::string normalizeAdminPath(const std::string& raw_path)
+            {
+                const std::string trimmed = trimAsciiCopy(raw_path);
+                if (trimmed.empty())
+                {
+                    return std::string();
+                }
+
+                try
+                {
+                    std::filesystem::path path(trimmed);
+                    if (path.is_relative())
+                    {
+                        path = std::filesystem::absolute(path);
+                    }
+                    return path.lexically_normal().string();
+                }
+                catch (...)
+                {
+                    return trimmed;
+                }
+            }
+
+            static bool isFalseySetting(const std::string& value)
+            {
+                const std::string normalized = toUpperAsciiCopy(trimAsciiCopy(value));
+                return normalized == "0" ||
+                       normalized == "FALSE" ||
+                       normalized == "NO" ||
+                       normalized == "OFF";
+            }
+
+            static const char* backupJobStateToText(core::BackupJobState state)
+            {
+                using core::BackupJobState;
+                switch (state)
+                {
+                    case BackupJobState::PREPARING:
+                        return "PREPARING";
+                    case BackupJobState::WRITING:
+                        return "WRITING";
+                    case BackupJobState::FINALIZING:
+                        return "FINALIZING";
+                    case BackupJobState::PAUSED:
+                        return "PAUSED";
+                    case BackupJobState::COMPLETED:
+                        return "COMPLETED";
+                    case BackupJobState::FAILED:
+                        return "FAILED";
+                    case BackupJobState::CANCELLED:
+                        return "CANCELLED";
+                }
+                return "UNKNOWN";
+            }
+
+            static uint64_t adminNowMicros()
+            {
+                return static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count());
+            }
+
+            static std::unique_ptr<ResultSet> makeJobStatusResultSet(
+                const std::string& job_id,
+                const std::string& state,
+                double progress_pct,
+                uint64_t started_at,
+                uint64_t updated_at,
+                const std::string& correlation_id)
+            {
+                auto result = std::make_unique<ResultSet>();
+                result->addColumn("job_id", core::DataType::VARCHAR);
+                result->addColumn("state", core::DataType::VARCHAR);
+                result->addColumn("progress_pct", core::DataType::DOUBLE);
+                result->addColumn("started_at", core::DataType::INT64);
+                result->addColumn("updated_at", core::DataType::INT64);
+                result->addColumn("correlation_id", core::DataType::VARCHAR);
+                result->addRow({
+                    Value::makeVarchar(job_id),
+                    Value::makeVarchar(state),
+                    Value::makeFloat64(progress_pct),
+                    Value::makeUInt64(started_at),
+                    Value::makeUInt64(updated_at),
+                    Value::makeVarchar(correlation_id)
+                });
+                return result;
+            }
+
+            static std::unique_ptr<ResultSet> makeDiagnosticReportResultSet(
+                const std::string& report_id,
+                const std::string& severity,
+                uint64_t findings_count,
+                const std::string& summary,
+                const std::string& correlation_id)
+            {
+                auto result = std::make_unique<ResultSet>();
+                result->addColumn("report_id", core::DataType::VARCHAR);
+                result->addColumn("severity", core::DataType::VARCHAR);
+                result->addColumn("findings_count", core::DataType::INT64);
+                result->addColumn("summary", core::DataType::VARCHAR);
+                result->addColumn("correlation_id", core::DataType::VARCHAR);
+                result->addRow({
+                    Value::makeVarchar(report_id),
+                    Value::makeVarchar(severity),
+                    Value::makeUInt64(findings_count),
+                    Value::makeText(summary),
+                    Value::makeVarchar(correlation_id)
+                });
+                return result;
+            }
+
+            static bool tokenizeAdminPayload(const std::string& input,
+                                             std::vector<std::string>* tokens_out,
+                                             std::string* error_out)
+            {
+                if (!tokens_out)
+                {
+                    if (error_out)
+                    {
+                        *error_out = "Internal admin payload tokenizer error";
+                    }
+                    return false;
+                }
+
+                tokens_out->clear();
+                size_t cursor = 0;
+                while (cursor < input.size())
+                {
+                    const unsigned char ch = static_cast<unsigned char>(input[cursor]);
+                    if (std::isspace(ch) != 0)
+                    {
+                        ++cursor;
+                        continue;
+                    }
+
+                    if (ch == '\'' || ch == '"')
+                    {
+                        const char quote = static_cast<char>(ch);
+                        ++cursor;
+                        std::string token;
+                        bool closed = false;
+                        while (cursor < input.size())
+                        {
+                            const char current = input[cursor];
+                            if (current == '\\' && cursor + 1 < input.size())
+                            {
+                                token.push_back(input[cursor + 1]);
+                                cursor += 2;
+                                continue;
+                            }
+                            if (current == quote)
+                            {
+                                if (quote == '\'' && cursor + 1 < input.size() &&
+                                    input[cursor + 1] == quote)
+                                {
+                                    token.push_back(quote);
+                                    cursor += 2;
+                                    continue;
+                                }
+                                ++cursor;
+                                closed = true;
+                                break;
+                            }
+                            token.push_back(current);
+                            ++cursor;
+                        }
+
+                        if (!closed)
+                        {
+                            if (error_out)
+                            {
+                                *error_out = "Unterminated quoted admin payload token";
+                            }
+                            tokens_out->clear();
+                            return false;
+                        }
+
+                        tokens_out->push_back(std::move(token));
+                        continue;
+                    }
+
+                    if (ch == '(' || ch == ')' || ch == ',' || ch == '=')
+                    {
+                        tokens_out->emplace_back(1, static_cast<char>(ch));
+                        ++cursor;
+                        continue;
+                    }
+
+                    const size_t start = cursor;
+                    while (cursor < input.size())
+                    {
+                        const unsigned char current =
+                            static_cast<unsigned char>(input[cursor]);
+                        if (std::isspace(current) != 0 ||
+                            input[cursor] == '(' ||
+                            input[cursor] == ')' ||
+                            input[cursor] == ',' ||
+                            input[cursor] == '=')
+                        {
+                            break;
+                        }
+                        ++cursor;
+                    }
+                    tokens_out->push_back(input.substr(start, cursor - start));
+                }
+
+                return true;
+            }
+
+            static bool parseAdminOptionClause(const std::vector<std::string>& tokens,
+                                               size_t* cursor,
+                                               std::unordered_map<std::string, std::string>* options_out,
+                                               std::string* error_out)
+            {
+                if (!cursor || !options_out)
+                {
+                    if (error_out)
+                    {
+                        *error_out = "Internal admin option parsing error";
+                    }
+                    return false;
+                }
+
+                options_out->clear();
+                if (*cursor >= tokens.size())
+                {
+                    return true;
+                }
+
+                if (toUpperAsciiCopy(tokens[*cursor]) != "WITH")
+                {
+                    return true;
+                }
+
+                ++(*cursor);
+                if (*cursor >= tokens.size() || tokens[*cursor] != "(")
+                {
+                    if (error_out)
+                    {
+                        *error_out = "Expected '(' after WITH";
+                    }
+                    return false;
+                }
+                ++(*cursor);
+
+                while (*cursor < tokens.size())
+                {
+                    if (tokens[*cursor] == ")")
+                    {
+                        ++(*cursor);
+                        return true;
+                    }
+
+                    const std::string key = toUpperAsciiCopy(tokens[*cursor]);
+                    if (key.empty() || key == "," || key == "=")
+                    {
+                        if (error_out)
+                        {
+                            *error_out = "Expected option key inside WITH clause";
+                        }
+                        return false;
+                    }
+
+                    ++(*cursor);
+                    if (*cursor >= tokens.size() || tokens[*cursor] != "=")
+                    {
+                        if (error_out)
+                        {
+                            *error_out = "Expected '=' after option key " + key;
+                        }
+                        return false;
+                    }
+                    ++(*cursor);
+                    if (*cursor >= tokens.size() ||
+                        tokens[*cursor] == "," ||
+                        tokens[*cursor] == ")" ||
+                        tokens[*cursor] == "=")
+                    {
+                        if (error_out)
+                        {
+                            *error_out = "Expected option value for " + key;
+                        }
+                        return false;
+                    }
+
+                    (*options_out)[key] = tokens[*cursor];
+                    ++(*cursor);
+
+                    if (*cursor >= tokens.size())
+                    {
+                        if (error_out)
+                        {
+                            *error_out = "Expected ')' to close WITH clause";
+                        }
+                        return false;
+                    }
+
+                    if (tokens[*cursor] == ",")
+                    {
+                        ++(*cursor);
+                        continue;
+                    }
+                    if (tokens[*cursor] == ")")
+                    {
+                        ++(*cursor);
+                        return true;
+                    }
+
+                    if (error_out)
+                    {
+                        *error_out = "Expected ',' or ')' in WITH clause";
+                    }
+                    return false;
+                }
+
+                if (error_out)
+                {
+                    *error_out = "Expected ')' to close WITH clause";
+                }
+                return false;
+            }
+
+            static bool parseAdminSqlCommand(core::Status* status_hint,
+                                             scratchbird::sblr::v3::Opcode opcode,
+                                             const std::string& raw_payload,
+                                             AdminSqlCommand* command_out,
+                                             std::string* error_out)
+            {
+                if (status_hint)
+                {
+                    *status_hint = core::Status::INVALID_ARGUMENT;
+                }
+                if (!command_out)
+                {
+                    if (error_out)
+                    {
+                        *error_out = "Internal admin payload parsing error";
+                    }
+                    return false;
+                }
+
+                std::vector<std::string> tokens;
+                if (!tokenizeAdminPayload(raw_payload, &tokens, error_out))
+                {
+                    return false;
+                }
+
+                AdminSqlCommand command;
+                size_t cursor = 0;
+
+                auto remainingUnexpected = [&](const char* detail) {
+                    if (error_out)
+                    {
+                        *error_out = detail;
+                    }
+                    return false;
+                };
+
+                auto parsePathToken = [&](const char* detail, std::string* out) -> bool {
+                    if (!out)
+                    {
+                        return false;
+                    }
+                    if (cursor >= tokens.size())
+                    {
+                        if (error_out)
+                        {
+                            *error_out = detail;
+                        }
+                        return false;
+                    }
+                    const std::string token = tokens[cursor];
+                    if (token == "(" || token == ")" || token == "," || token == "=")
+                    {
+                        if (error_out)
+                        {
+                            *error_out = detail;
+                        }
+                        return false;
+                    }
+                    *out = normalizeAdminPath(token);
+                    ++cursor;
+                    return true;
+                };
+
+                auto parseRestorePair = [&](AdminSqlCommandKind kind) -> bool {
+                    if (cursor < tokens.size() &&
+                        toUpperAsciiCopy(tokens[cursor]) == "FROM")
+                    {
+                        ++cursor;
+                    }
+                    if (!parsePathToken("Expected backup artifact path", &command.primary_path))
+                    {
+                        return false;
+                    }
+                    if (cursor >= tokens.size() ||
+                        toUpperAsciiCopy(tokens[cursor]) != "TO")
+                    {
+                        if (error_out)
+                        {
+                            *error_out = "Expected TO <target_database_path>";
+                        }
+                        return false;
+                    }
+                    ++cursor;
+                    if (!parsePathToken("Expected target database path", &command.target_path))
+                    {
+                        return false;
+                    }
+                    command.kind = kind;
+                    return true;
+                };
+
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_BACKUP:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_BACKUP:
+                        if (cursor < tokens.size() &&
+                            toUpperAsciiCopy(tokens[cursor]) == "FROM")
+                        {
+                            ++cursor;
+                        }
+                        if (!parsePathToken("Expected backup artifact path", &command.primary_path))
+                        {
+                            return false;
+                        }
+                        command.kind = AdminSqlCommandKind::BACKUP_EXECUTE;
+                        break;
+
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS:
+                        if (cursor < tokens.size())
+                        {
+                            const std::string upper = toUpperAsciiCopy(tokens[cursor]);
+                            if (upper == "JOB" || upper == "BACKUP")
+                            {
+                                ++cursor;
+                            }
+                        }
+                        if (!parsePathToken("Expected backup artifact path", &command.primary_path))
+                        {
+                            return false;
+                        }
+                        command.kind = AdminSqlCommandKind::BACKUP_STATUS;
+                        break;
+
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_RESTORE:
+                        if (!parseRestorePair(AdminSqlCommandKind::RESTORE_EXECUTE))
+                        {
+                            return false;
+                        }
+                        break;
+
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VALIDATE:
+                        if (cursor >= tokens.size())
+                        {
+                            if (error_out)
+                            {
+                                *error_out =
+                                    "VALIDATE DATABASE requires BACKUP, RESTORE, or REHEARSAL arguments";
+                            }
+                            return false;
+                        }
+
+                        if (toUpperAsciiCopy(tokens[cursor]) == "MODE")
+                        {
+                            if (status_hint)
+                            {
+                                *status_hint = core::Status::NOT_IMPLEMENTED;
+                            }
+                            if (error_out)
+                            {
+                                *error_out =
+                                    "VALIDATE DATABASE MODE LIGHT/DIAGNOSTIC is not implemented in this cycle";
+                            }
+                            return false;
+                        }
+
+                        if (toUpperAsciiCopy(tokens[cursor]) == "BACKUP")
+                        {
+                            ++cursor;
+                            if (cursor < tokens.size() &&
+                                toUpperAsciiCopy(tokens[cursor]) == "FROM")
+                            {
+                                ++cursor;
+                            }
+                            if (!parsePathToken("Expected backup artifact path", &command.primary_path))
+                            {
+                                return false;
+                            }
+                            command.kind = AdminSqlCommandKind::VALIDATE_BACKUP;
+                            break;
+                        }
+
+                        if (toUpperAsciiCopy(tokens[cursor]) == "RESTORE")
+                        {
+                            ++cursor;
+                            if (!parseRestorePair(AdminSqlCommandKind::VALIDATE_RESTORE))
+                            {
+                                return false;
+                            }
+                            break;
+                        }
+
+                        if (toUpperAsciiCopy(tokens[cursor]) == "DR")
+                        {
+                            ++cursor;
+                        }
+                        if (cursor < tokens.size() &&
+                            toUpperAsciiCopy(tokens[cursor]) == "REHEARSAL")
+                        {
+                            ++cursor;
+                            if (cursor < tokens.size() &&
+                                toUpperAsciiCopy(tokens[cursor]) == "FROM")
+                            {
+                                ++cursor;
+                            }
+                            if (cursor >= tokens.size() || tokens[cursor] != "(")
+                            {
+                                if (error_out)
+                                {
+                                    *error_out =
+                                        "Expected backup chain list after VALIDATE DATABASE REHEARSAL";
+                                }
+                                return false;
+                            }
+                            ++cursor;
+                            while (cursor < tokens.size() && tokens[cursor] != ")")
+                            {
+                                std::string path_token;
+                                if (!parsePathToken("Expected backup artifact path in rehearsal chain",
+                                                    &path_token))
+                                {
+                                    return false;
+                                }
+                                command.backup_chain.push_back(std::move(path_token));
+                                if (cursor < tokens.size() && tokens[cursor] == ",")
+                                {
+                                    ++cursor;
+                                }
+                            }
+                            if (cursor >= tokens.size() || tokens[cursor] != ")")
+                            {
+                                if (error_out)
+                                {
+                                    *error_out = "Expected ')' after rehearsal backup chain";
+                                }
+                                return false;
+                            }
+                            ++cursor;
+                            if (command.backup_chain.empty())
+                            {
+                                if (error_out)
+                                {
+                                    *error_out =
+                                        "VALIDATE DATABASE REHEARSAL requires at least one backup artifact path";
+                                }
+                                return false;
+                            }
+                            if (cursor >= tokens.size() ||
+                                toUpperAsciiCopy(tokens[cursor]) != "TO")
+                            {
+                                if (error_out)
+                                {
+                                    *error_out =
+                                        "Expected TO <target_database_path> after rehearsal backup chain";
+                                }
+                                return false;
+                            }
+                            ++cursor;
+                            if (!parsePathToken("Expected rehearsal target database path",
+                                                &command.target_path))
+                            {
+                                return false;
+                            }
+                            command.kind = AdminSqlCommandKind::VALIDATE_REHEARSAL;
+                            break;
+                        }
+
+                        if (error_out)
+                        {
+                            *error_out =
+                                "VALIDATE DATABASE only supports BACKUP, RESTORE, or REHEARSAL forms";
+                        }
+                        return false;
+
+                    default:
+                        if (error_out)
+                        {
+                            *error_out = "Unsupported admin control opcode";
+                        }
+                        return false;
+                }
+
+                if (!parseAdminOptionClause(tokens, &cursor, &command.options, error_out))
+                {
+                    return false;
+                }
+                if (cursor != tokens.size())
+                {
+                    return remainingUnexpected("Unexpected trailing tokens in admin payload");
+                }
+
+                *command_out = std::move(command);
+                if (status_hint)
+                {
+                    *status_hint = core::Status::OK;
+                }
+                return true;
             }
 
             // SBLR3_FUNC_NOW flag bit: 1 means CURRENT_TIMESTAMP semantics (txn-start anchored).
@@ -3352,6 +3985,166 @@ namespace scratchbird
                 return false;
             }
             return parsed;
+        }
+
+        enum class ParallelSettingValueType : uint8_t
+        {
+            BOOLEAN = 0,
+            UINT32 = 1,
+            DOUBLE = 2,
+        };
+
+        struct ParallelSettingSpec
+        {
+            const char* session_name;
+            const char* show_name;
+            ParallelSettingValueType value_type;
+            const char* default_value;
+        };
+
+        static const auto& parallelSettingSpecs()
+        {
+            static const std::array<ParallelSettingSpec, 12> specs{{
+                {"ENABLE_PARALLEL", "enable_parallel", ParallelSettingValueType::BOOLEAN, "OFF"},
+                {"ENABLE_PARALLEL_APPEND", "enable_parallel_append", ParallelSettingValueType::BOOLEAN, "OFF"},
+                {"ENABLE_PARALLEL_HASH", "enable_parallel_hash", ParallelSettingValueType::BOOLEAN, "OFF"},
+                {"ENABLE_PARALLEL_SCAN", "enable_parallel_scan", ParallelSettingValueType::BOOLEAN, "OFF"},
+                {"ENABLE_PARALLEL_AGGREGATE", "enable_parallel_aggregate", ParallelSettingValueType::BOOLEAN, "OFF"},
+                {"ENABLE_PARALLEL_JOIN", "enable_parallel_join", ParallelSettingValueType::BOOLEAN, "OFF"},
+                {"PARALLEL_LEADER_PARTICIPATION", "parallel_leader_participation", ParallelSettingValueType::BOOLEAN, "ON"},
+                {"MAX_PARALLEL_WORKERS", "max_parallel_workers", ParallelSettingValueType::UINT32, "0"},
+                {"MAX_PARALLEL_WORKERS_PER_GATHER", "max_parallel_workers_per_gather", ParallelSettingValueType::UINT32, "0"},
+                {"MIN_PARALLEL_TABLE_SCAN_SIZE", "min_parallel_table_scan_size", ParallelSettingValueType::UINT32, "0"},
+                {"PARALLEL_SETUP_COST", "parallel_setup_cost", ParallelSettingValueType::DOUBLE, "1000"},
+                {"PARALLEL_TUPLE_COST", "parallel_tuple_cost", ParallelSettingValueType::DOUBLE, "0.1"},
+            }};
+            return specs;
+        }
+
+        static auto findParallelSettingSpec(const std::string& normalized)
+            -> const ParallelSettingSpec*
+        {
+            for (const auto& spec : parallelSettingSpecs())
+            {
+                if (normalized == spec.session_name)
+                {
+                    return &spec;
+                }
+            }
+            return nullptr;
+        }
+
+        static bool parseUnsigned32Setting(const std::string& raw_value, uint32_t& out_value)
+        {
+            std::string trimmed = raw_value;
+            size_t start = trimmed.find_first_not_of(" \t");
+            size_t end = trimmed.find_last_not_of(" \t");
+            if (start == std::string::npos)
+            {
+                return false;
+            }
+            trimmed = trimmed.substr(start, end - start + 1);
+            if (!trimmed.empty() && trimmed.front() == '-')
+            {
+                return false;
+            }
+
+            char* parse_end = nullptr;
+            unsigned long parsed = std::strtoul(trimmed.c_str(), &parse_end, 10);
+            if (parse_end == trimmed.c_str() || parse_end == nullptr || *parse_end != '\0')
+            {
+                return false;
+            }
+            if (parsed > std::numeric_limits<uint32_t>::max())
+            {
+                return false;
+            }
+            out_value = static_cast<uint32_t>(parsed);
+            return true;
+        }
+
+        static bool parseDoubleSetting(const std::string& raw_value, double& out_value)
+        {
+            std::string trimmed = raw_value;
+            size_t start = trimmed.find_first_not_of(" \t");
+            size_t end = trimmed.find_last_not_of(" \t");
+            if (start == std::string::npos)
+            {
+                return false;
+            }
+            trimmed = trimmed.substr(start, end - start + 1);
+
+            char* parse_end = nullptr;
+            double parsed = std::strtod(trimmed.c_str(), &parse_end);
+            if (parse_end == trimmed.c_str() || parse_end == nullptr || *parse_end != '\0')
+            {
+                return false;
+            }
+            if (!std::isfinite(parsed))
+            {
+                return false;
+            }
+            out_value = parsed;
+            return true;
+        }
+
+        static bool normalizeParallelSettingValue(const ParallelSettingSpec& spec,
+                                                  const std::string& raw_value,
+                                                  std::string& stored_value_out)
+        {
+            switch (spec.value_type)
+            {
+                case ParallelSettingValueType::BOOLEAN:
+                {
+                    bool enabled = false;
+                    if (!parseBooleanSetting(raw_value, enabled))
+                    {
+                        return false;
+                    }
+                    stored_value_out = enabled ? "ON" : "OFF";
+                    return true;
+                }
+                case ParallelSettingValueType::UINT32:
+                {
+                    uint32_t parsed = 0;
+                    if (!parseUnsigned32Setting(raw_value, parsed))
+                    {
+                        return false;
+                    }
+                    stored_value_out = std::to_string(parsed);
+                    return true;
+                }
+                case ParallelSettingValueType::DOUBLE:
+                {
+                    double parsed = 0.0;
+                    if (!parseDoubleSetting(raw_value, parsed))
+                    {
+                        return false;
+                    }
+                    std::ostringstream stream;
+                    stream << std::setprecision(15) << parsed;
+                    stored_value_out = stream.str();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static auto resolveParallelSettingValue(core::ConnectionContext* conn_ctx,
+                                                const std::string& normalized) -> std::string
+        {
+            const auto* spec = findParallelSettingSpec(normalized);
+            if (!spec)
+            {
+                return std::string();
+            }
+
+            std::string value;
+            if (conn_ctx && conn_ctx->getSessionVariable(spec->session_name, value))
+            {
+                return value;
+            }
+            return spec->default_value;
         }
 
         static core::DecFloatContext defaultDecfloatContext() {
@@ -74510,8 +75303,817 @@ namespace scratchbird
 			                auto executeAdminControlOpcode =
 			                    [&](scratchbird::sblr::v3::Opcode opcode,
 			                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                        auto require_admin_runtime = [&]() -> ExecutionResult {
+                            if (!conn_ctx_ || !conn_ctx_->isSuperuser())
+                            {
+                                return ExecutionResult(
+                                    "Permission denied: backup/restore control surface (superuser only)");
+                            }
+                            if (!db_ || !db_->is_open())
+                            {
+                                return ExecutionResult("Database not available");
+                            }
+                            return ExecutionResult();
+                        };
+
+                        auto readOptionText =
+                            [&](const AdminSqlCommand& command,
+                                const char* key,
+                                std::string* value_out) -> bool {
+                            if (!value_out)
+                            {
+                                return false;
+                            }
+                            const auto it = command.options.find(toUpperAsciiCopy(key));
+                            if (it == command.options.end())
+                            {
+                                return false;
+                            }
+                            *value_out = trimAsciiCopy(it->second);
+                            return true;
+                        };
+
+                        auto parseBoolOption =
+                            [&](const AdminSqlCommand& command,
+                                const char* key,
+                                bool* out,
+                                std::string* error_out) -> bool {
+                            std::string value;
+                            if (!readOptionText(command, key, &value))
+                            {
+                                return true;
+                            }
+                            if (isTruthySetting(value.c_str()))
+                            {
+                                *out = true;
+                                return true;
+                            }
+                            if (isFalseySetting(value))
+                            {
+                                *out = false;
+                                return true;
+                            }
+                            if (error_out)
+                            {
+                                *error_out = std::string("Invalid boolean value for ") + key;
+                            }
+                            return false;
+                        };
+
+                        auto parseU64Option =
+                            [&](const AdminSqlCommand& command,
+                                const char* key,
+                                uint64_t* out,
+                                std::string* error_out) -> bool {
+                            std::string value;
+                            if (!readOptionText(command, key, &value))
+                            {
+                                return true;
+                            }
+                            try
+                            {
+                                size_t consumed = 0;
+                                const uint64_t parsed = std::stoull(value, &consumed, 10);
+                                if (consumed != value.size())
+                                {
+                                    throw std::invalid_argument("trailing text");
+                                }
+                                *out = parsed;
+                                return true;
+                            }
+                            catch (...)
+                            {
+                                if (error_out)
+                                {
+                                    *error_out = std::string("Invalid unsigned integer value for ") + key;
+                                }
+                                return false;
+                            }
+                        };
+
+                        auto rejectUnknownOptions =
+                            [&](const AdminSqlCommand& command,
+                                std::initializer_list<const char*> allowed,
+                                std::string* error_out) -> bool {
+                            std::unordered_set<std::string> allowed_keys;
+                            for (const char* key : allowed)
+                            {
+                                allowed_keys.insert(toUpperAsciiCopy(key));
+                            }
+                            for (const auto& [key, value] : command.options)
+                            {
+                                (void)value;
+                                if (allowed_keys.find(key) == allowed_keys.end())
+                                {
+                                    if (error_out)
+                                    {
+                                        *error_out = "Unsupported option: " + key;
+                                    }
+                                    return false;
+                                }
+                            }
+                            return true;
+                        };
+
+                        auto parseBackupExecutionConfig =
+                            [&](const AdminSqlCommand& command,
+                                core::BackupExecutionConfig* execution_config_out,
+                                std::string* error_out) -> bool {
+                            if (!execution_config_out)
+                            {
+                                if (error_out)
+                                {
+                                    *error_out = "Internal backup execution config error";
+                                }
+                                return false;
+                            }
+                            core::BackupExecutionConfig execution_config;
+                            if (!parseU64Option(command,
+                                                "MAX_PAGES_PER_INVOCATION",
+                                                &execution_config.max_pages_per_invocation,
+                                                error_out))
+                            {
+                                return false;
+                            }
+                            *execution_config_out = execution_config;
+                            return true;
+                        };
+
+                        auto parseBackupConfig =
+                            [&](const AdminSqlCommand& command,
+                                core::BackupConfig* config_out,
+                                std::string* error_out) -> bool {
+                            if (!config_out)
+                            {
+                                if (error_out)
+                                {
+                                    *error_out = "Internal backup config error";
+                                }
+                                return false;
+                            }
+                            if (!rejectUnknownOptions(
+                                    command,
+                                    {"TYPE",
+                                     "COMPRESSION",
+                                     "COMPRESSION_LEVEL",
+                                     "PARALLEL_WORKERS",
+                                     "BUFFER_SIZE",
+                                     "VERIFY_CHECKSUMS",
+                                     "STORAGE_PROFILE",
+                                     "LABEL",
+                                     "PARENT_PATH",
+                                     "PARENT_BACKUP_PATH",
+                                     "MAX_PAGES_PER_INVOCATION"},
+                                    error_out))
+                            {
+                                return false;
+                            }
+
+                            core::BackupConfig config;
+                            std::string text;
+                            if (readOptionText(command, "TYPE", &text))
+                            {
+                                const std::string upper = toUpperAsciiCopy(text);
+                                if (upper == "FULL")
+                                {
+                                    config.type = core::BackupType::FULL;
+                                }
+                                else if (upper == "INCREMENTAL")
+                                {
+                                    config.type = core::BackupType::INCREMENTAL;
+                                }
+                                else if (upper == "DIFFERENTIAL")
+                                {
+                                    config.type = core::BackupType::DIFFERENTIAL;
+                                }
+                                else
+                                {
+                                    if (error_out)
+                                    {
+                                        *error_out = "Unsupported BACKUP TYPE value";
+                                    }
+                                    return false;
+                                }
+                            }
+
+                            if (readOptionText(command, "COMPRESSION", &text))
+                            {
+                                const std::string upper = toUpperAsciiCopy(text);
+                                if (upper == "NONE")
+                                {
+                                    config.compression = core::CompressionType::NONE;
+                                }
+                                else if (upper == "ZLIB")
+                                {
+                                    config.compression = core::CompressionType::ZLIB;
+                                }
+                                else
+                                {
+                                    if (error_out)
+                                    {
+                                        *error_out = "Unsupported BACKUP COMPRESSION value";
+                                    }
+                                    return false;
+                                }
+                            }
+
+                            uint64_t u64_value = 0;
+                            if (!parseU64Option(command, "COMPRESSION_LEVEL", &u64_value, error_out))
+                            {
+                                return false;
+                            }
+                            if (command.options.find("COMPRESSION_LEVEL") != command.options.end())
+                            {
+                                if (u64_value > 9)
+                                {
+                                    if (error_out)
+                                    {
+                                        *error_out = "COMPRESSION_LEVEL must be between 0 and 9";
+                                    }
+                                    return false;
+                                }
+                                config.compression_level = static_cast<int>(u64_value);
+                            }
+                            if (!parseU64Option(command, "PARALLEL_WORKERS", &u64_value, error_out))
+                            {
+                                return false;
+                            }
+                            if (command.options.find("PARALLEL_WORKERS") != command.options.end())
+                            {
+                                config.parallel_workers = static_cast<uint32_t>(u64_value);
+                            }
+                            if (!parseU64Option(command, "BUFFER_SIZE", &u64_value, error_out))
+                            {
+                                return false;
+                            }
+                            if (command.options.find("BUFFER_SIZE") != command.options.end())
+                            {
+                                config.buffer_size = static_cast<size_t>(u64_value);
+                            }
+                            if (!parseBoolOption(command, "VERIFY_CHECKSUMS", &config.verify_checksums, error_out))
+                            {
+                                return false;
+                            }
+                            if (readOptionText(command, "STORAGE_PROFILE", &text))
+                            {
+                                config.storage_profile = text;
+                            }
+                            if (readOptionText(command, "LABEL", &text))
+                            {
+                                config.label = text;
+                            }
+                            if (readOptionText(command, "PARENT_PATH", &text) ||
+                                readOptionText(command, "PARENT_BACKUP_PATH", &text))
+                            {
+                                config.parent_backup_path = normalizeAdminPath(text);
+                            }
+                            *config_out = config;
+                            return true;
+                        };
+
+                        auto restoreTargetsCurrentDatabase = [&](const std::string& target_path) -> bool {
+                            const std::string current_db_path = normalizeAdminPath(db_->path());
+                            if (current_db_path.empty())
+                            {
+                                return false;
+                            }
+                            return normalizeAdminPath(target_path) == current_db_path;
+                        };
+
+                        auto parseRestoreConfig =
+                            [&](const AdminSqlCommand& command,
+                                core::RestoreConfig* config_out,
+                                std::string* error_out) -> bool {
+                            if (!config_out)
+                            {
+                                if (error_out)
+                                {
+                                    *error_out = "Internal restore config error";
+                                }
+                                return false;
+                            }
+                            if (!rejectUnknownOptions(
+                                    command,
+                                    {"VERIFY_CHECKSUMS",
+                                     "PARTIAL_RESTORE",
+                                     "ALLOW_TABLESPACE_CREATE",
+                                     "IDENTITY_MODE",
+                                     "TARGET_TIME",
+                                     "TARGET_LSN"},
+                                    error_out))
+                            {
+                                return false;
+                            }
+
+                            core::RestoreConfig config;
+                            if (!parseBoolOption(command, "VERIFY_CHECKSUMS", &config.verify_checksums, error_out))
+                            {
+                                return false;
+                            }
+                            if (!parseBoolOption(command, "PARTIAL_RESTORE", &config.partial_restore, error_out))
+                            {
+                                return false;
+                            }
+                            if (!parseBoolOption(command,
+                                                 "ALLOW_TABLESPACE_CREATE",
+                                                 &config.allow_tablespace_create,
+                                                 error_out))
+                            {
+                                return false;
+                            }
+
+                            std::string identity_mode;
+                            if (readOptionText(command, "IDENTITY_MODE", &identity_mode))
+                            {
+                                const std::string upper = toUpperAsciiCopy(identity_mode);
+                                if (upper == "PRESERVE_EXISTING" ||
+                                    upper == "REPLACE_ORIGINAL" ||
+                                    upper == "PRESERVE_UUIDS")
+                                {
+                                    // Default behavior already preserves source identity.
+                                }
+                                else if (upper == "NEW_DATABASE" ||
+                                         upper == "RESTORE_AS_NEW" ||
+                                         upper == "REGENERATE_UUIDS")
+                                {
+                                    if (error_out)
+                                    {
+                                        *error_out =
+                                            "IDENTITY_MODE=NEW_DATABASE requires a dedicated UUID rekey lane and is not implemented";
+                                    }
+                                    return false;
+                                }
+                                else
+                                {
+                                    if (error_out)
+                                    {
+                                        *error_out = "Unsupported IDENTITY_MODE value";
+                                    }
+                                    return false;
+                                }
+                            }
+
+                            if (command.options.find("TARGET_TIME") != command.options.end() ||
+                                command.options.find("TARGET_LSN") != command.options.end())
+                            {
+                                if (error_out)
+                                {
+                                    *error_out =
+                                        "Direct PITR targets are not exposed through the SQL restore surface in this cycle";
+                                }
+                                return false;
+                            }
+
+                            *config_out = config;
+                            return true;
+                        };
+
+                        auto parseRestoreValidationConfig =
+                            [&](const AdminSqlCommand& command,
+                                core::RestoreValidationConfig* config_out,
+                                std::string* error_out) -> bool {
+                            if (!config_out)
+                            {
+                                if (error_out)
+                                {
+                                    *error_out = "Internal restore validation config error";
+                                }
+                                return false;
+                            }
+                            if (!rejectUnknownOptions(
+                                    command,
+                                    {"VERIFY_CHECKSUMS",
+                                     "PARTIAL_RESTORE",
+                                     "ALLOW_TABLESPACE_CREATE",
+                                     "IDENTITY_MODE",
+                                     "MAX_RESTORE_MICROS",
+                                     "MAX_RPO_MICROS",
+                                     "REQUIRE_BACKUP_VERIFICATION",
+                                     "REQUIRE_REOPEN_VALIDATION"},
+                                    error_out))
+                            {
+                                return false;
+                            }
+
+                            core::RestoreValidationConfig config;
+                            AdminSqlCommand restore_command = command;
+                            restore_command.options.erase("MAX_RESTORE_MICROS");
+                            restore_command.options.erase("MAX_RPO_MICROS");
+                            restore_command.options.erase("REQUIRE_BACKUP_VERIFICATION");
+                            restore_command.options.erase("REQUIRE_REOPEN_VALIDATION");
+                            if (!parseRestoreConfig(restore_command,
+                                                    &config.restore_config,
+                                                    error_out))
+                            {
+                                return false;
+                            }
+                            if (!parseU64Option(command, "MAX_RESTORE_MICROS", &config.max_restore_micros, error_out))
+                            {
+                                return false;
+                            }
+                            if (!parseU64Option(command, "MAX_RPO_MICROS", &config.max_rpo_micros, error_out))
+                            {
+                                return false;
+                            }
+                            if (!parseBoolOption(command,
+                                                 "REQUIRE_BACKUP_VERIFICATION",
+                                                 &config.require_backup_verification,
+                                                 error_out))
+                            {
+                                return false;
+                            }
+                            if (!parseBoolOption(command,
+                                                 "REQUIRE_REOPEN_VALIDATION",
+                                                 &config.require_reopen_validation,
+                                                 error_out))
+                            {
+                                return false;
+                            }
+                            *config_out = config;
+                            return true;
+                        };
+
+                        auto makeBackupJobStatus =
+                            [&](const core::BackupJobResult& job_result,
+                                const std::string& correlation_id) -> ExecutionResult {
+                            double progress_pct = 0.0;
+                            if (job_result.pages_total > 0)
+                            {
+                                progress_pct =
+                                    (100.0 * static_cast<double>(job_result.pages_processed)) /
+                                    static_cast<double>(job_result.pages_total);
+                            }
+                            else if (job_result.state == core::BackupJobState::COMPLETED)
+                            {
+                                progress_pct = 100.0;
+                            }
+                            return ExecutionResult(makeJobStatusResultSet(
+                                job_result.backup_id.toString(),
+                                backupJobStateToText(job_result.state),
+                                progress_pct,
+                                job_result.started_time,
+                                job_result.last_updated_time,
+                                correlation_id));
+                        };
+
+                        auto makeRestoreJobStatus =
+                            [&](const std::string& correlation_id,
+                                uint64_t started_at,
+                                uint64_t updated_at,
+                                const std::string& state) -> ExecutionResult {
+                            return ExecutionResult(makeJobStatusResultSet(
+                                core::generateUuidV7().toString(),
+                                state,
+                                state == "COMPLETED" ? 100.0 : 0.0,
+                                started_at,
+                                updated_at,
+                                correlation_id));
+                        };
+
+                        auto makeValidationReport =
+                            [&](bool success,
+                                const std::string& summary,
+                                const std::string& correlation_id) -> ExecutionResult {
+                            return ExecutionResult(makeDiagnosticReportResultSet(
+                                core::generateUuidV7().toString(),
+                                success ? "INFO" : "ERROR",
+                                success ? 0u : 1u,
+                                summary,
+                                correlation_id));
+                        };
+
 	                    switch (opcode)
 	                    {
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_BACKUP: {
+                                    ExecutionResult runtime_ready = require_admin_runtime();
+                                    if (!runtime_ready.success())
+                                    {
+                                        return runtime_ready;
+                                    }
+
+                                    std::string raw_payload;
+                                    (void)getPayloadStringValue(payload, "value", raw_payload);
+                                    core::Status parse_status = core::Status::OK;
+                                    AdminSqlCommand command;
+                                    std::string parse_error;
+                                    if (!parseAdminSqlCommand(&parse_status,
+                                                              opcode,
+                                                              raw_payload,
+                                                              &command,
+                                                              &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    core::BackupConfig backup_config;
+                                    if (!parseBackupConfig(command, &backup_config, &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+                                    core::BackupExecutionConfig execution_config;
+                                    if (!parseBackupExecutionConfig(command,
+                                                                    &execution_config,
+                                                                    &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    core::BackupManager backup_manager(db_);
+                                    core::BackupJobResult job_result;
+                                    core::ErrorContext backup_ctx;
+                                    const core::Status status = backup_manager.executeBackupJob(
+                                        command.primary_path,
+                                        backup_config,
+                                        execution_config,
+                                        &job_result,
+                                        nullptr,
+                                        &backup_ctx);
+                                    if (status != core::Status::OK &&
+                                        isZeroUuid(job_result.backup_id))
+                                    {
+                                        return ExecutionResult(
+                                            backup_ctx.message.empty()
+                                                ? std::string("BACKUP DATABASE failed")
+                                                : backup_ctx.message);
+                                    }
+                                    return makeBackupJobStatus(job_result, command.primary_path);
+                                }
+
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_BACKUP: {
+                                    ExecutionResult runtime_ready = require_admin_runtime();
+                                    if (!runtime_ready.success())
+                                    {
+                                        return runtime_ready;
+                                    }
+
+                                    std::string raw_payload;
+                                    (void)getPayloadStringValue(payload, "value", raw_payload);
+                                    core::Status parse_status = core::Status::OK;
+                                    AdminSqlCommand command;
+                                    std::string parse_error;
+                                    if (!parseAdminSqlCommand(&parse_status,
+                                                              opcode,
+                                                              raw_payload,
+                                                              &command,
+                                                              &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    if (!rejectUnknownOptions(command,
+                                                              {"MAX_PAGES_PER_INVOCATION"},
+                                                              &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    core::BackupExecutionConfig execution_config;
+                                    if (!parseBackupExecutionConfig(command,
+                                                                    &execution_config,
+                                                                    &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    core::BackupManager backup_manager(db_);
+                                    core::BackupJobResult job_result;
+                                    core::ErrorContext backup_ctx;
+                                    const core::Status status = backup_manager.resumeBackupJob(
+                                        command.primary_path,
+                                        execution_config,
+                                        &job_result,
+                                        nullptr,
+                                        &backup_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(
+                                            backup_ctx.message.empty()
+                                                ? std::string("SERVICE CHANNEL BACKUP failed")
+                                                : backup_ctx.message);
+                                    }
+                                    return makeBackupJobStatus(job_result, command.primary_path);
+                                }
+
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS: {
+                                    ExecutionResult runtime_ready = require_admin_runtime();
+                                    if (!runtime_ready.success())
+                                    {
+                                        return runtime_ready;
+                                    }
+
+                                    std::string raw_payload;
+                                    (void)getPayloadStringValue(payload, "value", raw_payload);
+                                    core::Status parse_status = core::Status::OK;
+                                    AdminSqlCommand command;
+                                    std::string parse_error;
+                                    if (!parseAdminSqlCommand(&parse_status,
+                                                              opcode,
+                                                              raw_payload,
+                                                              &command,
+                                                              &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    core::BackupManager backup_manager(db_);
+                                    core::BackupJobResult job_result;
+                                    core::ErrorContext progress_ctx;
+                                    const core::Status status = backup_manager.getBackupJobResult(
+                                        command.primary_path, &job_result, &progress_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(
+                                            progress_ctx.message.empty()
+                                                ? std::string("SERVICE CHANNEL PROGRESS failed")
+                                                : progress_ctx.message);
+                                    }
+                                    return makeBackupJobStatus(job_result, command.primary_path);
+                                }
+
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_RESTORE: {
+                                    ExecutionResult runtime_ready = require_admin_runtime();
+                                    if (!runtime_ready.success())
+                                    {
+                                        return runtime_ready;
+                                    }
+
+                                    std::string raw_payload;
+                                    (void)getPayloadStringValue(payload, "value", raw_payload);
+                                    core::Status parse_status = core::Status::OK;
+                                    AdminSqlCommand command;
+                                    std::string parse_error;
+                                    if (!parseAdminSqlCommand(&parse_status,
+                                                              opcode,
+                                                              raw_payload,
+                                                              &command,
+                                                              &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    if (restoreTargetsCurrentDatabase(command.target_path))
+                                    {
+                                        return ExecutionResult(
+                                            "RESTORE DATABASE cannot overwrite the currently open database path");
+                                    }
+
+                                    core::RestoreConfig restore_config;
+                                    if (!parseRestoreConfig(command, &restore_config, &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    core::BackupManager backup_manager(db_);
+                                    uint64_t started_at = adminNowMicros();
+                                    core::ErrorContext restore_ctx;
+                                    const core::Status status = backup_manager.restoreBackup(
+                                        command.primary_path,
+                                        command.target_path,
+                                        restore_config,
+                                        nullptr,
+                                        &restore_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(
+                                            restore_ctx.message.empty()
+                                                ? std::string("RESTORE DATABASE failed")
+                                                : restore_ctx.message);
+                                    }
+                                    return makeRestoreJobStatus(command.target_path,
+                                                                started_at,
+                                                                adminNowMicros(),
+                                                                "COMPLETED");
+                                }
+
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VALIDATE: {
+                                    ExecutionResult runtime_ready = require_admin_runtime();
+                                    if (!runtime_ready.success())
+                                    {
+                                        return runtime_ready;
+                                    }
+
+                                    std::string raw_payload;
+                                    (void)getPayloadStringValue(payload, "value", raw_payload);
+                                    core::Status parse_status = core::Status::OK;
+                                    AdminSqlCommand command;
+                                    std::string parse_error;
+                                    if (!parseAdminSqlCommand(&parse_status,
+                                                              opcode,
+                                                              raw_payload,
+                                                              &command,
+                                                              &parse_error))
+                                    {
+                                        return ExecutionResult(parse_error);
+                                    }
+
+                                    core::BackupManager backup_manager(db_);
+                                    switch (command.kind)
+                                    {
+                                        case AdminSqlCommandKind::VALIDATE_BACKUP: {
+                                            core::ErrorContext verify_ctx;
+                                            const core::Status status = backup_manager.verifyBackup(
+                                                command.primary_path, nullptr, &verify_ctx);
+                                            const std::string summary =
+                                                status == core::Status::OK
+                                                    ? std::string("Backup artifact validated successfully")
+                                                    : (verify_ctx.message.empty()
+                                                           ? std::string("Backup verification failed")
+                                                           : verify_ctx.message);
+                                            return makeValidationReport(status == core::Status::OK,
+                                                                        summary,
+                                                                        command.primary_path);
+                                        }
+
+                                        case AdminSqlCommandKind::VALIDATE_RESTORE: {
+                                            if (restoreTargetsCurrentDatabase(command.target_path))
+                                            {
+                                                return ExecutionResult(
+                                                    "VALIDATE DATABASE RESTORE cannot target the currently open database path");
+                                            }
+
+                                            core::RestoreValidationConfig validation_config;
+                                            if (!parseRestoreValidationConfig(command,
+                                                                              &validation_config,
+                                                                              &parse_error))
+                                            {
+                                                return ExecutionResult(parse_error);
+                                            }
+
+                                            core::RestoreValidationResult validation_result;
+                                            core::ErrorContext validation_ctx;
+                                            const core::Status status = backup_manager.runRestoreValidation(
+                                                command.primary_path,
+                                                command.target_path,
+                                                validation_config,
+                                                &validation_result,
+                                                nullptr,
+                                                &validation_ctx);
+                                            std::ostringstream summary;
+                                            if (status == core::Status::OK)
+                                            {
+                                                summary << "Restore validation passed; preserved database UUID "
+                                                        << validation_result.restored_database_id.toString();
+                                            }
+                                            else
+                                            {
+                                                summary << (validation_result.failure_reason.empty()
+                                                                ? validation_ctx.message
+                                                                : validation_result.failure_reason);
+                                            }
+                                            return makeValidationReport(status == core::Status::OK,
+                                                                        summary.str(),
+                                                                        command.target_path);
+                                        }
+
+                                        case AdminSqlCommandKind::VALIDATE_REHEARSAL: {
+                                            if (restoreTargetsCurrentDatabase(command.target_path))
+                                            {
+                                                return ExecutionResult(
+                                                    "VALIDATE DATABASE REHEARSAL cannot target the currently open database path");
+                                            }
+
+                                            core::RestoreValidationConfig validation_config;
+                                            if (!parseRestoreValidationConfig(command,
+                                                                              &validation_config,
+                                                                              &parse_error))
+                                            {
+                                                return ExecutionResult(parse_error);
+                                            }
+
+                                            core::RestoreValidationResult validation_result;
+                                            core::ErrorContext validation_ctx;
+                                            const core::Status status =
+                                                backup_manager.runDisasterRecoveryRehearsal(
+                                                    command.backup_chain,
+                                                    command.target_path,
+                                                    validation_config,
+                                                    &validation_result,
+                                                    nullptr,
+                                                    &validation_ctx);
+                                            std::ostringstream summary;
+                                            if (status == core::Status::OK)
+                                            {
+                                                summary << "DR rehearsal passed with "
+                                                        << validation_result.applied_backup_count
+                                                        << " applied backups";
+                                            }
+                                            else
+                                            {
+                                                summary << (validation_result.failure_reason.empty()
+                                                                ? validation_ctx.message
+                                                                : validation_result.failure_reason);
+                                            }
+                                            return makeValidationReport(status == core::Status::OK,
+                                                                        summary.str(),
+                                                                        command.target_path);
+                                        }
+
+                                        default:
+                                            return ExecutionResult(
+                                                "VALIDATE DATABASE only supports BACKUP, RESTORE, or REHEARSAL forms");
+                                    }
+                                }
+
                                 case scratchbird::sblr::v3::Opcode::SBLR3_SWEEP:
                                     executeSweep();
                                     return ExecutionResult();
@@ -80285,9 +81887,6 @@ namespace scratchbird
                     case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_ALTER_CONFIGURATION:
                     case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_DROP_CONFIGURATION:
                     case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_LOAD_DICTIONARY_DATA:
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_BACKUP:
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_RESTORE:
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VALIDATE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CQL_KEYSPACE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CQL_BATCH:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CQL_TTL:
@@ -80350,9 +81949,7 @@ namespace scratchbird
                     case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_CERT_DDL:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_PRIVATE_KEY_ROTATE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_SHOW_STATUS:
-                    case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_BACKUP:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_EVENTS:
-                    case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS:
                         return executeVNextOpcode(
                             static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
                             payload);
@@ -87944,6 +89541,35 @@ namespace scratchbird
                 return;
             }
 
+            if (const auto* parallel_spec = findParallelSettingSpec(normalized))
+            {
+                if (local_scope)
+                {
+                    error("SET LOCAL is not supported for parallel execution controls");
+                }
+                if (!conn_ctx_)
+                {
+                    error("SET parallel execution control requires connection context");
+                }
+
+                auto value_opt = readOptionalValue();
+                if (!value_opt.has_value() || value_opt->isNull())
+                {
+                    conn_ctx_->clearSessionVariable(parallel_spec->session_name);
+                    return;
+                }
+
+                std::string stored_value;
+                if (!normalizeParallelSettingValue(*parallel_spec,
+                                                   value_opt->toString(),
+                                                   stored_value))
+                {
+                    error("Invalid value for parallel execution control: " + var_name);
+                }
+                conn_ctx_->setSessionVariable(parallel_spec->session_name, stored_value);
+                return;
+            }
+
             if (normalized.rfind("ENABLE_", 0) == 0)
             {
                 if (!conn_ctx_)
@@ -93074,7 +94700,11 @@ namespace scratchbird
             std::string normalized = normalize(var_name);
             std::string value;
 
-            if (normalized == "SEARCH_PATH" || normalized == "SEARCHPATH")
+            if (findParallelSettingSpec(normalized) != nullptr)
+            {
+                value = resolveParallelSettingValue(conn_ctx_, normalized);
+            }
+            else if (normalized == "SEARCH_PATH" || normalized == "SEARCHPATH")
             {
                 value = resolve_search_path();
             }
@@ -93260,6 +94890,11 @@ namespace scratchbird
             add_row("transaction_isolation", isolation_to_string(conn_ctx_
                 ? conn_ctx_->getIsolationLevel()
                 : core::IsolationLevel::SNAPSHOT));
+            for (const auto& spec : parallelSettingSpecs())
+            {
+                add_row(spec.show_name,
+                        resolveParallelSettingValue(conn_ctx_, spec.session_name));
+            }
         }
 
         void Executor::executeShowTransactionLevel()

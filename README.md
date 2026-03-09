@@ -5,6 +5,23 @@ I built ScratchBird to create the database I always wanted: one where developers
 
 If you have taken the time to pull it down, let me know in the message boards and I can let you know what is and is not ready for testing.
 
+**What is ScratchBird**
+
+It started as a database project, it became a virtual machine.  I knew from the beginning that I wanted to be able to consolidate all the various database engines spread across the office into a single easy to manage environment.  So I separated the parser from the engine and had a series of parsers, one for each database I wanted to emulate, sharing a backend engine.  Each Parser uses the emulated engines wireprotocol, authentication and sql dialect.  The parsers job was to convert the users queries to the language supported by the engine - a bytecode language called SBLR.
+
+Once that was working, to ensure that I have full compatibility, I ran the original engines own regression suites using the original engines tools and code - only after all functionality was supported and all tests pass, did I release those parsers - right now the engine supports, FireBirdSQL, MySQL and PostgreSQL.
+
+I also knew that I needed to be able to migrate the existing data from the legacy databases, so I made a pseudo proxy - point your client to SB(scratchbird) and have SB connect to your legacy server, and SB, using pass-through queries, responds with what the legacy server generated.  Then, SB recreates the remote engine inside itself and starts to replicate the data inside the new SB database.  Once data parity is met, all queries are ran against the legacy and the new emulated database.  The results are compared and any differences reported.  Once you are confident the new is working exactly like the old, you can turn off the legacy server.
+
+Having been in IT for decades, the concept of a full server migration without any code changes and no downtime, was a dream that was now possible.
+
+During the migration, the legacy procedure and function code, is compiled into SBLR inside the engine, which also has a SBLR->SQL process, so you automatically have all your legacy stored procedures become native SB code.  
+
+The way I make this work is via recursive schema - think of namespaces or file directories - each database being emulated is in its own schema with emulated system files so the clients see exactly what they expect.   This also means that we can separate tables, indexes by job or application.  I even included a relative resolution system.
+I incorporated LLVM as a JIT or pre-compiler so that you can specify which functions and procedures should be natively compiled.
+
+So what is scratchbird, it is a way to stop all the headaches I have dealt with over the years. 
+
 ## Docker Development Environment
 
 - Use the unified environment scripts under `scripts/dev-unified/` to bootstrap and run a full Linux SSH container for building and testing all ScratchBird-related repos.

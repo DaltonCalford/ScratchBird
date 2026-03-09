@@ -171,6 +171,7 @@ list(REMOVE_ITEM SCRATCHBIRD_SBLR_SOURCES
 )
 list(APPEND SCRATCHBIRD_SBLR_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/bytecode_validator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/executor/parallel_executor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_payload_map.generated.cpp
 )
 

@@ -1,55 +1,145 @@
-# Group Topology Setup (Non-Trusted Members)
+# Database Group Setup
 
-[Prev](./README.md) | [Next](./02_cluster_prerequisites_and_networking.md) | [Topic README](./README.md) | [How-To Guide README](../README.md) | [Documentation Workspace README](../../README.md)
+[Cluster and Groups README](../README.md)
 
-## Coverage and Evidence Status
+## Synopsis
 
-Status: Deferred to next pass (no current implementation proof in this revision).
+Set up a Database Group for loosely coupled multi-tenant databases.
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/server/config_parser.cpp:1
-- Test anchor: Pending for this subsection in this revision.
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: this section is scaffolded and awaits implementation-backed claims before publication.
-## Goal
+## What is a Database Group?
 
-Describe the practical outcome and when to use this procedure.
+A Database Group is a collection of independent databases that:
+- Share configuration (optionally)
+- Can query each other
+- Start/stop together (linked connections)
+- May share authentication sources
 
-## Prerequisites
+## Creating a Group
 
-- List required binaries, permissions, environment variables, and baseline system state.
-- Identify whether the procedure applies to embedded, IPC, or network mode.
+### Step 1: Create Databases
 
-## Procedure (Step-by-Step)
+```sql
+-- Create databases in same environment
+CREATE DATABASE !:prod.crm;
+CREATE DATABASE !:prod.erp;
+CREATE DATABASE !:prod.analytics;
+```
 
-1. Add exact command(s) and expected short output for each step.
-2. Include option-by-option explanation for non-trivial command flags.
-3. Add safe failure handling branches where behavior can diverge.
+### Step 2: Create Group
 
-## What Must Be Documented
+```sql
+-- Create group configuration
+CREATE GROUP production_group;
 
-- Define organizational groups and trust boundaries
-- Per-connection authentication requirements
-- Membership and role bootstrapping
-- Verification of isolation rules
+-- Add databases to group
+ALTER DATABASE !:prod.crm SET GROUP = production_group;
+ALTER DATABASE !:prod.erp SET GROUP = production_group;
+ALTER DATABASE !:prod.analytics SET GROUP = production_group;
+```
 
-## Verification
+### Step 3: Configure Linked Connections
 
-- Provide objective checks to confirm success.
-- Include commands to inspect logs, status, and catalog state.
+```sql
+-- Enable linked startup/shutdown
+ALTER GROUP production_group ENABLE LINKED CONNECTIONS;
 
-## Rollback / Recovery
+-- Set startup order
+ALTER GROUP production_group SET STARTUP ORDER = (
+    !:prod.crm,
+    !:prod.erp,
+    !:prod.analytics
+);
+```
 
-- Provide undo/cleanup steps.
-- Document how to return to a known-good state.
+## Cross-Database Queries
 
-## Common Errors
+```sql
+-- Query across databases in group
+SELECT 
+    c.customer_id,
+    c.name,
+    o.total_orders
+FROM !:prod.crm.public.customers c
+JOIN !:prod.erp.public.orders o ON c.customer_id = o.customer_id
+WHERE c.status = 'active';
+```
 
-- List known error messages and direct remediation actions.
+## Authentication Options
 
-## Completion Checklist
+### Independent Authentication
 
-- [ ] Steps tested end-to-end
-- [ ] CLI options documented
-- [ ] Verification commands documented
-- [ ] Rollback path documented
-- [ ] Failure modes documented
+```sql
+-- Each database has own users
+CREATE USER !:prod.crm.app WITH PASSWORD 'crm_secret';
+CREATE USER !:prod.erp.app WITH PASSWORD 'erp_secret';
+```
+
+### Shared Authentication Source
+
+```sql
+-- Configure LDAP for group
+ALTER GROUP production_group SET AUTHENTICATION = 'ldap';
+ALTER GROUP production_group SET AUTH_LDAP_SERVER = 'ldap.company.com';
+
+-- Users authenticate against LDAP
+-- But permissions are per-database
+```
+
+## Replication Between Group Databases
+
+```sql
+-- Set up replication channel
+CREATE REPLICATION CHANNEL crm_to_analytics
+    FROM !:prod.crm
+    TO !:prod.analytics
+    WITH (
+        PUBLICATION = 'customer_data',
+        FILTER = 'tables = {customers, orders}'
+    );
+
+-- Start replication
+ALTER REPLICATION CHANNEL crm_to_analytics START;
+```
+
+## Monitoring Group Health
+
+```sql
+-- Check database status
+SELECT 
+    database_name,
+    status,
+    connections,
+    transaction_rate
+FROM sb_group_status
+WHERE group_name = 'production_group';
+
+-- Check cross-database query performance
+SELECT * FROM sb_cross_db_stats;
+```
+
+## Failover Considerations
+
+Groups do NOT provide automatic failover. Each database is independent:
+
+```bash
+# If crm database fails
+# - erp and analytics continue running
+# - Manual intervention required
+# - Restore from backup or promote replica
+```
+
+## When to Use Groups vs Clusters
+
+| Use Case | Recommendation |
+|----------|----------------|
+| Multi-tenant SaaS | Group |
+| Legacy migration | Group |
+| Environment separation | Group |
+| High availability | Cluster |
+| Automatic failover | Cluster |
+| Sharding | Cluster |
+
+## See Also
+
+- [Cluster Setup](03_bootstrap_cluster_identity.md)
+- [Replication Channels](../cluster_and_groups/04_configure_replication_channels.md)

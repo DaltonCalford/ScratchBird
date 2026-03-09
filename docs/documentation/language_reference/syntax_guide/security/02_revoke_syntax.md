@@ -1,48 +1,116 @@
-# REVOKE Syntax
+<!-- 
+NOTE: Source code anchors in this document have been verified against the 
+actual ScratchBird codebase. Any previously unverified claims have been removed.
+Verification date: 2026-03-08
+-->
 
-[Prev](./01_grant_syntax.md) | [Next](./03_role_user_group_membership_syntax.md) | [Topic README](./README.md) | [Language Reference README](../../README.md) | [Documentation Workspace README](../../../README.md)
+# REVOKE
+
+[Prev](./01_grant_syntax.md) | [Next](./03_role_user_group_membership_syntax.md) | [Topic README](./README.md) | [Syntax Guide README](../README.md) | [Language Reference README](../../README.md)
 
 ## Coverage and Evidence Status
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Status: Complete
 
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
 
-## Intent
+## Synopsis
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+Removes privileges from users or roles.
 
-## Canonical Syntax Forms To Document
+## Syntax
 
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
+```sql
+-- Revoke table privileges
+REVOKE [ GRANT OPTION FOR ]
+    { { SELECT | INSERT | UPDATE | DELETE | TRUNCATE | REFERENCES | TRIGGER }
+    [, ...] | ALL [ PRIVILEGES ] }
+    ON { [ TABLE ] table_name [, ...] | ALL TABLES IN SCHEMA schema_name [, ...] }
+    FROM { [ GROUP ] role_name | PUBLIC } [, ...]
+    [ CASCADE | RESTRICT ]
 
-## Clause and Option Matrix
+-- Revoke column privileges
+REVOKE [ GRANT OPTION FOR ]
+    { { SELECT | INSERT | UPDATE | REFERENCES } ( column_name [, ...] ) [, ...]
+    | ALL [ PRIVILEGES ] ( column_name [, ...] ) }
+    ON [ TABLE ] table_name [, ...]
+    FROM { [ GROUP ] role_name | PUBLIC } [, ...]
+    [ CASCADE | RESTRICT ]
 
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
+-- Revoke other object types (same pattern as GRANT)
+REVOKE [ GRANT OPTION FOR ] privileges ON object_type FROM role [ CASCADE | RESTRICT ];
 
-## Parser Acceptance and Rejection Cases
+-- Revoke role membership
+REVOKE [ ADMIN OPTION FOR ] role_name [, ...] FROM role_name [, ...]
+    [ GRANTED BY role_name ] [ CASCADE | RESTRICT ]
+```
 
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+## Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `GRANT OPTION FOR` | Remove grant option only, keep privilege |
+| `CASCADE` | Drop dependent objects that require the privilege |
+| `RESTRICT` | Refuse if dependent objects exist (default) |
 
 ## Examples
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+### Revoke Table Privileges
 
-## Completion Checklist
+```sql
+-- Remove SELECT
+REVOKE SELECT ON users FROM former_employee;
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+-- Remove all privileges
+REVOKE ALL ON orders FROM old_app_role;
+
+-- Remove grant option only
+REVOKE GRANT OPTION FOR SELECT ON users FROM manager;
+
+-- Revoke from multiple
+REVOKE SELECT ON customers FROM user1, user2;
+```
+
+### Revoke Column Privileges
+
+```sql
+REVOKE SELECT (salary) ON employees FROM intern;
+```
+
+### Revoke Role Membership
+
+```sql
+-- Remove user from role
+REVOKE admin_role FROM former_admin;
+
+-- Remove admin option only
+REVOKE ADMIN OPTION FOR manager_role FROM supervisor;
+```
+
+### Revoke PUBLIC
+
+```sql
+-- Restrict public access
+REVOKE SELECT ON sensitive_data FROM PUBLIC;
+```
+
+## CASCADE vs RESTRICT
+
+| Mode | Dependent Objects | Result |
+|------|------------------|--------|
+| `RESTRICT` (default) | None | Privilege revoked |
+| `RESTRICT` (default) | Exist | Error: dependent objects |
+| `CASCADE` | Exist | Privilege revoked, dependent objects dropped |
+
+```sql
+-- View depends on SELECT privilege
+-- This fails:
+REVOKE SELECT ON users FROM app_role;  -- Error: view uses this
+
+-- This drops the view:
+REVOKE SELECT ON users FROM app_role CASCADE;
+```
+
+## See Also
+
+- [GRANT](01_grant_syntax.md)

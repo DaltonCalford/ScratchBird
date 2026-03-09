@@ -32,6 +32,7 @@ namespace core
 // Forward declarations
 class TransactionManager;
 class Database;
+class LSMCompactionManager;
 struct UuidV7Bytes;  // ID typedef
 using ID = UuidV7Bytes;
 
@@ -361,6 +362,8 @@ public:
     // Configuration setters
     void setIndexPath(const std::string &path) { index_path_ = path; }
     void setBlockSize(size_t block_size) { block_size_ = block_size; }
+    const std::string &indexPath() const { return index_path_; }
+    size_t blockSize() const { return block_size_; }
 
     // Recalculate level sizes from current SSTable paths (post-rewrite GC)
     void recalculateLevelSizes();
@@ -561,6 +564,11 @@ public:
      */
     Status getStatistics(Statistics *stats_out,
                         ErrorContext *ctx = nullptr);
+
+    const std::string &indexPath() const { return index_path_; }
+    size_t memtableMaxSizeBytes() const { return memtable_max_size_; }
+    size_t blockSize() const { return block_size_; }
+    const LSMCompactionManager *compactionManager() const { return compaction_mgr_.get(); }
 
     // Update TIDs after tablespace migration (GPID remap)
     Status updateTIDsAfterMigration(const std::unordered_map<TID, TID> &tid_mapping,

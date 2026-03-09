@@ -37,6 +37,21 @@
 namespace scratchbird::core
 {
     namespace {
+        using DomainReplicaCatalogMap =
+            std::unordered_map<ID, std::unique_ptr<DomainControlPlaneReplicaCatalog>, IDHash>;
+
+        auto domainControlPlaneReplicaCatalogMutex() -> std::mutex&
+        {
+            static std::mutex catalogs_mutex;
+            return catalogs_mutex;
+        }
+
+        auto domainControlPlaneReplicaCatalogs() -> DomainReplicaCatalogMap&
+        {
+            static DomainReplicaCatalogMap catalogs_by_database;
+            return catalogs_by_database;
+        }
+
         bool isZeroUuidLocal(const ID& id) {
             for (auto b : id.bytes) {
                 if (b != 0) {
@@ -652,17 +667,14 @@ namespace scratchbird::core
         auto domainControlPlaneReplicaCatalog(Database* db) -> DomainControlPlaneReplicaCatalog&
         {
             static DomainControlPlaneReplicaCatalog fallback_catalog;
-            static std::mutex catalogs_mutex;
-            static std::unordered_map<ID,
-                                      std::unique_ptr<DomainControlPlaneReplicaCatalog>,
-                                      IDHash> catalogs_by_database;
 
             if (!db || isZeroUuidLocal(db->uuid()))
             {
                 return fallback_catalog;
             }
 
-            std::lock_guard<std::mutex> lock(catalogs_mutex);
+            std::lock_guard<std::mutex> lock(domainControlPlaneReplicaCatalogMutex());
+            auto& catalogs_by_database = domainControlPlaneReplicaCatalogs();
             auto it = catalogs_by_database.find(db->uuid());
             if (it != catalogs_by_database.end())
             {
@@ -2184,6 +2196,17 @@ namespace scratchbird::core
 
         LOG_INFO(CATALOG, "Loaded %u domains", domain_count_);
         return Status::OK;
+    }
+
+    void clearDomainControlPlaneReplicaCatalog(const ID& database_id)
+    {
+        if (isZeroUuidLocal(database_id))
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(domainControlPlaneReplicaCatalogMutex());
+        domainControlPlaneReplicaCatalogs().erase(database_id);
     }
 
     // ====================

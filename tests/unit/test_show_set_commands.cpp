@@ -852,3 +852,96 @@ TEST_F(ShowSetCommandsTest, ShowTablesAndColumnsRedactWithoutSelect)
         EXPECT_NE(visible_cols_rs->getValue(row, 0).toString(), "Redacted");
     }
 }
+
+TEST_F(ShowSetCommandsTest, ShowParallelControlDefaults)
+{
+    auto show_value = [&](const std::string& sql) -> std::string {
+        auto result = compileAndExecute(sql);
+        if (!result.success())
+        {
+            ADD_FAILURE() << result.error();
+            return {};
+        }
+        if (!result.hasResultSet() || result.resultSet() == nullptr ||
+            result.resultSet()->rowCount() == 0)
+        {
+            ADD_FAILURE() << "Missing result set for " << sql;
+            return {};
+        }
+        return result.resultSet()->getValue(0, 1).toString();
+    };
+
+    EXPECT_EQ(show_value("SHOW max_parallel_workers"), "0");
+    EXPECT_EQ(show_value("SHOW max_parallel_workers_per_gather"), "0");
+    EXPECT_EQ(show_value("SHOW enable_parallel_hash"), "OFF");
+    EXPECT_EQ(show_value("SHOW parallel_setup_cost"), "1000");
+}
+
+TEST_F(ShowSetCommandsTest, SetAndShowParallelControls)
+{
+    ASSERT_TRUE(compileAndExecute("SET max_parallel_workers = 6").success());
+    ASSERT_TRUE(compileAndExecute("SET max_parallel_workers_per_gather = 3").success());
+    ASSERT_TRUE(compileAndExecute("SET parallel_setup_cost = 12.5").success());
+    ASSERT_TRUE(compileAndExecute("SET enable_parallel_hash = ON").success());
+
+    auto show_value = [&](const std::string& sql) -> std::string {
+        auto result = compileAndExecute(sql);
+        if (!result.success())
+        {
+            ADD_FAILURE() << result.error();
+            return {};
+        }
+        if (!result.hasResultSet() || result.resultSet() == nullptr ||
+            result.resultSet()->rowCount() == 0)
+        {
+            ADD_FAILURE() << "Missing result set for " << sql;
+            return {};
+        }
+        return result.resultSet()->getValue(0, 1).toString();
+    };
+
+    EXPECT_EQ(show_value("SHOW max_parallel_workers"), "6");
+    EXPECT_EQ(show_value("SHOW max_parallel_workers_per_gather"), "3");
+    EXPECT_EQ(show_value("SHOW parallel_setup_cost"), "12.5");
+    EXPECT_EQ(show_value("SHOW enable_parallel_hash"), "ON");
+}
+
+TEST_F(ShowSetCommandsTest, RejectsSetLocalParallelControls)
+{
+    auto set_local_cost = compileAndExecute("SET LOCAL parallel_setup_cost = 0");
+    ASSERT_FALSE(set_local_cost.success());
+    EXPECT_EQ(set_local_cost.error(),
+              "SET LOCAL is not supported for parallel execution controls");
+
+    auto set_local_enable = compileAndExecute("SET LOCAL enable_parallel_hash = OFF");
+    ASSERT_FALSE(set_local_enable.success());
+    EXPECT_EQ(set_local_enable.error(),
+              "SET LOCAL is not supported for parallel execution controls");
+}
+
+TEST_F(ShowSetCommandsTest, ShowAllIncludesParallelControls)
+{
+    ASSERT_TRUE(compileAndExecute("SET enable_parallel_hash = ON").success());
+    ASSERT_TRUE(compileAndExecute("SET max_parallel_workers = 8").success());
+
+    auto result = compileAndExecute("SHOW ALL");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+
+    auto has_row = [&](const std::string& name, const std::string& value) {
+        for (size_t row = 0; row < result.resultSet()->rowCount(); ++row)
+        {
+            if (result.resultSet()->getValue(row, 0).toString() == name &&
+                result.resultSet()->getValue(row, 1).toString() == value)
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    EXPECT_TRUE(has_row("enable_parallel_hash", "ON"));
+    EXPECT_TRUE(has_row("max_parallel_workers", "8"));
+    EXPECT_TRUE(has_row("parallel_setup_cost", "1000"));
+}

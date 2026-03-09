@@ -14,6 +14,8 @@
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/workload_governance.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
@@ -589,6 +591,116 @@ TEST(JobSchedulerTimeout, MarksRunFailedAfterTimeout) {
     EXPECT_NE(updated.result_message.find("timed out"), std::string::npos);
 
     scheduler.stop();
+    db.close();
+
+    cfg.set("scheduler", "enabled", prev_enabled);
+}
+
+TEST(JobSchedulerGovernance, ProcedureRunRespectsWorkloadAdmissionPolicy) {
+    auto& cfg = Config::getInstance();
+    std::string prev_enabled = cfg.getString("scheduler", "enabled", "true");
+    cfg.set("scheduler", "enabled", "false");
+
+    testing::TestDatabaseFile db_file("test_scheduler_governance");
+    ErrorContext ctx;
+
+    ASSERT_EQ(Database::create(db_file.path(), 16384, &ctx), Status::OK);
+
+    Database db;
+    ASSERT_EQ(db.open(db_file.path(), &ctx), Status::OK);
+
+    auto* catalog = db.catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    CatalogManager::SchemaInfo schema_info;
+    ASSERT_EQ(catalog->getSchema("PUBLIC", schema_info, &ctx), Status::OK) << ctx.message;
+    const ID system_user = catalog->getSystemUserId(&ctx);
+
+    CatalogManager::ProcedureInfo proc{};
+    proc.procedure_id = generateUuidV7();
+    proc.schema_id = schema_info.schema_id;
+    proc.name = "proc_scheduler_governed";
+    proc.owner_id = system_user;
+    proc.bytecode = {0x00, 0x00, static_cast<uint8_t>(scratchbird::sblr::Opcode::END)};
+    ASSERT_EQ(catalog->registerProcedure(proc, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::WorkloadClassCatalogInfo klass{};
+    klass.class_id = generateUuidV7();
+    klass.class_name = "wl_scheduler";
+    klass.match_kind = CatalogManager::WorkloadMatchKind::RESOURCE_TAG;
+    klass.match_text = "scheduler";
+    klass.priority = 5;
+    ASSERT_EQ(catalog->upsertWorkloadClassCatalogEntry(klass, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::AdmissionPolicyCatalogInfo policy{};
+    policy.policy_id = generateUuidV7();
+    policy.policy_name = "ap_scheduler";
+    policy.max_concurrent_sessions = 8;
+    policy.max_concurrent_queries = 1;
+    policy.max_queue_depth = 0;
+    policy.reject_mode = CatalogManager::AdmissionRejectMode::REJECT;
+    policy.queue_timeout_ms = 0;
+    ASSERT_EQ(catalog->upsertAdmissionPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::AdmissionBindingCatalogInfo binding{};
+    binding.binding_id = generateUuidV7();
+    binding.policy_id = policy.policy_id;
+    binding.target_kind = CatalogManager::AdmissionTargetKind::WORKLOAD_CLASS;
+    binding.class_id = klass.class_id;
+    binding.priority = 1;
+    ASSERT_EQ(catalog->upsertAdmissionBindingCatalogEntry(binding, &ctx), Status::OK) << ctx.message;
+
+    std::unique_ptr<ConnectionContext> gate_conn;
+    ASSERT_EQ(db.connect(gate_conn, &ctx), Status::OK) << ctx.message;
+    ASSERT_NE(gate_conn, nullptr);
+    ConnectionContext::setCurrent(gate_conn.get());
+    ASSERT_EQ(gate_conn->initialize(&ctx), Status::OK) << ctx.message;
+    ConnectionContext::setCurrent(nullptr);
+    gate_conn->setCurrentUser(system_user, true);
+    gate_conn->setCurrentSchemaId(schema_info.schema_id);
+    gate_conn->set_current_schema("PUBLIC");
+    gate_conn->set_search_path({"PUBLIC"});
+    gate_conn->setSessionVariable("RESOURCE_TAG", "scheduler");
+
+    WorkloadGovernance::QueryDescriptor descriptor;
+    descriptor.connection = gate_conn.get();
+    descriptor.sql = "CALL proc_scheduler_governed";
+    descriptor.schema_name = "PUBLIC";
+    descriptor.resource_tag = "scheduler";
+
+    WorkloadGovernance::AdmissionLease gate_lease;
+    auto gate_decision = db.workload_governance()->acquire(descriptor, gate_lease, &ctx);
+    ASSERT_TRUE(gate_decision.admitted) << gate_decision.detail;
+    ASSERT_TRUE(gate_lease.active());
+
+    auto job = buildSimpleJob("governed_proc_job", system_user, nowMs());
+    job.job_type = CatalogManager::JobType::PROCEDURE;
+    job.job_sql.clear();
+    job.procedure_uuid = proc.procedure_id;
+
+    ID job_id;
+    ASSERT_EQ(catalog->createJob(job, job_id, &ctx), Status::OK);
+    job.job_id = job_id;
+
+    JobScheduler::Config config;
+    config.polling_interval_seconds = 1;
+    config.pre_execute_delay_ms = 0;
+
+    JobScheduler scheduler(&db, config);
+    ASSERT_EQ(scheduler.start(&ctx), Status::OK);
+
+    ID run_id;
+    ASSERT_EQ(scheduler.executeJobNow(job, run_id, &ctx), Status::OK);
+
+    CatalogManager::JobRunInfo run;
+    ASSERT_TRUE(waitForJobRunState(catalog, run_id, CatalogManager::JobRunState::FAILED, 10000, &run));
+    EXPECT_EQ(run.error_code, static_cast<int32_t>(Status::CONFIGURATION_LIMIT_EXCEEDED));
+    EXPECT_NE(run.result_message.find("Admission rejected by max_concurrent_queries"),
+              std::string::npos);
+
+    scheduler.stop();
+    gate_lease.release();
+    gate_conn.reset();
     db.close();
 
     cfg.set("scheduler", "enabled", prev_enabled);

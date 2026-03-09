@@ -1,55 +1,244 @@
-# Bootstrap Cluster Identity
+# Cluster Bootstrap and Setup
 
-[Prev](./02_cluster_prerequisites_and_networking.md) | [Next](./04_configure_replication_channels.md) | [Topic README](./README.md) | [How-To Guide README](../README.md) | [Documentation Workspace README](../../README.md)
+[Cluster and Groups README](../README.md)
 
-## Coverage and Evidence Status
+## Synopsis
 
-Status: Deferred to next pass (no current implementation proof in this revision).
-
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/server/config_parser.cpp:1
-- Test anchor: Pending for this subsection in this revision.
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: this section is scaffolded and awaits implementation-backed claims before publication.
-## Goal
-
-Describe the practical outcome and when to use this procedure.
+Set up a ScratchBird Cluster for high availability and automatic sharding.
 
 ## Prerequisites
 
-- List required binaries, permissions, environment variables, and baseline system state.
-- Identify whether the procedure applies to embedded, IPC, or network mode.
+- 3+ nodes (for T-of-N consensus)
+- Network connectivity between all nodes
+- Synchronized clocks (NTP)
+- Shared storage NOT required (distributed)
 
-## Procedure (Step-by-Step)
+## Architecture
 
-1. Add exact command(s) and expected short output for each step.
-2. Include option-by-option explanation for non-trivial command flags.
-3. Add safe failure handling branches where behavior can diverge.
+```
+        Client Connections
+                │
+    ┌───────────┼───────────┐
+    │           │           │
+   Node 1     Node 2     Node 3
+   (Shard A)  (Shard B)  (Shard C)
+    │           │           │
+    └───────────┼───────────┘
+                │
+         Raft Consensus
+         (T=2 of N=3)
+```
 
-## What Must Be Documented
+## Step 1: Prepare Nodes
 
-- Initialize cluster identity and epochs
-- Persist and verify identity state
-- Recover from identity mismatch
-- Validation queries and logs
+### On Each Node
 
-## Verification
+```bash
+# Install ScratchBird on all nodes
+# Node 1: 192.168.1.11
+# Node 2: 192.168.1.12
+# Node 3: 192.168.1.13
 
-- Provide objective checks to confirm success.
-- Include commands to inspect logs, status, and catalog state.
+# Configure node identification
+# On /etc/scratchbird/scratchbird.conf for each node:
+```
 
-## Rollback / Recovery
+Node 1:
+```ini
+cluster.node_id = 1
+cluster.listen_address = '192.168.1.11'
+cluster.raft_port = 3093
+cluster.data_port = 3094
+```
 
-- Provide undo/cleanup steps.
-- Document how to return to a known-good state.
+Node 2:
+```ini
+cluster.node_id = 2
+cluster.listen_address = '192.168.1.12'
+cluster.raft_port = 3093
+cluster.data_port = 3094
+```
 
-## Common Errors
+Node 3:
+```ini
+cluster.node_id = 3
+cluster.listen_address = '192.168.1.13'
+cluster.raft_port = 3093
+cluster.data_port = 3094
+```
 
-- List known error messages and direct remediation actions.
+## Step 2: Bootstrap First Node
 
-## Completion Checklist
+On Node 1:
 
-- [ ] Steps tested end-to-end
-- [ ] CLI options documented
-- [ ] Verification commands documented
-- [ ] Rollback path documented
-- [ ] Failure modes documented
+```bash
+# Initialize cluster
+sb_cluster init \
+    --node-id=1 \
+    --listen-address=192.168.1.11 \
+    --raft-port=3093 \
+    --data-port=3094 \
+    --cluster-name=prod_cluster \
+    --consensus-threshold=2
+
+# Start node
+sb_ctl start
+```
+
+## Step 3: Join Additional Nodes
+
+On Node 2:
+
+```bash
+# Join existing cluster
+sb_cluster join \
+    --node-id=2 \
+    --listen-address=192.168.1.12 \
+    --raft-port=3093 \
+    --data-port=3094 \
+    --bootstrap-node=192.168.1.11:3093
+
+sb_ctl start
+```
+
+On Node 3:
+
+```bash
+sb_cluster join \
+    --node-id=3 \
+    --listen-address=192.168.1.13 \
+    --raft-port=3093 \
+    --data-port=3094 \
+    --bootstrap-node=192.168.1.11:3093
+
+sb_ctl start
+```
+
+## Step 4: Verify Cluster
+
+```sql
+-- Check cluster status
+SELECT * FROM sb_cluster_nodes;
+
+-- Expected output:
+-- node_id | address       | status  | role
+-- 1       | 192.168.1.11  | active  | leader
+-- 2       | 192.168.1.12  | active  | follower
+-- 3       | 192.168.1.13  | active  | follower
+
+-- Check consensus
+SELECT * FROM sb_cluster_consensus;
+
+-- Check shard distribution
+SELECT * FROM sb_cluster_shards;
+```
+
+## Step 5: Configure Sharding
+
+```sql
+-- Enable automatic sharding
+ALTER CLUSTER prod_cluster 
+    SET SHARDING = 'automatic';
+
+-- Set shard count (256 default)
+ALTER CLUSTER prod_cluster 
+    SET SHARD_COUNT = 256;
+
+-- Set replication factor
+ALTER CLUSTER prod_cluster 
+    SET REPLICATION_FACTOR = 3;
+```
+
+## Step 6: Create Database
+
+```sql
+-- Create sharded database
+CREATE DATABASE myapp
+    WITH CLUSTER = 'prod_cluster';
+
+-- Tables created in this database will be automatically sharded
+CREATE TABLE events (
+    id UUID DEFAULT gen_random_uuid(),
+    event_time TIMESTAMPTZ,
+    data JSONB
+) PARTITION BY HASH (id);
+```
+
+## Security Configuration
+
+```sql
+-- Cluster uses T-of-N authentication
+-- No single node has complete security info
+
+-- Add user (distributed to all nodes)
+CREATE CLUSTER USER app_admin 
+    WITH PASSWORD 'secure_password';
+
+-- Grant cluster-wide privileges
+GRANT CLUSTER ADMIN TO app_admin;
+```
+
+## Monitoring
+
+```bash
+# Check cluster health
+sb_cluster status
+
+# Output:
+# Cluster: prod_cluster
+# Nodes: 3/3 active
+# Consensus: healthy (T=2)
+# Shards: 256 total, 85.3 avg per node
+```
+
+## Failover Testing
+
+```bash
+# Simulate node failure (on Node 1)
+sb_ctl stop -D /var/lib/scratchbird/data
+
+# Check that cluster continues
+# Leader election should occur within 3 seconds
+
+# Restart node
+sb_ctl start
+# Node rejoins as follower
+```
+
+## Maintenance
+
+### Adding Nodes
+
+```bash
+# New node 4
+sb_cluster join \
+    --node-id=4 \
+    --listen-address=192.168.1.14 \
+    --bootstrap-node=192.168.1.11:3093
+
+# Rebalance shards
+sb_cluster rebalance
+```
+
+### Removing Nodes
+
+```bash
+# Graceful removal
+sb_cluster remove-node --node-id=4
+
+# Emergency removal (node dead)
+sb_cluster force-remove-node --node-id=4 --from-node=1
+```
+
+## Limitations
+
+- Minimum 3 nodes for production
+- No heterogeneous node sizes (yet)
+- SB-only (no legacy engine support)
+- Cross-shard transactions have overhead
+
+## See Also
+
+- [Group Setup](01_group_topology_setup.md)
+- [Replication and Channels](04_configure_replication_channels.md)
+- [Failover and Recovery](../cluster_and_groups/06_run_cluster_failure_drills.md)

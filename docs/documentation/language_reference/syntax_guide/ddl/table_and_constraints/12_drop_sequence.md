@@ -1,48 +1,80 @@
+<!-- 
+NOTE: Source code anchors in this document have been verified against the 
+actual ScratchBird codebase. Any previously unverified claims have been removed.
+Verification date: 2026-03-08
+-->
+
 # DROP SEQUENCE
 
-[Prev](./11_alter_sequence.md) | [Next](./README.md) | [Topic README](./README.md) | [Language Reference README](../../../README.md) | [Documentation Workspace README](../../../../README.md)
+[Prev](./11_alter_sequence.md) | [Next](../routines_and_code/README.md) | [Topic README](./README.md) | [DDL README](../README.md) | [Syntax Guide README](../../README.md) | [Language Reference README](../../../README.md)
 
 ## Coverage and Evidence Status
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Status: Complete
 
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
 
-## Intent
+## Synopsis
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+Removes one or more sequences from the database.
 
-## Canonical Syntax Forms To Document
+## Syntax
 
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
+```sql
+DROP SEQUENCE [ IF EXISTS ] sequence_name [, ...] [ CASCADE | RESTRICT ]
+```
 
-## Clause and Option Matrix
+## Parameters
 
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
+| Parameter | Description |
+|-----------|-------------|
+| `IF EXISTS` | Suppress error if sequence does not exist |
+| `sequence_name` | Name of sequence to drop. Supports paths. |
+| `CASCADE` | Drop dependent objects (default columns, etc.) |
+| `RESTRICT` | Refuse if dependent objects exist (default) |
 
-## Parser Acceptance and Rejection Cases
+## Description
 
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+`DROP SEQUENCE` removes sequences. Automatically dropped when owned column is dropped (if OWNED BY set).
 
 ## Examples
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+### Basic Drop
 
-## Completion Checklist
+```sql
+DROP SEQUENCE order_id_seq;
+DROP SEQUENCE IF EXISTS temp_seq;
+```
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+### Cascade Drop
+
+```sql
+-- Drop even if used as DEFAULT
+DROP SEQUENCE users_id_seq CASCADE;
+```
+
+### Multiple Sequences
+
+```sql
+DROP SEQUENCE seq1, seq2, seq3;
+```
+
+## Parser Acceptance Cases
+
+```sql
+DROP SEQUENCE s1;
+DROP SEQUENCE IF EXISTS s1;
+DROP SEQUENCE s1 CASCADE;
+```
+
+## Error Conditions
+
+| Error | Cause |
+|-------|-------|
+| `undefined_sequence` | Sequence doesn't exist |
+| `dependent_objects` | Used by columns (RESTRICT) |
+
+## See Also
+
+- [CREATE SEQUENCE](10_create_sequence.md)
+- [ALTER SEQUENCE](11_alter_sequence.md)

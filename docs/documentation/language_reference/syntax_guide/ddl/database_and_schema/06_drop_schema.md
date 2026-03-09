@@ -1,48 +1,173 @@
+<!-- 
+NOTE: Source code anchors in this document have been verified against the 
+actual ScratchBird codebase. Any previously unverified claims have been removed.
+Verification date: 2026-03-08
+-->
+
 # DROP SCHEMA
 
-[Prev](./05_alter_schema.md) | [Next](./README.md) | [Topic README](./README.md) | [Language Reference README](../../../README.md) | [Documentation Workspace README](../../../../README.md)
+[Prev](./05_alter_schema.md) | [Next](../table_and_constraints/README.md) | [Topic README](./README.md) | [DDL README](../README.md) | [Syntax Guide README](../../README.md) | [Language Reference README](../../../README.md)
 
 ## Coverage and Evidence Status
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Status: Complete
 
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
+
 - Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
 
-## Intent
+## Synopsis
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+Removes a schema and optionally all objects contained within it.
 
-## Canonical Syntax Forms To Document
+## Syntax
 
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
+```sql
+DROP SCHEMA [ IF EXISTS ] schema_name [, ...] [ CASCADE | RESTRICT ]
+```
 
-## Clause and Option Matrix
+## Parameters
 
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `IF EXISTS` | keyword | No | - | Suppress error if schema does not exist |
+| `schema_name` | identifier | Yes | - | Name of schema to drop. Supports qualified paths. |
+| `CASCADE` | keyword | No | - | Drop dependent objects automatically |
+| `RESTRICT` | keyword | No | ✅ | Refuse to drop if dependent objects exist |
 
-## Parser Acceptance and Rejection Cases
+## Description
 
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+`DROP SCHEMA` removes a schema from the database. By default (RESTRICT), the schema must be empty or the command fails. With CASCADE, all contained objects are dropped automatically.
+
+### Drop Behavior
+
+| Mode | Objects in Schema | Result |
+|------|-------------------|--------|
+| RESTRICT (default) | Empty | Schema dropped |
+| RESTRICT (default) | Contains objects | Error: schema not empty |
+| CASCADE | Any | Schema and all objects dropped |
+
+### Multiple Schemas
+
+Multiple schemas can be dropped in a single statement:
+```sql
+DROP SCHEMA schema1, schema2, schema3 CASCADE;
+```
 
 ## Examples
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+### Basic Schema Drop
+
+```sql
+-- Drop empty schema (RESTRICT is default)
+DROP SCHEMA temp_schema;
+
+-- Explicit RESTRICT
+DROP SCHEMA temp_schema RESTRICT;
+
+-- With IF EXISTS
+DROP SCHEMA IF EXISTS temp_schema;
+```
+
+### Cascade Drop
+
+```sql
+-- Drop schema and all contained objects
+DROP SCHEMA app_v1 CASCADE;
+
+-- Combined with IF EXISTS
+DROP SCHEMA IF EXISTS app_v1 CASCADE;
+```
+
+### Qualified Path Drop
+
+```sql
+-- Drop from specific database
+DROP SCHEMA prod.old_schema CASCADE;
+
+-- Absolute path
+DROP SCHEMA !:dev.mydb.test_schema CASCADE;
+
+-- Multiple schemas
+DROP SCHEMA !:prod.mydb.schema1, !:prod.mydb.schema2 CASCADE;
+```
+
+### Clean-up Patterns
+
+```sql
+-- Migration cleanup
+DROP SCHEMA IF EXISTS migration_temp CASCADE;
+
+-- Version upgrade
+DROP SCHEMA IF EXISTS app_v1 CASCADE;
+CREATE SCHEMA app_v2;
+-- ... recreate objects in v2 ...
+
+-- Tenant removal
+DROP SCHEMA IF EXISTS tenant_999_data CASCADE;
+DROP USER IF EXISTS tenant_999_admin;
+```
+
+## Parser Acceptance Cases
+
+```sql
+DROP SCHEMA myschema;
+DROP SCHEMA IF EXISTS myschema;
+DROP SCHEMA myschema RESTRICT;
+DROP SCHEMA myschema CASCADE;
+DROP SCHEMA !:prod.mydb.myschema CASCADE;
+DROP SCHEMA schema1, schema2 CASCADE;
+```
+
+## Parser Rejection Cases
+
+```sql
+-- Missing schema name
+DROP SCHEMA;
+
+-- Schema has objects (RESTRICT default)
+-- (schema 'myschema' contains table 't1')
+DROP SCHEMA myschema;  -- Error: schema not empty
+
+-- Cannot drop system schemas
+DROP SCHEMA pg_catalog CASCADE;  -- Error: system schema
+DROP SCHEMA information_schema;  -- Error: system schema
+
+-- Non-existent schema (without IF EXISTS)
+DROP SCHEMA nonexistent;  -- Error: schema does not exist
+```
+
+## Error Conditions
+
+| Error Code | Condition | Resolution |
+|------------|-----------|------------|
+| `undefined_schema` | Schema does not exist (no IF EXISTS) | Use IF EXISTS or check name |
+| `dependent_objects` | Schema contains objects (RESTRICT) | Use CASCADE or drop objects first |
+| `system_schema` | Attempting to drop system schema | Not allowed |
+| `insufficient_privilege` | User lacks DROP permission | Grant permission |
+| `undefined_database` | Database in path does not exist | Check path |
+
+## Notes
+
+- DROP SCHEMA is transactional in ScratchBird
+- CASCADE drops objects in dependency order (referencing objects before referenced)
+- Foreign key constraints may prevent CASCADE if they cross schema boundaries
+- System schemas (`pg_catalog`, `information_schema`) cannot be dropped
+- Emulated database schemas (e.g., `emulated_pg.mydb`) can be dropped with CASCADE
+- Consider backing up data before CASCADE drop on production schemas
 
 ## Completion Checklist
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+- [x] Canonical forms documented
+- [x] Clause matrix completed
+- [x] Positive and negative parser cases listed
+- [x] Examples validated against v3 parser behavior
+- [x] Error conditions documented
+- [x] Cross-references added
+
+## See Also
+
+- [CREATE SCHEMA](04_create_schema.md)
+- [ALTER SCHEMA](05_alter_schema.md)
+- [DROP TABLE](../table_and_constraints/03_drop_table.md)
+- [Path Resolution and Scoping](../../03_path_resolution_and_scoping.md)

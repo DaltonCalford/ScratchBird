@@ -53,7 +53,7 @@ int main(int argc, char *argv[])
 
     if (command == "--version")
     {
-        std::cout << "ScratchBird v0.1.0-alpha.1.01\n";
+        std::cout << scratchbird::version::formatProductVersionBanner() << "\n";
         return 0;
     }
 

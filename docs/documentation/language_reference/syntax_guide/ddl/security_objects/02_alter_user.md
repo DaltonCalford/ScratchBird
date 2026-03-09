@@ -1,48 +1,90 @@
 # ALTER USER
 
-[Prev](./01_create_user.md) | [Next](./03_drop_user.md) | [Topic README](./README.md) | [Language Reference README](../../../README.md) | [Documentation Workspace README](../../../../README.md)
+[Prev](./01_create_user.md) | [Next](./03_drop_user.md) | [Topic README](./README.md)
 
-## Coverage and Evidence Status
+## Synopsis
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Modifies an existing database user.
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
+## Syntax
 
-## Intent
+```sql
+ALTER USER [ environment_path ] user_name [ WITH ] option [ ... ]
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+where option can be:
+    SUPERUSER | NOSUPERUSER
+    | CREATEDB | NOCREATEDB
+    | CREATEROLE | NOCREATEROLE
+    | INHERIT | NOINHERIT
+    | LOGIN | NOLOGIN
+    | REPLICATION | NOREPLICATION
+    | BYPASSRLS | NOBYPASSRLS
+    | CONNECTION LIMIT connlimit
+    | [ ENCRYPTED ] PASSWORD 'password' | PASSWORD NULL
+    | VALID UNTIL 'timestamp'
+    | PROFILE profile_name
+    | AUTH plugin_name [ USING 'auth_options' ]
+```
 
-## Canonical Syntax Forms To Document
+## Description
 
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
-
-## Clause and Option Matrix
-
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
-
-## Parser Acceptance and Rejection Cases
-
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+ALTER USER changes the attributes of an existing user. Any option not mentioned remains unchanged.
 
 ## Examples
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+### Change Password
 
-## Completion Checklist
+```sql
+ALTER USER john WITH PASSWORD 'new_secure_password';
+```
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+### Grant Privileges
+
+```sql
+-- Grant CREATEDB privilege
+ALTER USER app_user WITH CREATEDB;
+
+-- Make superuser
+ALTER USER admin WITH SUPERUSER;
+
+-- Grant replication
+ALTER USER replicator WITH REPLICATION;
+```
+
+### Restrict Account
+
+```sql
+-- Disable login
+ALTER USER former_employee WITH NOLOGIN;
+
+-- Set connection limit
+ALTER USER app_user WITH CONNECTION LIMIT 50;
+
+-- Set password expiration
+ALTER USER temp_user WITH VALID UNTIL '2024-12-31';
+```
+
+### Change Authentication
+
+```sql
+-- Switch to LDAP
+ALTER USER corp_user WITH AUTH ldap USING 'cn=newcn,dc=company';
+```
+
+### Rename User
+
+```sql
+ALTER USER old_name RENAME TO new_name;
+```
+
+## Notes
+
+- Only superusers can alter other superusers
+- Users can change their own passwords
+- Changes take effect immediately for new connections
+- Existing connections retain previous settings
+
+## See Also
+
+- [CREATE USER](01_create_user.md)
+- [DROP USER](03_drop_user.md)

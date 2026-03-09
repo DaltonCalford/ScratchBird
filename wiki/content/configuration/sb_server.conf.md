@@ -284,17 +284,21 @@ Memory allocation settings.
 buffer_pool_size = 128MB
 ```
 
-Size of the buffer pool for caching database pages.
+Size of the buffer pool for caching database pages. Raw integers are page
+counts; size-suffixed values such as `128MB` or `4GB` are converted using the
+database page size.
 
 **Recommendation:** 25% of available RAM, up to 8GB.
 
 ### buffer_pool_page_size
 
 ```ini
-buffer_pool_page_size = 8192
+buffer_pool_page_size = 16384
 ```
 
-Page size in bytes for the buffer pool.
+The buffer-pool page size is derived from the database page size. This setting
+is only a self-check: if it is present and does not match the database page
+size, startup fails closed.
 
 ### buffer_pool_layout
 
@@ -302,7 +306,9 @@ Page size in bytes for the buffer pool.
 buffer_pool_layout = single
 ```
 
-Buffer pool layout selection. Options: `single`, `hot_cold`, `tablespace`.
+Buffer pool layout selection. Only `single` is implemented in the current
+runtime. `hot_cold` and `tablespace` are rejected during startup instead of
+silently degrading to a single pool.
 
 ### buffer_pool_bgwriter_enabled
 
@@ -679,7 +685,6 @@ min_protocol = TLSv1.2
 
 [memory]
 buffer_pool_size = 128MB
-buffer_pool_page_size = 8192
 buffer_pool_layout = single
 buffer_pool_bgwriter_enabled = true
 buffer_pool_bgwriter_max_pages = 1000
@@ -732,7 +737,6 @@ max_connections = 500
 
 [memory]
 buffer_pool_size = 4GB        # 25% of 16GB RAM
-buffer_pool_page_size = 8192
 buffer_pool_layout = single
 buffer_pool_bgwriter_enabled = true
 buffer_pool_bgwriter_max_pages = 5000

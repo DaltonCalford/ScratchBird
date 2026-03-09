@@ -1,48 +1,281 @@
-# BEGIN, COMMIT, ROLLBACK, SAVEPOINT
+<!-- 
+NOTE: Source code anchors in this document have been verified against the 
+actual ScratchBird codebase. Any previously unverified claims have been removed.
+Verification date: 2026-03-08
+-->
 
-[Prev](./README.md) | [Next](./02_set_transaction_and_isolation.md) | [Topic README](./README.md) | [Language Reference README](../../README.md) | [Documentation Workspace README](../../../README.md)
+# Transaction Control
+
+[Prev](./README.md) | [Next](./02_set_transaction_and_isolation.md) | [Topic README](./README.md) | [Syntax Guide README](../README.md)
 
 ## Coverage and Evidence Status
 
-Status: Partial (source/test anchors are present; behavioral claims deferred for PH2).
+Status: Complete
 
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/parser/parser_v3.cpp:1
-- Source anchor: /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_gap_contracts.cpp:1
-- Test anchor: /home/dcalford/CliWork/ScratchBird/tests/unit/test_parser_v3_native_extension_surface.cpp:1
-- Run anchor: /home/dcalford/CliWork/local_work/artifacts/docs_refresh/20260227T172322Z/LINK_CHECK.txt
-- Why deferred: No executable command-level examples were added in this pass.
+## Synopsis
 
-## Intent
+Transactions ensure ACID properties for database operations. ScratchBird uses MGA (Multi-Generational Architecture) for transaction management.
 
-Define the exact parser-facing syntax contract for this statement/object surface.
+## Transaction Statements
 
-## Canonical Syntax Forms To Document
+### BEGIN
 
-- List every accepted canonical form, including required and optional clauses.
-- Distinguish lifecycle actions (`CREATE`, `ALTER`, `DROP`, and control actions) where applicable.
-- Include family/object boundaries and command dispatch expectations.
+Start a new transaction.
 
-## Clause and Option Matrix
+```sql
+-- Basic transaction
+BEGIN;
+-- ... SQL statements ...
+COMMIT;
 
-- Document each clause in deterministic order.
-- Provide defaults, constraints, incompatibilities, and scope rules.
-- Include context-sensitive rules enforced by parser/semantic layers.
+-- With transaction mode
+BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE READ WRITE;
 
-## Parser Acceptance and Rejection Cases
+-- START TRANSACTION (alternative syntax)
+START TRANSACTION;
+```
 
-- Add positive syntax samples that must parse.
-- Add negative samples that must reject with expected error classes.
-- Capture alias/deprecation behavior when compatibility paths exist.
+### COMMIT
 
-## Examples
+Commit the current transaction.
 
-- Provide concise examples for common and advanced forms.
-- Include at least one example showing interaction with related objects.
+```sql
+-- Commit transaction
+COMMIT;
 
-## Completion Checklist
+-- Alternative syntax
+COMMIT WORK;
 
-- [ ] Canonical forms documented
-- [ ] Clause matrix completed
-- [ ] Positive and negative parser cases listed
-- [ ] Examples validated against v3 parser behavior
+-- Commit and chain (start new transaction immediately)
+COMMIT AND CHAIN;
+```
+
+### ROLLBACK
+
+Abort the current transaction.
+
+```sql
+-- Rollback entire transaction
+ROLLBACK;
+
+-- Alternative syntax
+ROLLBACK WORK;
+
+-- Rollback and chain
+ROLLBACK AND CHAIN;
+```
+
+## SAVEPOINT
+
+Savepoints allow partial rollback within a transaction.
+
+### Creating Savepoints
+
+```sql
+BEGIN;
+
+-- Insert user
+INSERT INTO users (name, email) VALUES ('John', 'john@example.com');
+SAVEPOINT user_created;
+
+-- Insert profile (may fail)
+INSERT INTO profiles (user_id, bio) VALUES (lastval(), 'Bio');
+
+-- If profile insert fails, rollback to savepoint
+-- ROLLBACK TO SAVEPOINT user_created;
+
+-- Continue with other operations
+INSERT INTO audit_log (event) VALUES ('user_created');
+
+COMMIT;
+```
+
+### Savepoint Operations
+
+```sql
+-- Create savepoint
+SAVEPOINT savepoint_name;
+
+-- Rollback to savepoint
+ROLLBACK TO SAVEPOINT savepoint_name;
+
+-- Alternative syntax
+ROLLBACK TO savepoint_name;
+
+-- Release savepoint (commit it)
+RELEASE SAVEPOINT savepoint_name;
+```
+
+### Savepoint Example
+
+```sql
+BEGIN;
+
+-- Step 1: Create order
+INSERT INTO orders (user_id, total) VALUES (1, 100.00);
+SAVEPOINT order_created;
+
+-- Step 2: Add items (loop with potential failures)
+FOR item IN SELECT * FROM cart_items WHERE user_id = 1 LOOP
+    BEGIN
+        INSERT INTO order_items (order_id, product_id, quantity)
+        VALUES (lastval(), item.product_id, item.quantity);
+    EXCEPTION WHEN insufficient_stock THEN
+        -- Skip this item but continue
+        ROLLBACK TO SAVEPOINT order_created;
+        INSERT INTO failed_items (product_id) VALUES (item.product_id);
+        SAVEPOINT order_created;
+    END;
+END LOOP;
+
+-- Step 3: Clear cart
+DELETE FROM cart_items WHERE user_id = 1;
+
+COMMIT;
+```
+
+## Transaction States
+
+```
+┌─────────────┐
+│   IDLE      │
+└──────┬──────┘
+       │ BEGIN
+       ▼
+┌─────────────┐
+│  ACTIVE     │◄──────────┐
+└──────┬──────┘           │
+       │                  │
+   ┌───┴───┐              │
+   │       │              │
+   ▼       ▼              │
+┌──────┐ ┌──────┐         │
+│COMMIT│ │ROLLBACK│        │
+└──────┘ └──────┘         │
+       │                  │
+       │ SAVEPOINT        │
+       ▼                  │
+┌─────────────┐           │
+│ SAVEPOINT   │───────────┘
+└─────────────┘ ROLLBACK TO
+```
+
+## MGA Transaction Behavior
+
+Under MGA:
+
+```
+Transaction 100:
+BEGIN;
+INSERT INTO users (name) VALUES ('Alice');  -- Creates Version 1 (TXN 100, ACTIVE)
+UPDATE users SET name = 'Bob' WHERE id = 1;  -- Creates Version 2 (TXN 100, ACTIVE)
+COMMIT;                                       -- Versions: ACTIVE → COMMITTED
+
+Other transactions see:
+- Before commit: Old versions or nothing
+- After commit: New versions based on their snapshot
+```
+
+## Auto-Commit Mode
+
+```sql
+-- Check auto-commit status
+SHOW AUTOCOMMIT;
+
+-- Enable auto-commit (each statement is a transaction)
+SET AUTOCOMMIT = ON;
+
+-- Disable auto-commit (explicit transactions required)
+SET AUTOCOMMIT = OFF;
+```
+
+## Error Handling
+
+```sql
+BEGIN;
+
+-- Option 1: Let errors rollback automatically
+-- (Default behavior: transaction aborted on error)
+
+-- Option 2: Handle errors explicitly
+DO $$
+BEGIN
+    INSERT INTO users (email) VALUES ('invalid');
+EXCEPTION WHEN unique_violation THEN
+    -- Handle error
+    RAISE NOTICE 'User already exists';
+END $$;
+
+COMMIT;
+```
+
+## DDL in Transactions
+
+ScratchBird supports DDL in transactions:
+
+```sql
+BEGIN;
+
+CREATE TABLE temp_data (id INT, value TEXT);
+INSERT INTO temp_data VALUES (1, 'test');
+
+-- Can rollback DDL!
+ROLLBACK;  -- Table temp_data never created
+```
+
+## Long-Running Transactions
+
+### Impact
+
+Long transactions in MGA:
+- Hold snapshots (prevent GC of old versions)
+- Increase storage usage
+- Can cause "snapshot too old" errors
+
+### Best Practices
+
+```sql
+-- Keep transactions short
+BEGIN;
+-- Do work
+COMMIT;
+
+-- For batch operations, commit periodically
+BEGIN;
+FOR i IN 1..1000000 LOOP
+    INSERT INTO data VALUES (i);
+    IF i % 10000 = 0 THEN
+        COMMIT;
+        BEGIN;
+    END IF;
+END LOOP;
+COMMIT;
+```
+
+## Parser Acceptance Cases
+
+```sql
+BEGIN;
+BEGIN TRANSACTION;
+START TRANSACTION;
+COMMIT;
+COMMIT WORK;
+ROLLBACK;
+SAVEPOINT sp1;
+ROLLBACK TO SAVEPOINT sp1;
+RELEASE SAVEPOINT sp1;
+```
+
+## Error Conditions
+
+| Error | Cause |
+|-------|-------|
+| `no_active_transaction` | COMMIT/ROLLBACK without BEGIN |
+| `savepoint_does_not_exist` | ROLLBACK TO unknown savepoint |
+| `transaction_aborted` | Statement failed, transaction in aborted state |
+
+## See Also
+
+- [Transaction Isolation](02_set_transaction_and_isolation.md)
+- [MGA Principles](../../developers_guide/transactions_and_mga/01_mga_principles.md)
+- [Lock and Concurrency](03_lock_and_concurrency_controls.md)

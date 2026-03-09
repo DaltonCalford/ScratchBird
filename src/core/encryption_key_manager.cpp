@@ -15,6 +15,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/buffer_pool.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <random>
 #include <string>
@@ -454,6 +455,143 @@ namespace scratchbird::core
                 return 0;
             }
         }
+
+        uint64_t runtimeNowTicks()
+        {
+            return static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+        }
+
+        bool isZeroUuid(const ID &value)
+        {
+            return value == ID{};
+        }
+
+        std::string normalizeUnlockPolicy(std::string value)
+        {
+            value.erase(
+                value.begin(),
+                std::find_if(
+                    value.begin(),
+                    value.end(),
+                    [](unsigned char ch) { return std::isspace(ch) == 0; }));
+            value.erase(
+                std::find_if(
+                    value.rbegin(),
+                    value.rend(),
+                    [](unsigned char ch) { return std::isspace(ch) == 0; })
+                    .base(),
+                value.end());
+            for (char &ch : value)
+            {
+                ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            }
+            return value;
+        }
+
+        Status configureBootstrapPolicyRequest(
+            const CatalogManager::EncryptionProfileCatalogInfo &profile,
+            const CatalogManager::EncryptionBootstrapInfoCatalogInfo &bootstrap,
+            const CatalogManager::EncryptionKeyCatalogInfo &active_key,
+            CatalogManager::CryptoBaselineEvaluationRequest &request_out,
+            ErrorContext *ctx)
+        {
+            request_out = CatalogManager::CryptoBaselineEvaluationRequest{};
+            request_out.evaluate_rotation_window = true;
+            request_out.privileged_operation = true;
+            request_out.has_encryption_profile_id = true;
+            request_out.encryption_profile_id = profile.profile_id;
+            request_out.has_active_key_id = true;
+            request_out.active_key_id = active_key.key_id;
+            request_out.now_utc = runtimeNowTicks();
+            request_out.artifact_signed = true;
+            request_out.artifact_signature_algorithm = "Ed25519";
+            request_out.primary_provider_available = true;
+            request_out.primary_provider_authorized = true;
+            request_out.nonce_len_bytes = 12;
+            request_out.aes_gcm_hw_available = DataEncryption::hasHardwareAcceleration();
+
+            switch (profile.cipher)
+            {
+            case CatalogManager::EncryptionAlgorithm::AES_256_GCM:
+                request_out.crypto_profile_id = CatalogManager::CryptoProfileId::MODERN_BASELINE;
+                request_out.at_rest_algorithm = CatalogManager::EncryptionAlgorithm::AES_256_GCM;
+                break;
+            case CatalogManager::EncryptionAlgorithm::CHACHA20_POLY1305:
+                request_out.crypto_profile_id = CatalogManager::CryptoProfileId::COMPAT_EMULATION;
+                request_out.at_rest_algorithm = CatalogManager::EncryptionAlgorithm::CHACHA20_POLY1305;
+                request_out.chacha_fallback_explicit = true;
+                break;
+            default:
+                SET_ERROR_CONTEXT_VNEXT(
+                    ctx,
+                    Status::INVALID_AUTHORIZATION,
+                    "SEC_1292",
+                    "Encryption profile uses unsupported at-rest algorithm");
+                return Status::INVALID_AUTHORIZATION;
+            }
+
+            const std::string policy = normalizeUnlockPolicy(bootstrap.unlock_policy);
+            if (policy == "local_only" ||
+                policy == "local_file" ||
+                policy == "local_keystore")
+            {
+                request_out.security_tier = CatalogManager::SecurityTierId::TIER_1_BASIC;
+                request_out.primary_provider = CatalogManager::KeyProviderKind::LOCAL_FILE_KEYSTORE;
+                return Status::OK;
+            }
+            if (policy == "os_keyring" ||
+                policy == "os_keyring_primary" ||
+                policy == "manual_quorum")
+            {
+                request_out.security_tier = CatalogManager::SecurityTierId::TIER_2_STANDARD;
+                request_out.primary_provider = CatalogManager::KeyProviderKind::OS_KEYRING;
+                return Status::OK;
+            }
+            if (policy == "kms_first" ||
+                policy == "kms_hsm_primary" ||
+                policy == "external_kms" ||
+                policy == "hsm_quorum")
+            {
+                SET_ERROR_CONTEXT_VNEXT(
+                    ctx,
+                    Status::CONNECTION_FAILURE,
+                    "SEC_1293",
+                    "External KMS/HSM unlock policy is not available in the non-cluster runtime");
+                return Status::CONNECTION_FAILURE;
+            }
+
+            SET_ERROR_CONTEXT_VNEXT(
+                ctx,
+                Status::INVALID_AUTHORIZATION,
+                "SEC_1292",
+                "Encryption bootstrap unlock policy is unknown");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        void copyErrorContext(const ErrorContext &from, ErrorContext *to)
+        {
+            if (to == nullptr)
+            {
+                return;
+            }
+
+            to->code = from.code;
+            to->sqlstate_text = from.sqlstate_text;
+            to->sqlstate = to->sqlstate_text.empty() ? from.sqlstate : to->sqlstate_text.c_str();
+            to->message = from.message;
+            to->vnext_code = from.vnext_code;
+            to->file = from.file;
+            to->line = from.line;
+            to->function = from.function;
+            to->constraint_name = from.constraint_name;
+            to->table_name = from.table_name;
+            to->column_name = from.column_name;
+            to->violating_value = from.violating_value;
+            to->referenced_table = from.referenced_table;
+            to->referenced_column = from.referenced_column;
+            to->check_expression = from.check_expression;
+            to->hint = from.hint;
+        }
     }
 
     struct EncryptionKeyManager::EncryptionKeyRecord
@@ -652,6 +790,217 @@ namespace scratchbird::core
         record.is_valid = 0;
         record.is_active = 0;
         return writeKeyRecord(record, ctx);
+    }
+
+    Status EncryptionKeyManager::validateDatabaseEncryptionPolicy(ErrorContext *ctx)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (!db_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager *catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::EncryptionBootstrapInfoCatalogInfo bootstrap{};
+        Status status = catalog->getEncryptionBootstrapInfoCatalogEntry(db_->uuid(), bootstrap, ctx);
+        if (status == Status::NOT_FOUND)
+        {
+            return Status::OK;
+        }
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (bootstrap.database_id != db_->uuid() ||
+            isZeroUuid(bootstrap.profile_id) ||
+            isZeroUuid(bootstrap.active_key_id))
+        {
+            SET_ERROR_CONTEXT_VNEXT(
+                ctx,
+                Status::INVALID_AUTHORIZATION,
+                "SEC_1292",
+                "Encryption bootstrap metadata is incomplete");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        CatalogManager::EncryptionProfileCatalogInfo profile{};
+        status = catalog->getEncryptionProfileCatalogEntry(bootstrap.profile_id, profile, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(
+                ctx,
+                Status::INVALID_AUTHORIZATION,
+                "SEC_1292",
+                "Encryption bootstrap profile is missing");
+            return Status::INVALID_AUTHORIZATION;
+        }
+        if (!profile.is_active)
+        {
+            SET_ERROR_CONTEXT_VNEXT(
+                ctx,
+                Status::INVALID_AUTHORIZATION,
+                "SEC_1292",
+                "Encryption bootstrap profile is inactive");
+            return Status::INVALID_AUTHORIZATION;
+        }
+        if (bootstrap.min_shards_required < profile.min_shards_required)
+        {
+            SET_ERROR_CONTEXT_VNEXT(
+                ctx,
+                Status::INVALID_AUTHORIZATION,
+                "SEC_1292",
+                "Encryption bootstrap quorum is weaker than the profile minimum");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        CatalogManager::EncryptionKeyCatalogInfo active_key{};
+        status = catalog->getEncryptionKeyCatalogEntry(bootstrap.active_key_id, active_key, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(
+                ctx,
+                Status::INVALID_AUTHORIZATION,
+                "SEC_1294",
+                "Encryption bootstrap active key is missing");
+            return Status::INVALID_AUTHORIZATION;
+        }
+        if (active_key.profile_id != bootstrap.profile_id ||
+            active_key.key_status != CatalogManager::EncryptionKeyStatus::ACTIVE ||
+            !active_key.has_activated_time)
+        {
+            SET_ERROR_CONTEXT_VNEXT(
+                ctx,
+                Status::INVALID_AUTHORIZATION,
+                "SEC_1294",
+                "Encryption bootstrap active key is not valid for runtime activation");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        CatalogManager::CryptoBaselineEvaluationRequest request{};
+        status = configureBootstrapPolicyRequest(profile, bootstrap, active_key, request, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        CatalogManager::CryptoBaselineEvaluationDecision decision{};
+        status = catalog->evaluateCryptoBaselinePolicy(request, decision, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (decision.rotation_overdue)
+        {
+            SET_ERROR_CONTEXT_VNEXT(
+                ctx,
+                Status::INVALID_AUTHORIZATION,
+                "SEC_1294",
+                "Database encryption key rotation is overdue");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        return Status::OK;
+    }
+
+    Status EncryptionKeyManager::rotateDatabaseKey(const ID &key_id, ErrorContext *ctx)
+    {
+        if (isZeroUuid(key_id))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database encryption key id is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            if (!db_)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not available");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            CatalogManager *catalog = db_->catalog_manager();
+            if (!catalog)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            CatalogManager::EncryptionBootstrapInfoCatalogInfo bootstrap{};
+            Status status = catalog->getEncryptionBootstrapInfoCatalogEntry(db_->uuid(), bootstrap, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            CatalogManager::EncryptionKeyCatalogInfo target_key{};
+            status = catalog->getEncryptionKeyCatalogEntry(key_id, target_key, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (target_key.profile_id != bootstrap.profile_id)
+            {
+                SET_ERROR_CONTEXT_VNEXT(
+                    ctx,
+                    Status::INVALID_ARGUMENT,
+                    "SEC_1294",
+                    "Database encryption key does not belong to the bootstrap profile");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (target_key.key_status != CatalogManager::EncryptionKeyStatus::STAGED &&
+                target_key.key_status != CatalogManager::EncryptionKeyStatus::ACTIVE)
+            {
+                SET_ERROR_CONTEXT_VNEXT(
+                    ctx,
+                    Status::INVALID_ARGUMENT,
+                    "SEC_1294",
+                    "Database encryption key must be staged or active before rotation");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (target_key.key_status == CatalogManager::EncryptionKeyStatus::STAGED)
+            {
+                CatalogManager::EncryptionKeyLifecycleTransitionRequest transition{};
+                transition.key_id = key_id;
+                transition.target_status = CatalogManager::EncryptionKeyStatus::ACTIVE;
+                transition.event_time_utc = runtimeNowTicks();
+                transition.retire_existing_active = true;
+                CatalogManager::EncryptionKeyLifecycleTransitionDecision decision{};
+                status = catalog->transitionEncryptionKeyLifecycle(transition, decision, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            bootstrap.active_key_id = key_id;
+            status = catalog->upsertEncryptionBootstrapInfoCatalogEntry(bootstrap, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        ErrorContext local_ctx;
+        const Status status = validateDatabaseEncryptionPolicy(&local_ctx);
+        if (status != Status::OK)
+        {
+            copyErrorContext(local_ctx, ctx);
+            return status;
+        }
+
+        return Status::OK;
     }
 
     Status EncryptionKeyManager::getActiveKey(const ID &domain_id, EncryptionKey &key_out,

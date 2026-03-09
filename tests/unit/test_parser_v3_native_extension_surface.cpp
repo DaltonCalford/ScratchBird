@@ -258,6 +258,20 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesAdminClusterAndServiceControlSurf
     }
 }
 
+TEST(ParserV3NativeExtensionSurfaceTest, PreservesIfExistsForGovernanceDrops) {
+    Parser parser("DROP CLUSTER IF EXISTS ADMISSION POLICY ap_main");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+    auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+    EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)),
+              "cluster.admission_policy.drop.ap_main");
+    ASSERT_NE(stmt->value, nullptr);
+    ASSERT_EQ(stmt->value->kind(), ASTKind::LiteralExpr);
+    auto* lit = static_cast<LiteralExpr*>(stmt->value);
+    EXPECT_EQ(std::string(parser.stringPool().get(lit->string_value)), "IF_EXISTS=1");
+}
+
 TEST(ParserV3NativeExtensionSurfaceTest, RejectsRemovedVacuumAndClusterShowAliases) {
     {
         Parser parser("VACUUM");

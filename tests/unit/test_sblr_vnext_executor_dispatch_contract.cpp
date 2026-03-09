@@ -508,11 +508,11 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
          Value::Object{{"action", Value(static_cast<uint64_t>(3))},
                        {"object_name", Value(std::string("default_profile"))},
                        {"options", Value(Value::Object{{"cipher", Value(std::string("aes-256-gcm"))}})}}},
-        {static_cast<uint16_t>(Opcode::SBLR3_SERVICE_CHANNEL_BACKUP),
-         "SBLR3_SERVICE_CHANNEL_BACKUP",
+        {static_cast<uint16_t>(Opcode::SBLR3_SERVICE_CHANNEL_EVENTS),
+         "SBLR3_SERVICE_CHANNEL_EVENTS",
          Value::Object{{"action", Value(static_cast<uint64_t>(1))},
-                       {"object_name", Value(std::string("backup"))},
-                       {"options", Value(Value::Object{{"mode", Value(std::string("full"))}})}}},
+                       {"object_name", Value(std::string("events"))},
+                       {"options", Value(Value::Object{{"mode", Value(std::string("follow"))}})}}},
     }};
 
     for (const auto &entry : cases)
@@ -1644,7 +1644,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_IDX_SHOW_CONTENTION,
     }};
 
-    const std::array<Opcode, 17> bridge_control_admin = {{
+    const std::array<Opcode, 14> bridge_control_admin = {{
         Opcode::SBLR3_SESSION_RESET,
         Opcode::SBLR3_CONFIG_RESET,
         Opcode::SBLR3_CONFIG_HISTORY,
@@ -1659,9 +1659,6 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_TEXTSEARCH_ALTER_CONFIGURATION,
         Opcode::SBLR3_TEXTSEARCH_DROP_CONFIGURATION,
         Opcode::SBLR3_TEXTSEARCH_LOAD_DICTIONARY_DATA,
-        Opcode::SBLR3_ADMIN_BACKUP,
-        Opcode::SBLR3_ADMIN_RESTORE,
-        Opcode::SBLR3_ADMIN_VALIDATE,
     }};
 
     const std::array<Opcode, 20> bridge_multi_model = {{
@@ -1687,7 +1684,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_MILVUS_QUERY,
     }};
 
-    const std::array<Opcode, 32> bridge_control_cluster_security = {{
+    const std::array<Opcode, 30> bridge_control_cluster_security = {{
         Opcode::SBLR3_CLUSTER_SET_STATE,
         Opcode::SBLR3_CLUSTER_SHOW_STATE,
         Opcode::SBLR3_ALERT_RULE_DDL,
@@ -1717,9 +1714,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_SECURITY_CERT_DDL,
         Opcode::SBLR3_SECURITY_PRIVATE_KEY_ROTATE,
         Opcode::SBLR3_SECURITY_SHOW_STATUS,
-        Opcode::SBLR3_SERVICE_CHANNEL_BACKUP,
         Opcode::SBLR3_SERVICE_CHANNEL_EVENTS,
-        Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS,
     }};
 
     for (const auto opcode : bridge_expr)

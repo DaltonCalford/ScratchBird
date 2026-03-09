@@ -30,6 +30,34 @@ namespace scratchbird::executor {
 
 using namespace scratchbird::core;
 
+namespace
+{
+
+auto shouldParallelizeWithConfig(const ParallelConfig& config,
+                                 bool initialized,
+                                 uint64_t num_rows,
+                                 uint64_t num_pages) -> bool
+{
+    if (!initialized) {
+        return false;
+    }
+    if (config.max_workers <= 1) {
+        return false;
+    }
+    if (!config.enable_parallel_scan) {
+        return false;
+    }
+    if (num_rows < config.min_rows_per_worker) {
+        return false;
+    }
+    if (num_pages < config.min_pages_per_worker) {
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 // =================================================================================================
 // WorkerPool Implementation
 // =================================================================================================
@@ -196,56 +224,23 @@ Status ParallelScan::execute(const ID& table_id,
 
     auto start_time = std::chrono::steady_clock::now();
     rows_processed_ = 0;
+    uint32_t num_workers = pool_->numWorkers();
 
-    // Get table info
-    CatalogManager::TableInfo table_info;
-    auto status = db_->catalog_manager()->getTableInfo(table_id, table_info, ctx);
-    if (status != Status::OK) return status;
+    if (num_workers > 1) {
+        LOG_WARNING(GENERAL,
+                    "ParallelScan worker execution is not finalized; falling back to sequential scan");
+    }
+    workers_used_ = 1;
+    auto scan = db_->storage_engine()->createScan(table_id, ctx);
+    if (!scan) {
+        SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, "Failed to create scan");
+        return Status::INTERNAL_ERROR;
+    }
 
-    // Determine number of workers
-    uint32_t num_workers = ParallelExecutionManager::getInstance().optimalWorkerCount(
-        table_info.num_rows, table_info.num_pages);
-
-    if (num_workers <= 1) {
-        // Sequential scan
-        workers_used_ = 1;
-        auto scan = db_->storage_engine()->createScan(table_id, ctx);
-        if (!scan) {
-            SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, "Failed to create scan");
-            return Status::INTERNAL_ERROR;
-        }
-
-        Tuple tuple;
-        while (scan->next(&tuple, ctx) == Status::OK) {
-            row_callback(tuple.data, tuple.data_size);
-            ++rows_processed_;
-        }
-    } else {
-        // Parallel scan
-        workers_used_ = num_workers;
-        auto work_units = partitionTable(table_id, num_workers);
-
-        // Collected rows per worker
-        std::vector<std::vector<std::pair<std::vector<uint8_t>, uint32_t>>> worker_rows(num_workers);
-        std::mutex rows_mutex;
-
-        // Submit work
-        auto futures = pool_->submitBatch(work_units, [this, &table_id, &worker_rows, &rows_mutex](const WorkUnit& unit) {
-            return scanWorker(unit);
-        });
-
-        // Wait for results
-        for (auto& future : futures) {
-            auto result = future.get();
-            if (result.status != Status::OK) {
-                LOG_ERROR(GENERAL, "Worker %u failed: %s",
-                         result.worker_id, result.error_message.c_str());
-            }
-            rows_processed_ += result.rows_processed;
-        }
-
-        // Note: In a full implementation, we'd need to handle row callbacks
-        // properly with synchronization. For now, this demonstrates the structure.
+    Tuple tuple;
+    while (scan->next(&tuple, ctx) == Status::OK) {
+        row_callback(tuple.data, tuple.data_size);
+        ++rows_processed_;
     }
 
     auto end_time = std::chrono::steady_clock::now();
@@ -261,26 +256,13 @@ Status ParallelScan::execute(const ID& table_id,
 std::vector<WorkUnit> ParallelScan::partitionTable(const ID& table_id, uint32_t num_partitions)
 {
     std::vector<WorkUnit> units;
-
-    CatalogManager::TableInfo table_info;
-    ErrorContext ctx;
-    if (db_->catalog_manager()->getTableInfo(table_id, table_info, &ctx) != Status::OK) {
-        return units;
-    }
-
-    uint32_t total_pages = static_cast<uint32_t>(table_info.num_pages);
-    uint32_t pages_per_partition = (total_pages + num_partitions - 1) / num_partitions;
-
     for (uint32_t i = 0; i < num_partitions; ++i) {
         WorkUnit unit;
         unit.table_id = table_id;
         unit.worker_id = i;
-        unit.start_page = i * pages_per_partition;
-        unit.end_page = std::min((i + 1) * pages_per_partition, total_pages);
-
-        if (unit.start_page < unit.end_page) {
-            units.push_back(unit);
-        }
+        unit.start_page = i;
+        unit.end_page = i + 1;
+        units.push_back(unit);
     }
 
     return units;
@@ -320,58 +302,13 @@ Status ParallelAggregate::execute(const ID& table_id,
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null result output");
         return Status::INVALID_ARGUMENT;
     }
-
-    // Get table info
-    CatalogManager::TableInfo table_info;
-    auto status = db_->catalog_manager()->getTableInfo(table_id, table_info, ctx);
-    if (status != Status::OK) return status;
-
-    // Determine number of workers
-    uint32_t num_workers = ParallelExecutionManager::getInstance().optimalWorkerCount(
-        table_info.num_rows, table_info.num_pages);
-
-    if (num_workers <= 1) {
-        // Sequential aggregation
-        auto partial = aggregateWorker(WorkUnit{table_id, 0,
-            static_cast<uint32_t>(table_info.num_pages), 0, nullptr}, column_id, agg_type);
-
-        *result_out = mergePartialResults({partial}, agg_type);
-    } else {
-        // Parallel aggregation
-        ParallelScan scan(db_, pool_, config_);
-        auto work_units = scan.partitionTable(table_id, num_workers);
-
-        std::vector<PartialAggregateState> partials;
-        std::mutex partials_mutex;
-
-        // Submit work
-        std::vector<std::future<WorkerResult>> futures;
-        for (const auto& unit : work_units) {
-            auto future = pool_->submit(unit,
-                [this, &column_id, agg_type, &partials, &partials_mutex](const WorkUnit& u) {
-                    auto partial = aggregateWorker(u, column_id, agg_type);
-                    {
-                        std::lock_guard<std::mutex> lock(partials_mutex);
-                        partials.push_back(partial);
-                    }
-                    WorkerResult result;
-                    result.worker_id = u.worker_id;
-                    result.status = Status::OK;
-                    result.rows_processed = partial.count;
-                    return result;
-                });
-            futures.push_back(std::move(future));
-        }
-
-        // Wait for results
-        for (auto& future : futures) {
-            future.get();
-        }
-
-        *result_out = mergePartialResults(partials, agg_type);
-    }
-
-    return Status::OK;
+    (void)table_id;
+    (void)column_id;
+    (void)agg_type;
+    *result_out = 0.0;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                      "Parallel aggregate execution is not implemented");
+    return Status::NOT_IMPLEMENTED;
 }
 
 Status ParallelAggregate::executeGroupBy(const ID& table_id,
@@ -381,14 +318,18 @@ Status ParallelAggregate::executeGroupBy(const ID& table_id,
                                          std::vector<std::pair<std::vector<uint8_t>, double>>* results_out,
                                          ErrorContext* ctx)
 {
-    // Placeholder for GROUP BY - would need hash partitioning
     if (!results_out) {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null results output");
         return Status::INVALID_ARGUMENT;
     }
-
+    (void)table_id;
+    (void)group_column_id;
+    (void)agg_column_id;
+    (void)agg_type;
     results_out->clear();
-    return Status::OK;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                      "Parallel GROUP BY execution is not implemented");
+    return Status::NOT_IMPLEMENTED;
 }
 
 PartialAggregateState ParallelAggregate::aggregateWorker(const WorkUnit& unit,
@@ -498,7 +439,6 @@ double ParallelAggregate::mergePartialResults(const std::vector<PartialAggregate
 ParallelHashJoin::ParallelHashJoin(Database* db, WorkerPool* pool, const ParallelConfig& config)
     : db_(db), pool_(pool), config_(config)
 {
-    partitions_.resize(NUM_PARTITIONS);
 }
 
 ParallelHashJoin::~ParallelHashJoin() = default;
@@ -510,65 +450,14 @@ Status ParallelHashJoin::execute(const ID& outer_table_id,
                                   const std::function<void(const uint8_t*, uint32_t, const uint8_t*, uint32_t)>& match_callback,
                                   ErrorContext* ctx)
 {
-    // Clear partitions
-    for (auto& partition : partitions_) {
-        partition.entries.clear();
-    }
-
-    // Phase 1: Build hash table from outer table (parallel)
-    ParallelScan outer_scan(db_, pool_, config_);
-    CatalogManager::TableInfo outer_info;
-    auto status = db_->catalog_manager()->getTableInfo(outer_table_id, outer_info, ctx);
-    if (status != Status::OK) return status;
-
-    uint32_t num_workers = ParallelExecutionManager::getInstance().optimalWorkerCount(
-        outer_info.num_rows, outer_info.num_pages);
-
-    auto build_units = outer_scan.partitionTable(outer_table_id, num_workers);
-
-    // Build phase
-    auto build_futures = pool_->submitBatch(build_units,
-        [this, &outer_join_column_id](const WorkUnit& unit) {
-            buildWorker(unit, outer_join_column_id);
-            WorkerResult result;
-            result.worker_id = unit.worker_id;
-            result.status = Status::OK;
-            return result;
-        });
-
-    // Wait for build to complete
-    for (auto& future : build_futures) {
-        future.get();
-    }
-
-    LOG_INFO(GENERAL, "ParallelHashJoin build phase complete");
-
-    // Phase 2: Probe with inner table (parallel)
-    CatalogManager::TableInfo inner_info;
-    status = db_->catalog_manager()->getTableInfo(inner_table_id, inner_info, ctx);
-    if (status != Status::OK) return status;
-
-    ParallelScan inner_scan(db_, pool_, config_);
-    auto probe_units = inner_scan.partitionTable(inner_table_id, num_workers);
-
-    // Probe phase
-    auto probe_futures = pool_->submitBatch(probe_units,
-        [this, &inner_join_column_id, &match_callback](const WorkUnit& unit) {
-            probeWorker(unit, inner_join_column_id, match_callback);
-            WorkerResult result;
-            result.worker_id = unit.worker_id;
-            result.status = Status::OK;
-            return result;
-        });
-
-    // Wait for probe to complete
-    for (auto& future : probe_futures) {
-        future.get();
-    }
-
-    LOG_INFO(GENERAL, "ParallelHashJoin probe phase complete");
-
-    return Status::OK;
+    (void)outer_table_id;
+    (void)outer_join_column_id;
+    (void)inner_table_id;
+    (void)inner_join_column_id;
+    (void)match_callback;
+    SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
+                      "Parallel hash join execution is not implemented");
+    return Status::NOT_IMPLEMENTED;
 }
 
 void ParallelHashJoin::buildWorker(const WorkUnit& unit, const ID& join_column_id)
@@ -731,25 +620,31 @@ void ParallelExecutionManager::initialize(const ParallelConfig& config)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    if (initialized_) {
-        // Already initialized, update config
-        config_ = config;
-        return;
-    }
+    const uint32_t requested_workers = std::max(1u, config.max_workers);
+    const bool rebuild_pool =
+        !initialized_ || !pool_ || pool_->numWorkers() != requested_workers;
 
     config_ = config;
-    pool_ = std::make_unique<WorkerPool>(config_.max_workers);
+    if (rebuild_pool) {
+        if (pool_) {
+            pool_->shutdown();
+            pool_.reset();
+        }
+        pool_ = std::make_unique<WorkerPool>(requested_workers);
+    }
     initialized_ = true;
 
     LOG_INFO(GENERAL, "ParallelExecutionManager initialized with %u workers",
-             config_.max_workers);
+             requested_workers);
 }
 
 WorkerPool* ParallelExecutionManager::getPool()
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_) {
-        initialize(ParallelConfig{});
+        config_ = ParallelConfig{};
+        pool_ = std::make_unique<WorkerPool>(std::max(1u, config_.max_workers));
+        initialized_ = true;
     }
     return pool_.get();
 }
@@ -757,13 +652,7 @@ WorkerPool* ParallelExecutionManager::getPool()
 bool ParallelExecutionManager::shouldParallelize(uint64_t num_rows, uint64_t num_pages) const
 {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    if (!initialized_) return false;
-    if (!config_.enable_parallel_scan) return false;
-    if (num_rows < config_.min_rows_per_worker) return false;
-    if (num_pages < config_.min_pages_per_worker) return false;
-
-    return true;
+    return shouldParallelizeWithConfig(config_, initialized_, num_rows, num_pages);
 }
 
 uint32_t ParallelExecutionManager::optimalWorkerCount(uint64_t num_rows, uint64_t num_pages) const
@@ -771,7 +660,7 @@ uint32_t ParallelExecutionManager::optimalWorkerCount(uint64_t num_rows, uint64_
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (!initialized_) return 1;
-    if (!shouldParallelize(num_rows, num_pages)) return 1;
+    if (!shouldParallelizeWithConfig(config_, initialized_, num_rows, num_pages)) return 1;
 
     // Calculate based on data size
     uint32_t workers_by_rows = static_cast<uint32_t>(

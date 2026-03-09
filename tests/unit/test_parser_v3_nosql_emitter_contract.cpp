@@ -318,6 +318,29 @@ TEST(ParserV3NoSqlEmitterContractTest, MapsAdminClusterAndServiceCommandsToBridg
     }
 }
 
+TEST(ParserV3NoSqlEmitterContractTest, EmitsIfExistsPayloadForGovernanceDrops) {
+    EmittedRoot emitted;
+    std::string err;
+    ASSERT_TRUE(emitRootFromSql("DROP CLUSTER IF EXISTS ADMISSION POLICY ap_ingress", emitted, err))
+        << err;
+    EXPECT_EQ(static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_ADMISSION_POLICY), emitted.opcode);
+
+    const auto* payload = payloadObject(emitted);
+    ASSERT_NE(nullptr, payload);
+
+    const uint64_t* action = payloadU64(*payload, "action");
+    ASSERT_NE(nullptr, action);
+    EXPECT_EQ(40u, *action);
+
+    const auto* object_name = payloadStringField(*payload, "object_name");
+    ASSERT_NE(nullptr, object_name);
+    EXPECT_EQ("ap_ingress", *object_name);
+
+    const auto* literal = payloadLiteralStringExprField(*payload, "value");
+    ASSERT_NE(nullptr, literal);
+    EXPECT_EQ("IF_EXISTS=1", *literal);
+}
+
 TEST(ParserV3NoSqlEmitterContractTest, EmitsDedicatedWindowFunctionOpcodes) {
     struct Case {
         const char* sql;

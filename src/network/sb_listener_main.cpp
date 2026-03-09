@@ -1393,7 +1393,8 @@ void printUsage(const char* program) {
 }
 
 void printVersion() {
-    std::cout << SB_LISTENER_NAME << " (" << SCRATCHBIRD_VERSION_STRING << ")\n";
+    std::cout << scratchbird::version::formatComponentVersionBanner(SB_LISTENER_NAME)
+              << "\n";
 }
 
 bool parseArgsForConfig(int argc, char* argv[], ListenerConfig& config) {

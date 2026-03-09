@@ -302,7 +302,7 @@ void WorkloadGovernance::AdmissionLease::release()
         owner_->releaseLease(proc_id_, policy_id_, class_id_);
     }
     owner_ = nullptr;
-    proc_id_ = 0;
+    proc_id_ = UINT32_MAX;
     class_id_ = ID{};
     policy_id_ = ID{};
     class_name_.clear();
@@ -321,7 +321,7 @@ void WorkloadGovernance::AdmissionLease::moveFrom(AdmissionLease&& other) noexce
     active_ = other.active_;
 
     other.owner_ = nullptr;
-    other.proc_id_ = 0;
+    other.proc_id_ = UINT32_MAX;
     other.class_id_ = ID{};
     other.policy_id_ = ID{};
     other.active_ = false;
@@ -624,7 +624,7 @@ auto WorkloadGovernance::countActiveSessionsLocked(const BindingState& binding,
     }
 
     if (!current_session_known &&
-        current_proc_id != 0 &&
+        current_proc_id != UINT32_MAX &&
         active.find(current_proc_id) == active.end())
     {
         ++count;
@@ -689,7 +689,7 @@ auto WorkloadGovernance::acquire(const QueryDescriptor& descriptor,
     decision.policy_id = binding.policy.policy_id;
     decision.policy_name = binding.policy.policy_name;
 
-    uint32_t proc_id = 0;
+    uint32_t proc_id = UINT32_MAX;
     if (descriptor.connection != nullptr)
     {
         proc_id = descriptor.connection->getProcId();
@@ -729,14 +729,14 @@ auto WorkloadGovernance::acquire(const QueryDescriptor& descriptor,
         }
     }
 
-    if (proc_id != 0 && match.matched)
+    if (proc_id != UINT32_MAX && match.matched)
     {
         session_class_map_[proc_id] = match.klass.class_id;
     }
 
     const bool current_session_known =
-        (proc_id != 0 && session_policy_map_.find(proc_id) != session_policy_map_.end()) ||
-        (proc_id != 0 && session_class_map_.find(proc_id) != session_class_map_.end());
+        (proc_id != UINT32_MAX && session_policy_map_.find(proc_id) != session_policy_map_.end()) ||
+        (proc_id != UINT32_MAX && session_class_map_.find(proc_id) != session_class_map_.end());
 
     if (binding.policy.max_concurrent_sessions > 0)
     {
@@ -821,7 +821,7 @@ auto WorkloadGovernance::acquire(const QueryDescriptor& descriptor,
     }
 
     ++counter.active_queries;
-    if (proc_id != 0)
+    if (proc_id != UINT32_MAX)
     {
         session_policy_map_[proc_id] = binding.policy.policy_id;
     }
@@ -934,7 +934,7 @@ auto WorkloadGovernance::snapshotAdmissionStatus(std::vector<AdmissionStatusRow>
             binding_state.binding = binding;
             row.active_sessions = countActiveSessionsLocked(binding_state,
                                                             active_proc_ids,
-                                                            0,
+                                                            UINT32_MAX,
                                                             true);
             rows_out.push_back(std::move(row));
         }
@@ -1060,7 +1060,7 @@ void WorkloadGovernance::releaseLease(uint32_t proc_id,
             policy_counters_.erase(it);
         }
     }
-    if (proc_id != 0)
+    if (proc_id != UINT32_MAX)
     {
         if (!isZeroUuidLocal(class_id))
         {

@@ -268,6 +268,13 @@ namespace scratchbird::core
          */
         auto unlockPage(uint32_t page_id, ErrorContext *ctx = nullptr) -> Status;
 
+        // Runtime config snapshot for tests and diagnostics.
+        auto getConfigSnapshot() const -> Config
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return config_;
+        }
+
         // Statistics snapshot (non-atomic for return values)
         struct StatsSnapshot
         {
