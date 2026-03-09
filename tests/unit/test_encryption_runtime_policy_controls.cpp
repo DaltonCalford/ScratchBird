@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -23,6 +24,42 @@
 #include "scratchbird/core/uuidv7.h"
 
 using namespace scratchbird::core;
+
+namespace
+{
+    class ScopedEnvVar
+    {
+    public:
+        ScopedEnvVar(const char *key, const std::string &value)
+            : key_(key)
+        {
+            const char *existing = std::getenv(key_.c_str());
+            if (existing != nullptr)
+            {
+                had_old_value_ = true;
+                old_value_ = existing;
+            }
+            ::setenv(key_.c_str(), value.c_str(), 1);
+        }
+
+        ~ScopedEnvVar()
+        {
+            if (had_old_value_)
+            {
+                ::setenv(key_.c_str(), old_value_.c_str(), 1);
+            }
+            else
+            {
+                ::unsetenv(key_.c_str());
+            }
+        }
+
+    private:
+        std::string key_;
+        std::string old_value_;
+        bool had_old_value_ = false;
+    };
+} // namespace
 
 class EncryptionRuntimePolicyControlsTest : public ::testing::Test
 {
@@ -43,6 +80,16 @@ protected:
         const uint64_t delta = static_cast<uint64_t>(
             std::chrono::duration_cast<ClockDuration>(std::chrono::hours(24 * days)).count());
         return nowTicks() - delta;
+    }
+
+    static void clearExternalBridgeEnv()
+    {
+        ::unsetenv("SCRATCHBIRD_KMS_PROVIDER_STATUS");
+        ::unsetenv("SCRATCHBIRD_HSM_PROVIDER_STATUS");
+        ::unsetenv("SCRATCHBIRD_KMS_ALLOWED_KEY_IDS");
+        ::unsetenv("SCRATCHBIRD_HSM_ALLOWED_KEY_IDS");
+        ::unsetenv("SCRATCHBIRD_ENCRYPTION_UNLOCK_RETRY_MAX");
+        ::unsetenv("SCRATCHBIRD_ENCRYPTION_UNLOCK_BACKOFF_MS");
     }
 
     void connectCurrent()
@@ -72,6 +119,7 @@ protected:
         db_path_ = "/tmp/test_encryption_runtime_policy_controls_" +
                    std::to_string(getpid()) + ".db";
         std::remove(db_path_.c_str());
+        clearExternalBridgeEnv();
 
         ErrorContext ctx;
         ASSERT_EQ(Database::create(db_path_, 16384, &ctx), Status::OK) << ctx.message;
@@ -84,6 +132,7 @@ protected:
     void TearDown() override
     {
         closeCurrent();
+        clearExternalBridgeEnv();
         std::remove(db_path_.c_str());
     }
 
@@ -128,7 +177,9 @@ protected:
 
     void installBootstrap(const CatalogManager::EncryptionProfileCatalogInfo &profile,
                           const CatalogManager::EncryptionKeyCatalogInfo &active_key,
-                          const std::string &unlock_policy)
+                          const std::string &unlock_policy,
+                          uint16_t min_shards_required_override = 0,
+                          uint32_t unlock_timeout_ms_override = 0)
     {
         ErrorContext ctx;
         ASSERT_EQ(catalog_->upsertEncryptionProfileCatalogEntry(profile, &ctx), Status::OK)
@@ -140,8 +191,12 @@ protected:
         bootstrap.database_id = db_->uuid();
         bootstrap.profile_id = profile.profile_id;
         bootstrap.active_key_id = active_key.key_id;
-        bootstrap.min_shards_required = profile.min_shards_required;
-        bootstrap.unlock_timeout_ms = profile.unlock_timeout_ms;
+        bootstrap.min_shards_required =
+            (min_shards_required_override == 0) ? profile.min_shards_required
+                                                : min_shards_required_override;
+        bootstrap.unlock_timeout_ms =
+            (unlock_timeout_ms_override == 0) ? profile.unlock_timeout_ms
+                                              : unlock_timeout_ms_override;
         bootstrap.unlock_policy = unlock_policy;
         bootstrap.last_unlock_result = CatalogManager::UnlockResult::SUCCESS;
         bootstrap.has_last_unlock_time = true;
@@ -169,10 +224,10 @@ protected:
     }
 };
 
-TEST_F(EncryptionRuntimePolicyControlsTest, DatabaseOpenRejectsUnsupportedExternalUnlockPolicy)
+TEST_F(EncryptionRuntimePolicyControlsTest, DatabaseOpenAcceptsExternalKmsUnlockPolicyWhenBridgeIsReady)
 {
     const auto profile = makeProfile(
-        "en031_kms_policy",
+        "en032_external_kms_ok",
         CatalogManager::EncryptionAlgorithm::AES_256_GCM,
         CatalogManager::KeyRotationPolicy::TIME_BASED);
     const auto active_key = makeKey(
@@ -182,11 +237,115 @@ TEST_F(EncryptionRuntimePolicyControlsTest, DatabaseOpenRejectsUnsupportedExtern
         1,
         nowTicks(),
         true);
-    installBootstrap(profile, active_key, "kms_first");
+    installBootstrap(profile, active_key, "external_kms", 1, 250);
+
+    const ScopedEnvVar kms_status("SCRATCHBIRD_KMS_PROVIDER_STATUS", "ready");
+    const ScopedEnvVar kms_keys(
+        "SCRATCHBIRD_KMS_ALLOWED_KEY_IDS",
+        active_key.key_id.toString());
 
     ErrorContext ctx;
-    EXPECT_EQ(reopen(&ctx), Status::CONNECTION_FAILURE);
+    ASSERT_EQ(reopen(&ctx), Status::OK) << ctx.message;
+
+    CatalogManager::EncryptionBootstrapInfoCatalogInfo bootstrap{};
+    ASSERT_EQ(catalog_->getEncryptionBootstrapInfoCatalogEntry(db_->uuid(), bootstrap, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(bootstrap.last_unlock_result, CatalogManager::UnlockResult::SUCCESS);
+    EXPECT_TRUE(bootstrap.has_last_unlock_time);
+}
+
+TEST_F(EncryptionRuntimePolicyControlsTest,
+       ValidateDatabaseEncryptionPolicyRejectsExternalKmsProviderUnavailableAndPersistsFailure)
+{
+    const auto profile = makeProfile(
+        "en032_external_kms_fail",
+        CatalogManager::EncryptionAlgorithm::AES_256_GCM,
+        CatalogManager::KeyRotationPolicy::TIME_BASED);
+    const auto active_key = makeKey(
+        profile.profile_id,
+        generateUuidV7(),
+        CatalogManager::EncryptionKeyStatus::ACTIVE,
+        1,
+        nowTicks(),
+        true);
+    installBootstrap(profile, active_key, "kms_first", 1, 250);
+
+    const ScopedEnvVar kms_status("SCRATCHBIRD_KMS_PROVIDER_STATUS", "unavailable");
+
+    ErrorContext ctx;
+    EXPECT_EQ(db_->encryption_key_manager()->validateDatabaseEncryptionPolicy(&ctx),
+              Status::CONNECTION_FAILURE);
     EXPECT_EQ(ctx.vnext_code, "SEC_1293");
+
+    CatalogManager::EncryptionBootstrapInfoCatalogInfo bootstrap{};
+    ASSERT_EQ(catalog_->getEncryptionBootstrapInfoCatalogEntry(db_->uuid(), bootstrap, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(bootstrap.last_unlock_result, CatalogManager::UnlockResult::FAILED);
+    EXPECT_TRUE(bootstrap.has_last_unlock_time);
+}
+
+TEST_F(EncryptionRuntimePolicyControlsTest, DatabaseOpenRetriesKmsHsmPrimaryUnlockAndSucceeds)
+{
+    auto profile = makeProfile(
+        "en032_kms_hsm_primary",
+        CatalogManager::EncryptionAlgorithm::AES_256_GCM,
+        CatalogManager::KeyRotationPolicy::TIME_BASED);
+    profile.min_shards_required = 2;
+    profile.unlock_timeout_ms = 250;
+
+    const auto active_key = makeKey(
+        profile.profile_id,
+        generateUuidV7(),
+        CatalogManager::EncryptionKeyStatus::ACTIVE,
+        1,
+        nowTicks(),
+        true);
+    installBootstrap(profile, active_key, "kms_hsm_primary", 2, 250);
+
+    const ScopedEnvVar retry_max("SCRATCHBIRD_ENCRYPTION_UNLOCK_RETRY_MAX", "2");
+    const ScopedEnvVar backoff_ms("SCRATCHBIRD_ENCRYPTION_UNLOCK_BACKOFF_MS", "5");
+    const ScopedEnvVar kms_status("SCRATCHBIRD_KMS_PROVIDER_STATUS", "timeout,ready");
+    const ScopedEnvVar hsm_status("SCRATCHBIRD_HSM_PROVIDER_STATUS", "ready");
+    const ScopedEnvVar kms_keys(
+        "SCRATCHBIRD_KMS_ALLOWED_KEY_IDS",
+        active_key.key_id.toString());
+    const ScopedEnvVar hsm_keys(
+        "SCRATCHBIRD_HSM_ALLOWED_KEY_IDS",
+        active_key.key_id.toString());
+
+    ErrorContext ctx;
+    ASSERT_EQ(reopen(&ctx), Status::OK) << ctx.message;
+
+    CatalogManager::EncryptionBootstrapInfoCatalogInfo bootstrap{};
+    ASSERT_EQ(catalog_->getEncryptionBootstrapInfoCatalogEntry(db_->uuid(), bootstrap, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(bootstrap.last_unlock_result, CatalogManager::UnlockResult::SUCCESS);
+}
+
+TEST_F(EncryptionRuntimePolicyControlsTest, ValidateDatabaseEncryptionPolicyRejectsHsmQuorumWithoutMultipleShards)
+{
+    const auto profile = makeProfile(
+        "en032_hsm_quorum_invalid",
+        CatalogManager::EncryptionAlgorithm::AES_256_GCM,
+        CatalogManager::KeyRotationPolicy::TIME_BASED);
+    const auto active_key = makeKey(
+        profile.profile_id,
+        generateUuidV7(),
+        CatalogManager::EncryptionKeyStatus::ACTIVE,
+        1,
+        nowTicks(),
+        true);
+    installBootstrap(profile, active_key, "hsm_quorum", 1, 250);
+
+    const ScopedEnvVar hsm_status("SCRATCHBIRD_HSM_PROVIDER_STATUS", "ready");
+    const ScopedEnvVar hsm_keys(
+        "SCRATCHBIRD_HSM_ALLOWED_KEY_IDS",
+        active_key.key_id.toString());
+
+    ErrorContext ctx;
+    EXPECT_EQ(db_->encryption_key_manager()->validateDatabaseEncryptionPolicy(&ctx),
+              Status::INVALID_AUTHORIZATION);
+    EXPECT_EQ(ctx.vnext_code, "SEC_1292");
 }
 
 TEST_F(EncryptionRuntimePolicyControlsTest, DatabaseOpenRejectsRotationOverdueBootstrapKey)

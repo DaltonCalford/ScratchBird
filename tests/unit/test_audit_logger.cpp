@@ -15,11 +15,129 @@
  */
 
 #include <gtest/gtest.h>
-#include "scratchbird/core/audit_logger.h"
-#include <thread>
+
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <atomic>
 #include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <thread>
+
+#include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/error_context.h"
+#include "scratchbird/core/ondisk.h"
+#include "test_helpers.h"
 
 using namespace scratchbird::core;
+using scratchbird::testing::TestDatabaseFile;
+
+namespace {
+
+bool readFullyAt(int fd, void* buffer, size_t size, off_t offset)
+{
+    auto* dst = static_cast<uint8_t*>(buffer);
+    size_t transferred = 0;
+    while (transferred < size)
+    {
+        const ssize_t rc = ::pread(fd,
+                                   dst + transferred,
+                                   size - transferred,
+                                   offset + static_cast<off_t>(transferred));
+        if (rc <= 0)
+        {
+            return false;
+        }
+        transferred += static_cast<size_t>(rc);
+    }
+    return true;
+}
+
+bool writeFullyAt(int fd, const void* buffer, size_t size, off_t offset)
+{
+    const auto* src = static_cast<const uint8_t*>(buffer);
+    size_t transferred = 0;
+    while (transferred < size)
+    {
+        const ssize_t rc = ::pwrite(fd,
+                                    src + transferred,
+                                    size - transferred,
+                                    offset + static_cast<off_t>(transferred));
+        if (rc <= 0)
+        {
+            return false;
+        }
+        transferred += static_cast<size_t>(rc);
+    }
+    return true;
+}
+
+bool tamperFirstStringOccurrencePreservingPageChecksum(const std::string& db_path,
+                                                       uint32_t page_size,
+                                                       const std::string& needle)
+{
+    int fd = ::open(db_path.c_str(), O_RDWR);
+    if (fd < 0)
+    {
+        return false;
+    }
+
+    bool mutated = false;
+    std::vector<uint8_t> page(page_size, 0);
+    off_t offset = 0;
+    while (readFullyAt(fd, page.data(), page.size(), offset))
+    {
+        auto it = std::search(page.begin(), page.end(), needle.begin(), needle.end());
+        if (it != page.end())
+        {
+            *it = static_cast<uint8_t>('X');
+            auto* header = reinterpret_cast<PageHeader*>(page.data());
+            header->checksum = calculatePageChecksum(page.data(), page_size);
+            mutated = writeFullyAt(fd, page.data(), page.size(), offset);
+            break;
+        }
+        offset += static_cast<off_t>(page_size);
+    }
+
+    ::close(fd);
+    return mutated;
+}
+
+bool replaceFirstStringOccurrenceInFile(const std::filesystem::path& path,
+                                        const std::string& needle,
+                                        const std::string& replacement)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open())
+    {
+        return false;
+    }
+    std::string contents((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+    in.close();
+
+    const size_t pos = contents.find(needle);
+    if (pos == std::string::npos)
+    {
+        return false;
+    }
+    contents.replace(pos, needle.size(), replacement);
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out.is_open())
+    {
+        return false;
+    }
+    out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+    return out.good();
+}
+
+} // namespace
 
 /**
  * Test Fixture for Audit Logger
@@ -39,6 +157,47 @@ protected:
         std::memcpy(&id, &value, sizeof(uint32_t));
         return id;
     }
+};
+
+class CatalogBackedAuditLoggerTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        db_file_ = std::make_unique<TestDatabaseFile>("audit_logger", ".sbdb");
+
+        ErrorContext ctx;
+        ASSERT_EQ(Database::create(db_file_->path(), 16384, &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(db_.open(db_file_->path(), &ctx), Status::OK) << ctx.message;
+
+        catalog_ = db_.catalog_manager();
+        ASSERT_NE(catalog_, nullptr);
+
+        logger_ = db_.audit_logger();
+        ASSERT_NE(logger_, nullptr);
+    }
+
+    void TearDown() override
+    {
+        db_.close();
+        db_file_.reset();
+    }
+
+    void reopen()
+    {
+        ErrorContext ctx;
+        db_.close();
+        ASSERT_EQ(db_.open(db_file_->path(), &ctx), Status::OK) << ctx.message;
+        catalog_ = db_.catalog_manager();
+        ASSERT_NE(catalog_, nullptr);
+        logger_ = db_.audit_logger();
+        ASSERT_NE(logger_, nullptr);
+    }
+
+    std::unique_ptr<TestDatabaseFile> db_file_;
+    Database db_{};
+    CatalogManager* catalog_ = nullptr;
+    AuditLogger* logger_ = nullptr;
 };
 
 // ===== Basic Functionality Tests =====
@@ -566,4 +725,380 @@ TEST_F(AuditLoggerTest, ComplianceAuditTrail) {
     EXPECT_EQ(AuditEventType::LOGIN_FAILURE, trail[2].event_type);
     EXPECT_EQ(AuditEventType::LOGIN_SUCCESS, trail[1].event_type);
     EXPECT_EQ(AuditEventType::PERMISSION_DENIED, trail[0].event_type);
+}
+
+TEST_F(CatalogBackedAuditLoggerTest, VerifyIntegrityPassesForPersistedAuditChain)
+{
+    ErrorContext ctx;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        AuditEvent event;
+        event.event_type = AuditEventType::LOGIN_SUCCESS;
+        event.username = "catalog_user_" + std::to_string(i);
+        event.success = true;
+        ASSERT_EQ(logger_->logEvent(event, &ctx), Status::OK) << ctx.message;
+    }
+
+    ASSERT_EQ(logger_->flush(&ctx), Status::OK) << ctx.message;
+
+    AuditIntegrityResult result;
+    ASSERT_EQ(logger_->verifyIntegrity(result, &ctx), Status::OK) << ctx.message;
+    EXPECT_TRUE(result.chain_intact);
+    EXPECT_EQ(3u, result.verified_event_count);
+    EXPECT_EQ(3u, result.last_verified_event_id);
+    EXPECT_EQ(0u, result.first_bad_event_id);
+    EXPECT_TRUE(result.failure_reason.empty());
+}
+
+TEST_F(CatalogBackedAuditLoggerTest, CatalogRejectsOutOfSequenceAuditAppend)
+{
+    ErrorContext ctx;
+
+    AuditEvent first;
+    first.event_type = AuditEventType::LOGIN_SUCCESS;
+    first.username = "append_guard";
+    first.success = true;
+    ASSERT_EQ(logger_->logEvent(first, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(logger_->flush(&ctx), Status::OK) << ctx.message;
+
+    AuditEvent forged;
+    forged.event_id = 1;
+    forged.timestamp = first.timestamp + 1;
+    forged.event_type = AuditEventType::LOGIN_FAILURE;
+    forged.username = "append_guard";
+    forged.success = false;
+
+    std::array<uint8_t, 32> zero_hash{};
+    const auto hash_curr = AuditLogger::computeChainHash(forged, zero_hash);
+    const Status status = catalog_->appendAuditLog(forged, zero_hash, hash_curr, &ctx);
+
+    EXPECT_EQ(Status::CONSTRAINT_VIOLATION, status);
+    EXPECT_NE(std::string(ctx.message).find("append-only"), std::string::npos);
+}
+
+TEST_F(CatalogBackedAuditLoggerTest, VerifyIntegrityDetectsTamperedPersistedAuditRecord)
+{
+    ErrorContext ctx;
+    static std::atomic<uint64_t> counter{0};
+    const std::string marker =
+        "audit_tamper_target_" + std::to_string(counter.fetch_add(1));
+
+    AuditEvent event1;
+    event1.event_type = AuditEventType::LOGIN_SUCCESS;
+    event1.username = marker;
+    event1.success = true;
+    ASSERT_EQ(logger_->logEvent(event1, &ctx), Status::OK) << ctx.message;
+
+    AuditEvent event2;
+    event2.event_type = AuditEventType::LOGOUT;
+    event2.username = "audit_tail";
+    event2.success = true;
+    ASSERT_EQ(logger_->logEvent(event2, &ctx), Status::OK) << ctx.message;
+
+    ASSERT_EQ(logger_->flush(&ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(db_.buffer_pool()->flushAll(&ctx), Status::OK) << ctx.message;
+    db_.close();
+
+    ASSERT_TRUE(tamperFirstStringOccurrencePreservingPageChecksum(
+        db_file_->path(), 16384, marker));
+
+    reopen();
+
+    AuditIntegrityResult result;
+    const Status status = logger_->verifyIntegrity(result, &ctx);
+    EXPECT_EQ(Status::CHECKSUM_MISMATCH, status);
+    EXPECT_FALSE(result.chain_intact);
+    EXPECT_EQ(1u, result.first_bad_event_id);
+    EXPECT_NE(std::string(result.failure_reason).find("hash_curr"), std::string::npos);
+}
+
+TEST_F(CatalogBackedAuditLoggerTest, ExportAuditPackagePersistsSegmentAndValidates)
+{
+    ErrorContext ctx;
+
+    CatalogManager::AuditSinkProfileCatalogInfo profile;
+    profile.audit_sink_profile_id = generateUuidV7();
+    profile.profile_name = "local_compliance_export";
+    profile.sink_type = "LOCAL_APPEND_ONLY";
+    profile.failure_policy = "BEST_EFFORT";
+    profile.config_json = "{\"tier\":\"hot_queryable\"}";
+    ASSERT_EQ(catalog_->upsertAuditSinkProfileCatalogEntry(profile, &ctx), Status::OK) << ctx.message;
+
+    AuditEvent first;
+    first.event_type = AuditEventType::LOGIN_SUCCESS;
+    first.username = "export_user_a";
+    first.details = "token=super-secret endpoint=https://audit.internal:9443";
+    first.success = true;
+    ASSERT_EQ(logger_->logEvent(first, &ctx), Status::OK) << ctx.message;
+
+    AuditEvent second;
+    second.event_type = AuditEventType::PERMISSION_DENIED;
+    second.username = "export_user_b";
+    second.object_type = "TABLE";
+    second.object_name = "sensitive_table";
+    second.success = false;
+    ASSERT_EQ(logger_->logEvent(second, &ctx), Status::OK) << ctx.message;
+
+    const std::filesystem::path export_path =
+        scratchbird::testing::uniqueTestDbPath("audit_export_package", ".sbpkg");
+
+    AuditExportPackageRequest request;
+    request.sink_profile_id = profile.audit_sink_profile_id;
+    request.output_path = export_path.string();
+
+    AuditExportPackageResult export_result;
+    ASSERT_EQ(logger_->exportAuditPackage(request, export_result, &ctx), Status::OK) << ctx.message;
+    ASSERT_TRUE(std::filesystem::exists(export_path));
+    EXPECT_EQ(2u, export_result.event_count);
+
+    std::ifstream exported(export_path, std::ios::binary);
+    ASSERT_TRUE(exported.is_open());
+    std::ostringstream exported_contents;
+    exported_contents << exported.rdbuf();
+    EXPECT_EQ(exported_contents.str().find("super-secret"), std::string::npos);
+    EXPECT_EQ(exported_contents.str().find("audit.internal"), std::string::npos);
+    EXPECT_NE(exported_contents.str().find("<redacted>"), std::string::npos);
+    EXPECT_NE(exported_contents.str().find("<endpoint>"), std::string::npos);
+
+    AuditExportValidationResult validation;
+    ASSERT_EQ(logger_->validateAuditPackage(export_path.string(), validation, &ctx), Status::OK) << ctx.message;
+    EXPECT_TRUE(validation.manifest_matches_catalog);
+    EXPECT_TRUE(validation.payload_checksum_valid);
+    EXPECT_TRUE(validation.package_valid);
+    EXPECT_EQ(2u, validation.event_count);
+
+    std::vector<CatalogManager::AuditExportSegmentCatalogInfo> segments;
+    ASSERT_EQ(catalog_->listAuditExportSegmentCatalogEntries(profile.audit_sink_profile_id, segments, &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(1u, segments.size());
+    EXPECT_EQ(export_result.segment_id, segments[0].audit_export_segment_id);
+    EXPECT_EQ(1u, segments[0].segment_seq);
+    EXPECT_EQ("EXPORT_DELIVERY_EVENT", segments[0].evidence_class);
+    EXPECT_NE(std::string::npos, segments[0].payload_manifest.find("event_count=2"));
+
+    std::filesystem::remove(export_path);
+}
+
+TEST_F(CatalogBackedAuditLoggerTest, AuditExportSegmentRejectsOutOfSequenceAppend)
+{
+    ErrorContext ctx;
+
+    CatalogManager::AuditSinkProfileCatalogInfo profile;
+    profile.audit_sink_profile_id = generateUuidV7();
+    profile.profile_name = "segment_append_guard";
+    profile.sink_type = "LOCAL_APPEND_ONLY";
+    profile.failure_policy = "BEST_EFFORT";
+    ASSERT_EQ(catalog_->upsertAuditSinkProfileCatalogEntry(profile, &ctx), Status::OK) << ctx.message;
+
+    AuditEvent event;
+    event.event_type = AuditEventType::LOGIN_SUCCESS;
+    event.username = "segment_guard_user";
+    event.success = true;
+    ASSERT_EQ(logger_->logEvent(event, &ctx), Status::OK) << ctx.message;
+
+    const std::filesystem::path export_path =
+        scratchbird::testing::uniqueTestDbPath("audit_export_guard", ".sbpkg");
+    AuditExportPackageRequest request;
+    request.sink_profile_id = profile.audit_sink_profile_id;
+    request.output_path = export_path.string();
+
+    AuditExportPackageResult export_result;
+    ASSERT_EQ(logger_->exportAuditPackage(request, export_result, &ctx), Status::OK) << ctx.message;
+
+    std::vector<CatalogManager::AuditExportSegmentCatalogInfo> segments;
+    ASSERT_EQ(catalog_->listAuditExportSegmentCatalogEntries(profile.audit_sink_profile_id, segments, &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(1u, segments.size());
+
+    CatalogManager::AuditExportSegmentCatalogInfo forged;
+    forged.audit_export_segment_id = generateUuidV7();
+    forged.audit_sink_profile_id = profile.audit_sink_profile_id;
+    forged.evidence_class = "EXPORT_DELIVERY_EVENT";
+    forged.segment_seq = 3;
+    forged.range_start_time = 10;
+    forged.range_end_time = 11;
+    forged.delivery_state = "LOCAL_COMMITTED";
+    forged.payload_manifest =
+        "SB_AUDIT_EXPORT_PACKAGE_V1\n"
+        "manifest_version=1\n"
+        "segment_uuid=" + forged.audit_export_segment_id.toString() + "\n"
+        "database_uuid=" + db_.uuid().toString() + "\n"
+        "sink_profile_uuid=" + profile.audit_sink_profile_id.toString() + "\n"
+        "profile_name=" + profile.profile_name + "\n"
+        "sink_type=LOCAL_APPEND_ONLY\n"
+        "failure_policy=BEST_EFFORT\n"
+        "evidence_class=EXPORT_DELIVERY_EVENT\n"
+        "segment_seq=3\n"
+        "range_start_time=10\n"
+        "range_end_time=11\n"
+        "event_count=1\n"
+        "first_event_id=2\n"
+        "last_event_id=2\n"
+        "first_event_hash_prev=0000000000000000000000000000000000000000000000000000000000000000\n"
+        "last_event_hash_curr=1111111111111111111111111111111111111111111111111111111111111111\n"
+        "payload_sha256=2222222222222222222222222222222222222222222222222222222222222222\n"
+        "payload_bytes=1\n"
+        "END_MANIFEST\n";
+    forged.hash_prev = segments[0].hash_curr;
+    forged.hash_curr = AuditLogger::computeExportSegmentHash(forged.payload_manifest, forged.hash_prev);
+
+    const Status status = catalog_->appendAuditExportSegmentCatalogEntry(forged, &ctx);
+    EXPECT_EQ(Status::CONSTRAINT_VIOLATION, status);
+    EXPECT_NE(std::string(ctx.message).find("append-only"), std::string::npos);
+
+    std::filesystem::remove(export_path);
+}
+
+TEST_F(CatalogBackedAuditLoggerTest, ValidateAuditPackageDetectsPayloadTamper)
+{
+    ErrorContext ctx;
+
+    CatalogManager::AuditSinkProfileCatalogInfo profile;
+    profile.audit_sink_profile_id = generateUuidV7();
+    profile.profile_name = "tamper_validate_export";
+    profile.sink_type = "LOCAL_APPEND_ONLY";
+    profile.failure_policy = "BEST_EFFORT";
+    ASSERT_EQ(catalog_->upsertAuditSinkProfileCatalogEntry(profile, &ctx), Status::OK) << ctx.message;
+
+    AuditEvent event;
+    event.event_type = AuditEventType::LOGIN_SUCCESS;
+    event.username = "alice";
+    event.success = true;
+    ASSERT_EQ(logger_->logEvent(event, &ctx), Status::OK) << ctx.message;
+
+    const std::filesystem::path export_path =
+        scratchbird::testing::uniqueTestDbPath("audit_export_tamper", ".sbpkg");
+    AuditExportPackageRequest request;
+    request.sink_profile_id = profile.audit_sink_profile_id;
+    request.output_path = export_path.string();
+
+    AuditExportPackageResult export_result;
+    ASSERT_EQ(logger_->exportAuditPackage(request, export_result, &ctx), Status::OK) << ctx.message;
+    ASSERT_TRUE(replaceFirstStringOccurrenceInFile(export_path, "\"username\":\"alice\"", "\"username\":\"al1ce\""));
+
+    AuditExportValidationResult validation;
+    const Status status = logger_->validateAuditPackage(export_path.string(), validation, &ctx);
+    EXPECT_EQ(Status::CHECKSUM_MISMATCH, status);
+    EXPECT_FALSE(validation.payload_checksum_valid);
+    EXPECT_FALSE(validation.package_valid);
+    EXPECT_NE(std::string(ctx.message).find("checksum"), std::string::npos);
+
+    std::filesystem::remove(export_path);
+}
+
+TEST_F(CatalogBackedAuditLoggerTest, LegalHoldBlocksRetentionEligibilityAndAppendsEvidence)
+{
+    ErrorContext ctx;
+
+    CatalogManager::AuditSinkProfileCatalogInfo profile;
+    profile.audit_sink_profile_id = generateUuidV7();
+    profile.profile_name = "legal_hold_profile";
+    profile.sink_type = "LOCAL_APPEND_ONLY";
+    profile.failure_policy = "BEST_EFFORT";
+    profile.config_json =
+        "{\"retention_policy\":{\"hot_retention_days\":30,\"archive_retention_days\":365}}";
+    ASSERT_EQ(catalog_->upsertAuditSinkProfileCatalogEntry(profile, &ctx), Status::OK) << ctx.message;
+
+    AuditEvent event;
+    event.event_type = AuditEventType::LOGIN_SUCCESS;
+    event.username = "hold_user";
+    event.success = true;
+    ASSERT_EQ(logger_->logEvent(event, &ctx), Status::OK) << ctx.message;
+
+    const std::filesystem::path export_path =
+        scratchbird::testing::uniqueTestDbPath("audit_hold_export", ".sbpkg");
+    AuditExportPackageRequest package_request;
+    package_request.sink_profile_id = profile.audit_sink_profile_id;
+    package_request.output_path = export_path.string();
+
+    AuditExportPackageResult package_result;
+    ASSERT_EQ(logger_->exportAuditPackage(package_request, package_result, &ctx), Status::OK) << ctx.message;
+
+    AuditLegalHoldCommand hold_command;
+    hold_command.sink_profile_id = profile.audit_sink_profile_id;
+    hold_command.enable_hold = true;
+    hold_command.actor = "secops";
+    hold_command.reason = "forensic investigation";
+
+    AuditLegalHoldResult hold_result;
+    ASSERT_EQ(logger_->setAuditLegalHold(hold_command, hold_result, &ctx), Status::OK) << ctx.message;
+    EXPECT_TRUE(hold_result.legal_hold_active);
+
+    AuditRetentionEvaluationRequest retention_request;
+    retention_request.sink_profile_id = profile.audit_sink_profile_id;
+    retention_request.requested_by = "secops";
+    retention_request.now_time =
+        static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count()) +
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::hours(24 * 400)).count());
+
+    AuditRetentionEvaluationResult retention_result;
+    ASSERT_EQ(logger_->evaluateRetentionPolicy(retention_request, retention_result, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(retention_result.legal_hold_active);
+    EXPECT_EQ(0u, retention_result.segments_eligible);
+    EXPECT_GE(retention_result.segments_blocked, 1u);
+
+    std::vector<CatalogManager::AuditExportSegmentCatalogInfo> segments;
+    ASSERT_EQ(catalog_->listAuditExportSegmentCatalogEntries(profile.audit_sink_profile_id, segments, &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_GE(segments.size(), 3u);
+    EXPECT_EQ("LEGAL_HOLD_ENABLED", segments[segments.size() - 2].evidence_class);
+    EXPECT_EQ("RETENTION_POLICY_DECISION", segments.back().evidence_class);
+    EXPECT_NE(segments.back().payload_manifest.find("legal_hold_active=true"), std::string::npos);
+
+    std::filesystem::remove(export_path);
+}
+
+TEST_F(CatalogBackedAuditLoggerTest, RetentionEvaluationMarksExpiredSegmentsEligibleWithoutHold)
+{
+    ErrorContext ctx;
+
+    CatalogManager::AuditSinkProfileCatalogInfo profile;
+    profile.audit_sink_profile_id = generateUuidV7();
+    profile.profile_name = "retention_profile";
+    profile.sink_type = "LOCAL_APPEND_ONLY";
+    profile.failure_policy = "BEST_EFFORT";
+    profile.config_json =
+        "{\"retention_policy\":{\"hot_retention_days\":1,\"archive_retention_days\":1}}";
+    ASSERT_EQ(catalog_->upsertAuditSinkProfileCatalogEntry(profile, &ctx), Status::OK) << ctx.message;
+
+    AuditEvent event;
+    event.event_type = AuditEventType::LOGIN_SUCCESS;
+    event.username = "retention_user";
+    event.success = true;
+    ASSERT_EQ(logger_->logEvent(event, &ctx), Status::OK) << ctx.message;
+
+    const std::filesystem::path export_path =
+        scratchbird::testing::uniqueTestDbPath("audit_retention_export", ".sbpkg");
+    AuditExportPackageRequest package_request;
+    package_request.sink_profile_id = profile.audit_sink_profile_id;
+    package_request.output_path = export_path.string();
+
+    AuditExportPackageResult package_result;
+    ASSERT_EQ(logger_->exportAuditPackage(package_request, package_result, &ctx), Status::OK) << ctx.message;
+
+    std::vector<CatalogManager::AuditExportSegmentCatalogInfo> segments;
+    ASSERT_EQ(catalog_->listAuditExportSegmentCatalogEntries(profile.audit_sink_profile_id, segments, &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(1u, segments.size());
+
+    AuditRetentionEvaluationRequest retention_request;
+    retention_request.sink_profile_id = profile.audit_sink_profile_id;
+    retention_request.append_evidence = false;
+    retention_request.now_time =
+        segments.front().created_time +
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::hours(24 * 2)).count());
+
+    AuditRetentionEvaluationResult retention_result;
+    ASSERT_EQ(logger_->evaluateRetentionPolicy(retention_request, retention_result, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_FALSE(retention_result.legal_hold_active);
+    EXPECT_EQ(1u, retention_result.segments_examined);
+    EXPECT_EQ(1u, retention_result.segments_eligible);
+    EXPECT_EQ(0u, retention_result.segments_blocked);
+
+    std::filesystem::remove(export_path);
 }

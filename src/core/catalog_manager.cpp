@@ -13,6 +13,8 @@
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/permission_cache.h"
+#include "scratchbird/core/secure_diagnostics.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/heap_page.h"
@@ -250,38 +252,6 @@ void applyWriteOnlyCredentialView(CatalogManager::UserMappingInfo& mapping)
     {
         mapping.remote_credentials = kWriteOnlyCredentialMarker;
     }
-}
-
-std::string redactRemoteDiagnosticText(const std::string& input)
-{
-    if (input.empty())
-    {
-        return input;
-    }
-
-    std::string redacted = input;
-    static const std::regex kUriUserinfoRegex(
-        R"(([A-Za-z][A-Za-z0-9+.-]*://[^/@:\s]+:)([^@/\s]+)(@))",
-        std::regex::icase);
-    static const std::regex kUriAuthorityRegex(
-        R"(([A-Za-z][A-Za-z0-9+.-]*://)([^/\s?#]+))",
-        std::regex::icase);
-    static const std::regex kAssignmentRegex(
-        R"(((?:password|passwd|pwd|secret|token|api[_-]?key|credential(?:s)?)[ \t]*[:=][ \t]*)(\"[^\"]*\"|'[^']*'|[^,; \t\r\n]+))",
-        std::regex::icase);
-    static const std::regex kJsonAssignmentRegex(
-        R"((\"(?:password|passwd|pwd|secret|token|api[_-]?key|credential(?:s)?)\"[ \t]*:[ \t]*)(\"[^\"]*\"|[^,}\s]+))",
-        std::regex::icase);
-    static const std::regex kQueryParamRegex(
-        R"(([?&](?:password|passwd|pwd|secret|token|api[_-]?key|credential(?:s)?)=)[^&#\s]*)",
-        std::regex::icase);
-
-    redacted = std::regex_replace(redacted, kUriUserinfoRegex, "$1<redacted>$3");
-    redacted = std::regex_replace(redacted, kQueryParamRegex, "$1<redacted>");
-    redacted = std::regex_replace(redacted, kAssignmentRegex, "$1<redacted>");
-    redacted = std::regex_replace(redacted, kJsonAssignmentRegex, "$1\"<redacted>\"");
-    redacted = std::regex_replace(redacted, kUriAuthorityRegex, "$1<endpoint>");
-    return redacted;
 }
 
 std::string fixedNameFromBuffer(const char* data, size_t cap)
@@ -1369,6 +1339,45 @@ bool isValidBackupHistoryStatus(CatalogManager::BackupHistoryStatus status)
            status == BHS::SUCCESS ||
            status == BHS::FAILED ||
            status == BHS::CANCELLED;
+}
+
+bool isValidAuditSinkType(const std::string& sink_type)
+{
+    return sink_type == "LOCAL_APPEND_ONLY" ||
+           sink_type == "LOCAL_SHADOW_TABLE" ||
+           sink_type == "REMOTE_DATABASE" ||
+           sink_type == "KAFKA_CHANNEL" ||
+           sink_type == "OBJECT_EXPORT_PROFILE";
+}
+
+bool isValidAuditFailurePolicy(const std::string& failure_policy)
+{
+    return failure_policy == "BEST_EFFORT" ||
+           failure_policy == "DEFERRED_RETRY" ||
+           failure_policy == "STRICT_AUDIT";
+}
+
+bool isValidAuditEvidenceClass(const std::string& evidence_class)
+{
+    return evidence_class == "TX_LINEAGE_SUMMARY" ||
+           evidence_class == "TX_OBJECT_TOUCH" ||
+           evidence_class == "TX_DDL_EVENT" ||
+           evidence_class == "WAL_AFTER_LOG" ||
+           evidence_class == "PAGE_SPOT_AUDIT_FINDING" ||
+           evidence_class == "SHADOW_CAPTURE_MANIFEST" ||
+           evidence_class == "FORENSIC_CAPSULE_MANIFEST" ||
+           evidence_class == "EXPORT_DELIVERY_EVENT" ||
+           evidence_class == "LEGAL_HOLD_ENABLED" ||
+           evidence_class == "LEGAL_HOLD_RELEASED" ||
+           evidence_class == "RETENTION_POLICY_DECISION";
+}
+
+bool isValidAuditExportDeliveryState(const std::string& delivery_state)
+{
+    return delivery_state == "LOCAL_COMMITTED" ||
+           delivery_state == "LOCAL_FAILED" ||
+           delivery_state == "REMOTE_PENDING" ||
+           delivery_state == "REMOTE_DELIVERED";
 }
 
 bool isValidConnectionTransport(CatalogManager::ConnectionTransport transport)
@@ -3099,9 +3108,13 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"access_mode", "[sb_dom]U8"},
     {"acl_oid", "[sb_dom]LOB_REF"},
     {"action_oid", "[sb_dom]LOB_REF"},
+    {"audit_export_segment_id", "[sb_dom]UUID_V7"},
+    {"audit_export_segment_page", "[sb_dom]PAGE_ID"},
     {"array_size", "[sb_dom]U32"},
     {"attachment_id", "[sb_dom]KEY_ATTACHMENT"},
     {"audit_log_page", "[sb_dom]PAGE_ID"},
+    {"audit_sink_profile_id", "[sb_dom]UUID_V7"},
+    {"audit_sink_profile_page", "[sb_dom]PAGE_ID"},
     {"auth_method", "[sb_dom]U8"},
     {"authkey_id", "[sb_dom]KEY_AUTHKEY"},
     {"authkeys_page", "[sb_dom]PAGE_ID"},
@@ -3173,6 +3186,7 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"dependencies_oid", "[sb_dom]LOB_REF"},
     {"dependencies_page", "[sb_dom]PAGE_ID"},
     {"dependency_id", "[sb_dom]KEY_DEPENDENCY"},
+    {"delivery_state", "[sb_dom]NAME_64"},
     {"description", "[sb_dom]NAME"},
     {"details_oid", "[sb_dom]LOB_REF"},
     {"deterministic", "[sb_dom]BOOL"},
@@ -3208,6 +3222,7 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"engine_type", "[sb_dom]U8"},
     {"entry_point", "[sb_dom]NAME_1024"},
     {"enum_values_oid", "[sb_dom]LOB_REF"},
+    {"evidence_class", "[sb_dom]NAME_64"},
     {"event_id", "[sb_dom]U64"},
     {"event_type", "[sb_dom]U16"},
     {"exception_id", "[sb_dom]KEY_EXCEPTION"},
@@ -3221,6 +3236,7 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"final_phase", "[sb_dom]U32"},
     {"fk_id", "[sb_dom]KEY_FOREIGN_KEY"},
     {"fk_name", "[sb_dom]NAME"},
+    {"failure_policy", "[sb_dom]NAME_64"},
     {"foreign_keys_page", "[sb_dom]PAGE_ID"},
     {"foreign_server_id", "[sb_dom]KEY_FOREIGN_SERVER"},
     {"foreign_servers_page", "[sb_dom]PAGE_ID"},
@@ -3367,6 +3383,7 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"parent_schema_id", "[sb_dom]KEY_SCHEMA"},
     {"parent_table_id", "[sb_dom]UUID_V7"},
     {"password_hash_oid", "[sb_dom]LOB_REF"},
+    {"payload_manifest_oid", "[sb_dom]LOB_REF"},
     {"permission_id", "[sb_dom]KEY_PERMISSION"},
     {"permissions", "[sb_dom]PERMISSIONS_MASK"},
     {"permissions_page", "[sb_dom]PAGE_ID"},
@@ -3384,6 +3401,7 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"prepared_id", "[sb_dom]KEY_PREPARED_TXN"},
     {"prepared_time", "[sb_dom]TIME_US"},
     {"prepared_transactions_page", "[sb_dom]PAGE_ID"},
+    {"profile_name", "[sb_dom]NAME"},
     {"privileges", "[sb_dom]U32"},
     {"proc_id", "[sb_dom]U32"},
     {"proc_params_page", "[sb_dom]PAGE_ID"},
@@ -3392,6 +3410,8 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"procedure_type", "[sb_dom]U8"},
     {"procedures_page", "[sb_dom]PAGE_ID"},
     {"quality_oid", "[sb_dom]LOB_REF"},
+    {"range_end_time", "[sb_dom]TIME_US"},
+    {"range_start_time", "[sb_dom]TIME_US"},
     {"referenced_table_id", "[sb_dom]KEY_TABLE"},
     {"refresh_on_commit", "[sb_dom]U8"},
     {"refresh_strategy", "[sb_dom]U8"},
@@ -3434,6 +3454,7 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"server_registry_page", "[sb_dom]PAGE_ID"},
     {"server_type", "[sb_dom]NAME"},
     {"server_version", "[sb_dom]NAME_256"},
+    {"segment_seq", "[sb_dom]U64"},
     {"session_id", "[sb_dom]KEY_SESSION"},
     {"session_settings_oid", "[sb_dom]LOB_REF"},
     {"session_user_id", "[sb_dom]KEY_USER"},
@@ -3456,6 +3477,7 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"synonym_id", "[sb_dom]KEY_SYNONYM"},
     {"synonym_name", "[sb_dom]NAME"},
     {"synonyms_page", "[sb_dom]PAGE_ID"},
+    {"sink_type", "[sb_dom]NAME_64"},
     {"table_count", "[sb_dom]U32"},
     {"table_id", "[sb_dom]KEY_TABLE"},
     {"table_name", "[sb_dom]NAME"},
@@ -3540,6 +3562,8 @@ const std::unordered_map<std::string, const char*> kSystemDomainByTableColumn = 
 // kSystemTableAliasMap (internal -> spec table name)
 const std::unordered_map<std::string, const char*> kSystemTableAliasMap = {
     {"audit_log", "sys.auditlogrecord"},
+    {"audit_export_segment", "sys.auditexportsegmentrecord"},
+    {"audit_sink_profile", "sys.auditsinkprofilerecord"},
     {"authkeys", "sys.authkeyrecord"},
     {"charsets", "sys.charsetrecord"},
     {"collations", "sys.collationrecord"},
@@ -4799,8 +4823,10 @@ bool hasTriggerNameConflictInTable(
         uint32_t quota_binding_page; // Page containing quota_binding table
         uint32_t settings_profile_page; // Page containing settings_profile table
         uint32_t settings_binding_page; // Page containing settings_binding table
+        uint32_t audit_sink_profile_page; // Page containing audit_sink_profile table
+        uint32_t audit_export_segment_page; // Page containing audit_export_segment table
 
-        uint8_t reserved[2920];       // Padding for 4KB page
+        uint8_t reserved[2912];       // Padding for 4KB page
     };
 
     // Database record on disk
@@ -9583,6 +9609,39 @@ bool hasTriggerNameConflictInTable(
         ID error_message_oid;
         uint64_t created_time;
         uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AuditSinkProfileRecord
+    {
+        ID audit_sink_profile_id;
+        char profile_name[128];
+        char sink_type[64];
+        char failure_policy[64];
+        ID config_oid;
+        uint8_t is_enabled;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AuditExportSegmentRecord
+    {
+        ID audit_export_segment_id;
+        ID audit_sink_profile_id;
+        char evidence_class[64];
+        char delivery_state[64];
+        uint64_t segment_seq;
+        uint64_t range_start_time;
+        uint64_t range_end_time;
+        ID payload_manifest_oid;
+        uint8_t hash_prev[32];
+        uint8_t hash_curr[32];
+        uint8_t is_valid;
+        uint8_t reserved0[7];
+        uint64_t created_time;
         uint32_t padding;
     };
 
@@ -20116,6 +20175,8 @@ bool hasTriggerNameConflictInTable(
         root->object_page = object_table_page_;
         root->object_name_page = object_name_table_page_;
         root->policy_toast_table_id = policy_toast_table_id_;
+        root->audit_sink_profile_page = audit_sink_profile_table_page_;
+        root->audit_export_segment_page = audit_export_segment_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -20442,6 +20503,8 @@ bool hasTriggerNameConflictInTable(
         object_table_page_ = root->object_page;
         object_name_table_page_ = root->object_name_page;
         policy_toast_table_id_ = root->policy_toast_table_id;
+        audit_sink_profile_table_page_ = root->audit_sink_profile_page;
+        audit_export_segment_table_page_ = root->audit_export_segment_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
@@ -43155,6 +43218,18 @@ auto CatalogManager::grantRole(const ID& role_id, const ID& user_id, const ID& g
         return status;
     }
 
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+
+    if (db_ && db_->permission_cache())
+    {
+        db_->permission_cache()->invalidateUser(user_id);
+    }
+
     DEBUG_LOG_DB("Granted role " << role_id.toString() << " to user " << user_id.toString());
     return Status::OK;
 }
@@ -43175,6 +43250,18 @@ auto CatalogManager::revokeRole(const ID& role_id, const ID& user_id,
     {
         SET_ERROR_CONTEXT(ctx, status, "Failed to revoke role membership");
         return status;
+    }
+
+    uint64_t epoch = 0;
+    Status epoch_status = bumpSecurityPolicyEpoch(epoch, ctx);
+    if (epoch_status != Status::OK)
+    {
+        return epoch_status;
+    }
+
+    if (db_ && db_->permission_cache())
+    {
+        db_->permission_cache()->invalidateUser(user_id);
     }
 
     DEBUG_LOG_DB("Revoked role " << role_id.toString() << " from user " << user_id.toString());
@@ -46588,6 +46675,69 @@ auto CatalogManager::appendAuditLog(const AuditEvent& event,
         }
     }
 
+    uint64_t last_event_id = 0;
+    std::array<uint8_t, 32> expected_prev_hash{};
+    BufferPool* bp = db_->buffer_pool();
+    if (!bp)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint32_t current_page_id = audit_log_table_page_;
+    while (current_page_id != 0)
+    {
+        void* page_buffer = nullptr;
+        Status pin_status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (pin_status != Status::OK)
+        {
+            return pin_status;
+        }
+
+        auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto* prior = reinterpret_cast<AuditLogRecord*>(
+                reinterpret_cast<uint8_t*>(page_buffer) + offset);
+            if (prior->is_valid && prior->event_id >= last_event_id)
+            {
+                last_event_id = prior->event_id;
+                std::memcpy(expected_prev_hash.data(), prior->hash_curr, expected_prev_hash.size());
+            }
+            offset += sizeof(AuditLogRecord);
+        }
+
+        const uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
+    const auto expected_curr_hash = AuditLogger::computeChainHash(event, hash_prev);
+    if (expected_curr_hash != hash_curr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH,
+                          "audit log hash_curr does not match event payload");
+        return Status::CHECKSUM_MISMATCH;
+    }
+
+    if (last_event_id == 0)
+    {
+        std::array<uint8_t, 32> zero_hash{};
+        if (event.event_id != 1 || hash_prev != zero_hash)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                              "audit log rows are append-only and must start at event_id 1");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+    else if (event.event_id != (last_event_id + 1) || hash_prev != expected_prev_hash)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "audit log rows are append-only and hash chained");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
     AuditLogRecord record{};
     record.event_id = event.event_id;
     record.timestamp = event.timestamp;
@@ -46657,11 +46807,6 @@ auto CatalogManager::queryAuditLog(const AuditQuery& query, std::vector<AuditEve
     std::vector<AuditEvent> events;
     auto filter = [](const AuditLogRecord& rec) { return rec.is_valid; };
     auto converter = [this, xmin, ctx](const AuditLogRecord& rec, AuditEvent& event) {
-        const_cast<char&>(rec.username[sizeof(rec.username) - 1]) = '\0';
-        const_cast<char&>(rec.target_username[sizeof(rec.target_username) - 1]) = '\0';
-        const_cast<char&>(rec.object_type[sizeof(rec.object_type) - 1]) = '\0';
-        const_cast<char&>(rec.object_name[sizeof(rec.object_name) - 1]) = '\0';
-
         event.event_id = rec.event_id;
         event.timestamp = rec.timestamp;
         event.event_type = static_cast<AuditEventType>(rec.event_type);
@@ -46672,10 +46817,10 @@ auto CatalogManager::queryAuditLog(const AuditQuery& query, std::vector<AuditEve
         event.role_id = rec.role_id;
         event.target_user_id = rec.target_user_id;
         event.object_id = rec.object_id;
-        event.username = rec.username;
-        event.target_username = rec.target_username;
-        event.object_type = rec.object_type;
-        event.object_name = rec.object_name;
+        event.username = fixedNameFromBuffer(rec.username, sizeof(rec.username));
+        event.target_username = fixedNameFromBuffer(rec.target_username, sizeof(rec.target_username));
+        event.object_type = fixedNameFromBuffer(rec.object_type, sizeof(rec.object_type));
+        event.object_name = fixedNameFromBuffer(rec.object_name, sizeof(rec.object_name));
 
         event.details.clear();
         if (!isZeroUuidLocal(rec.details_oid))
@@ -46778,6 +46923,124 @@ auto CatalogManager::queryAuditLog(const AuditQuery& query, std::vector<AuditEve
         events_out.swap(paged);
     }
 
+    return Status::OK;
+}
+
+auto CatalogManager::verifyAuditLogChain(AuditIntegrityResult& result_out,
+                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    result_out = AuditIntegrityResult{};
+    if (audit_log_table_page_ == 0)
+    {
+        result_out.chain_intact = true;
+        return Status::OK;
+    }
+
+    BufferPool* bp = db_->buffer_pool();
+    if (!bp)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::array<uint8_t, 32> expected_prev_hash{};
+    uint64_t expected_event_id = 1;
+    uint32_t current_page_id = audit_log_table_page_;
+    uint64_t xmin = 0;
+
+    while (current_page_id != 0)
+    {
+        void* page_buffer = nullptr;
+        Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            const auto* rec = reinterpret_cast<const AuditLogRecord*>(
+                reinterpret_cast<const uint8_t*>(page_buffer) + offset);
+            offset += sizeof(AuditLogRecord);
+
+            if (!rec->is_valid)
+            {
+                continue;
+            }
+
+            AuditEvent event;
+            event.event_id = rec->event_id;
+            event.timestamp = rec->timestamp;
+            event.event_type = static_cast<AuditEventType>(rec->event_type);
+            event.success = rec->success != 0;
+            event.session_id = rec->session_id;
+            event.authkey_id = rec->authkey_id;
+            event.user_id = rec->user_id;
+            event.role_id = rec->role_id;
+            event.target_user_id = rec->target_user_id;
+            event.object_id = rec->object_id;
+            event.username = fixedNameFromBuffer(rec->username, sizeof(rec->username));
+            event.target_username = fixedNameFromBuffer(rec->target_username, sizeof(rec->target_username));
+            event.object_type = fixedNameFromBuffer(rec->object_type, sizeof(rec->object_type));
+            event.object_name = fixedNameFromBuffer(rec->object_name, sizeof(rec->object_name));
+            if (!isZeroUuidLocal(rec->details_oid))
+            {
+                status = loadStringFromToast(rec->details_oid, xmin, event.details, ctx);
+                if (status != Status::OK)
+                {
+                    bp->unpinPage(current_page_id, false, ctx);
+                    result_out.first_bad_event_id = rec->event_id;
+                    result_out.failure_reason = "audit details payload is corrupt";
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, result_out.failure_reason.c_str());
+                    return Status::PAGE_CORRUPT;
+                }
+            }
+
+            if (event.event_id != expected_event_id)
+            {
+                bp->unpinPage(current_page_id, false, ctx);
+                result_out.first_bad_event_id = event.event_id;
+                result_out.failure_reason = "audit event_id sequence is not append-only";
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, result_out.failure_reason.c_str());
+                return Status::DATA_CORRUPTED;
+            }
+
+            if (std::memcmp(rec->hash_prev, expected_prev_hash.data(), expected_prev_hash.size()) != 0)
+            {
+                bp->unpinPage(current_page_id, false, ctx);
+                result_out.first_bad_event_id = event.event_id;
+                result_out.failure_reason = "audit hash_prev link does not match prior event";
+                SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH, result_out.failure_reason.c_str());
+                return Status::CHECKSUM_MISMATCH;
+            }
+
+            const auto expected_curr_hash = AuditLogger::computeChainHash(event, expected_prev_hash);
+            if (std::memcmp(rec->hash_curr, expected_curr_hash.data(), expected_curr_hash.size()) != 0)
+            {
+                bp->unpinPage(current_page_id, false, ctx);
+                result_out.first_bad_event_id = event.event_id;
+                result_out.failure_reason =
+                    "audit hash_curr does not match persisted event payload";
+                SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH, result_out.failure_reason.c_str());
+                return Status::CHECKSUM_MISMATCH;
+            }
+
+            result_out.verified_event_count += 1;
+            result_out.last_verified_event_id = event.event_id;
+            expected_prev_hash = expected_curr_hash;
+            expected_event_id += 1;
+        }
+
+        const uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
+    result_out.chain_intact = true;
     return Status::OK;
 }
 
@@ -48456,23 +48719,102 @@ auto CatalogManager::getAccessibleColumns(const ID& user_id, const ID& table_id,
         return Status::OK;
     }
 
+    if (column_permissions_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
     // Collect columns with specific privileges
     uint32_t required_priv = static_cast<uint32_t>(privilege);
+    std::unordered_set<std::string> visible_columns;
 
-    auto filter = [&](const ColumnPermissionRecord& rec) {
-        return rec.is_valid &&
-               rec.table_id == table_id &&
-               rec.grantee_id == user_id &&
-               rec.grantee_type == static_cast<uint8_t>(GranteeType::USER) &&
-               (rec.privileges & required_priv) != 0;
+    auto collect_columns_for_grantee =
+        [&](GranteeType grantee_type, const ID* grantee_id) -> Status
+    {
+        std::vector<std::string> granted_columns;
+        auto filter = [&](const ColumnPermissionRecord& rec) {
+            if (!rec.is_valid ||
+                rec.table_id != table_id ||
+                rec.grantee_type != static_cast<uint8_t>(grantee_type) ||
+                (rec.privileges & required_priv) == 0)
+            {
+                return false;
+            }
+
+            if (grantee_type == GranteeType::PUBLIC)
+            {
+                return true;
+            }
+
+            return grantee_id != nullptr && rec.grantee_id == *grantee_id;
+        };
+
+        auto converter = [](const ColumnPermissionRecord& rec, std::string& col_name) {
+            col_name = std::string(rec.column_name);
+        };
+
+        Status read_status = readRecordsToVector<ColumnPermissionRecord, std::string>(
+            column_permissions_table_page_, granted_columns, filter, converter, ctx);
+        if (read_status != Status::OK)
+        {
+            return read_status;
+        }
+
+        for (const auto& col_name : granted_columns)
+        {
+            if (visible_columns.insert(col_name).second)
+            {
+                columns_out.push_back(col_name);
+            }
+        }
+
+        return Status::OK;
     };
 
-    auto converter = [](const ColumnPermissionRecord& rec, std::string& col_name) {
-        col_name = std::string(rec.column_name);
-    };
+    Status collect_status = collect_columns_for_grantee(GranteeType::USER, &user_id);
+    if (collect_status != Status::OK)
+    {
+        return collect_status;
+    }
 
-    return readRecordsToVector<ColumnPermissionRecord, std::string>(
-        column_permissions_table_page_, columns_out, filter, converter, ctx);
+    collect_status = collect_columns_for_grantee(GranteeType::PUBLIC, nullptr);
+    if (collect_status != Status::OK)
+    {
+        return collect_status;
+    }
+
+    std::vector<ID> effective_roles;
+    status = getEffectiveRoles(user_id, effective_roles, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (const auto& role_id : effective_roles)
+    {
+        collect_status = collect_columns_for_grantee(GranteeType::ROLE, &role_id);
+        if (collect_status != Status::OK)
+        {
+            return collect_status;
+        }
+    }
+
+    std::vector<ID> effective_groups;
+    status = getEffectiveGroups(user_id, effective_groups, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (const auto& group_id : effective_groups)
+    {
+        collect_status = collect_columns_for_grantee(GranteeType::GROUP, &group_id);
+        if (collect_status != Status::OK)
+        {
+            return collect_status;
+        }
+    }
+
+    std::sort(columns_out.begin(), columns_out.end());
+    return Status::OK;
 }
 
 auto CatalogManager::getColumnPermissions(const ID& table_id,
@@ -61240,6 +61582,533 @@ auto CatalogManager::deleteBackupHistoryCatalogEntry(const ID& backup_id,
     updated.is_valid = 0;
     updated.last_modified_time = catalogNowTicks();
     return updateRecordInHeapPage(backup_history_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertAuditSinkProfileCatalogEntry(const AuditSinkProfileCatalogInfo& info,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.audit_sink_profile_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_sink_profile.audit_sink_profile_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.profile_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_sink_profile.profile_name is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuditSinkType(info.sink_type))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_sink_profile.sink_type is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuditFailurePolicy(info.failure_policy))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_sink_profile.failure_policy is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (audit_sink_profile_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(audit_sink_profile_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto validate_capacity = [ctx](const std::string& value, size_t bytes_cap,
+                                   const char* label) -> Status {
+        if (value.empty())
+        {
+            return Status::OK;
+        }
+        ErrorContext local_ctx;
+        Status status = UTF8Utils::validateStorageCapacity(value, bytes_cap, bytes_cap, &local_ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, label);
+        }
+        return status;
+    };
+    Status status = validate_capacity(info.profile_name, sizeof(AuditSinkProfileRecord{}.profile_name),
+                                      "audit_sink_profile.profile_name too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_capacity(info.sink_type, sizeof(AuditSinkProfileRecord{}.sink_type),
+                               "audit_sink_profile.sink_type too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    status = validate_capacity(info.failure_policy, sizeof(AuditSinkProfileRecord{}.failure_policy),
+                               "audit_sink_profile.failure_policy too long");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto duplicate_predicate = [&info](const AuditSinkProfileRecord& row) {
+        return row.is_valid == 1 &&
+               row.audit_sink_profile_id != info.audit_sink_profile_id &&
+               fixedNameFromBuffer(row.profile_name, sizeof(row.profile_name)) == info.profile_name;
+    };
+    auto duplicate = findRecordInHeapPage<AuditSinkProfileRecord>(
+        audit_sink_profile_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "audit_sink_profile.profile_name must be unique");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    const uint64_t now = catalogNowTicks();
+    AuditSinkProfileRecord rec{};
+    rec.audit_sink_profile_id = info.audit_sink_profile_id;
+    rec.is_enabled = info.is_enabled ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.last_modified_time = (info.last_modified_time == 0) ? now : info.last_modified_time;
+    std::strncpy(rec.profile_name,
+                 UTF8Utils::truncateToBytes(info.profile_name, sizeof(rec.profile_name)).c_str(),
+                 sizeof(rec.profile_name) - 1);
+    std::strncpy(rec.sink_type,
+                 UTF8Utils::truncateToBytes(info.sink_type, sizeof(rec.sink_type)).c_str(),
+                 sizeof(rec.sink_type) - 1);
+    std::strncpy(rec.failure_policy,
+                 UTF8Utils::truncateToBytes(info.failure_policy, sizeof(rec.failure_policy)).c_str(),
+                 sizeof(rec.failure_policy) - 1);
+    uint64_t xmin = 0;
+    if (!info.config_json.empty())
+    {
+        status = storeStringInToast(info.config_json, xmin, rec.config_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing_predicate = [&info](const AuditSinkProfileRecord& row) {
+        return row.audit_sink_profile_id == info.audit_sink_profile_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<AuditSinkProfileRecord>(
+        audit_sink_profile_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status == Status::NOT_FOUND)
+    {
+        rec.created_time = (info.created_time == 0) ? now : info.created_time;
+    }
+    else
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const AuditSinkProfileRecord& row) {
+        return row.audit_sink_profile_id == info.audit_sink_profile_id && row.is_valid == 1;
+    };
+    return updateRecordInHeapPage(audit_sink_profile_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getAuditSinkProfileCatalogEntry(const ID& audit_sink_profile_id,
+                                                     AuditSinkProfileCatalogInfo& info_out,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (audit_sink_profile_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&audit_sink_profile_id](const AuditSinkProfileRecord& rec) {
+        return rec.audit_sink_profile_id == audit_sink_profile_id && rec.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuditSinkProfileRecord>(
+        audit_sink_profile_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = AuditSinkProfileCatalogInfo{};
+    info_out.audit_sink_profile_id = result.record.audit_sink_profile_id;
+    info_out.profile_name = fixedNameFromBuffer(result.record.profile_name, sizeof(result.record.profile_name));
+    info_out.sink_type = fixedNameFromBuffer(result.record.sink_type, sizeof(result.record.sink_type));
+    info_out.failure_policy = fixedNameFromBuffer(result.record.failure_policy, sizeof(result.record.failure_policy));
+    info_out.is_enabled = result.record.is_enabled != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    if (!isZeroUuidLocal(result.record.config_oid))
+    {
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(result.record.config_oid, xmin, info_out.config_json, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listAuditSinkProfileCatalogEntries(
+    std::vector<AuditSinkProfileCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (audit_sink_profile_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const AuditSinkProfileRecord& rec) {
+        return rec.is_valid == 1;
+    };
+    auto converter = [this, ctx](const AuditSinkProfileRecord& rec, AuditSinkProfileCatalogInfo& info) {
+        info = AuditSinkProfileCatalogInfo{};
+        info.audit_sink_profile_id = rec.audit_sink_profile_id;
+        info.profile_name = fixedNameFromBuffer(rec.profile_name, sizeof(rec.profile_name));
+        info.sink_type = fixedNameFromBuffer(rec.sink_type, sizeof(rec.sink_type));
+        info.failure_policy = fixedNameFromBuffer(rec.failure_policy, sizeof(rec.failure_policy));
+        info.is_enabled = rec.is_enabled != 0;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        if (!isZeroUuidLocal(rec.config_oid))
+        {
+            uint64_t xmin = 0;
+            std::string text;
+            if (loadStringFromToast(rec.config_oid, xmin, text, ctx) == Status::OK)
+            {
+                info.config_json = std::move(text);
+            }
+        }
+    };
+    return readRecordsToVector<AuditSinkProfileRecord, AuditSinkProfileCatalogInfo>(
+        audit_sink_profile_table_page_, rows_out, filter, converter, ctx);
+}
+
+auto CatalogManager::deleteAuditSinkProfileCatalogEntry(const ID& audit_sink_profile_id,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (audit_sink_profile_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (audit_export_segment_table_page_ != 0)
+    {
+        auto segment_predicate = [&audit_sink_profile_id](const AuditExportSegmentRecord& row) {
+            return row.is_valid == 1 && row.audit_sink_profile_id == audit_sink_profile_id;
+        };
+        auto segment = findRecordInHeapPage<AuditExportSegmentRecord>(
+            audit_export_segment_table_page_, segment_predicate, ctx);
+        if (segment.status == Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                              "audit_sink_profile cannot be deleted while export segments exist");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+        if (segment.status != Status::NOT_FOUND)
+        {
+            return segment.status;
+        }
+    }
+    auto predicate = [&audit_sink_profile_id](const AuditSinkProfileRecord& rec) {
+        return rec.audit_sink_profile_id == audit_sink_profile_id && rec.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuditSinkProfileRecord>(
+        audit_sink_profile_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    AuditSinkProfileRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(audit_sink_profile_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::appendAuditExportSegmentCatalogEntry(const AuditExportSegmentCatalogInfo& info,
+                                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.audit_export_segment_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_export_segment.audit_export_segment_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (isZeroUuidLocal(info.audit_sink_profile_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_export_segment.audit_sink_profile_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuditEvidenceClass(info.evidence_class))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_export_segment.evidence_class is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.segment_seq == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_export_segment.segment_seq must be positive");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.range_start_time == 0 || info.range_end_time == 0 || info.range_end_time < info.range_start_time)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_export_segment range is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.payload_manifest.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_export_segment.payload_manifest is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuditExportDeliveryState(info.delivery_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_export_segment.delivery_state is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (audit_sink_profile_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto profile_predicate = [&info](const AuditSinkProfileRecord& rec) {
+        return rec.audit_sink_profile_id == info.audit_sink_profile_id && rec.is_valid == 1;
+    };
+    auto profile = findRecordInHeapPage<AuditSinkProfileRecord>(
+        audit_sink_profile_table_page_, profile_predicate, ctx);
+    if (profile.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    if (audit_export_segment_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(audit_export_segment_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_id = [&info](const AuditExportSegmentRecord& row) {
+        return row.is_valid == 1 && row.audit_export_segment_id == info.audit_export_segment_id;
+    };
+    auto existing_id = findRecordInHeapPage<AuditExportSegmentRecord>(
+        audit_export_segment_table_page_, duplicate_id, ctx);
+    if (existing_id.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "audit_export_segment rows are immutable");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing_id.status != Status::NOT_FOUND)
+    {
+        return existing_id.status;
+    }
+    auto duplicate_seq = [&info](const AuditExportSegmentRecord& row) {
+        return row.is_valid == 1 &&
+               row.audit_sink_profile_id == info.audit_sink_profile_id &&
+               row.segment_seq == info.segment_seq;
+    };
+    auto existing_seq = findRecordInHeapPage<AuditExportSegmentRecord>(
+        audit_export_segment_table_page_, duplicate_seq, ctx);
+    if (existing_seq.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "audit_export_segment.segment_seq must be contiguous and unique");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing_seq.status != Status::NOT_FOUND)
+    {
+        return existing_seq.status;
+    }
+
+    uint64_t last_segment_seq = 0;
+    std::array<uint8_t, 32> expected_prev_hash{};
+    BufferPool* bp = db_->buffer_pool();
+    if (!bp)
+    {
+        return Status::INVALID_ARGUMENT;
+    }
+    uint32_t current_page_id = audit_export_segment_table_page_;
+    while (current_page_id != 0)
+    {
+        void* page_buffer = nullptr;
+        Status pin_status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (pin_status != Status::OK)
+        {
+            return pin_status;
+        }
+
+        auto* heap = reinterpret_cast<CatalogHeapPage*>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto* prior = reinterpret_cast<AuditExportSegmentRecord*>(
+                reinterpret_cast<uint8_t*>(page_buffer) + offset);
+            if (prior->is_valid == 1 &&
+                prior->audit_sink_profile_id == info.audit_sink_profile_id &&
+                prior->segment_seq >= last_segment_seq)
+            {
+                last_segment_seq = prior->segment_seq;
+                std::memcpy(expected_prev_hash.data(), prior->hash_curr, expected_prev_hash.size());
+            }
+            offset += sizeof(AuditExportSegmentRecord);
+        }
+
+        const uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
+    const auto expected_curr_hash =
+        AuditLogger::computeExportSegmentHash(info.payload_manifest, info.hash_prev);
+    if (expected_curr_hash != info.hash_curr)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH,
+                          "audit_export_segment.hash_curr does not match manifest payload");
+        return Status::CHECKSUM_MISMATCH;
+    }
+    if (last_segment_seq == 0)
+    {
+        std::array<uint8_t, 32> zero_hash{};
+        if (info.segment_seq != 1 || info.hash_prev != zero_hash)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                              "first audit_export_segment row must start at segment_seq 1");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+    else if (info.segment_seq != (last_segment_seq + 1) || info.hash_prev != expected_prev_hash)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "audit_export_segment rows are append-only and hash chained");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    AuditExportSegmentRecord rec{};
+    rec.audit_export_segment_id = info.audit_export_segment_id;
+    rec.audit_sink_profile_id = info.audit_sink_profile_id;
+    rec.segment_seq = info.segment_seq;
+    rec.range_start_time = info.range_start_time;
+    rec.range_end_time = info.range_end_time;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    std::strncpy(rec.evidence_class,
+                 UTF8Utils::truncateToBytes(info.evidence_class, sizeof(rec.evidence_class)).c_str(),
+                 sizeof(rec.evidence_class) - 1);
+    std::strncpy(rec.delivery_state,
+                 UTF8Utils::truncateToBytes(info.delivery_state, sizeof(rec.delivery_state)).c_str(),
+                 sizeof(rec.delivery_state) - 1);
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(info.payload_manifest, xmin, rec.payload_manifest_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::memcpy(rec.hash_prev, info.hash_prev.data(), info.hash_prev.size());
+    std::memcpy(rec.hash_curr, info.hash_curr.data(), info.hash_curr.size());
+    return writeRecordToHeapPage(audit_export_segment_table_page_, rec, ctx);
+}
+
+auto CatalogManager::getAuditExportSegmentCatalogEntry(const ID& audit_export_segment_id,
+                                                       AuditExportSegmentCatalogInfo& info_out,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (audit_export_segment_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&audit_export_segment_id](const AuditExportSegmentRecord& rec) {
+        return rec.audit_export_segment_id == audit_export_segment_id && rec.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuditExportSegmentRecord>(
+        audit_export_segment_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = AuditExportSegmentCatalogInfo{};
+    info_out.audit_export_segment_id = result.record.audit_export_segment_id;
+    info_out.audit_sink_profile_id = result.record.audit_sink_profile_id;
+    info_out.evidence_class = fixedNameFromBuffer(result.record.evidence_class, sizeof(result.record.evidence_class));
+    info_out.delivery_state = fixedNameFromBuffer(result.record.delivery_state, sizeof(result.record.delivery_state));
+    info_out.segment_seq = result.record.segment_seq;
+    info_out.range_start_time = result.record.range_start_time;
+    info_out.range_end_time = result.record.range_end_time;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    std::memcpy(info_out.hash_prev.data(), result.record.hash_prev, info_out.hash_prev.size());
+    std::memcpy(info_out.hash_curr.data(), result.record.hash_curr, info_out.hash_curr.size());
+    uint64_t xmin = 0;
+    return loadStringFromToast(result.record.payload_manifest_oid, xmin, info_out.payload_manifest, ctx);
+}
+
+auto CatalogManager::listAuditExportSegmentCatalogEntries(
+    const ID& audit_sink_profile_id,
+    std::vector<AuditExportSegmentCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (audit_export_segment_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [&audit_sink_profile_id](const AuditExportSegmentRecord& rec) {
+        return rec.is_valid == 1 &&
+               (isZeroUuidLocal(audit_sink_profile_id) || rec.audit_sink_profile_id == audit_sink_profile_id);
+    };
+    auto converter = [this, ctx](const AuditExportSegmentRecord& rec, AuditExportSegmentCatalogInfo& info) {
+        info = AuditExportSegmentCatalogInfo{};
+        info.audit_export_segment_id = rec.audit_export_segment_id;
+        info.audit_sink_profile_id = rec.audit_sink_profile_id;
+        info.evidence_class = fixedNameFromBuffer(rec.evidence_class, sizeof(rec.evidence_class));
+        info.delivery_state = fixedNameFromBuffer(rec.delivery_state, sizeof(rec.delivery_state));
+        info.segment_seq = rec.segment_seq;
+        info.range_start_time = rec.range_start_time;
+        info.range_end_time = rec.range_end_time;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        std::memcpy(info.hash_prev.data(), rec.hash_prev, info.hash_prev.size());
+        std::memcpy(info.hash_curr.data(), rec.hash_curr, info.hash_curr.size());
+        uint64_t xmin = 0;
+        std::string text;
+        if (loadStringFromToast(rec.payload_manifest_oid, xmin, text, ctx) == Status::OK)
+        {
+            info.payload_manifest = std::move(text);
+        }
+    };
+    Status status = readRecordsToVector<AuditExportSegmentRecord, AuditExportSegmentCatalogInfo>(
+        audit_export_segment_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const AuditExportSegmentCatalogInfo& lhs, const AuditExportSegmentCatalogInfo& rhs) {
+                  return lhs.segment_seq < rhs.segment_seq;
+              });
+    return Status::OK;
 }
 
 // ============================================================================
@@ -78515,6 +79384,269 @@ auto CatalogManager::deleteHealingStepCatalogEntry(const ID& step_id,
     return updateRecordInHeapPage(healing_step_table_page_, result.slot_index, updated, ctx);
 }
 
+auto CatalogManager::runSecurityOperationsAutomation(const SecurityOperationsAutomationRequest& request,
+                                                     SecurityOperationsAutomationResult& result_out,
+                                                     ErrorContext* ctx) -> Status
+{
+    result_out = SecurityOperationsAutomationResult{};
+    if (request.info_ack_sla_ms == 0 || request.warning_ack_sla_ms == 0 ||
+        request.critical_ack_sla_ms == 0 || request.warning_vulnerability_sla_ms == 0 ||
+        request.critical_vulnerability_sla_ms == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "security operations SLA values must be non-zero");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const uint64_t now_time = request.now_time == 0 ? catalogNowTicks() : request.now_time;
+    auto ack_sla_for = [&request](AlertSeverity severity) {
+        switch (severity)
+        {
+            case AlertSeverity::INFO:
+                return request.info_ack_sla_ms;
+            case AlertSeverity::WARNING:
+                return request.warning_ack_sla_ms;
+            case AlertSeverity::CRITICAL:
+                return request.critical_ack_sla_ms;
+        }
+        return request.warning_ack_sla_ms;
+    };
+    auto vulnerability_sla_for = [&request](AlertSeverity severity) {
+        switch (severity)
+        {
+            case AlertSeverity::CRITICAL:
+                return request.critical_vulnerability_sla_ms;
+            case AlertSeverity::WARNING:
+            case AlertSeverity::INFO:
+                return request.warning_vulnerability_sla_ms;
+        }
+        return request.warning_vulnerability_sla_ms;
+    };
+    auto severity_matches_route = [](AlertSeverity severity,
+                                     const AlertRouteCatalogInfo& route) {
+        return static_cast<uint8_t>(severity) >= static_cast<uint8_t>(route.severity_min) &&
+               static_cast<uint8_t>(severity) <= static_cast<uint8_t>(route.severity_max);
+    };
+    auto is_vulnerability_rule = [](const std::string& rule_name) {
+        const std::string normalized = IdentifierUtils::toUpper(rule_name);
+        return normalized.rfind("VULN_", 0) == 0 ||
+               normalized.rfind("CVE_", 0) == 0 ||
+               normalized.find("VULNERABILITY") != std::string::npos;
+    };
+
+    std::vector<AlertSilenceCatalogInfo> silences;
+    Status status = listAlertSilenceCatalogEntries(silences, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+
+    std::vector<AlertRuleCatalogInfo> rules;
+    status = listAlertRuleCatalogEntries(rules, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+
+    std::vector<HealingPolicyCatalogInfo> healing_policies;
+    status = listHealingPolicyCatalogEntries(healing_policies, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+
+    for (const auto& rule : rules)
+    {
+        if (!rule.is_enabled || !rule.is_valid)
+        {
+            continue;
+        }
+
+        std::vector<AlertEventCatalogInfo> events;
+        status = listAlertEventCatalogEntries(rule.rule_id, events, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        for (const auto& event : events)
+        {
+            if (!event.is_valid || event.event_state == AlertEventState::RESOLVED ||
+                event.event_state == AlertEventState::SUPPRESSED)
+            {
+                continue;
+            }
+
+            bool silenced = false;
+            for (const auto& silence : silences)
+            {
+                if (!silence.is_valid || !silence.is_enabled)
+                {
+                    continue;
+                }
+                if (now_time < silence.starts_time || now_time > silence.ends_time)
+                {
+                    continue;
+                }
+                if (silence.scope_kind == AlertSilenceScope::RULE &&
+                    silence.has_scope_uuid &&
+                    silence.scope_uuid == rule.rule_id)
+                {
+                    silenced = true;
+                    break;
+                }
+            }
+            if (silenced)
+            {
+                continue;
+            }
+
+            result_out.open_event_count += 1;
+
+            SecurityOperationsAutomationAction action{};
+            action.event_id = event.event_id;
+            action.rule_id = rule.rule_id;
+            action.rule_name = rule.rule_name;
+            action.severity = event.severity;
+            action.vulnerability_signal = is_vulnerability_rule(rule.rule_name);
+            action.ack_deadline_time = event.event_time + ack_sla_for(event.severity);
+            action.remediation_deadline_time =
+                event.event_time + vulnerability_sla_for(event.severity);
+
+            std::vector<AlertAckCatalogInfo> acks;
+            status = listAlertAckCatalogEntries(event.event_id, acks, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND)
+            {
+                return status;
+            }
+            const bool is_acked = event.event_state == AlertEventState::ACKED || !acks.empty();
+            action.ack_overdue = !is_acked && now_time > action.ack_deadline_time;
+            action.remediation_overdue =
+                action.vulnerability_signal && now_time > action.remediation_deadline_time;
+
+            std::vector<AlertRouteCatalogInfo> routes;
+            status = listAlertRouteCatalogEntries(rule.rule_id, routes, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND)
+            {
+                return status;
+            }
+            for (const auto& route : routes)
+            {
+                if (!route.is_valid || !route.is_enabled || !severity_matches_route(event.severity, route))
+                {
+                    continue;
+                }
+                action.route_ids.push_back(route.route_id);
+                action.target_ids.push_back(route.target_id);
+            }
+
+            if (!action.ack_overdue && !action.remediation_overdue)
+            {
+                continue;
+            }
+
+            action.action_code = action.remediation_overdue ? "SECOPS_REMEDIATE" : "SECOPS_ACK";
+            result_out.actionable_event_count += 1;
+
+            if (request.create_healing_runs && action.remediation_overdue)
+            {
+                const HealingPolicyCatalogInfo* selected_policy = nullptr;
+                for (const auto& policy : healing_policies)
+                {
+                    if (!policy.is_valid || !policy.is_enabled)
+                    {
+                        continue;
+                    }
+                    if (static_cast<uint8_t>(event.severity) < static_cast<uint8_t>(policy.min_severity))
+                    {
+                        continue;
+                    }
+                    if (policy.trigger_kind == HealingTriggerKind::MANUAL)
+                    {
+                        selected_policy = &policy;
+                        break;
+                    }
+                    if (selected_policy == nullptr)
+                    {
+                        selected_policy = &policy;
+                    }
+                }
+
+                if (selected_policy != nullptr)
+                {
+                    std::vector<HealingRunCatalogInfo> existing_runs;
+                    status = listHealingRunCatalogEntries(selected_policy->policy_id, existing_runs, ctx);
+                    if (status != Status::OK && status != Status::NOT_FOUND)
+                    {
+                        return status;
+                    }
+
+                    for (const auto& existing : existing_runs)
+                    {
+                        if (existing.is_valid &&
+                            existing.has_trigger_event_id &&
+                            existing.trigger_event_id == event.event_id &&
+                            existing.state != HealingRunState::CANCELLED)
+                        {
+                            action.healing_run_id = existing.run_id;
+                            action.action_code = "SECOPS_EXISTING_RUN";
+                            break;
+                        }
+                    }
+
+                    if (isZeroUuidLocal(action.healing_run_id))
+                    {
+                        HealingRunCatalogInfo run{};
+                        run.run_id = generateUuidV7();
+                        run.policy_id = selected_policy->policy_id;
+                        run.has_trigger_event_id = true;
+                        run.trigger_event_id = event.event_id;
+                        run.state = HealingRunState::QUEUED;
+                        run.started_time = now_time;
+                        status = upsertHealingRunCatalogEntry(run, ctx);
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                        action.healing_run_created = true;
+                        action.healing_run_id = run.run_id;
+                        result_out.healing_run_count += 1;
+
+                        std::vector<HealingActionCatalogInfo> healing_actions;
+                        status = listHealingActionCatalogEntries(selected_policy->policy_id, healing_actions, ctx);
+                        if (status != Status::OK && status != Status::NOT_FOUND)
+                        {
+                            return status;
+                        }
+                        uint16_t step_index = 1;
+                        for (const auto& healing_action : healing_actions)
+                        {
+                            if (!healing_action.is_valid || !healing_action.is_enabled)
+                            {
+                                continue;
+                            }
+                            HealingStepCatalogInfo step{};
+                            step.step_id = generateUuidV7();
+                            step.run_id = run.run_id;
+                            step.action_id = healing_action.action_id;
+                            step.step_index = step_index++;
+                            step.state = HealingStepState::PENDING;
+                            status = upsertHealingStepCatalogEntry(step, ctx);
+                            if (status != Status::OK)
+                            {
+                                return status;
+                            }
+                        }
+                    }
+                }
+            }
+
+            result_out.actions.push_back(std::move(action));
+        }
+    }
+
+    return Status::OK;
+}
+
 auto CatalogManager::upsertJobTypeCatalogEntry(const JobTypeCatalogInfo& info,
                                                ErrorContext* ctx) -> Status
 {
@@ -81760,7 +82892,7 @@ auto CatalogManager::upsertRemoteErrorCatalogEntry(const RemoteErrorCatalogInfo&
         return Status::NOT_FOUND;
     }
 
-    std::string sanitized_message_text = redactRemoteDiagnosticText(info.message_text);
+    std::string sanitized_message_text = redactSensitiveDiagnosticText(info.message_text);
     if (sanitized_message_text.empty())
     {
         sanitized_message_text = "<redacted>";
@@ -85110,7 +86242,8 @@ auto CatalogManager::upsertReplicationErrorCatalogEntry(const ReplicationErrorCa
     rec.is_valid = info.is_valid ? 1 : 0;
 
     uint64_t xmin = 0;
-    Status status = storeStringInToast(info.message_text, xmin, rec.message_text_oid, ctx);
+    const std::string sanitized_message_text = redactSensitiveDiagnosticText(info.message_text);
+    Status status = storeStringInToast(sanitized_message_text, xmin, rec.message_text_oid, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -86643,7 +87776,8 @@ auto CatalogManager::upsertClusterFabricErrorCatalogEntry(const ClusterFabricErr
     rec.occurrence_count = info.occurrence_count;
 
     uint64_t xmin = 0;
-    Status status = storeStringInToast(info.message_text, xmin, rec.message_text_oid, ctx);
+    const std::string sanitized_message_text = redactSensitiveDiagnosticText(info.message_text);
+    Status status = storeStringInToast(sanitized_message_text, xmin, rec.message_text_oid, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -90242,7 +91376,8 @@ auto CatalogManager::upsertTriggerMessageCatalogEntry(const TriggerMessageCatalo
     rec.last_modified_time = (info.last_modified_time == 0) ? now : info.last_modified_time;
 
     uint64_t xmin = 0;
-    Status status = storeStringInToast(info.message_text, xmin, rec.message_text_oid, ctx);
+    const std::string sanitized_message_text = redactSensitiveDiagnosticText(info.message_text);
+    Status status = storeStringInToast(sanitized_message_text, xmin, rec.message_text_oid, ctx);
     if (status != Status::OK)
     {
         return status;
@@ -92930,6 +94065,250 @@ auto CatalogManager::transitionEncryptionKeyLifecycle(
 
     decision_out.applied = true;
     decision_out.resulting_key_version = updated.key_version;
+    return Status::OK;
+}
+
+auto CatalogManager::evaluateChannelSecurityPolicy(const ChannelSecurityEvaluationRequest& request,
+                                                   ChannelSecurityEvaluationDecision& decision_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    decision_out = ChannelSecurityEvaluationDecision{};
+    if (request.channel_name.empty() ||
+        !isValidCertKind(request.cert_kind) ||
+        !isValidTlsVersion(request.tls_version) ||
+        !isValidCryptoProfileId(request.crypto_profile_id) ||
+        !isValidSecurityTierId(request.security_tier))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "channel security evaluation request is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto reject = [&](Status status, const char* code, const char* message) -> Status {
+        decision_out.allowed = false;
+        decision_out.reject_code = code;
+        SET_ERROR_CONTEXT_VNEXT(ctx, status, code, message);
+        return status;
+    };
+
+    std::vector<ChannelCertBindingCatalogInfo> bindings;
+    Status status = listChannelCertBindingCatalogEntries(bindings, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+
+    const ChannelCertBindingCatalogInfo* binding = nullptr;
+    for (const auto& row : bindings)
+    {
+        if (!row.is_valid ||
+            row.channel_name != request.channel_name ||
+            row.cert_kind != request.cert_kind)
+        {
+            continue;
+        }
+        if (binding == nullptr || row.created_time > binding->created_time)
+        {
+            binding = &row;
+        }
+    }
+    if (binding == nullptr)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0005", "no active channel binding");
+    }
+
+    decision_out.binding_found = true;
+    decision_out.binding_id = binding->binding_id;
+    if (!request.is_tls)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0001",
+                      "required channel TLS policy violated");
+    }
+    if (binding->enforce_mtls && !request.is_mtls)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0001",
+                      "required channel mTLS policy violated");
+    }
+    if (static_cast<uint8_t>(request.tls_version) < static_cast<uint8_t>(binding->min_tls_version))
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0001",
+                      "channel TLS version does not satisfy binding policy");
+    }
+
+    CertRegistryCatalogInfo cert;
+    status = getCertRegistryCatalogEntry(binding->cert_id, cert, ctx);
+    if (status != Status::OK)
+    {
+        return reject(Status::NOT_FOUND, "SB-PKI-0005", "bound certificate not found");
+    }
+    decision_out.cert_id = cert.cert_id;
+    const uint64_t now_time = request.now_time == 0 ? catalogNowTicks() : request.now_time;
+    if (request.has_presented_cert_id &&
+        compareUuidBytesLocal(request.presented_cert_id, cert.cert_id) != 0)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0002",
+                      "presented certificate does not match channel binding");
+    }
+    if (cert.status == CertStatus::REVOKED)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0003", "certificate is revoked");
+    }
+    if (cert.status != CertStatus::ACTIVE || now_time < cert.not_before || now_time > cert.not_after)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0004",
+                      "certificate is not active in its validity window");
+    }
+    decision_out.cert_active = true;
+
+    std::vector<CertRevocationCatalogInfo> revocations;
+    status = listCertRevocationCatalogEntries(revocations, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+    for (const auto& revocation : revocations)
+    {
+        if (!revocation.is_valid || compareUuidBytesLocal(revocation.cert_id, cert.cert_id) != 0)
+        {
+            continue;
+        }
+        if (!revocation.has_expiry_time || now_time <= revocation.expiry_time)
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0003", "certificate is revoked");
+        }
+    }
+
+    std::vector<TrustAnchorCatalogInfo> anchors;
+    status = listTrustAnchorCatalogEntries(anchors, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+    for (const auto& anchor : anchors)
+    {
+        if (!anchor.is_valid ||
+            (anchor.state != TrustAnchorState::ACTIVE &&
+             anchor.state != TrustAnchorState::ROLLING_OUT))
+        {
+            continue;
+        }
+        CertRegistryCatalogInfo anchor_cert;
+        if (getCertRegistryCatalogEntry(anchor.cert_id, anchor_cert, ctx) != Status::OK)
+        {
+            continue;
+        }
+        if (compareUuidBytesLocal(anchor.cert_id, cert.cert_id) == 0 ||
+            (!anchor_cert.subject_name.empty() && anchor_cert.subject_name == cert.issuer_name))
+        {
+            decision_out.trust_anchor_active = true;
+            break;
+        }
+    }
+    if (!decision_out.trust_anchor_active)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0002",
+                      "certificate chain is not trusted");
+    }
+
+    std::vector<PkiDistributionStateCatalogInfo> distribution_rows;
+    status = listPkiDistributionStateCatalogEntries(distribution_rows, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND)
+    {
+        return status;
+    }
+    for (const auto& row : distribution_rows)
+    {
+        if (!row.is_valid)
+        {
+            continue;
+        }
+        const bool matches_binding =
+            row.artifact_kind == PkiArtifactKind::CHANNEL_BINDING &&
+            compareUuidBytesLocal(row.artifact_id, binding->binding_id) == 0;
+        const bool matches_cert =
+            row.artifact_kind == PkiArtifactKind::CERT &&
+            compareUuidBytesLocal(row.artifact_id, cert.cert_id) == 0;
+        if (!matches_binding && !matches_cert)
+        {
+            continue;
+        }
+        if (row.distribution_state != DistributionState::APPLIED)
+        {
+            const uint64_t freshness_time =
+                row.has_last_success_time ? row.last_success_time :
+                (row.has_last_attempt_time ? row.last_attempt_time : 0);
+            if (freshness_time == 0 || now_time < freshness_time ||
+                (now_time - freshness_time) > request.distribution_stale_after_ms)
+            {
+                decision_out.revocation_stale = true;
+                return reject(Status::INVALID_AUTHORIZATION, "SB-PKI-0008",
+                              "PKI distribution state is stale");
+            }
+        }
+    }
+
+    for (const auto& row : bindings)
+    {
+        if (!row.is_valid ||
+            row.channel_name != request.channel_name ||
+            row.cert_kind != request.cert_kind ||
+            compareUuidBytesLocal(row.binding_id, binding->binding_id) == 0)
+        {
+            continue;
+        }
+        if (row.created_time > binding->created_time)
+        {
+            decision_out.rotation_required = true;
+            break;
+        }
+    }
+
+    CryptoBaselineEvaluationRequest baseline{};
+    baseline.crypto_profile_id = request.crypto_profile_id;
+    baseline.security_tier = request.security_tier;
+    baseline.is_network_session = true;
+    baseline.is_mtls = request.is_mtls;
+    baseline.tls_version = request.tls_version;
+    baseline.tls_cipher_suite = request.tls_cipher_suite;
+    baseline.artifact_signed = true;
+    baseline.artifact_signature_algorithm = "Ed25519";
+    baseline.at_rest_algorithm = EncryptionAlgorithm::AES_256_GCM;
+    baseline.nonce_len_bytes = 12;
+    baseline.aes_gcm_hw_available = true;
+    baseline.chacha_fallback_explicit = false;
+    baseline.now_utc = now_time;
+    switch (request.security_tier)
+    {
+        case SecurityTierId::TIER_0_NONE:
+        case SecurityTierId::TIER_1_BASIC:
+            baseline.primary_provider = KeyProviderKind::LOCAL_FILE_KEYSTORE;
+            break;
+        case SecurityTierId::TIER_2_STANDARD:
+            baseline.primary_provider = KeyProviderKind::OS_KEYRING;
+            break;
+        case SecurityTierId::TIER_3_HARDENED:
+            baseline.primary_provider = KeyProviderKind::EXTERNAL_KMS;
+            break;
+        case SecurityTierId::TIER_4_MILITARY_CLUSTER:
+            baseline.primary_provider = KeyProviderKind::PKCS11_HSM;
+            baseline.has_escrow_provider = true;
+            baseline.escrow_provider = KeyProviderKind::EXTERNAL_KMS;
+            baseline.escrow_provider_available = true;
+            baseline.escrow_provider_authorized = true;
+            break;
+    }
+    baseline.primary_provider_available = true;
+    baseline.primary_provider_authorized = true;
+
+    CryptoBaselineEvaluationDecision baseline_decision{};
+    status = evaluateCryptoBaselinePolicy(baseline, baseline_decision, ctx);
+    if (status != Status::OK)
+    {
+        decision_out.reject_code = baseline_decision.reject_code;
+        return status;
+    }
+
+    decision_out.allowed = true;
+    decision_out.reject_code.clear();
     return Status::OK;
 }
 

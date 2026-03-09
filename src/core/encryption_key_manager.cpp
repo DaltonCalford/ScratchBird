@@ -17,8 +17,10 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <random>
 #include <string>
+#include <thread>
 
 #ifdef __has_include
 #if __has_include(<openssl/evp.h>)
@@ -466,6 +468,24 @@ namespace scratchbird::core
             return value == ID{};
         }
 
+        enum class ExternalProviderBridgeState
+        {
+            READY,
+            UNAVAILABLE,
+            UNAUTHORIZED,
+            TIMEOUT
+        };
+
+        struct ExternalProviderEvaluation
+        {
+            bool attempted = false;
+            bool available = false;
+            bool authorized = false;
+            CatalogManager::UnlockResult unlock_result =
+                CatalogManager::UnlockResult::NOT_ATTEMPTED;
+            uint64_t event_time_utc = 0;
+        };
+
         std::string normalizeUnlockPolicy(std::string value)
         {
             value.erase(
@@ -488,9 +508,245 @@ namespace scratchbird::core
             return value;
         }
 
+        auto splitEnvList(const std::string &value) -> std::vector<std::string>
+        {
+            std::vector<std::string> tokens;
+            size_t start = 0;
+            while (start <= value.size())
+            {
+                const size_t end = value.find(',', start);
+                const std::string token = (end == std::string::npos)
+                    ? value.substr(start)
+                    : value.substr(start, end - start);
+                const std::string normalized = normalizeUnlockPolicy(token);
+                if (!normalized.empty())
+                {
+                    tokens.push_back(normalized);
+                }
+                if (end == std::string::npos)
+                {
+                    break;
+                }
+                start = end + 1;
+            }
+            return tokens;
+        }
+
+        auto getEnvString(const char *key) -> std::string
+        {
+            const char *value = std::getenv(key);
+            return value == nullptr ? std::string{} : std::string(value);
+        }
+
+        auto parseUnsignedEnv(const char *key, uint32_t fallback) -> uint32_t
+        {
+            const std::string value = normalizeUnlockPolicy(getEnvString(key));
+            if (value.empty())
+            {
+                return fallback;
+            }
+
+            uint64_t parsed = 0;
+            for (char ch : value)
+            {
+                if (ch < '0' || ch > '9')
+                {
+                    return fallback;
+                }
+                parsed = (parsed * 10ULL) + static_cast<uint64_t>(ch - '0');
+                if (parsed > std::numeric_limits<uint32_t>::max())
+                {
+                    return fallback;
+                }
+            }
+            return static_cast<uint32_t>(parsed);
+        }
+
+        auto providerStatusEnvKey(CatalogManager::KeyProviderKind provider) -> const char *
+        {
+            switch (provider)
+            {
+            case CatalogManager::KeyProviderKind::EXTERNAL_KMS:
+                return "SCRATCHBIRD_KMS_PROVIDER_STATUS";
+            case CatalogManager::KeyProviderKind::PKCS11_HSM:
+                return "SCRATCHBIRD_HSM_PROVIDER_STATUS";
+            case CatalogManager::KeyProviderKind::LOCAL_FILE_KEYSTORE:
+            case CatalogManager::KeyProviderKind::OS_KEYRING:
+                break;
+            }
+            return "";
+        }
+
+        auto providerAllowedKeysEnvKey(CatalogManager::KeyProviderKind provider) -> const char *
+        {
+            switch (provider)
+            {
+            case CatalogManager::KeyProviderKind::EXTERNAL_KMS:
+                return "SCRATCHBIRD_KMS_ALLOWED_KEY_IDS";
+            case CatalogManager::KeyProviderKind::PKCS11_HSM:
+                return "SCRATCHBIRD_HSM_ALLOWED_KEY_IDS";
+            case CatalogManager::KeyProviderKind::LOCAL_FILE_KEYSTORE:
+            case CatalogManager::KeyProviderKind::OS_KEYRING:
+                break;
+            }
+            return "";
+        }
+
+        auto parseExternalProviderBridgeState(const std::string &token)
+            -> ExternalProviderBridgeState
+        {
+            const std::string normalized = normalizeUnlockPolicy(token);
+            if (normalized == "ready" ||
+                normalized == "ok" ||
+                normalized == "success")
+            {
+                return ExternalProviderBridgeState::READY;
+            }
+            if (normalized == "unauthorized" ||
+                normalized == "denied" ||
+                normalized == "forbidden")
+            {
+                return ExternalProviderBridgeState::UNAUTHORIZED;
+            }
+            if (normalized == "timeout" ||
+                normalized == "timed_out")
+            {
+                return ExternalProviderBridgeState::TIMEOUT;
+            }
+            return ExternalProviderBridgeState::UNAVAILABLE;
+        }
+
+        bool providerAuthorizesActiveKey(CatalogManager::KeyProviderKind provider,
+                                         const ID &active_key_id)
+        {
+            const std::string configured = getEnvString(providerAllowedKeysEnvKey(provider));
+            if (configured.empty())
+            {
+                return true;
+            }
+
+            const std::string active_key = normalizeUnlockPolicy(active_key_id.toString());
+            const std::vector<std::string> allowed = splitEnvList(configured);
+            return std::any_of(
+                allowed.begin(),
+                allowed.end(),
+                [&active_key](const std::string &candidate) {
+                    return candidate == "*" || candidate == active_key;
+                });
+        }
+
+        auto evaluateExternalProviderBridge(CatalogManager::KeyProviderKind provider,
+                                            const ID &active_key_id,
+                                            uint32_t unlock_timeout_ms)
+            -> ExternalProviderEvaluation
+        {
+            ExternalProviderEvaluation evaluation{};
+            evaluation.attempted = true;
+
+            const uint32_t retry_max =
+                parseUnsignedEnv("SCRATCHBIRD_ENCRYPTION_UNLOCK_RETRY_MAX", 0);
+            const uint32_t backoff_ms =
+                parseUnsignedEnv("SCRATCHBIRD_ENCRYPTION_UNLOCK_BACKOFF_MS", 0);
+            const std::vector<std::string> statuses =
+                splitEnvList(getEnvString(providerStatusEnvKey(provider)));
+            const auto started_at = std::chrono::steady_clock::now();
+            auto elapsed_ms = [&]() -> uint64_t {
+                return static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - started_at)
+                        .count());
+            };
+            auto state_for_attempt = [&](uint32_t attempt) -> ExternalProviderBridgeState {
+                if (statuses.empty())
+                {
+                    return ExternalProviderBridgeState::UNAVAILABLE;
+                }
+                const size_t index =
+                    std::min<size_t>(attempt, statuses.size() - 1);
+                return parseExternalProviderBridgeState(statuses[index]);
+            };
+
+            for (uint32_t attempt = 0; attempt <= retry_max; ++attempt)
+            {
+                if (unlock_timeout_ms > 0 && elapsed_ms() >= unlock_timeout_ms)
+                {
+                    evaluation.unlock_result = CatalogManager::UnlockResult::TIMED_OUT;
+                    evaluation.event_time_utc = runtimeNowTicks();
+                    return evaluation;
+                }
+
+                switch (state_for_attempt(attempt))
+                {
+                case ExternalProviderBridgeState::READY:
+                    evaluation.available = true;
+                    evaluation.authorized =
+                        providerAuthorizesActiveKey(provider, active_key_id);
+                    evaluation.unlock_result = evaluation.authorized
+                        ? CatalogManager::UnlockResult::SUCCESS
+                        : CatalogManager::UnlockResult::FAILED;
+                    evaluation.event_time_utc = runtimeNowTicks();
+                    return evaluation;
+                case ExternalProviderBridgeState::UNAUTHORIZED:
+                    evaluation.available = true;
+                    evaluation.authorized = false;
+                    evaluation.unlock_result = CatalogManager::UnlockResult::FAILED;
+                    evaluation.event_time_utc = runtimeNowTicks();
+                    return evaluation;
+                case ExternalProviderBridgeState::UNAVAILABLE:
+                    evaluation.available = false;
+                    evaluation.authorized = false;
+                    if (attempt == retry_max)
+                    {
+                        evaluation.unlock_result = CatalogManager::UnlockResult::FAILED;
+                        evaluation.event_time_utc = runtimeNowTicks();
+                        return evaluation;
+                    }
+                    break;
+                case ExternalProviderBridgeState::TIMEOUT:
+                    evaluation.available = false;
+                    evaluation.authorized = false;
+                    if (attempt == retry_max)
+                    {
+                        evaluation.unlock_result = CatalogManager::UnlockResult::TIMED_OUT;
+                        evaluation.event_time_utc = runtimeNowTicks();
+                        return evaluation;
+                    }
+                    break;
+                }
+
+                if (backoff_ms > 0)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+                }
+            }
+
+            evaluation.unlock_result = CatalogManager::UnlockResult::FAILED;
+            evaluation.event_time_utc = runtimeNowTicks();
+            return evaluation;
+        }
+
+        Status persistBootstrapUnlockOutcome(
+            CatalogManager *catalog,
+            CatalogManager::EncryptionBootstrapInfoCatalogInfo &bootstrap,
+            const ExternalProviderEvaluation &evaluation,
+            ErrorContext *ctx)
+        {
+            if (catalog == nullptr || !evaluation.attempted)
+            {
+                return Status::OK;
+            }
+
+            bootstrap.last_unlock_result = evaluation.unlock_result;
+            bootstrap.has_last_unlock_time = true;
+            bootstrap.last_unlock_time =
+                (evaluation.event_time_utc == 0) ? runtimeNowTicks() : evaluation.event_time_utc;
+            return catalog->upsertEncryptionBootstrapInfoCatalogEntry(bootstrap, ctx);
+        }
+
         Status configureBootstrapPolicyRequest(
+            CatalogManager *catalog,
             const CatalogManager::EncryptionProfileCatalogInfo &profile,
-            const CatalogManager::EncryptionBootstrapInfoCatalogInfo &bootstrap,
+            CatalogManager::EncryptionBootstrapInfoCatalogInfo &bootstrap,
             const CatalogManager::EncryptionKeyCatalogInfo &active_key,
             CatalogManager::CryptoBaselineEvaluationRequest &request_out,
             ErrorContext *ctx)
@@ -547,16 +803,142 @@ namespace scratchbird::core
                 request_out.primary_provider = CatalogManager::KeyProviderKind::OS_KEYRING;
                 return Status::OK;
             }
-            if (policy == "kms_first" ||
-                policy == "kms_hsm_primary" ||
-                policy == "external_kms" ||
-                policy == "hsm_quorum")
+            if (policy == "external_kms" || policy == "kms_first")
             {
+                request_out.security_tier = CatalogManager::SecurityTierId::TIER_2_STANDARD;
+                request_out.primary_provider = CatalogManager::KeyProviderKind::EXTERNAL_KMS;
+                const ExternalProviderEvaluation evaluation =
+                    evaluateExternalProviderBridge(
+                        request_out.primary_provider,
+                        active_key.key_id,
+                        bootstrap.unlock_timeout_ms);
+                request_out.primary_provider_available = evaluation.available;
+                request_out.primary_provider_authorized = evaluation.authorized;
+                const Status persist_status =
+                    persistBootstrapUnlockOutcome(catalog, bootstrap, evaluation, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+                if (evaluation.unlock_result == CatalogManager::UnlockResult::SUCCESS)
+                {
+                    return Status::OK;
+                }
                 SET_ERROR_CONTEXT_VNEXT(
                     ctx,
                     Status::CONNECTION_FAILURE,
                     "SEC_1293",
-                    "External KMS/HSM unlock policy is not available in the non-cluster runtime");
+                    (evaluation.unlock_result == CatalogManager::UnlockResult::TIMED_OUT)
+                        ? "External KMS provider timed out during database unlock"
+                        : "External KMS provider is unavailable or unauthorized for the active key");
+                return Status::CONNECTION_FAILURE;
+            }
+            if (policy == "hsm_quorum")
+            {
+                if (bootstrap.min_shards_required < 2)
+                {
+                    SET_ERROR_CONTEXT_VNEXT(
+                        ctx,
+                        Status::INVALID_AUTHORIZATION,
+                        "SEC_1292",
+                        "HSM quorum policy requires at least two bootstrap shards");
+                    return Status::INVALID_AUTHORIZATION;
+                }
+                request_out.security_tier = CatalogManager::SecurityTierId::TIER_3_HARDENED;
+                request_out.primary_provider = CatalogManager::KeyProviderKind::PKCS11_HSM;
+                const ExternalProviderEvaluation evaluation =
+                    evaluateExternalProviderBridge(
+                        request_out.primary_provider,
+                        active_key.key_id,
+                        bootstrap.unlock_timeout_ms);
+                request_out.primary_provider_available = evaluation.available;
+                request_out.primary_provider_authorized = evaluation.authorized;
+                const Status persist_status =
+                    persistBootstrapUnlockOutcome(catalog, bootstrap, evaluation, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+                if (evaluation.unlock_result == CatalogManager::UnlockResult::SUCCESS)
+                {
+                    return Status::OK;
+                }
+                SET_ERROR_CONTEXT_VNEXT(
+                    ctx,
+                    Status::CONNECTION_FAILURE,
+                    "SEC_1293",
+                    (evaluation.unlock_result == CatalogManager::UnlockResult::TIMED_OUT)
+                        ? "PKCS#11 HSM provider timed out during database unlock"
+                        : "PKCS#11 HSM provider is unavailable or unauthorized for the active key");
+                return Status::CONNECTION_FAILURE;
+            }
+            if (policy == "kms_hsm_primary")
+            {
+                if (bootstrap.min_shards_required < 2)
+                {
+                    SET_ERROR_CONTEXT_VNEXT(
+                        ctx,
+                        Status::INVALID_AUTHORIZATION,
+                        "SEC_1292",
+                        "kms_hsm_primary requires a quorum-aware bootstrap shard threshold");
+                    return Status::INVALID_AUTHORIZATION;
+                }
+
+                request_out.security_tier = CatalogManager::SecurityTierId::TIER_3_HARDENED;
+                request_out.primary_provider = CatalogManager::KeyProviderKind::EXTERNAL_KMS;
+                request_out.has_escrow_provider = true;
+                request_out.escrow_provider = CatalogManager::KeyProviderKind::PKCS11_HSM;
+
+                const ExternalProviderEvaluation kms_evaluation =
+                    evaluateExternalProviderBridge(
+                        request_out.primary_provider,
+                        active_key.key_id,
+                        bootstrap.unlock_timeout_ms);
+                request_out.primary_provider_available = kms_evaluation.available;
+                request_out.primary_provider_authorized = kms_evaluation.authorized;
+                if (kms_evaluation.unlock_result != CatalogManager::UnlockResult::SUCCESS)
+                {
+                    const Status persist_status =
+                        persistBootstrapUnlockOutcome(catalog, bootstrap, kms_evaluation, ctx);
+                    if (persist_status != Status::OK)
+                    {
+                        return persist_status;
+                    }
+                    SET_ERROR_CONTEXT_VNEXT(
+                        ctx,
+                        Status::CONNECTION_FAILURE,
+                        "SEC_1293",
+                        (kms_evaluation.unlock_result == CatalogManager::UnlockResult::TIMED_OUT)
+                            ? "Primary external KMS provider timed out during database unlock"
+                            : "Primary external KMS provider is unavailable or unauthorized for the active key");
+                    return Status::CONNECTION_FAILURE;
+                }
+
+                const ExternalProviderEvaluation hsm_evaluation =
+                    evaluateExternalProviderBridge(
+                        request_out.escrow_provider,
+                        active_key.key_id,
+                        bootstrap.unlock_timeout_ms);
+                request_out.escrow_provider_available = hsm_evaluation.available;
+                request_out.escrow_provider_authorized = hsm_evaluation.authorized;
+                const Status persist_status =
+                    persistBootstrapUnlockOutcome(catalog, bootstrap, hsm_evaluation, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+                if (hsm_evaluation.unlock_result == CatalogManager::UnlockResult::SUCCESS)
+                {
+                    return Status::OK;
+                }
+
+                SET_ERROR_CONTEXT_VNEXT(
+                    ctx,
+                    Status::CONNECTION_FAILURE,
+                    "SEC_1293",
+                    (hsm_evaluation.unlock_result == CatalogManager::UnlockResult::TIMED_OUT)
+                        ? "Companion PKCS#11 HSM attestation timed out during database unlock"
+                        : "Companion PKCS#11 HSM attestation is unavailable or unauthorized for the active key");
                 return Status::CONNECTION_FAILURE;
             }
 
@@ -886,7 +1268,8 @@ namespace scratchbird::core
         }
 
         CatalogManager::CryptoBaselineEvaluationRequest request{};
-        status = configureBootstrapPolicyRequest(profile, bootstrap, active_key, request, ctx);
+        status = configureBootstrapPolicyRequest(
+            catalog, profile, bootstrap, active_key, request, ctx);
         if (status != Status::OK)
         {
             return status;

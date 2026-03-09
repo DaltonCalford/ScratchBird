@@ -173,7 +173,8 @@ TEST_F(CatalogReplicationRuntimeConflictExtensionContractTest,
     repl_error.replication_channel_id = channel.replication_channel_id;
     repl_error.source_component = "apply_worker";
     repl_error.source_code = "E_DUP_KEY";
-    repl_error.message_text = "duplicate key during apply";
+    repl_error.message_text =
+        "duplicate key during apply password=hunter2 endpoint=https://replica.internal:5444/apply";
     repl_error.recoverable = true;
     repl_error.has_retry_after_ms = true;
     repl_error.retry_after_ms = 250;
@@ -182,6 +183,14 @@ TEST_F(CatalogReplicationRuntimeConflictExtensionContractTest,
     repl_error.occurrence_count = 1;
     repl_error.is_open = true;
     ASSERT_EQ(catalog_->upsertReplicationErrorCatalogEntry(repl_error, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::ReplicationErrorCatalogInfo repl_error_out{};
+    ASSERT_EQ(catalog_->getReplicationErrorCatalogEntry(repl_error.replication_error_id, repl_error_out, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(repl_error_out.message_text.find("hunter2"), std::string::npos);
+    EXPECT_EQ(repl_error_out.message_text.find("replica.internal"), std::string::npos);
+    EXPECT_NE(repl_error_out.message_text.find("<redacted>"), std::string::npos);
+    EXPECT_NE(repl_error_out.message_text.find("<endpoint>"), std::string::npos);
 
     CatalogManager::ReplicationCursorCatalogInfo cursor{};
     cursor.replication_cursor_id = generateUuidV7();

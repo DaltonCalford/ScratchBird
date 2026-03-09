@@ -725,6 +725,420 @@ TEST_F(ExecutorTest, IndexedSelectPathStillAppliesRlsPolicies) {
     conn_ctx_->setCurrentUser(system_user_id_, true);
 }
 
+TEST_F(ExecutorTest, RoleGrantedColumnsRemainVisibleUnderLeastPrivilegeDefaults) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE docs_role_cols (id INTEGER, title TEXT, body TEXT)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_role_cols (id, title, body) VALUES (1, 'Doc1', 'alpha beta')").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "docs_role_cols", table_info, &ctx), Status::OK)
+        << ctx.message;
+
+    ID viewer_id{};
+    ASSERT_EQ(db_->catalog_manager()->createUser("viewer_role_cols", "", default_schema_id_, false,
+                                                 viewer_id, &ctx), Status::OK)
+        << ctx.message;
+
+    ID role_id{};
+    ASSERT_EQ(db_->catalog_manager()->createRole("role_cols_reader", system_user_id_,
+                                                 default_schema_id_, role_id, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->catalog_manager()->grantRole(role_id, viewer_id, system_user_id_, false, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        viewer_id, CatalogManager::GranteeType::USER,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+    revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        ID{}, CatalogManager::GranteeType::PUBLIC,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+
+    const uint32_t select_priv = static_cast<uint32_t>(CatalogManager::Privilege::SELECT);
+    ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                  table_info.table_id, "id", role_id, CatalogManager::GranteeType::ROLE,
+                  select_priv, false, system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                  table_info.table_id, "title", role_id, CatalogManager::GranteeType::ROLE,
+                  select_priv, false, system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    conn_ctx_->setCurrentUser(viewer_id, false);
+    conn_ctx_->setCurrentSchemaId(default_schema_id_);
+
+    std::string star_sql = "SELECT * FROM " + default_schema_name_ + ".docs_role_cols";
+    auto star_result = executeSQLWithSchema(star_sql, false);
+    ASSERT_TRUE(star_result.success()) << star_result.error();
+    ASSERT_TRUE(star_result.hasResultSet());
+    auto* rs = star_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    EXPECT_EQ(rs->columnCount(), 2u);
+    EXPECT_EQ(rs->columnName(0), "id");
+    EXPECT_EQ(rs->columnName(1), "title");
+    EXPECT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 1);
+    EXPECT_EQ(rs->getValue(0, 1).toString(), "Doc1");
+
+    std::string denied_sql = "SELECT body FROM " + default_schema_name_ + ".docs_role_cols";
+    auto denied_result = executeSQLWithSchema(denied_sql, false);
+    EXPECT_FALSE(denied_result.success());
+    EXPECT_NE(denied_result.error().find("Permission denied: SELECT on column body"),
+              std::string::npos);
+
+    conn_ctx_->setCurrentUser(system_user_id_, true);
+}
+
+TEST_F(ExecutorTest, RlsWithoutPoliciesFailsClosedForNonOwner) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE docs_rls_default (id INTEGER, tenant_id INTEGER, body TEXT)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls_default (id, tenant_id, body) VALUES (1, 1, 'alpha doc')").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls_default (id, tenant_id, body) VALUES (2, 2, 'beta doc')").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "docs_rls_default", table_info, &ctx), Status::OK)
+        << ctx.message;
+
+    ID viewer_id{};
+    ASSERT_EQ(db_->catalog_manager()->createUser("viewer_rls_default", "", default_schema_id_, false,
+                                                 viewer_id, &ctx), Status::OK)
+        << ctx.message;
+
+    auto revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        viewer_id, CatalogManager::GranteeType::USER,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+    revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        ID{}, CatalogManager::GranteeType::PUBLIC,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+
+    const uint32_t select_priv = static_cast<uint32_t>(CatalogManager::Privilege::SELECT);
+    ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                  table_info.table_id, "id", viewer_id, CatalogManager::GranteeType::USER,
+                  select_priv, false, system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                  table_info.table_id, "tenant_id", viewer_id, CatalogManager::GranteeType::USER,
+                  select_priv, false, system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(db_->catalog_manager()->setTableRLS(table_info.table_id, true, false, &ctx), Status::OK)
+        << ctx.message;
+
+    conn_ctx_->setCurrentUser(viewer_id, false);
+    conn_ctx_->setCurrentSchemaId(default_schema_id_);
+
+    std::string sql = "SELECT id, tenant_id FROM " + default_schema_name_ + ".docs_rls_default";
+    auto result = executeSQLWithSchema(sql, false);
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    EXPECT_EQ(result.resultSet()->rowCount(), 0u);
+
+    conn_ctx_->setCurrentUser(system_user_id_, true);
+}
+
+TEST_F(ExecutorTest, RoleScopedRlsPoliciesDenyUsersOutsidePolicyRoles) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE docs_rls_role (id INTEGER, tenant_id INTEGER, body TEXT)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls_role (id, tenant_id, body) VALUES (1, 1, 'alpha doc')").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls_role (id, tenant_id, body) VALUES (2, 2, 'beta doc')").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "docs_rls_role", table_info, &ctx), Status::OK)
+        << ctx.message;
+
+    ID viewer_id{};
+    ASSERT_EQ(db_->catalog_manager()->createUser("viewer_rls_role", "", default_schema_id_, false,
+                                                 viewer_id, &ctx), Status::OK)
+        << ctx.message;
+
+    ID role_id{};
+    ASSERT_EQ(db_->catalog_manager()->createRole("tenant_one_role", system_user_id_,
+                                                 default_schema_id_, role_id, &ctx), Status::OK)
+        << ctx.message;
+
+    auto revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        viewer_id, CatalogManager::GranteeType::USER,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+    revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        ID{}, CatalogManager::GranteeType::PUBLIC,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+
+    const uint32_t select_priv = static_cast<uint32_t>(CatalogManager::Privilege::SELECT);
+    ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                  table_info.table_id, "id", viewer_id, CatalogManager::GranteeType::USER,
+                  select_priv, false, system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                  table_info.table_id, "tenant_id", viewer_id, CatalogManager::GranteeType::USER,
+                  select_priv, false, system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(db_->catalog_manager()->setTableRLS(table_info.table_id, true, false, &ctx), Status::OK)
+        << ctx.message;
+
+    ID policy_id{};
+    std::string policy_expr = makeBinaryPolicyHex("tenant_id", Opcode::EXPR_EQ, 1);
+    ASSERT_EQ(db_->catalog_manager()->createPolicy(
+                  table_info.table_id, "tenant_one_only", CatalogManager::PolicyType::ALL,
+                  {"tenant_one_role"}, policy_expr, policy_expr, policy_id, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    conn_ctx_->setCurrentUser(viewer_id, false);
+    conn_ctx_->setCurrentSchemaId(default_schema_id_);
+
+    std::string sql = "SELECT id, tenant_id FROM " + default_schema_name_ + ".docs_rls_role";
+    auto denied_result = executeSQLWithSchema(sql, false);
+    ASSERT_TRUE(denied_result.success()) << denied_result.error();
+    ASSERT_TRUE(denied_result.hasResultSet());
+    ASSERT_NE(denied_result.resultSet(), nullptr);
+    EXPECT_EQ(denied_result.resultSet()->rowCount(), 0u);
+
+    ASSERT_EQ(db_->catalog_manager()->grantRole(role_id, viewer_id, system_user_id_, false, &ctx),
+              Status::OK)
+        << ctx.message;
+    // Security catalog changes are transaction-scoped under MGA semantics, so
+    // the granted role must be committed before a separate attachment can see it.
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    std::unique_ptr<ConnectionContext> role_conn_ctx;
+    ASSERT_EQ(db_->connect(role_conn_ctx, &ctx), Status::OK) << ctx.message;
+    ConnectionContext::setCurrent(role_conn_ctx.get());
+    ASSERT_EQ(role_conn_ctx->initialize(&ctx), Status::OK) << ctx.message;
+    role_conn_ctx->setCurrentUser(viewer_id, false);
+    role_conn_ctx->setCurrentSchemaId(default_schema_id_);
+
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty());
+
+    Executor allowed_executor(db_.get());
+    allowed_executor.setConnectionContext(role_conn_ctx.get());
+    auto allowed_result = allowed_executor.execute(bytecode);
+    ASSERT_TRUE(allowed_result.success()) << allowed_result.error();
+    ASSERT_TRUE(allowed_result.hasResultSet());
+    auto* rs = allowed_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 1);
+    EXPECT_EQ(rs->getValue(0, 1).toInt64(), 1);
+
+    ConnectionContext::setCurrent(conn_ctx_.get());
+
+    conn_ctx_->setCurrentUser(system_user_id_, true);
+}
+
+TEST_F(ExecutorTest, QueryResultCacheIsolatedPerSecurityContext) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE docs_rls_cache_scope (id INTEGER, tenant_id INTEGER, body TEXT)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls_cache_scope (id, tenant_id, body) VALUES (1, 1, 'alpha doc')").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls_cache_scope (id, tenant_id, body) VALUES (2, 2, 'beta doc')").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "docs_rls_cache_scope", table_info, &ctx), Status::OK)
+        << ctx.message;
+
+    ID viewer_one_id{};
+    ASSERT_EQ(db_->catalog_manager()->createUser("viewer_rls_cache_one", "", default_schema_id_, false,
+                                                 viewer_one_id, &ctx), Status::OK)
+        << ctx.message;
+
+    ID viewer_two_id{};
+    ASSERT_EQ(db_->catalog_manager()->createUser("viewer_rls_cache_two", "", default_schema_id_, false,
+                                                 viewer_two_id, &ctx), Status::OK)
+        << ctx.message;
+
+    ID role_one_id{};
+    ASSERT_EQ(db_->catalog_manager()->createRole("tenant_cache_one_role", system_user_id_,
+                                                 default_schema_id_, role_one_id, &ctx), Status::OK)
+        << ctx.message;
+
+    ID role_two_id{};
+    ASSERT_EQ(db_->catalog_manager()->createRole("tenant_cache_two_role", system_user_id_,
+                                                 default_schema_id_, role_two_id, &ctx), Status::OK)
+        << ctx.message;
+
+    auto revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        ID{}, CatalogManager::GranteeType::PUBLIC,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+
+    const uint32_t select_priv = static_cast<uint32_t>(CatalogManager::Privilege::SELECT);
+    for (const auto& viewer_id : {viewer_one_id, viewer_two_id})
+    {
+        ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                      table_info.table_id, "id", viewer_id, CatalogManager::GranteeType::USER,
+                      select_priv, false, system_user_id_, &ctx),
+                  Status::OK)
+            << ctx.message;
+        ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                      table_info.table_id, "tenant_id", viewer_id, CatalogManager::GranteeType::USER,
+                      select_priv, false, system_user_id_, &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+
+    ASSERT_EQ(db_->catalog_manager()->setTableRLS(table_info.table_id, true, false, &ctx), Status::OK)
+        << ctx.message;
+
+    ID policy_one_id{};
+    std::string tenant_one_expr = makeBinaryPolicyHex("tenant_id", Opcode::EXPR_EQ, 1);
+    ASSERT_EQ(db_->catalog_manager()->createPolicy(
+                  table_info.table_id, "tenant_cache_one_only", CatalogManager::PolicyType::ALL,
+                  {"tenant_cache_one_role"}, tenant_one_expr, tenant_one_expr, policy_one_id, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ID policy_two_id{};
+    std::string tenant_two_expr = makeBinaryPolicyHex("tenant_id", Opcode::EXPR_EQ, 2);
+    ASSERT_EQ(db_->catalog_manager()->createPolicy(
+                  table_info.table_id, "tenant_cache_two_only", CatalogManager::PolicyType::ALL,
+                  {"tenant_cache_two_role"}, tenant_two_expr, tenant_two_expr, policy_two_id, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(db_->catalog_manager()->grantRole(role_one_id, viewer_one_id, system_user_id_, false, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->catalog_manager()->grantRole(role_two_id, viewer_two_id, system_user_id_, false, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    std::string sql = "SELECT id, tenant_id FROM " + default_schema_name_ + ".docs_rls_cache_scope";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty());
+
+    std::unique_ptr<ConnectionContext> viewer_one_ctx;
+    ASSERT_EQ(db_->connect(viewer_one_ctx, &ctx), Status::OK) << ctx.message;
+    ConnectionContext::setCurrent(viewer_one_ctx.get());
+    ASSERT_EQ(viewer_one_ctx->initialize(&ctx), Status::OK) << ctx.message;
+    viewer_one_ctx->setCurrentUser(viewer_one_id, false);
+    viewer_one_ctx->setCurrentSchemaId(default_schema_id_);
+
+    Executor viewer_one_executor(db_.get());
+    viewer_one_executor.setConnectionContext(viewer_one_ctx.get());
+    auto viewer_one_result = viewer_one_executor.execute(bytecode);
+    ASSERT_TRUE(viewer_one_result.success()) << viewer_one_result.error();
+    ASSERT_TRUE(viewer_one_result.hasResultSet());
+    ASSERT_NE(viewer_one_result.resultSet(), nullptr);
+    ASSERT_EQ(viewer_one_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(viewer_one_result.resultSet()->getValue(0, 0).toInt64(), 1);
+    EXPECT_EQ(viewer_one_result.resultSet()->getValue(0, 1).toInt64(), 1);
+
+    std::unique_ptr<ConnectionContext> viewer_two_ctx;
+    ASSERT_EQ(db_->connect(viewer_two_ctx, &ctx), Status::OK) << ctx.message;
+    ConnectionContext::setCurrent(viewer_two_ctx.get());
+    ASSERT_EQ(viewer_two_ctx->initialize(&ctx), Status::OK) << ctx.message;
+    viewer_two_ctx->setCurrentUser(viewer_two_id, false);
+    viewer_two_ctx->setCurrentSchemaId(default_schema_id_);
+
+    Executor viewer_two_executor(db_.get());
+    viewer_two_executor.setConnectionContext(viewer_two_ctx.get());
+    auto viewer_two_result = viewer_two_executor.execute(bytecode);
+    ASSERT_TRUE(viewer_two_result.success()) << viewer_two_result.error();
+    ASSERT_TRUE(viewer_two_result.hasResultSet());
+    ASSERT_NE(viewer_two_result.resultSet(), nullptr);
+    ASSERT_EQ(viewer_two_result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(viewer_two_result.resultSet()->getValue(0, 0).toInt64(), 2);
+    EXPECT_EQ(viewer_two_result.resultSet()->getValue(0, 1).toInt64(), 2);
+
+    ConnectionContext::setCurrent(conn_ctx_.get());
+    conn_ctx_->setCurrentUser(system_user_id_, true);
+}
+
+TEST_F(ExecutorTest, RoleGrantInvalidatesPermissionCacheForRoleBasedTableAccess) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE docs_role_select (id INTEGER, title TEXT)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_role_select (id, title) VALUES (1, 'Doc1')").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_role_select (id, title) VALUES (2, 'Doc2')").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "docs_role_select", table_info, &ctx), Status::OK)
+        << ctx.message;
+
+    ID viewer_id{};
+    ASSERT_EQ(db_->catalog_manager()->createUser("viewer_role_select", "", default_schema_id_, false,
+                                                 viewer_id, &ctx), Status::OK)
+        << ctx.message;
+
+    ID role_id{};
+    ASSERT_EQ(db_->catalog_manager()->createRole("role_select_reader", system_user_id_,
+                                                 default_schema_id_, role_id, &ctx), Status::OK)
+        << ctx.message;
+
+    auto revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        viewer_id, CatalogManager::GranteeType::USER,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+    revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        ID{}, CatalogManager::GranteeType::PUBLIC,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+
+    ASSERT_EQ(db_->catalog_manager()->grantPermission(
+                  table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+                  role_id, CatalogManager::GranteeType::ROLE,
+                  static_cast<uint32_t>(CatalogManager::Privilege::SELECT), false,
+                  system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    conn_ctx_->setCurrentUser(viewer_id, false);
+    conn_ctx_->setCurrentSchemaId(default_schema_id_);
+
+    std::string sql = "SELECT id, title FROM " + default_schema_name_ + ".docs_role_select";
+    auto denied_result = executeSQLWithSchema(sql, false);
+    EXPECT_FALSE(denied_result.success());
+    EXPECT_NE(denied_result.error().find("Permission denied: SELECT on table"),
+              std::string::npos);
+
+    conn_ctx_->setCurrentUser(system_user_id_, true);
+    ASSERT_EQ(db_->catalog_manager()->grantRole(role_id, viewer_id, system_user_id_, false, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    std::unique_ptr<ConnectionContext> role_conn_ctx;
+    ASSERT_EQ(db_->connect(role_conn_ctx, &ctx), Status::OK) << ctx.message;
+    ConnectionContext::setCurrent(role_conn_ctx.get());
+    ASSERT_EQ(role_conn_ctx->initialize(&ctx), Status::OK) << ctx.message;
+    role_conn_ctx->setCurrentUser(viewer_id, false);
+    role_conn_ctx->setCurrentSchemaId(default_schema_id_);
+
+    Executor allowed_executor(db_.get());
+    allowed_executor.setConnectionContext(role_conn_ctx.get());
+    auto allowed_result = allowed_executor.execute(compileSQL(sql));
+    ASSERT_TRUE(allowed_result.success()) << allowed_result.error();
+    ASSERT_TRUE(allowed_result.hasResultSet());
+    ASSERT_NE(allowed_result.resultSet(), nullptr);
+    EXPECT_EQ(allowed_result.resultSet()->rowCount(), 2u);
+
+    ConnectionContext::setCurrent(conn_ctx_.get());
+    conn_ctx_->setCurrentUser(system_user_id_, true);
+}
+
 // ===== Integration Tests =====
 
 TEST_F(ExecutorTest, CompleteWorkflow) {

@@ -72,6 +72,7 @@ namespace scratchbird::core
     struct LockSnapshot;
     struct AuditEvent;
     struct AuditQuery;
+    struct AuditIntegrityResult;
 
     using ID = UuidV7Bytes;
 
@@ -4655,6 +4656,35 @@ public:
             uint64_t last_modified_time = 0;
         };
 
+        struct AuditSinkProfileCatalogInfo
+        {
+            ID audit_sink_profile_id;
+            std::string profile_name;
+            std::string sink_type;
+            std::string failure_policy;
+            std::string config_json;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct AuditExportSegmentCatalogInfo
+        {
+            ID audit_export_segment_id;
+            ID audit_sink_profile_id;
+            std::string evidence_class;
+            uint64_t segment_seq = 0;
+            uint64_t range_start_time = 0;
+            uint64_t range_end_time = 0;
+            std::string payload_manifest;
+            std::array<uint8_t, 32> hash_prev{};
+            std::array<uint8_t, 32> hash_curr{};
+            std::string delivery_state;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+        };
+
         struct RuntimeConnectionCatalogInfo
         {
             ID connection_id;
@@ -6408,6 +6438,43 @@ public:
             bool is_valid = true;
         };
 
+        struct SecurityOperationsAutomationRequest
+        {
+            uint64_t now_time = 0;
+            bool create_healing_runs = true;
+            uint64_t info_ack_sla_ms = 86400000ULL;
+            uint64_t warning_ack_sla_ms = 14400000ULL;
+            uint64_t critical_ack_sla_ms = 900000ULL;
+            uint64_t warning_vulnerability_sla_ms = 2592000000ULL;
+            uint64_t critical_vulnerability_sla_ms = 604800000ULL;
+        };
+
+        struct SecurityOperationsAutomationAction
+        {
+            ID event_id;
+            ID rule_id;
+            std::string rule_name;
+            AlertSeverity severity = AlertSeverity::INFO;
+            bool vulnerability_signal = false;
+            bool ack_overdue = false;
+            bool remediation_overdue = false;
+            uint64_t ack_deadline_time = 0;
+            uint64_t remediation_deadline_time = 0;
+            std::vector<ID> route_ids;
+            std::vector<ID> target_ids;
+            bool healing_run_created = false;
+            ID healing_run_id;
+            std::string action_code;
+        };
+
+        struct SecurityOperationsAutomationResult
+        {
+            uint64_t open_event_count = 0;
+            uint64_t actionable_event_count = 0;
+            uint64_t healing_run_count = 0;
+            std::vector<SecurityOperationsAutomationAction> actions;
+        };
+
         struct ClusterCatalogInfo
         {
             ID cluster_id;
@@ -6819,6 +6886,35 @@ public:
             bool rotated_existing_active = false;
             ID retired_key_id;
             uint32_t resulting_key_version = 0;
+            std::string reject_code;
+        };
+
+        struct ChannelSecurityEvaluationRequest
+        {
+            std::string channel_name;
+            CertKind cert_kind = CertKind::SERVER;
+            bool is_tls = false;
+            bool is_mtls = false;
+            TlsVersion tls_version = TlsVersion::TLS_1_2;
+            std::string tls_cipher_suite;
+            bool has_presented_cert_id = false;
+            ID presented_cert_id;
+            CryptoProfileId crypto_profile_id = CryptoProfileId::MODERN_BASELINE;
+            SecurityTierId security_tier = SecurityTierId::TIER_2_STANDARD;
+            uint64_t distribution_stale_after_ms = 10000;
+            uint64_t now_time = 0;
+        };
+
+        struct ChannelSecurityEvaluationDecision
+        {
+            bool allowed = false;
+            bool binding_found = false;
+            bool cert_active = false;
+            bool trust_anchor_active = false;
+            bool revocation_stale = false;
+            bool rotation_required = false;
+            ID binding_id;
+            ID cert_id;
             std::string reject_code;
         };
 
@@ -8090,6 +8186,25 @@ public:
         auto deleteBackupHistoryCatalogEntry(const ID& backup_id,
                                              ErrorContext* ctx = nullptr) -> Status;
 
+        auto upsertAuditSinkProfileCatalogEntry(const AuditSinkProfileCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getAuditSinkProfileCatalogEntry(const ID& audit_sink_profile_id,
+                                             AuditSinkProfileCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listAuditSinkProfileCatalogEntries(std::vector<AuditSinkProfileCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAuditSinkProfileCatalogEntry(const ID& audit_sink_profile_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto appendAuditExportSegmentCatalogEntry(const AuditExportSegmentCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getAuditExportSegmentCatalogEntry(const ID& audit_export_segment_id,
+                                               AuditExportSegmentCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listAuditExportSegmentCatalogEntries(const ID& audit_sink_profile_id,
+                                                  std::vector<AuditExportSegmentCatalogInfo>& rows_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
         // ============================================================================
         // Canonical runtime context catalog operations (CAT-019)
         // ============================================================================
@@ -8866,6 +8981,9 @@ public:
                                            ErrorContext* ctx = nullptr) -> Status;
         auto deleteHealingStepCatalogEntry(const ID& step_id,
                                            ErrorContext* ctx = nullptr) -> Status;
+        auto runSecurityOperationsAutomation(const SecurityOperationsAutomationRequest& request,
+                                             SecurityOperationsAutomationResult& result_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
 
         auto upsertJobTypeCatalogEntry(const JobTypeCatalogInfo& info,
                                        ErrorContext* ctx = nullptr) -> Status;
@@ -9844,6 +9962,9 @@ public:
             const EncryptionKeyLifecycleTransitionRequest& request,
             EncryptionKeyLifecycleTransitionDecision& decision_out,
             ErrorContext* ctx = nullptr) -> Status;
+        auto evaluateChannelSecurityPolicy(const ChannelSecurityEvaluationRequest& request,
+                                           ChannelSecurityEvaluationDecision& decision_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // UDR Operations (Phase A CRUD - Catalog Cleanup)
@@ -10753,6 +10874,8 @@ public:
         auto getAuditLogTail(uint64_t& last_event_id_out,
                              std::array<uint8_t, 32>& last_hash_out,
                              ErrorContext* ctx = nullptr) -> Status;
+        auto verifyAuditLogChain(AuditIntegrityResult& result_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
 
         // Dormant transaction persistence (Track 3.2)
         auto createDormantTransaction(DormantTransactionInfo& info,
@@ -13055,6 +13178,8 @@ public:
         uint32_t lob_table_page_ = 0; // Large object metadata catalog (CAT-018)
         uint32_t lob_page_table_page_ = 0; // Large object page map catalog (CAT-018)
         uint32_t backup_history_table_page_ = 0; // Backup history catalog (CAT-018)
+        uint32_t audit_sink_profile_table_page_ = 0; // Audit sink profile catalog (NCW-034)
+        uint32_t audit_export_segment_table_page_ = 0; // Audit export segment catalog (NCW-034)
         uint32_t connection_table_page_ = 0; // Runtime connection attribution catalog (CAT-019)
         uint32_t transaction_table_page_ = 0; // Runtime transaction attribution catalog (CAT-019)
         uint32_t principal_account_table_page_ = 0; // Principal account catalog (CAT-020)

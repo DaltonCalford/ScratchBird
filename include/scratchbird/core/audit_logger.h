@@ -12,6 +12,7 @@
 #include <array>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <mutex>
 #include <optional>
 #include <functional>
@@ -185,6 +186,92 @@ struct AuditSinkConfig {
 };
 
 /**
+ * Audit integrity verification result.
+ *
+ * The chain is intact only when every event ID is contiguous, every
+ * `hash_prev` link matches the previous event, and every `hash_curr`
+ * value recomputes from the persisted event payload.
+ */
+struct AuditIntegrityResult {
+    uint64_t verified_event_count = 0;
+    uint64_t last_verified_event_id = 0;
+    uint64_t first_bad_event_id = 0;
+    bool chain_intact = false;
+    std::string failure_reason;
+};
+
+struct AuditExportPackageRequest
+{
+    ID sink_profile_id;
+    std::string output_path;
+    std::string evidence_class = "EXPORT_DELIVERY_EVENT";
+};
+
+struct AuditExportPackageResult
+{
+    ID segment_id;
+    std::string output_path;
+    uint64_t segment_seq = 0;
+    uint64_t event_count = 0;
+    uint64_t first_event_id = 0;
+    uint64_t last_event_id = 0;
+    uint64_t range_start_time = 0;
+    uint64_t range_end_time = 0;
+    std::string payload_sha256;
+};
+
+struct AuditExportValidationResult
+{
+    ID segment_id;
+    uint64_t event_count = 0;
+    bool manifest_matches_catalog = false;
+    bool payload_checksum_valid = false;
+    bool package_valid = false;
+    std::string failure_reason;
+};
+
+struct AuditLegalHoldCommand
+{
+    ID sink_profile_id;
+    bool enable_hold = true;
+    std::string actor;
+    std::string reason;
+    uint64_t event_time = 0;
+};
+
+struct AuditLegalHoldResult
+{
+    bool legal_hold_active = false;
+    uint64_t policy_version = 0;
+    uint64_t event_time = 0;
+    ID evidence_segment_id;
+    std::string reject_code;
+};
+
+struct AuditRetentionEvaluationRequest
+{
+    ID sink_profile_id;
+    uint64_t now_time = 0;
+    bool append_evidence = true;
+    std::string requested_by;
+};
+
+struct AuditRetentionEvaluationResult
+{
+    bool legal_hold_active = false;
+    uint64_t policy_version = 0;
+    uint64_t hot_retention_days = 0;
+    uint64_t archive_retention_days = 0;
+    uint64_t segments_examined = 0;
+    uint64_t segments_eligible = 0;
+    uint64_t segments_blocked = 0;
+    std::vector<ID> eligible_segment_ids;
+    std::vector<ID> blocked_segment_ids;
+    ID evidence_segment_id;
+    std::string reject_code;
+};
+
+/**
  * Audit Logger
  *
  * Thread-safe audit logging system for security events.
@@ -245,6 +332,36 @@ public:
         ErrorContext* ctx);
 
     /**
+     * Verify the append-only audit hash chain.
+     *
+     * When a catalog sink is active this validates the persisted audit stream.
+     * Otherwise it validates the in-memory buffered chain.
+     */
+    Status verifyIntegrity(AuditIntegrityResult& result_out, ErrorContext* ctx);
+
+    /**
+     * Export the next contiguous retained audit segment into a deterministic package file.
+     */
+    Status exportAuditPackage(const AuditExportPackageRequest& request,
+                              AuditExportPackageResult& result_out,
+                              ErrorContext* ctx);
+
+    /**
+     * Validate a previously exported audit package file against persisted catalog truth.
+     */
+    Status validateAuditPackage(const std::string& package_path,
+                                AuditExportValidationResult& result_out,
+                                ErrorContext* ctx);
+
+    Status setAuditLegalHold(const AuditLegalHoldCommand& command,
+                             AuditLegalHoldResult& result_out,
+                             ErrorContext* ctx);
+
+    Status evaluateRetentionPolicy(const AuditRetentionEvaluationRequest& request,
+                                   AuditRetentionEvaluationResult& result_out,
+                                   ErrorContext* ctx);
+
+    /**
      * Get total event count
      *
      * @return Total number of events logged
@@ -276,6 +393,20 @@ public:
      * Get event type name (for display/logging)
      */
     static std::string getEventTypeName(AuditEventType type);
+
+    /**
+     * Compute the canonical audit chain hash for a persisted event payload.
+     */
+    static std::array<uint8_t, 32> computeChainHash(
+        const AuditEvent& event,
+        const std::array<uint8_t, 32>& prev_hash);
+
+    /**
+     * Compute the canonical export-segment hash for a persisted manifest payload.
+     */
+    static std::array<uint8_t, 32> computeExportSegmentHash(
+        const std::string& manifest_payload,
+        const std::array<uint8_t, 32>& prev_hash);
 
     /**
      * Helper: Create login success event
@@ -352,15 +483,16 @@ private:
     void broadcastEvent(const AuditEvent& event);
 
     /**
-     * Compute hash-chain value for event
-     */
-    std::array<uint8_t, 32> computeHash(const AuditEvent& event,
-                                        const std::array<uint8_t, 32>& prev_hash) const;
-
-    /**
      * Flush buffered events (internal, caller must hold mutex_)
      */
     Status flushUnlocked(ErrorContext* ctx);
+
+    Status appendGovernanceSegment(const ID& sink_profile_id,
+                                   const std::string& evidence_class,
+                                   uint64_t range_time,
+                                   const std::unordered_map<std::string, std::string>& extra_fields,
+                                   ID& segment_id_out,
+                                   ErrorContext* ctx);
 };
 
 }  // namespace core

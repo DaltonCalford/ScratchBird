@@ -139,7 +139,7 @@ TEST_F(CatalogEngineSpecificExtensionContractTest, EngineSpecificCatalogContract
     message.message_id = generateUuidV7();
     message.trigger_id = trigger_id_;
     message.message_number = 10;
-    message.message_text = "cat032 trigger message";
+    message.message_text = "cat032 trigger message secret='inline-token'";
     ASSERT_EQ(catalog_->upsertTriggerMessageCatalogEntry(message, &ctx), Status::OK) << ctx.message;
 
     CatalogManager::TriggerMessageCatalogInfo message_dup = message;
@@ -149,7 +149,8 @@ TEST_F(CatalogEngineSpecificExtensionContractTest, EngineSpecificCatalogContract
     CatalogManager::TriggerMessageCatalogInfo message_out{};
     ASSERT_EQ(catalog_->getTriggerMessageCatalogEntry(message.message_id, message_out, &ctx), Status::OK)
         << ctx.message;
-    EXPECT_EQ(message_out.message_text, message.message_text);
+    EXPECT_EQ(message_out.message_text.find("inline-token"), std::string::npos);
+    EXPECT_NE(message_out.message_text.find("<redacted>"), std::string::npos);
     EXPECT_NE(message_out.message_text_oid, ID{});
 
     std::vector<CatalogManager::TriggerMessageCatalogInfo> trigger_messages;

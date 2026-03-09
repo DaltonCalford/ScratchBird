@@ -17,6 +17,7 @@
 // November 25, 2025
 
 #include "scratchbird/core/structured_logger.h"
+#include "scratchbird/core/secure_diagnostics.h"
 #include <fstream>
 #include <iomanip>
 #include <thread>
@@ -45,7 +46,7 @@ StructuredLogEntry::StructuredLogEntry(LogLevel level, LogCategory category)
 }
 
 StructuredLogEntry& StructuredLogEntry::field(const std::string& key, const std::string& value) {
-    string_fields_[key] = value;
+    string_fields_[key] = redactSensitiveDiagnosticField(key, value);
     return *this;
 }
 
@@ -70,13 +71,13 @@ StructuredLogEntry& StructuredLogEntry::field(const std::string& key, bool value
 }
 
 StructuredLogEntry& StructuredLogEntry::message(const std::string& msg) {
-    message_ = msg;
+    message_ = redactSensitiveDiagnosticText(msg);
     return *this;
 }
 
 StructuredLogEntry& StructuredLogEntry::error(const std::string& error_code, const std::string& error_msg) {
     error_code_ = error_code;
-    error_message_ = error_msg;
+    error_message_ = redactSensitiveDiagnosticText(error_msg);
     return *this;
 }
 
@@ -279,7 +280,8 @@ std::string QueryLogEntry::toJson() const {
     ss << "{\"type\":\"query\"";
     ss << ",\"query_id\":\"" << StructuredLogEntry::escapeJson(query_id) << "\"";
     if (!sql_text.empty()) {
-        ss << ",\"sql\":\"" << StructuredLogEntry::escapeJson(sql_text) << "\"";
+        ss << ",\"sql\":\"" << StructuredLogEntry::escapeJson(
+            redactSensitiveDiagnosticField("sql", sql_text)) << "\"";
     }
     ss << ",\"user\":\"" << StructuredLogEntry::escapeJson(user) << "\"";
     ss << ",\"database\":\"" << StructuredLogEntry::escapeJson(database) << "\"";
@@ -291,10 +293,12 @@ std::string QueryLogEntry::toJson() const {
     ss << ",\"success\":" << (success ? "true" : "false");
     if (!success && !error_code.empty()) {
         ss << ",\"error\":{\"code\":\"" << StructuredLogEntry::escapeJson(error_code)
-           << "\",\"message\":\"" << StructuredLogEntry::escapeJson(error_message) << "\"}";
+           << "\",\"message\":\"" << StructuredLogEntry::escapeJson(
+               redactSensitiveDiagnosticText(error_message)) << "\"}";
     }
     if (!plan_summary.empty()) {
-        ss << ",\"plan\":\"" << StructuredLogEntry::escapeJson(plan_summary) << "\"";
+        ss << ",\"plan\":\"" << StructuredLogEntry::escapeJson(
+            redactSensitiveDiagnosticText(plan_summary)) << "\"";
     }
     ss << "}";
     return ss.str();
@@ -330,7 +334,8 @@ std::string LockWaitLogEntry::toJson() const {
     ss << ",\"waiting_xid\":" << waiting_xid;
     ss << ",\"blocking_xid\":" << blocking_xid;
     ss << ",\"lock_type\":\"" << StructuredLogEntry::escapeJson(lock_type) << "\"";
-    ss << ",\"resource\":\"" << StructuredLogEntry::escapeJson(resource) << "\"";
+    ss << ",\"resource\":\"" << StructuredLogEntry::escapeJson(
+        redactSensitiveDiagnosticText(resource)) << "\"";
     ss << ",\"wait_time_us\":" << wait_time_us;
     ss << ",\"acquired\":" << (acquired ? "true" : "false");
     ss << ",\"deadlock\":" << (deadlock ? "true" : "false");

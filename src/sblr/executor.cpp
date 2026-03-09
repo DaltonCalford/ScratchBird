@@ -1938,9 +1938,11 @@ namespace scratchbird
                                            core::CatalogManager::ProcedureInfo& info_out,
                                            core::ErrorContext* ctx);
             QueryHash computeResultCacheHash(const std::vector<uint8_t>& bytecode,
-                                              const std::vector<std::string>& params,
-                                              const std::vector<bool>& nulls,
-                                              uint64_t policy_epoch);
+                                             const std::vector<std::string>& params,
+                                             const std::vector<bool>& nulls,
+                                             const std::string& user_signature,
+                                             const std::string& role_signature,
+                                             uint64_t policy_epoch);
             std::unique_ptr<ResultSet> buildResultSetFromCache(const CachedResultSet& cached);
             CachedResultSet buildCachedResultSetFromResultSet(
                 const ResultSet& result_set,
@@ -82041,6 +82043,8 @@ namespace scratchbird
                         QueryHash hash = computeResultCacheHash(cache_key_bytes,
                                                                 parameter_values_,
                                                                 parameter_nulls_,
+                                                                getCurrentUserID().toString(),
+                                                                getActiveRoleID().toString(),
                                                                 policy_epoch);
                         CachedResultSet cached;
                         if (cache.get(hash, cached))
@@ -96179,13 +96183,15 @@ namespace scratchbird
                 }
             }
 
-            // No policies = allow (RLS enabled but no restrictions)
+            // Least-privilege default: RLS-enabled tables without an applicable
+            // enabled policy fail closed for non-owner, non-superuser callers.
             if (policies.empty())
             {
-                return true;
+                return false;
             }
 
             // Check each policy (AND semantics - all must pass)
+            bool had_applicable_policy = false;
             for (const auto& policy : policies)
             {
                 // Check if policy applies to current user/role
@@ -96193,6 +96199,7 @@ namespace scratchbird
                 {
                     continue; // Skip policies that don't apply
                 }
+                had_applicable_policy = true;
 
                 // Get the appropriate expression (USING or WITH CHECK)
                 const std::string& expr_hex = is_with_check ? policy.with_check_expr
@@ -96222,8 +96229,9 @@ namespace scratchbird
                 }
             }
 
-            // All applicable policies passed
-            return true;
+            // All applicable policies passed, but callers with no applicable
+            // policy never inherit visibility implicitly.
+            return had_applicable_policy;
         }
 
         bool Executor::policyAppliesToUser(const core::CatalogManager::PolicyInfo& policy)
@@ -103091,12 +103099,15 @@ namespace scratchbird
             }
 
             QueryHash computeResultCacheHash(const std::vector<uint8_t>& bytecode,
-                                              const std::vector<std::string>& params,
-                                              const std::vector<bool>& nulls,
-                                              uint64_t policy_epoch)
+                                             const std::vector<std::string>& params,
+                                             const std::vector<bool>& nulls,
+                                             const std::string& user_signature,
+                                             const std::string& role_signature,
+                                             uint64_t policy_epoch)
             {
                 std::vector<uint8_t> payload;
-                payload.reserve(bytecode.size() + params.size() * 16);
+                payload.reserve(bytecode.size() + params.size() * 16 +
+                                user_signature.size() + role_signature.size() + 32);
                 payload.insert(payload.end(), bytecode.begin(), bytecode.end());
 
                 for (size_t i = 0; i < params.size(); ++i)
@@ -103110,6 +103121,11 @@ namespace scratchbird
                     }
                     payload.push_back(0x1e);
                 }
+
+                payload.push_back(0x1d);
+                payload.insert(payload.end(), user_signature.begin(), user_signature.end());
+                payload.push_back(0x1c);
+                payload.insert(payload.end(), role_signature.begin(), role_signature.end());
 
                 for (int i = 7; i >= 0; --i)
                 {

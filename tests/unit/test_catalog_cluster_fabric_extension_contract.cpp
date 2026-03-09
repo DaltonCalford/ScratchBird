@@ -141,7 +141,8 @@ TEST_F(CatalogClusterFabricExtensionContractTest, ClusterFabricCatalogContracts)
     fabric_error.error_class = CatalogManager::FabricErrorClass::TASK;
     fabric_error.source_component = "fabric-worker";
     fabric_error.source_code = "E_CHUNK_TIMEOUT";
-    fabric_error.message_text = "timeout on chunk ack";
+    fabric_error.message_text =
+        "timeout on chunk ack token=abc123 remote=https://fabric-link.internal:9000/task";
     fabric_error.recoverable = true;
     fabric_error.first_seen_time = 2100;
     fabric_error.last_seen_time = 2100;
@@ -149,6 +150,16 @@ TEST_F(CatalogClusterFabricExtensionContractTest, ClusterFabricCatalogContracts)
     fabric_error.is_open = true;
     ASSERT_EQ(catalog_->upsertClusterFabricErrorCatalogEntry(fabric_error, &ctx), Status::OK)
         << ctx.message;
+
+    CatalogManager::ClusterFabricErrorCatalogInfo fabric_error_out{};
+    ASSERT_EQ(catalog_->getClusterFabricErrorCatalogEntry(fabric_error.cluster_fabric_error_id,
+                                                          fabric_error_out,
+                                                          &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(fabric_error_out.message_text.find("abc123"), std::string::npos);
+    EXPECT_EQ(fabric_error_out.message_text.find("fabric-link.internal"), std::string::npos);
+    EXPECT_NE(fabric_error_out.message_text.find("<redacted>"), std::string::npos);
+    EXPECT_NE(fabric_error_out.message_text.find("<endpoint>"), std::string::npos);
 
     CatalogManager::ClusterFabricTxnCatalogInfo txn{};
     txn.cluster_fabric_txn_id = generateUuidV7();
