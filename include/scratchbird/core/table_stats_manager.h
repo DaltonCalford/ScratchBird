@@ -63,9 +63,11 @@ namespace scratchbird::core
         void recordIndexScan(const ID& table_id);
         void recordSeqRowsRead(const ID& table_id, uint64_t count);
         void recordIndexRowsFetch(const ID& table_id, uint64_t count);
+        void recordAnalyze(const ID& table_id, bool automatic, uint64_t duration_ms = 0);
         void applyCommittedDelta(const ID& table_id, const TableDmlDelta& delta);
 
         std::vector<TableStatsSnapshot> snapshot() const;
+        auto snapshotForTable(const ID& table_id, TableStatsSnapshot& out) const -> bool;
 
     private:
         struct TableStats

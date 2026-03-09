@@ -167,6 +167,48 @@ namespace scratchbird::optimizer
             return true;
         }
 
+        auto expressionStatsKey(const parser::v3::Expression *expr,
+                                const parser::v3::StringPool *pool) -> std::optional<std::string>
+        {
+            const auto *current = unwrapCasts(expr);
+            if (current == nullptr || pool == nullptr ||
+                current->kind() != parser::v3::ASTKind::FunctionCallExpr)
+            {
+                return std::nullopt;
+            }
+
+            const auto *func = static_cast<const parser::v3::FunctionCallExpr *>(current);
+            if (func->arguments.size() != 1 || func->function_path.components.empty())
+            {
+                return std::nullopt;
+            }
+
+            const auto *arg = unwrapCasts(func->arguments.front());
+            if (arg == nullptr || arg->kind() != parser::v3::ASTKind::ColumnRefExpr)
+            {
+                return std::nullopt;
+            }
+
+            const auto *column_ref = static_cast<const parser::v3::ColumnRefExpr *>(arg);
+            if (column_ref->column.column_name == parser::v3::StringPool::INVALID_ID)
+            {
+                return std::nullopt;
+            }
+
+            const std::string func_name =
+                core::IdentifierUtils::toUpper(
+                    std::string(pool->get(func->function_path.components.back())));
+            if (func_name != "LOWER" && func_name != "UPPER")
+            {
+                return std::nullopt;
+            }
+
+            const std::string column_name =
+                core::IdentifierUtils::toUpper(
+                    std::string(pool->get(column_ref->column.column_name)));
+            return func_name + "(" + column_name + ")";
+        }
+
         auto resolveColumnRef(core::Database *db,
                               const core::ID &table_id,
                               const parser::v3::Expression *expr,
@@ -243,6 +285,26 @@ namespace scratchbird::optimizer
 
             return false;
         }
+
+        auto canonicalizeLiteralForExpression(std::string literal, const std::string &expression_key)
+            -> std::string
+        {
+            if (expression_key.rfind("LOWER(", 0) == 0)
+            {
+                std::transform(literal.begin(),
+                               literal.end(),
+                               literal.begin(),
+                               [](unsigned char ch) {
+                                   return static_cast<char>(std::tolower(ch));
+                               });
+                return literal;
+            }
+            if (expression_key.rfind("UPPER(", 0) == 0)
+            {
+                return core::IdentifierUtils::toUpper(literal);
+            }
+            return literal;
+        }
     } // namespace
 
     auto SelectivityEstimator::estimateWhereClause(
@@ -269,8 +331,38 @@ namespace scratchbird::optimizer
             const auto *binary = static_cast<const parser::v3::BinaryExpr *>(expr);
             if (binary->op == parser::v3::BinaryOp::AND)
             {
-                return estimateAnd(estimateWhereClause(binary->left, table_id, pool, ctx),
-                                   estimateWhereClause(binary->right, table_id, pool, ctx));
+                double left_sel = estimateWhereClause(binary->left, table_id, pool, ctx);
+                double right_sel = estimateWhereClause(binary->right, table_id, pool, ctx);
+                double combined = estimateAnd(left_sel, right_sel);
+
+                if (stats_manager_ != nullptr)
+                {
+                    auto left_column = resolveColumnRef(db_, table_id, binary->left, pool, ctx);
+                    auto right_column = resolveColumnRef(db_, table_id, binary->right, pool, ctx);
+                    if (left_column.has_value() && right_column.has_value())
+                    {
+                        ColumnCorrelationStatistics corr;
+                        if (stats_manager_->getColumnCorrelation(table_id,
+                                                                 left_column->column_id,
+                                                                 right_column->column_id,
+                                                                 corr,
+                                                                 nullptr) == core::Status::OK)
+                        {
+                            const double magnitude = std::min(1.0, std::abs(corr.coefficient));
+                            if (corr.coefficient >= 0.0)
+                            {
+                                combined += magnitude *
+                                            (std::min(left_sel, right_sel) - combined);
+                            }
+                            else
+                            {
+                                combined *= std::max(0.1, 1.0 - magnitude * 0.5);
+                            }
+                            combined = std::max(0.0, std::min(1.0, combined));
+                        }
+                    }
+                }
+                return combined;
             }
             if (binary->op == parser::v3::BinaryOp::OR)
             {
@@ -285,7 +377,72 @@ namespace scratchbird::optimizer
                     auto column = resolveColumnRef(db_, table_id, column_expr, pool, ctx);
                     if (!column.has_value())
                     {
-                        return std::nullopt;
+                        auto expr_key = expressionStatsKey(column_expr, pool);
+                        if (!expr_key.has_value() || binary->op != parser::v3::BinaryOp::EQ ||
+                            stats_manager_ == nullptr)
+                        {
+                            return std::nullopt;
+                        }
+
+                        std::string literal_text;
+                        if (!literalExprToString(literal_expr, pool, literal_text))
+                        {
+                            return std::nullopt;
+                        }
+
+                        ExpressionStatistics expr_stats;
+                        if (stats_manager_->getExpressionStatistics(table_id,
+                                                                    *expr_key,
+                                                                    expr_stats,
+                                                                    ctx) != core::Status::OK)
+                        {
+                            return std::nullopt;
+                        }
+
+                        const std::string normalized =
+                            canonicalizeLiteralForExpression(literal_text, *expr_key);
+                        std::vector<uint8_t> expr_value(sizeof(uint32_t) + normalized.size());
+                        uint32_t len = static_cast<uint32_t>(normalized.size());
+                        std::memcpy(expr_value.data(), &len, sizeof(len));
+                        if (!normalized.empty())
+                        {
+                            std::memcpy(expr_value.data() + sizeof(uint32_t),
+                                        normalized.data(),
+                                        normalized.size());
+                        }
+
+                        const auto &stats = expr_stats.stats;
+                        if (expr_value.empty())
+                        {
+                            return static_cast<double>(stats.null_fraction);
+                        }
+                        for (const auto &mcv : stats.mcv_list)
+                        {
+                            if (valueEquals(mcv.value_data, expr_value))
+                            {
+                                return static_cast<double>(mcv.frequency);
+                            }
+                        }
+                        if (stats.num_distinct == 0)
+                        {
+                            return DEFAULT_EQUALITY_SEL;
+                        }
+                        double mcv_total = 0.0;
+                        for (const auto &mcv : stats.mcv_list)
+                        {
+                            mcv_total += mcv.frequency;
+                        }
+                        const uint64_t remaining_distinct =
+                            stats.num_distinct > stats.mcv_list.size()
+                                ? stats.num_distinct - stats.mcv_list.size()
+                                : 0;
+                        if (remaining_distinct == 0)
+                        {
+                            return 0.0;
+                        }
+                        const double remaining =
+                            std::max(0.0, 1.0 - mcv_total - stats.null_fraction);
+                        return remaining / static_cast<double>(remaining_distinct);
                     }
 
                     std::vector<uint8_t> literal_bytes;

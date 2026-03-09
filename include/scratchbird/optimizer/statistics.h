@@ -153,4 +153,23 @@ namespace scratchbird::optimizer
         }
     };
 
+    struct ColumnCorrelationStatistics
+    {
+        ID table_id;
+        ID left_column_id;
+        ID right_column_id;
+        std::string left_column_name;
+        std::string right_column_name;
+        double coefficient = 0.0;
+        uint64_t sample_size = 0;
+        uint64_t last_analyzed_time = 0;
+    };
+
+    struct ExpressionStatistics
+    {
+        ID table_id;
+        std::string expression_key;
+        ColumnStatistics stats;
+    };
+
 } // namespace scratchbird::optimizer

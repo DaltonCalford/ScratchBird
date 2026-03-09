@@ -1,6 +1,7 @@
 #include "scratchbird/optimizer/v3_semantic_analyzer.h"
 
 #include "scratchbird/core/debug.h"
+#include "scratchbird/parser/parser_v3.h"
 
 #include <algorithm>
 #include <cctype>
@@ -388,8 +389,12 @@ namespace scratchbird::optimizer
         {
             for (const auto &index : relation.indexes)
             {
-                if (index.index_type != core::CatalogManager::IndexType::BTREE ||
-                    index.column_ids.empty())
+                if (index.column_ids.empty())
+                {
+                    continue;
+                }
+                if (index.index_type != core::CatalogManager::IndexType::BTREE &&
+                    index.index_type != core::CatalogManager::IndexType::LSM)
                 {
                     continue;
                 }
@@ -415,10 +420,10 @@ namespace scratchbird::optimizer
             if (expr->kind() == parser::v3::ASTKind::BinaryExpr)
             {
                 const auto *binary = static_cast<const parser::v3::BinaryExpr *>(expr);
-                if (binary->op == parser::v3::BinaryOp::AND)
+                if (binary->op == parser::v3::BinaryOp::AND ||
+                    binary->op == parser::v3::BinaryOp::OR)
                 {
-                    return extractSimplePredicate(binary->left, pool, relations, predicate_out) ||
-                           extractSimplePredicate(binary->right, pool, relations, predicate_out);
+                    return false;
                 }
 
                 const ResolvedPredicateKind kind = predicateKindForBinary(binary->op);
@@ -522,6 +527,42 @@ namespace scratchbird::optimizer
             return false;
         }
 
+        auto collectSimplePredicates(const parser::v3::Expression *expr,
+                                     const parser::v3::StringPool &pool,
+                                     std::vector<ResolvedRelation> &relations,
+                                     std::vector<ResolvedScanPredicate> &predicates_out) -> bool
+        {
+            if (expr == nullptr)
+            {
+                return false;
+            }
+
+            if (expr->kind() == parser::v3::ASTKind::BinaryExpr)
+            {
+                const auto *binary = static_cast<const parser::v3::BinaryExpr *>(expr);
+                if (binary->op == parser::v3::BinaryOp::AND)
+                {
+                    const bool left = collectSimplePredicates(binary->left,
+                                                              pool,
+                                                              relations,
+                                                              predicates_out);
+                    const bool right = collectSimplePredicates(binary->right,
+                                                               pool,
+                                                               relations,
+                                                               predicates_out);
+                    return left || right;
+                }
+            }
+
+            ResolvedScanPredicate predicate;
+            if (!extractSimplePredicate(expr, pool, relations, predicate))
+            {
+                return false;
+            }
+            predicates_out.push_back(std::move(predicate));
+            return true;
+        }
+
         auto resolveTableLikeRelation(core::CatalogManager *catalog,
                                       StatisticsManager *stats_manager,
                                       const parser::v3::TableRefNode *table_ref,
@@ -542,14 +583,68 @@ namespace scratchbird::optimizer
 
             if (table_ref->ref_type != parser::v3::TableRefNode::Type::TABLE)
             {
+                if (table_ref->ref_type == parser::v3::TableRefNode::Type::SUBQUERY &&
+                    table_ref->subquery != nullptr &&
+                    table_ref->subquery->kind() == parser::v3::ASTKind::SelectStmt)
+                {
+                    const auto *subquery =
+                        static_cast<const parser::v3::SelectStmt *>(table_ref->subquery);
+                    const bool pass_through =
+                        subquery->with == nullptr &&
+                        !subquery->distinct &&
+                        !subquery->all &&
+                        subquery->joins.empty() &&
+                        subquery->where == nullptr &&
+                        subquery->group_by.empty() &&
+                        subquery->having == nullptr &&
+                        subquery->windows.empty() &&
+                        subquery->order_by.empty() &&
+                        subquery->limit == nullptr &&
+                        subquery->offset == nullptr &&
+                        subquery->set_op == parser::v3::SetOpType::NONE &&
+                        subquery->from != nullptr &&
+                        subquery->items.size() == 1 &&
+                        (subquery->items.front()->item_type == parser::v3::SelectItem::Type::STAR ||
+                         subquery->items.front()->item_type ==
+                             parser::v3::SelectItem::Type::TABLE_STAR);
+                    if (pass_through)
+                    {
+                        ResolvedRelation flattened;
+                        auto status = resolveTableLikeRelation(catalog,
+                                                               stats_manager,
+                                                               subquery->from,
+                                                               pool,
+                                                               conn_ctx,
+                                                               current_schema_id,
+                                                               relation_index,
+                                                               flattened);
+                        if (status == core::Status::OK && flattened.resolved)
+                        {
+                            relation_out = std::move(flattened);
+                            relation_out.table_ref = table_ref;
+                            relation_out.derived = false;
+                            relation_out.flattened_derived = true;
+                            relation_out.table_path =
+                                relation_out.alias.empty() ? "<derived>" : relation_out.alias;
+                            relation_out.physical_table_path =
+                                relation_out.physical_table_path.empty()
+                                    ? relation_out.table_path
+                                    : relation_out.physical_table_path;
+                            return core::Status::OK;
+                        }
+                    }
+                }
+
                 relation_out.derived = true;
                 relation_out.table_path = relation_out.alias.empty() ? "<derived>" : relation_out.alias;
+                relation_out.physical_table_path = relation_out.table_path;
                 relation_out.estimated_rows = 1000;
                 relation_out.estimated_pages = 10;
                 return core::Status::OK;
             }
 
             relation_out.table_path = renderSchemaPath(table_ref->table_path, pool);
+            relation_out.physical_table_path = relation_out.table_path;
             const std::string table_name =
                 table_ref->table_path.components.empty()
                     ? std::string()
@@ -645,15 +740,127 @@ namespace scratchbird::optimizer
             relation_out.table_info = table_info;
             relation_out.estimated_rows = table_info.row_count == 0 ? 1000 : table_info.row_count;
             relation_out.estimated_pages = std::max<uint64_t>(1, relation_out.estimated_rows / 100);
+            if (!resolved && catalog != nullptr)
+            {
+                core::CatalogManager::ViewInfo view_info;
+                for (const auto &schema_id : schema_candidates)
+                {
+                    if (catalog->getView(schema_id, table_name, view_info, nullptr) ==
+                        core::Status::OK)
+                    {
+                        resolved = true;
+                        relation_out.flattened_derived = true;
+                        relation_out.derived = false;
+                        relation_out.table_path = renderSchemaPath(table_ref->table_path, pool);
+                        relation_out.alias = relation_out.alias.empty()
+                            ? table_name
+                            : relation_out.alias;
+
+                        if (view_info.materialized &&
+                            view_info.materialized_table_id != core::ID{} &&
+                            catalog->getTable(view_info.materialized_table_id,
+                                              relation_out.table_info,
+                                              nullptr) == core::Status::OK)
+                        {
+                            relation_out.resolved = true;
+                            relation_out.physical_table_path = relation_out.table_info.table_name;
+                            (void)catalog->getColumns(relation_out.table_info.table_id,
+                                                      relation_out.columns,
+                                                      nullptr);
+                            (void)catalog->listIndexesForTable(relation_out.table_info.table_id,
+                                                               relation_out.indexes,
+                                                               nullptr);
+                            break;
+                        }
+
+                        parser::v3::Parser parser(view_info.definition);
+                        auto parse_result = parser.parseStatement();
+                        if (!parse_result.success() ||
+                            parse_result.statement() == nullptr ||
+                            parse_result.statement()->kind() != parser::v3::ASTKind::SelectStmt)
+                        {
+                            resolved = false;
+                            break;
+                        }
+
+                        const auto *view_select =
+                            static_cast<const parser::v3::SelectStmt *>(parse_result.statement());
+                        const bool pass_through =
+                            view_select->with == nullptr &&
+                            !view_select->distinct &&
+                            !view_select->all &&
+                            view_select->joins.empty() &&
+                            view_select->where == nullptr &&
+                            view_select->group_by.empty() &&
+                            view_select->having == nullptr &&
+                            view_select->windows.empty() &&
+                            view_select->order_by.empty() &&
+                            view_select->limit == nullptr &&
+                            view_select->offset == nullptr &&
+                            view_select->set_op == parser::v3::SetOpType::NONE &&
+                            view_select->from != nullptr &&
+                            view_select->items.size() == 1 &&
+                            (view_select->items.front()->item_type ==
+                                 parser::v3::SelectItem::Type::STAR ||
+                             view_select->items.front()->item_type ==
+                                 parser::v3::SelectItem::Type::TABLE_STAR);
+                        if (!pass_through)
+                        {
+                            resolved = false;
+                            break;
+                        }
+
+                        ResolvedRelation flattened;
+                        if (resolveTableLikeRelation(catalog,
+                                                     stats_manager,
+                                                     view_select->from,
+                                                     parser.stringPool(),
+                                                     conn_ctx,
+                                                     current_schema_id,
+                                                     relation_index,
+                                                     flattened) != core::Status::OK ||
+                            !flattened.resolved)
+                        {
+                            resolved = false;
+                            break;
+                        }
+
+                        relation_out = std::move(flattened);
+                        relation_out.source_relation_index = relation_index;
+                        relation_out.table_ref = table_ref;
+                        relation_out.alias = defaultAliasForTable(table_ref, pool);
+                        relation_out.table_path = renderSchemaPath(table_ref->table_path, pool);
+                        relation_out.physical_table_path =
+                            relation_out.physical_table_path.empty()
+                                ? relation_out.table_path
+                                : relation_out.physical_table_path;
+                        relation_out.flattened_derived = true;
+                        relation_out.derived = false;
+                        relation_out.resolved = true;
+                        break;
+                    }
+                }
+            }
+
             if (resolved)
             {
-                (void)catalog->getColumns(table_info.table_id, relation_out.columns, nullptr);
-                (void)catalog->listIndexesForTable(table_info.table_id, relation_out.indexes, nullptr);
+                if (isZeroId(relation_out.table_info.table_id))
+                {
+                    relation_out.table_info = table_info;
+                }
+                (void)catalog->getColumns(relation_out.table_info.table_id,
+                                          relation_out.columns,
+                                          nullptr);
+                (void)catalog->listIndexesForTable(relation_out.table_info.table_id,
+                                                   relation_out.indexes,
+                                                   nullptr);
 
                 if (stats_manager != nullptr)
                 {
                     TableStatistics stats;
-                    if (stats_manager->getTableStatistics(table_info.table_id, stats, nullptr) ==
+                    if (stats_manager->getTableStatistics(relation_out.table_info.table_id,
+                                                          stats,
+                                                          nullptr) ==
                         core::Status::OK)
                     {
                         relation_out.estimated_rows =
@@ -885,11 +1092,22 @@ namespace scratchbird::optimizer
 
         if (!out.contains_outer_join)
         {
-            ResolvedScanPredicate predicate;
-            if (extractSimplePredicate(stmt->where, pool, out.relations, predicate) &&
-                predicate.relation_index < out.relations.size())
+            std::vector<ResolvedScanPredicate> predicates;
+            if (collectSimplePredicates(stmt->where, pool, out.relations, predicates))
             {
-                out.relations[predicate.relation_index].local_predicate = predicate;
+                for (const auto &predicate : predicates)
+                {
+                    if (predicate.relation_index >= out.relations.size())
+                    {
+                        continue;
+                    }
+                    auto &relation = out.relations[predicate.relation_index];
+                    relation.local_predicates.push_back(predicate);
+                    if (!relation.local_predicate.has_value())
+                    {
+                        relation.local_predicate = predicate;
+                    }
+                }
             }
         }
 

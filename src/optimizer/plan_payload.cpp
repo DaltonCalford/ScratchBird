@@ -11,22 +11,43 @@ namespace scratchbird::optimizer
             nlohmann::json out;
             out["source_relation_index"] = relation.source_relation_index;
             out["table_path"] = relation.table_path;
+            out["physical_table_path"] = relation.physical_table_path;
             out["alias"] = relation.alias;
             out["table_id_text"] = relation.table_id_text;
             out["scan_kind"] = relation.scan_kind;
             out["index_name"] = relation.index_name;
             out["index_id_text"] = relation.index_id_text;
+            out["bitmap_op"] = relation.bitmap_op;
+            out["covering_index"] = relation.covering_index;
+            out["exact_key_lookup"] = relation.exact_key_lookup;
+            out["flattened_derived"] = relation.flattened_derived;
             out["startup_cost"] = relation.startup_cost;
             out["total_cost"] = relation.total_cost;
             out["estimated_rows"] = relation.estimated_rows;
 
             nlohmann::json predicate;
             predicate["valid"] = relation.index_predicate.valid;
+            predicate["index_name"] = relation.index_predicate.index_name;
+            predicate["index_id_text"] = relation.index_predicate.index_id_text;
             predicate["column_name"] = relation.index_predicate.column_name;
             predicate["operator_name"] = relation.index_predicate.operator_name;
             predicate["literal_kind"] = relation.index_predicate.literal_kind;
             predicate["literal_text"] = relation.index_predicate.literal_text;
             out["index_predicate"] = std::move(predicate);
+
+            out["index_predicates"] = nlohmann::json::array();
+            for (const auto &entry : relation.index_predicates)
+            {
+                nlohmann::json pred;
+                pred["valid"] = entry.valid;
+                pred["index_name"] = entry.index_name;
+                pred["index_id_text"] = entry.index_id_text;
+                pred["column_name"] = entry.column_name;
+                pred["operator_name"] = entry.operator_name;
+                pred["literal_kind"] = entry.literal_kind;
+                pred["literal_text"] = entry.literal_text;
+                out["index_predicates"].push_back(std::move(pred));
+            }
             return out;
         }
 
@@ -42,11 +63,17 @@ namespace scratchbird::optimizer
 
             relation_out.source_relation_index = json_in.value("source_relation_index", 0U);
             relation_out.table_path = json_in.value("table_path", std::string());
+            relation_out.physical_table_path =
+                json_in.value("physical_table_path", std::string());
             relation_out.alias = json_in.value("alias", std::string());
             relation_out.table_id_text = json_in.value("table_id_text", std::string());
             relation_out.scan_kind = json_in.value("scan_kind", std::string());
             relation_out.index_name = json_in.value("index_name", std::string());
             relation_out.index_id_text = json_in.value("index_id_text", std::string());
+            relation_out.bitmap_op = json_in.value("bitmap_op", std::string());
+            relation_out.covering_index = json_in.value("covering_index", false);
+            relation_out.exact_key_lookup = json_in.value("exact_key_lookup", false);
+            relation_out.flattened_derived = json_in.value("flattened_derived", false);
             relation_out.startup_cost = json_in.value("startup_cost", 0.0);
             relation_out.total_cost = json_in.value("total_cost", 0.0);
             relation_out.estimated_rows = json_in.value("estimated_rows", 0ULL);
@@ -55,6 +82,10 @@ namespace scratchbird::optimizer
             if (predicate_it != json_in.end() && predicate_it->is_object())
             {
                 relation_out.index_predicate.valid = predicate_it->value("valid", false);
+                relation_out.index_predicate.index_name =
+                    predicate_it->value("index_name", std::string());
+                relation_out.index_predicate.index_id_text =
+                    predicate_it->value("index_id_text", std::string());
                 relation_out.index_predicate.column_name =
                     predicate_it->value("column_name", std::string());
                 relation_out.index_predicate.operator_name =
@@ -63,6 +94,28 @@ namespace scratchbird::optimizer
                     predicate_it->value("literal_kind", std::string());
                 relation_out.index_predicate.literal_text =
                     predicate_it->value("literal_text", std::string());
+            }
+
+            relation_out.index_predicates.clear();
+            const auto preds_it = json_in.find("index_predicates");
+            if (preds_it != json_in.end() && preds_it->is_array())
+            {
+                for (const auto &entry : *preds_it)
+                {
+                    if (!entry.is_object())
+                    {
+                        continue;
+                    }
+                    RuntimePlanIndexPredicate pred;
+                    pred.valid = entry.value("valid", false);
+                    pred.index_name = entry.value("index_name", std::string());
+                    pred.index_id_text = entry.value("index_id_text", std::string());
+                    pred.column_name = entry.value("column_name", std::string());
+                    pred.operator_name = entry.value("operator_name", std::string());
+                    pred.literal_kind = entry.value("literal_kind", std::string());
+                    pred.literal_text = entry.value("literal_text", std::string());
+                    relation_out.index_predicates.push_back(std::move(pred));
+                }
             }
             return true;
         }
@@ -157,6 +210,7 @@ namespace scratchbird::optimizer
             out["join_type"] = node.join_type;
             out["condition_text"] = node.condition_text;
             out["index_name"] = node.index_name;
+            out["detail_text"] = node.detail_text;
             out["startup_cost"] = node.startup_cost;
             out["total_cost"] = node.total_cost;
             out["estimated_rows"] = node.estimated_rows;
@@ -184,6 +238,7 @@ namespace scratchbird::optimizer
             node_out.join_type = json_in.value("join_type", std::string());
             node_out.condition_text = json_in.value("condition_text", std::string());
             node_out.index_name = json_in.value("index_name", std::string());
+            node_out.detail_text = json_in.value("detail_text", std::string());
             node_out.startup_cost = json_in.value("startup_cost", 0.0);
             node_out.total_cost = json_in.value("total_cost", 0.0);
             node_out.estimated_rows = json_in.value("estimated_rows", 0ULL);

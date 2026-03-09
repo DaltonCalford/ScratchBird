@@ -83,6 +83,32 @@ namespace scratchbird::core
         stats->idx_rows_fetch.fetch_add(count, std::memory_order_relaxed);
     }
 
+    void TableStatsManager::recordAnalyze(const ID& table_id,
+                                          bool automatic,
+                                          uint64_t duration_ms)
+    {
+        if (isZeroId(table_id))
+        {
+            return;
+        }
+
+        auto stats = getOrCreate(table_id);
+        const int64_t now = static_cast<int64_t>(nowMicros());
+        stats->mod_since_analyze.store(0, std::memory_order_relaxed);
+        if (automatic)
+        {
+            stats->last_autoanalyze_at.store(now, std::memory_order_relaxed);
+            stats->autoanalyze_count.fetch_add(1, std::memory_order_relaxed);
+            stats->total_autoanalyze_time_ms.fetch_add(duration_ms, std::memory_order_relaxed);
+        }
+        else
+        {
+            stats->last_analyze_at.store(now, std::memory_order_relaxed);
+            stats->analyze_count.fetch_add(1, std::memory_order_relaxed);
+            stats->total_analyze_time_ms.fetch_add(duration_ms, std::memory_order_relaxed);
+        }
+    }
+
     void TableStatsManager::applyCommittedDelta(const ID& table_id, const TableDmlDelta& delta)
     {
         if (isZeroId(table_id) || delta.empty())
@@ -169,6 +195,57 @@ namespace scratchbird::core
         }
 
         return out;
+    }
+
+    auto TableStatsManager::snapshotForTable(const ID& table_id,
+                                             TableStatsSnapshot& out) const -> bool
+    {
+        if (isZeroId(table_id))
+        {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = stats_.find(table_id);
+        if (it == stats_.end() || !it->second)
+        {
+            return false;
+        }
+
+        const auto& stats_ptr = it->second;
+        out = TableStatsSnapshot{};
+        out.table_id = table_id;
+        out.seq_scan_count = stats_ptr->seq_scan_count.load(std::memory_order_relaxed);
+        out.last_seq_scan_at = stats_ptr->last_seq_scan_at.load(std::memory_order_relaxed);
+        out.seq_rows_read = stats_ptr->seq_rows_read.load(std::memory_order_relaxed);
+        out.idx_scan_count = stats_ptr->idx_scan_count.load(std::memory_order_relaxed);
+        out.last_idx_scan_at = stats_ptr->last_idx_scan_at.load(std::memory_order_relaxed);
+        out.idx_rows_fetch = stats_ptr->idx_rows_fetch.load(std::memory_order_relaxed);
+        out.rows_inserted = stats_ptr->rows_inserted.load(std::memory_order_relaxed);
+        out.rows_updated = stats_ptr->rows_updated.load(std::memory_order_relaxed);
+        out.rows_deleted = stats_ptr->rows_deleted.load(std::memory_order_relaxed);
+        out.rows_hot_updated = stats_ptr->rows_hot_updated.load(std::memory_order_relaxed);
+        out.rows_newpage_updated = stats_ptr->rows_newpage_updated.load(std::memory_order_relaxed);
+        out.live_rows_estimate = stats_ptr->live_rows_estimate.load(std::memory_order_relaxed);
+        out.dead_rows_estimate = stats_ptr->dead_rows_estimate.load(std::memory_order_relaxed);
+        out.mod_since_analyze = stats_ptr->mod_since_analyze.load(std::memory_order_relaxed);
+        out.ins_since_vacuum = stats_ptr->ins_since_vacuum.load(std::memory_order_relaxed);
+        out.last_vacuum_at = stats_ptr->last_vacuum_at.load(std::memory_order_relaxed);
+        out.last_autovacuum_at = stats_ptr->last_autovacuum_at.load(std::memory_order_relaxed);
+        out.last_analyze_at = stats_ptr->last_analyze_at.load(std::memory_order_relaxed);
+        out.last_autoanalyze_at = stats_ptr->last_autoanalyze_at.load(std::memory_order_relaxed);
+        out.vacuum_count = stats_ptr->vacuum_count.load(std::memory_order_relaxed);
+        out.autovacuum_count = stats_ptr->autovacuum_count.load(std::memory_order_relaxed);
+        out.analyze_count = stats_ptr->analyze_count.load(std::memory_order_relaxed);
+        out.autoanalyze_count = stats_ptr->autoanalyze_count.load(std::memory_order_relaxed);
+        out.total_vacuum_time_ms = stats_ptr->total_vacuum_time_ms.load(std::memory_order_relaxed);
+        out.total_autovacuum_time_ms =
+            stats_ptr->total_autovacuum_time_ms.load(std::memory_order_relaxed);
+        out.total_analyze_time_ms =
+            stats_ptr->total_analyze_time_ms.load(std::memory_order_relaxed);
+        out.total_autoanalyze_time_ms =
+            stats_ptr->total_autoanalyze_time_ms.load(std::memory_order_relaxed);
+        return true;
     }
 
     std::shared_ptr<TableStatsManager::TableStats> TableStatsManager::getOrCreate(const ID& table_id)

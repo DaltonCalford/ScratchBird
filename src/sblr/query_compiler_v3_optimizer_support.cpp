@@ -276,6 +276,17 @@ namespace scratchbird::sblr::detail
                 return false;
             }
 
+            for (size_t relation_index = 0; relation_index < relation_refs.size(); ++relation_index)
+            {
+                auto *relation_obj =
+                    std::get_if<sblr::v3::Value::Object>(&relation_refs[relation_index].data);
+                if (relation_obj != nullptr)
+                {
+                    (*relation_obj)["source_relation_index"] =
+                        sblr::v3::Value(static_cast<uint64_t>(relation_index));
+                }
+            }
+
             const size_t first_relation_index = runtime_plan.relations.front().source_relation_index;
             if (first_relation_index >= relation_refs.size())
             {

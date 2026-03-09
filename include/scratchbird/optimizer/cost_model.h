@@ -138,6 +138,35 @@ namespace scratchbird::optimizer
             -> CostEstimate;
 
         /**
+         * costIndexOnlyScan - Estimate cost of covering index scan
+         *
+         * Similar to costIndexScan, but avoids heap fetches because every
+         * required value can be read directly from the index payload.
+         */
+        auto costIndexOnlyScan(uint64_t index_height,
+                               uint64_t index_pages,
+                               uint64_t index_tuples,
+                               double qual_cost,
+                               double correlation = 0.0,
+                               core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costBitmapScan - Estimate cost of bitmap index scan
+         *
+         * Combines multiple index probes, materializes a bitmap of tuple IDs,
+         * then visits heap pages in physical order.
+         */
+        auto costBitmapScan(uint64_t num_indexes,
+                            uint64_t total_index_pages,
+                            uint64_t heap_pages,
+                            uint64_t heap_tuples,
+                            double qual_cost,
+                            const std::string &bitmap_op = "AND",
+                            core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
          * costLSMScan - Estimate cost of LSM-Tree index scan
          *
          * LSM-Tree characteristics:
@@ -351,6 +380,20 @@ namespace scratchbird::optimizer
                       int64_t limit_count,
                       int64_t offset_count,
                       core::ErrorContext* ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costWindow - Estimate cost of window function evaluation
+         *
+         * Accounts for required partition/order sorting plus per-row window
+         * state maintenance.
+         */
+        auto costWindow(uint64_t input_rows,
+                        uint64_t row_width,
+                        uint64_t num_partition_keys,
+                        uint64_t num_order_keys,
+                        uint64_t num_window_functions,
+                        core::ErrorContext *ctx = nullptr)
             -> CostEstimate;
 
         /**

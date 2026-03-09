@@ -40,9 +40,11 @@ namespace scratchbird::optimizer
     {
         size_t source_relation_index = 0;
         std::string table_path;
+        std::string physical_table_path;
         std::string alias;
         bool resolved = false;
         bool derived = false;
+        bool flattened_derived = false;
         const parser::v3::TableRefNode *table_ref = nullptr;
         core::CatalogManager::TableInfo table_info{};
         std::vector<core::CatalogManager::ColumnInfo> columns;
@@ -50,6 +52,8 @@ namespace scratchbird::optimizer
         uint64_t estimated_rows = 1000;
         uint64_t estimated_pages = 10;
         std::optional<ResolvedScanPredicate> local_predicate;
+        std::vector<ResolvedScanPredicate> local_predicates;
+        std::string predicate_combination = "AND";
     };
 
     struct ResolvedJoin

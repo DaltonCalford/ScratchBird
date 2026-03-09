@@ -28,24 +28,35 @@ TEST(CostModelTest, AccessMethodCostsProduceDeterministicOutputs)
     const auto seq = model.costSeqScan(32, 3200, model.operatorCost("="));
     const auto index =
         model.costIndexScan(3, 4, 80, 8, 80, model.operatorCost("="), 0.9);
+    const auto index_only =
+        model.costIndexOnlyScan(3, 4, 80, model.operatorCost("="), 0.9);
+    const auto bitmap =
+        model.costBitmapScan(2, 6, 4, 80, model.operatorCost("="), "AND");
     const auto lsm = model.costLSMScan(3, 2, 80, 8, 80, model.operatorCost("="), 0.1);
     const auto aggregate = model.costAggregate(3200, 16, 2);
     const auto sort = model.costSort(3200, 64, 2);
     const auto limit = model.costLimit(3200, 25, 10);
+    const auto window = model.costWindow(3200, 64, 1, 1, 2);
 
     EXPECT_EQ(seq.rows, 3200u);
     EXPECT_EQ(index.rows, 80u);
+    EXPECT_EQ(index_only.rows, 80u);
+    EXPECT_EQ(bitmap.rows, 80u);
     EXPECT_EQ(lsm.rows, 80u);
     EXPECT_EQ(aggregate.rows, 16u);
     EXPECT_EQ(sort.rows, 3200u);
     EXPECT_EQ(limit.rows, 25u);
+    EXPECT_EQ(window.rows, 3200u);
 
     EXPECT_GT(seq.total_cost, 0.0);
     EXPECT_GT(index.total_cost, seq.startup_cost);
+    EXPECT_LT(index_only.total_cost, index.total_cost);
+    EXPECT_GT(bitmap.total_cost, 0.0);
     EXPECT_GT(lsm.total_cost, 0.0);
     EXPECT_GT(aggregate.total_cost, 0.0);
     EXPECT_GT(sort.total_cost, aggregate.total_cost);
     EXPECT_GT(limit.total_cost, 0.0);
+    EXPECT_GT(window.total_cost, 0.0);
 }
 
 TEST(CostModelTest, EffectiveRandomPageCostUsesCacheModel)

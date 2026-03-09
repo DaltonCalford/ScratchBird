@@ -122,6 +122,84 @@ namespace scratchbird::optimizer
         return cost;
     }
 
+    auto CostModel::costIndexOnlyScan(uint64_t index_height,
+                                      uint64_t index_pages,
+                                      uint64_t index_tuples,
+                                      double qual_cost,
+                                      double correlation,
+                                      core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating index-only scan cost: index_height=" +
+                     std::to_string(index_height) +
+                     ", index_pages=" + std::to_string(index_pages) +
+                     ", index_tuples=" + std::to_string(index_tuples) +
+                     ", correlation=" + std::to_string(correlation));
+
+        CostEstimate cost;
+        cost.startup_cost = static_cast<double>(index_height) * params_.cpu_operator_cost;
+
+        const double locality_discount =
+            std::abs(correlation) > 0.8 ? 0.65 : (std::abs(correlation) > 0.4 ? 0.8 : 1.0);
+        const double index_io_cost =
+            static_cast<double>(index_pages) * params_.random_page_cost * locality_discount;
+        const double index_cpu_cost =
+            static_cast<double>(index_tuples) * params_.cpu_index_tuple_cost;
+        const double visibility_cost =
+            static_cast<double>(index_tuples) * params_.cpu_tuple_cost * 0.25;
+        const double qual_cpu_cost =
+            static_cast<double>(index_tuples) * qual_cost;
+
+        cost.run_cost = index_io_cost + index_cpu_cost + visibility_cost + qual_cpu_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = index_tuples;
+        return cost;
+    }
+
+    auto CostModel::costBitmapScan(uint64_t num_indexes,
+                                   uint64_t total_index_pages,
+                                   uint64_t heap_pages,
+                                   uint64_t heap_tuples,
+                                   double qual_cost,
+                                   const std::string &bitmap_op,
+                                   core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating bitmap scan cost: indexes=" + std::to_string(num_indexes) +
+                     ", total_index_pages=" + std::to_string(total_index_pages) +
+                     ", heap_pages=" + std::to_string(heap_pages) +
+                     ", tuples=" + std::to_string(heap_tuples) +
+                     ", bitmap_op=" + bitmap_op);
+
+        CostEstimate cost;
+        const double bitmap_build_cost =
+            static_cast<double>(heap_tuples) *
+            (params_.cpu_index_tuple_cost + params_.cpu_operator_cost * 0.5);
+        const double bitmap_merge_cost =
+            static_cast<double>(std::max<uint64_t>(1, num_indexes - 1)) *
+            static_cast<double>(heap_tuples) * params_.cpu_operator_cost * 0.35;
+
+        cost.startup_cost = bitmap_build_cost + bitmap_merge_cost;
+
+        const double index_io_cost =
+            static_cast<double>(total_index_pages) * params_.random_page_cost;
+        const double heap_io_cost =
+            static_cast<double>(heap_pages) *
+            std::min(params_.random_page_cost,
+                     params_.seq_page_cost + effectiveRandomPageCost(heap_pages) * 0.5);
+        const double qual_cpu_cost =
+            static_cast<double>(heap_tuples) * (params_.cpu_tuple_cost + qual_cost);
+
+        cost.run_cost = index_io_cost + heap_io_cost + qual_cpu_cost;
+        if (bitmap_op == "OR")
+        {
+            cost.run_cost *= 1.08;
+        }
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = heap_tuples;
+        return cost;
+    }
+
     auto CostModel::costLSMScan(uint64_t num_levels, uint64_t avg_sstables_per_level,
                                  uint64_t index_tuples, uint64_t heap_pages,
                                  uint64_t heap_tuples, double qual_cost,
@@ -657,6 +735,53 @@ namespace scratchbird::optimizer
                      ", output_rows=" + std::to_string(cost.rows) +
                      " (offset_rows=" + std::to_string(offset) + ")");
 
+        return cost;
+    }
+
+    auto CostModel::costWindow(uint64_t input_rows,
+                               uint64_t row_width,
+                               uint64_t num_partition_keys,
+                               uint64_t num_order_keys,
+                               uint64_t num_window_functions,
+                               core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating window cost: input_rows=" + std::to_string(input_rows) +
+                     ", row_width=" + std::to_string(row_width) +
+                     ", partition_keys=" + std::to_string(num_partition_keys) +
+                     ", order_keys=" + std::to_string(num_order_keys) +
+                     ", funcs=" + std::to_string(num_window_functions));
+
+        CostEstimate cost;
+        if (input_rows == 0)
+        {
+            return cost;
+        }
+
+        const bool requires_sort = num_partition_keys > 0 || num_order_keys > 0;
+        double sort_cost = 0.0;
+        if (requires_sort)
+        {
+            const auto sort = costSort(input_rows,
+                                       row_width,
+                                       std::max<uint64_t>(1, num_partition_keys + num_order_keys),
+                                       ctx);
+            sort_cost = sort.total_cost;
+        }
+
+        const double partition_cpu =
+            static_cast<double>(input_rows) *
+            static_cast<double>(std::max<uint64_t>(1, num_partition_keys)) *
+            params_.cpu_operator_cost * 0.5;
+        const double function_cpu =
+            static_cast<double>(input_rows) *
+            static_cast<double>(std::max<uint64_t>(1, num_window_functions)) *
+            (params_.cpu_operator_cost + params_.cpu_tuple_cost * 0.5);
+
+        cost.startup_cost = sort_cost;
+        cost.run_cost = partition_cpu + function_cpu;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = input_rows;
         return cost;
     }
 

@@ -538,7 +538,209 @@ TEST_F(QueryPlannerIntegrationTest, ExplainJsonFormatsRuntimePlan)
     EXPECT_NE(lines.front().find("\"options\":["), std::string::npos);
     EXPECT_NE(lines.front().find("\"VERBOSE\""), std::string::npos);
     EXPECT_NE(lines.front().find("\"plan\":"), std::string::npos);
+    EXPECT_NE(lines.front().find("\"plan_root\":"), std::string::npos);
+    EXPECT_NE(lines.front().find("\"node_type\":\""), std::string::npos);
     EXPECT_NE(lines.front().find("\"analyze\":{\"rows\":"), std::string::npos);
+}
+
+TEST_F(QueryPlannerIntegrationTest, ReorderedJoinPayloadKeepsOriginalRelationIndexes)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_id ON users (id)").success());
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_products_id ON products (id)").success());
+    for (int i = 1; i <= 256; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" + std::to_string(i) +
+                               "', 'u" + std::to_string(i) +
+                               "@example.com', " + std::to_string(20 + (i % 30)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("INSERT INTO products (id, name, price) VALUES (42, 'widget', 12.5)")
+                    .success());
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(executeSQL("ANALYZE products").success());
+
+    const std::string sql =
+        "SELECT users.id FROM users JOIN products ON users.id = products.id "
+        "WHERE products.id = 42";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 2u);
+    ASSERT_EQ(plan.join_steps.size(), 1u);
+    EXPECT_EQ(plan.relations.front().source_relation_index, 1u);
+
+    sblr_v3::Instruction select_inst;
+    ASSERT_TRUE(decodeFirstSelect(bytecode, select_inst));
+    const auto* select_payload = std::get_if<sblr_v3::Value::Object>(&select_inst.payload.data);
+    ASSERT_NE(select_payload, nullptr);
+    auto from_it = select_payload->find("from");
+    ASSERT_NE(from_it, select_payload->end());
+    const auto* from_obj = std::get_if<sblr_v3::Value::Object>(&from_it->second.data);
+    ASSERT_NE(from_obj, nullptr);
+    auto relation_index_it = from_obj->find("source_relation_index");
+    ASSERT_NE(relation_index_it, from_obj->end());
+    const auto* relation_index = std::get_if<uint64_t>(&relation_index_it->second.data);
+    ASSERT_NE(relation_index, nullptr);
+    EXPECT_EQ(*relation_index, 1u);
+
+    auto result = executeSQL(sql);
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    const auto rows = resultStrings(result);
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows.front(), "42");
+}
+
+TEST_F(QueryPlannerIntegrationTest, CoveringIndexPlanUsesIndexOnlyScan)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_id_name ON users (id, name)").success());
+    for (int i = 1; i <= 1200; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" + std::to_string(i) +
+                               "', 'user" + std::to_string(i) +
+                               "@example.com', " + std::to_string(20 + (i % 40)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT id, name FROM users WHERE id = 777");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_EQ(plan.relations.front().scan_kind, "INDEX_ONLY_SCAN");
+    EXPECT_TRUE(plan.relations.front().covering_index);
+    EXPECT_TRUE(plan.relations.front().exact_key_lookup);
+    EXPECT_EQ(plan.relations.front().index_name, "idx_users_id_name");
+
+    auto result = executeSQL("SELECT id, name FROM users WHERE id = 777");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "777");
+    EXPECT_EQ(result.resultSet()->getValue(0, 1).toString(), "user777");
+}
+
+TEST_F(QueryPlannerIntegrationTest, BitmapIndexPlanExecutesExactProbes)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE search_users (id INTEGER, age INTEGER, city VARCHAR(64), cohort VARCHAR(32))")
+                    .success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON search_users TO PUBLIC").success());
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_search_users_age ON search_users (age)").success());
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_search_users_city ON search_users (city)").success());
+    for (int i = 1; i <= 1600; ++i)
+    {
+        const int age = 20 + (i % 8);
+        const std::string city = (i % 4 == 0) ? "Seattle" :
+                                 (i % 4 == 1) ? "Austin" :
+                                 (i % 4 == 2) ? "Boston" : "Denver";
+        ASSERT_TRUE(executeSQL("INSERT INTO search_users (id, age, city, cohort) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(age) + ", '" +
+                               city + "', 'c" + std::to_string(i % 5) + "')")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO search_users (id, age, city, cohort) VALUES (9001, 30, 'Seattle', 'target')")
+                    .success());
+    ASSERT_TRUE(executeSQL("ANALYZE search_users").success());
+
+    auto bytecode =
+        compileSQL("SELECT id FROM search_users WHERE age = 30 AND city = 'Seattle'");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_EQ(plan.relations.front().scan_kind, "BITMAP_INDEX_SCAN");
+    EXPECT_EQ(plan.relations.front().bitmap_op, "AND");
+    EXPECT_TRUE(plan.relations.front().exact_key_lookup);
+    ASSERT_GE(plan.relations.front().index_predicates.size(), 2u);
+
+    auto result =
+        executeSQL("SELECT id FROM search_users WHERE age = 30 AND city = 'Seattle'");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto rows = resultStrings(result);
+    ASSERT_FALSE(rows.empty());
+    EXPECT_NE(std::find(rows.begin(), rows.end(), "9001"), rows.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest, PassThroughViewIsFlattenedInRuntimePlan)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE VIEW v_users_flat AS SELECT * FROM users").success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES (42, 'flattened', 'f@example.com', 25)")
+                    .success());
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_id ON users (id)").success());
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT id FROM v_users_flat WHERE id = 42");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_TRUE(plan.relations.front().flattened_derived);
+    EXPECT_FALSE(plan.relations.front().physical_table_path.empty());
+    EXPECT_EQ(plan.relations.front().physical_table_path, "users");
+
+    auto result = executeSQL("SELECT id FROM v_users_flat WHERE id = 42");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "42");
+}
+
+TEST_F(QueryPlannerIntegrationTest, RuntimePlanCapturesAggregateWindowSortAndLimitNodes)
+{
+    ASSERT_TRUE(createDatabase());
+
+    for (int i = 1; i <= 128; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'window" + std::to_string(i) +
+                               "', 'window" + std::to_string(i) +
+                               "@example.com', " + std::to_string(18 + (i % 10)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto aggregate_bytecode = compileSQL("SELECT COUNT(*) FROM users");
+    ASSERT_FALSE(aggregate_bytecode.empty()) << last_compile_errors_;
+    scratchbird::optimizer::RuntimePlan aggregate_plan;
+    ASSERT_TRUE(decodeRuntimePlan(aggregate_bytecode, aggregate_plan));
+    EXPECT_EQ(aggregate_plan.root.node_type, "Aggregate");
+
+    auto window_bytecode =
+        compileSQL("SELECT ROW_NUMBER() OVER (ORDER BY id) FROM users");
+    ASSERT_FALSE(window_bytecode.empty()) << last_compile_errors_;
+    scratchbird::optimizer::RuntimePlan window_plan;
+    ASSERT_TRUE(decodeRuntimePlan(window_bytecode, window_plan));
+    EXPECT_EQ(window_plan.root.node_type, "Window");
+
+    auto ordered_bytecode =
+        compileSQL("SELECT id FROM users ORDER BY id DESC LIMIT 5");
+    ASSERT_FALSE(ordered_bytecode.empty()) << last_compile_errors_;
+    scratchbird::optimizer::RuntimePlan ordered_plan;
+    ASSERT_TRUE(decodeRuntimePlan(ordered_bytecode, ordered_plan));
+    EXPECT_EQ(ordered_plan.root.node_type, "Limit");
+    ASSERT_EQ(ordered_plan.root.children.size(), 1u);
+    EXPECT_EQ(ordered_plan.root.children.front().node_type, "Sort");
 }
 
 TEST_F(QueryPlannerIntegrationTest, BytecodeContainsVersionHeader)

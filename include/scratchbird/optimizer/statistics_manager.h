@@ -123,6 +123,17 @@ namespace scratchbird::optimizer
         auto getTableStatistics(const ID &table_id, TableStatistics &stats,
                                 ErrorContext *ctx = nullptr) -> Status;
 
+        auto getColumnCorrelation(const ID &table_id,
+                                  const ID &left_column_id,
+                                  const ID &right_column_id,
+                                  ColumnCorrelationStatistics &stats_out,
+                                  ErrorContext *ctx = nullptr) -> Status;
+
+        auto getExpressionStatistics(const ID &table_id,
+                                     const std::string &expression_key,
+                                     ExpressionStatistics &stats_out,
+                                     ErrorContext *ctx = nullptr) -> Status;
+
         /**
          * dropStatistics - Remove statistics for a table
          *
@@ -164,6 +175,8 @@ namespace scratchbird::optimizer
         // Statistics cache (table_id + column_id -> ColumnStatistics)
         std::unordered_map<uint64_t, ColumnStatistics> column_stats_cache_;
         std::unordered_map<uint64_t, TableStatistics> table_stats_cache_;
+        std::unordered_map<std::string, ColumnCorrelationStatistics> correlation_stats_cache_;
+        std::unordered_map<std::string, ExpressionStatistics> expression_stats_cache_;
         mutable std::mutex cache_mutex_;
 
         /**
@@ -186,6 +199,11 @@ namespace scratchbird::optimizer
         auto sampleTable(const ID &table_id, uint64_t sample_size,
                          std::vector<std::vector<uint8_t>> &sample_rows,
                          ErrorContext *ctx = nullptr) -> Status;
+
+        auto analyzeTableInternal(const ID &table_id,
+                                  float sample_rate,
+                                  bool automatic,
+                                  ErrorContext *ctx = nullptr) -> Status;
 
         /**
          * computeColumnStats - Compute statistics for a column from sample
@@ -299,6 +317,31 @@ namespace scratchbird::optimizer
          */
         static auto getCacheKey(const ID &table_id, const ID &column_id) -> uint64_t;
 
+        auto getCorrelationCacheKey(const ID &table_id,
+                                    const ID &left_column_id,
+                                    const ID &right_column_id) const -> std::string;
+
+        auto getExpressionCacheKey(const ID &table_id,
+                                   const std::string &expression_key) const -> std::string;
+
+        static auto makeSyntheticStatisticId(const ID &table_id,
+                                             const std::string &kind,
+                                             const std::string &key) -> ID;
+
+        static auto makeCorrelationStatisticKey(const ID &left_column_id,
+                                                const ID &right_column_id) -> std::string;
+
+        auto storeCorrelationStatistic(const ColumnCorrelationStatistics &stats,
+                                       ErrorContext *ctx = nullptr) -> Status;
+
+        auto loadCorrelationStatistic(const ID &table_id,
+                                      const ID &left_column_id,
+                                      const ID &right_column_id,
+                                      ColumnCorrelationStatistics &stats_out,
+                                      ErrorContext *ctx = nullptr) -> Status;
+
+        auto maybeAutoAnalyze(const ID &table_id, ErrorContext *ctx = nullptr) -> Status;
+
         /**
          * extractColumnValues - Extract values for a specific column from sample rows
          *
@@ -308,6 +351,20 @@ namespace scratchbird::optimizer
                                 const std::vector<std::vector<uint8_t>> &sample_rows,
                                 const std::vector<core::CatalogManager::ColumnInfo> &columns,
                                 ErrorContext *ctx = nullptr) -> std::vector<std::vector<uint8_t>>;
+
+        auto computeCorrelationStatistics(
+            const ID &table_id,
+            const std::vector<core::CatalogManager::ColumnInfo> &columns,
+            const std::vector<std::vector<uint8_t>> &sample_rows,
+            uint64_t analyzed_time,
+            ErrorContext *ctx = nullptr) -> void;
+
+        auto computeExpressionStatistics(
+            const ID &table_id,
+            const std::vector<core::CatalogManager::ColumnInfo> &columns,
+            const std::vector<std::vector<uint8_t>> &sample_rows,
+            uint64_t analyzed_time,
+            ErrorContext *ctx = nullptr) -> void;
     };
 
 } // namespace scratchbird::optimizer

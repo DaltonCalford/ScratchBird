@@ -20,6 +20,7 @@
 #include <exception>
 #include <functional>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <thread>
@@ -49566,7 +49567,8 @@ namespace scratchbird
                                    std::string& table_path_out,
                                    std::string& alias_out,
                                    std::optional<scratchbird::sblr::v3::Instruction>* query_out = nullptr,
-                                   std::optional<scratchbird::sblr::v3::Instruction>* function_out = nullptr) -> bool {
+                                   std::optional<scratchbird::sblr::v3::Instruction>* function_out = nullptr,
+                                   size_t* source_relation_index_out = nullptr) -> bool {
                 const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data);
                 if (!obj)
                 {
@@ -49574,6 +49576,15 @@ namespace scratchbird
                 }
                 table_path_out.clear();
                 alias_out.clear();
+                if (source_relation_index_out != nullptr)
+                {
+                    *source_relation_index_out = std::numeric_limits<size_t>::max();
+                    uint64_t relation_index = 0;
+                    if (getU64(*obj, "source_relation_index", relation_index))
+                    {
+                        *source_relation_index_out = static_cast<size_t>(relation_index);
+                    }
+                }
                 auto it_path = obj->find("table_path");
                 if (it_path != obj->end())
                 {
@@ -59391,15 +59402,48 @@ namespace scratchbird
                             return core::IdentifierUtils::toUpper(name);
                         };
 
+                        auto findRuntimeRelation =
+                            [&](size_t source_relation_index)
+                                -> const optimizer::RuntimePlanRelation* {
+                                if (!has_runtime_plan)
+                                {
+                                    return nullptr;
+                                }
+                                for (const auto& relation : runtime_plan.relations)
+                                {
+                                    if (relation.source_relation_index == source_relation_index)
+                                    {
+                                        return &relation;
+                                    }
+                                }
+                                return nullptr;
+                            };
+
                         auto loadTable = [&](const std::string& path,
                                              const std::string& alias,
                                              const std::optional<scratchbird::sblr::v3::Instruction>& query,
                                              const std::optional<scratchbird::sblr::v3::Instruction>& function,
+                                             size_t source_relation_index,
                                              TableData& out) -> ExecutionResult {
-                            const std::string display_name = path.empty() ? "<derived>" : path;
-                            if (query.has_value())
+                            const optimizer::RuntimePlanRelation* runtime_relation =
+                                findRuntimeRelation(source_relation_index);
+                            std::string access_path = path;
+                            std::optional<scratchbird::sblr::v3::Instruction> effective_query = query;
+                            std::optional<scratchbird::sblr::v3::Instruction> effective_function = function;
+                            if (runtime_relation != nullptr &&
+                                runtime_relation->flattened_derived &&
+                                !runtime_relation->physical_table_path.empty())
                             {
-                                auto query_res = execStmt(*query);
+                                access_path = runtime_relation->physical_table_path;
+                                effective_query.reset();
+                                effective_function.reset();
+                            }
+
+                            const std::string display_name =
+                                access_path.empty() ? "<derived>" : access_path;
+                            if (effective_query.has_value())
+                            {
+                                auto query_res = execStmt(*effective_query);
                                 if (!query_res.success())
                                 {
                                     return query_res;
@@ -59437,7 +59481,7 @@ namespace scratchbird
                                 return ExecutionResult();
                             }
 
-                            if (function.has_value())
+                            if (effective_function.has_value())
                             {
                                 TableData function_table;
                                 function_table.info.table_name = display_name;
@@ -59455,7 +59499,7 @@ namespace scratchbird
                                 std::string function_name;
                                 std::vector<Value> function_args;
                                 const auto* fobj =
-                                    std::get_if<scratchbird::sblr::v3::Value::Object>(&function->payload.data);
+                                    std::get_if<scratchbird::sblr::v3::Value::Object>(&effective_function->payload.data);
                                 if (fobj)
                                 {
                                     auto it_args = fobj->find("args");
@@ -59474,7 +59518,7 @@ namespace scratchbird
                                             }
                                         }
                                     }
-                                    if (static_cast<scratchbird::sblr::v3::Opcode>(function->opcode) ==
+                                    if (static_cast<scratchbird::sblr::v3::Opcode>(effective_function->opcode) ==
                                         scratchbird::sblr::v3::Opcode::SBLR3_EXPR_FUNCTION_CALL)
                                     {
                                         auto it_name = fobj->find("name");
@@ -59543,7 +59587,7 @@ namespace scratchbird
                                     return ExecutionResult();
                                 }
 
-                                Value scalar_value = evalExpr(*function);
+                                Value scalar_value = evalExpr(*effective_function);
                                 std::string column_name = function_name.empty() ? "value" : function_name;
                                 add_function_column(column_name, scalar_value.type());
                                 function_table.rows.push_back({scalar_value});
@@ -59551,18 +59595,18 @@ namespace scratchbird
                                 return ExecutionResult();
                             }
 
-                            if (path.empty())
+                            if (access_path.empty())
                             {
                                 return ExecutionResult("V3 SELECT table reference is missing table_path");
                             }
-                            std::string cte_key = normalize_cte_name(path);
+                            std::string cte_key = normalize_cte_name(access_path);
                             auto cte_it = cte_results_.find(cte_key);
                             if (cte_it == cte_results_.end())
                             {
-                                auto dot = path.find_last_of('.');
+                                auto dot = access_path.find_last_of('.');
                                 if (dot != std::string::npos)
                                 {
-                                    std::string short_name = path.substr(dot + 1);
+                                    std::string short_name = access_path.substr(dot + 1);
                                     cte_it = cte_results_.find(normalize_cte_name(short_name));
                                 }
                             }
@@ -59587,7 +59631,7 @@ namespace scratchbird
                                 return ExecutionResult();
                             }
 
-                            std::string upper_path = core::IdentifierUtils::toUpper(path);
+                            std::string upper_path = core::IdentifierUtils::toUpper(access_path);
                             if (upper_path == "SYS.CATALOG.OBJECT_RESOLVER")
                             {
                                 auto catalog = db_->catalog_manager();
@@ -59667,11 +59711,11 @@ namespace scratchbird
                                 }
 
                                 core::CatalogManager::TableInfo info;
-                                info.table_name = path;
+                                info.table_name = access_path;
                                 out.info = info;
                                 out.columns = std::move(cols);
                                 out.rows = std::move(rows);
-                                out.alias = alias.empty() ? path : alias;
+                                out.alias = alias.empty() ? access_path : alias;
                                 return ExecutionResult();
                             }
 
@@ -59681,7 +59725,7 @@ namespace scratchbird
                                 {
                                     std::string schema_name;
                                     std::string base_name;
-                                    std::vector<std::string> parts = splitSchemaComponents(path);
+                                    std::vector<std::string> parts = splitSchemaComponents(access_path);
                                     if (parts.size() >= 2)
                                     {
                                         base_name = parts.back();
@@ -60068,11 +60112,11 @@ namespace scratchbird
                                         }
 
                                         core::CatalogManager::TableInfo info;
-                                        info.table_name = path;
+                                        info.table_name = access_path;
                                         out.info = info;
                                         out.columns = std::move(cols);
                                         out.rows = std::move(rows);
-                                        out.alias = alias.empty() ? path : alias;
+                                        out.alias = alias.empty() ? access_path : alias;
                                         return ExecutionResult();
                                     }
                                 }
@@ -60080,7 +60124,7 @@ namespace scratchbird
 
                             core::CatalogManager::TableInfo info;
                             std::string err;
-                            if (!resolveTableId(path, info, err))
+                            if (!resolveTableId(access_path, info, err))
                             {
                                 core::ErrorContext view_ctx;
                                 core::ID view_id{};
@@ -60098,10 +60142,10 @@ namespace scratchbird
                                                &view_ctx,
                                                allow_search_path) == core::Status::OK;
                                 };
-                                std::string resolved_view_path = path;
-                                bool resolved_view = tryResolveView(path, true);
+                                std::string resolved_view_path = access_path;
+                                bool resolved_view = tryResolveView(access_path, true);
                                 if (!resolved_view &&
-                                    path.find('.') == std::string::npos &&
+                                    access_path.find('.') == std::string::npos &&
                                     conn_ctx_)
                                 {
                                     for (const auto& schema_path : conn_ctx_->search_path())
@@ -60110,7 +60154,7 @@ namespace scratchbird
                                         {
                                             continue;
                                         }
-                                        std::string candidate = schema_path + "." + path;
+                                        std::string candidate = schema_path + "." + access_path;
                                         if (tryResolveView(candidate, false))
                                         {
                                             resolved_view_path = std::move(candidate);
@@ -60123,7 +60167,7 @@ namespace scratchbird
                                 {
                                     std::string detail = view_ctx.message.empty() ? err : view_ctx.message;
                                     return ExecutionResult(
-                                        "Table or view not found: " + path +
+                                        "Table or view not found: " + access_path +
                                         (detail.empty() ? "" : (" (" + detail + ")")));
                                 }
 
@@ -60133,7 +60177,7 @@ namespace scratchbird
                                 {
                                     return ExecutionResult(
                                         view_ctx.message.empty()
-                                            ? ("Failed to resolve view '" + path + "'")
+                                            ? ("Failed to resolve view '" + access_path + "'")
                                             : view_ctx.message);
                                 }
 
@@ -60155,11 +60199,11 @@ namespace scratchbird
                                         if (!parse_result.errors().empty())
                                         {
                                             return ExecutionResult(
-                                                "Failed to parse view definition for '" + path + "': " +
+                                                "Failed to parse view definition for '" + access_path + "': " +
                                                 parse_result.errors().front().message);
                                         }
                                         return ExecutionResult(
-                                            "Failed to parse view definition for '" + path + "'");
+                                            "Failed to parse view definition for '" + access_path + "'");
                                     }
 
                                     parser::v3::V3Emitter view_emitter(view_parser.stringPool());
@@ -60172,7 +60216,7 @@ namespace scratchbird
                                     {
                                         return ExecutionResult(
                                             emit_err.empty()
-                                                ? ("Failed to emit view definition for '" + path + "'")
+                                                ? ("Failed to emit view definition for '" + access_path + "'")
                                                 : emit_err);
                                     }
 
@@ -60191,7 +60235,7 @@ namespace scratchbird
                                         {
                                             return ExecutionResult(
                                                 derr.message.empty()
-                                                    ? ("Failed to decode view definition for '" + path + "'")
+                                                    ? ("Failed to decode view definition for '" + access_path + "'")
                                                     : derr.message);
                                         }
                                         view_instructions.push_back(std::move(inst));
@@ -60213,7 +60257,7 @@ namespace scratchbird
                                     if (!view_stmt_inst.has_value())
                                     {
                                         return ExecutionResult(
-                                            "View '" + path + "' has no executable statement");
+                                            "View '" + access_path + "' has no executable statement");
                                     }
 
                                     auto view_res = execStmt(*view_stmt_inst);
@@ -60224,14 +60268,14 @@ namespace scratchbird
                                     if (!view_res.hasResultSet() || !view_res.resultSet())
                                     {
                                         return ExecutionResult(
-                                            "View query did not produce a result set: " + path);
+                                            "View query did not produce a result set: " + access_path);
                                     }
 
                                     auto* view_rs = view_res.resultSet();
                                     TableData view_table;
                                     view_table.info.table_id = view_id;
-                                    view_table.info.table_name = path;
-                                    view_table.alias = alias.empty() ? path : alias;
+                                    view_table.info.table_name = access_path;
+                                    view_table.alias = alias.empty() ? access_path : alias;
                                     view_table.columns.reserve(view_rs->columnCount());
                                     for (size_t i = 0; i < view_rs->columnCount(); ++i)
                                     {
@@ -60289,10 +60333,11 @@ namespace scratchbird
                                         out.info = info;
                                         out.columns = std::move(cols);
                                         out.rows.clear();
-                                        out.alias = alias.empty() ? path : alias;
+                                        out.alias = alias.empty() ? access_path : alias;
                                         return ExecutionResult();
                                     }
-                                    std::string err_msg = "Failed to acquire SELECT lock on table '" + path + "'";
+                                    std::string err_msg =
+                                        "Failed to acquire SELECT lock on table '" + access_path + "'";
                                     if (!lock_ctx.message.empty())
                                     {
                                         err_msg += ": " + lock_ctx.message;
@@ -60301,25 +60346,276 @@ namespace scratchbird
                                 }
                             }
                             std::vector<std::vector<Value>> rows;
-                            auto scan_iter = db_->storage_engine()->createScan(info.table_id, nullptr);
-                            if (!scan_iter)
+                            bool used_runtime_access = false;
+
+                            auto findColumnInfoByName =
+                                [&](const std::string& column_name)
+                                    -> const core::CatalogManager::ColumnInfo* {
+                                    for (const auto& column : cols)
+                                    {
+                                        if (core::IdentifierUtils::namesMatch(column.column_name,
+                                                                              false,
+                                                                              column_name,
+                                                                              false))
+                                        {
+                                            return &column;
+                                        }
+                                    }
+                                    return nullptr;
+                                };
+
+                            auto buildLiteralKey =
+                                [&](const optimizer::RuntimePlanIndexPredicate& predicate,
+                                    std::vector<uint8_t>& key_out) -> bool {
+                                    const auto* column_info =
+                                        findColumnInfoByName(predicate.column_name);
+                                    if (column_info == nullptr)
+                                    {
+                                        return false;
+                                    }
+
+                                    Value source_value = Value::makeNull();
+                                    const std::string literal_kind =
+                                        core::IdentifierUtils::toUpper(predicate.literal_kind);
+                                    if (literal_kind == "STRING")
+                                    {
+                                        source_value = Value::makeText(predicate.literal_text);
+                                    }
+                                    else if (literal_kind == "INT64" || literal_kind == "INTEGER")
+                                    {
+                                        try
+                                        {
+                                            source_value = Value::makeInt64(
+                                                std::stoll(predicate.literal_text));
+                                        }
+                                        catch (...)
+                                        {
+                                            return false;
+                                        }
+                                    }
+                                    else if (literal_kind == "DOUBLE" || literal_kind == "FLOAT")
+                                    {
+                                        try
+                                        {
+                                            source_value = Value::makeFloat64(
+                                                std::stod(predicate.literal_text));
+                                        }
+                                        catch (...)
+                                        {
+                                            return false;
+                                        }
+                                    }
+                                    else if (literal_kind == "BOOLEAN")
+                                    {
+                                        source_value = Value::makeBool(
+                                            core::IdentifierUtils::toUpper(predicate.literal_text) ==
+                                            "TRUE");
+                                    }
+                                    else if (literal_kind == "NULL")
+                                    {
+                                        source_value = Value::makeNull();
+                                    }
+                                    else
+                                    {
+                                        source_value = Value::makeText(predicate.literal_text);
+                                    }
+
+                                    core::TypedValue coerced_value;
+                                    core::ErrorContext literal_ctx;
+                                    if (!coerceValueForColumn(source_value,
+                                                              *column_info,
+                                                              coerced_value,
+                                                              &literal_ctx))
+                                    {
+                                        return false;
+                                    }
+                                    return coerced_value.serializePlainValue(key_out, &literal_ctx) ==
+                                        core::Status::OK;
+                                };
+
+                            auto fetchRowsForTids =
+                                [&](std::vector<core::TID> tids) {
+                                    std::sort(tids.begin(), tids.end());
+                                    tids.erase(std::unique(tids.begin(), tids.end()), tids.end());
+                                    for (const auto& tid : tids)
+                                    {
+                                        core::Tuple tuple;
+                                        if (db_->storage_engine()->getTuple(
+                                                info.table_id, tid, &tuple, nullptr) != core::Status::OK)
+                                        {
+                                            continue;
+                                        }
+                                        std::vector<Value> row_values;
+                                        if (!deserializeTuple(tuple.data, tuple.data_size, cols, row_values))
+                                        {
+                                            continue;
+                                        }
+                                        rows.push_back(std::move(row_values));
+                                    }
+                                };
+
+                            if (runtime_relation != nullptr && !runtime_relation->scan_kind.empty())
                             {
-                                return ExecutionResult("Failed to create scan for SELECT");
-                            }
-                            core::Tuple tuple;
-                            while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
-                            {
-                                std::vector<Value> row_values;
-                                if (!deserializeTuple(tuple.data, tuple.data_size, cols, row_values))
+                                std::vector<core::CatalogManager::IndexInfo> index_infos;
+                                (void)db_->catalog_manager()->listIndexesForTable(
+                                    info.table_id, index_infos, nullptr);
+
+                                auto findIndexInfoByName =
+                                    [&](const std::string& index_name)
+                                        -> const core::CatalogManager::IndexInfo* {
+                                        for (const auto& index_info : index_infos)
+                                        {
+                                            if (core::IdentifierUtils::namesMatch(
+                                                    index_info.index_name,
+                                                    false,
+                                                    index_name,
+                                                    false))
+                                            {
+                                                return &index_info;
+                                            }
+                                        }
+                                        return nullptr;
+                                    };
+
+                                auto probeExactIndex =
+                                    [&](const optimizer::RuntimePlanIndexPredicate& predicate,
+                                        std::vector<core::TID>& tids_out) -> bool {
+                                        const auto* index_info =
+                                            findIndexInfoByName(predicate.index_name);
+                                        if (index_info == nullptr)
+                                        {
+                                            return false;
+                                        }
+
+                                        std::vector<uint8_t> key_bytes;
+                                        if (!buildLiteralKey(predicate, key_bytes))
+                                        {
+                                            return false;
+                                        }
+
+                                        auto index_scan =
+                                            db_->storage_engine()->createIndexScan(index_info->index_id, nullptr);
+                                        if (!index_scan ||
+                                            index_scan->seek(key_bytes, nullptr) != core::Status::OK)
+                                        {
+                                            return false;
+                                        }
+
+                                        core::Tuple tuple;
+                                        while (index_scan->next(&tuple, nullptr) == core::Status::OK)
+                                        {
+                                            if (tuple.tid.isValid())
+                                            {
+                                                tids_out.push_back(tuple.tid);
+                                            }
+                                        }
+                                        return true;
+                                    };
+
+                                const bool runtime_bitmap =
+                                    runtime_relation->scan_kind == "BITMAP_INDEX_SCAN" &&
+                                    runtime_relation->exact_key_lookup &&
+                                    !runtime_relation->index_predicates.empty();
+                                const bool runtime_single_index =
+                                    (runtime_relation->scan_kind == "INDEX_SCAN" ||
+                                     runtime_relation->scan_kind == "INDEX_ONLY_SCAN") &&
+                                    runtime_relation->exact_key_lookup &&
+                                    runtime_relation->index_predicate.valid;
+
+                                if (runtime_bitmap)
                                 {
-                                    continue;
+                                    std::vector<core::TID> bitmap_tids;
+                                    bool first_probe = true;
+                                    bool bitmap_ok = true;
+                                    for (const auto& predicate : runtime_relation->index_predicates)
+                                    {
+                                        std::vector<core::TID> predicate_tids;
+                                        if (!probeExactIndex(predicate, predicate_tids))
+                                        {
+                                            bitmap_ok = false;
+                                            break;
+                                        }
+                                        std::sort(predicate_tids.begin(), predicate_tids.end());
+                                        predicate_tids.erase(std::unique(predicate_tids.begin(),
+                                                                         predicate_tids.end()),
+                                                             predicate_tids.end());
+
+                                        if (first_probe)
+                                        {
+                                            bitmap_tids = std::move(predicate_tids);
+                                            first_probe = false;
+                                            continue;
+                                        }
+
+                                        std::vector<core::TID> merged;
+                                        if (core::IdentifierUtils::toUpper(runtime_relation->bitmap_op) ==
+                                            "OR")
+                                        {
+                                            std::set_union(bitmap_tids.begin(),
+                                                           bitmap_tids.end(),
+                                                           predicate_tids.begin(),
+                                                           predicate_tids.end(),
+                                                           std::back_inserter(merged));
+                                        }
+                                        else
+                                        {
+                                            std::set_intersection(bitmap_tids.begin(),
+                                                                  bitmap_tids.end(),
+                                                                  predicate_tids.begin(),
+                                                                  predicate_tids.end(),
+                                                                  std::back_inserter(merged));
+                                        }
+                                        bitmap_tids = std::move(merged);
+                                    }
+
+                                    if (bitmap_ok)
+                                    {
+                                        fetchRowsForTids(std::move(bitmap_tids));
+                                        used_runtime_access = true;
+                                    }
                                 }
-                                rows.push_back(std::move(row_values));
+                                else if (runtime_single_index)
+                                {
+                                    std::vector<core::TID> index_tids;
+                                    if (probeExactIndex(runtime_relation->index_predicate, index_tids))
+                                    {
+                                        fetchRowsForTids(std::move(index_tids));
+                                        used_runtime_access = true;
+                                    }
+                                }
+
+                                // Runtime access paths are advisory until the storage-layer
+                                // exact-probe contract is fully certified for every supported
+                                // index shape. If the probe path returns nothing, fall back to
+                                // the canonical heap scan to preserve executor correctness.
+                                if (used_runtime_access && rows.empty())
+                                {
+                                    used_runtime_access = false;
+                                }
+                            }
+
+                            if (!used_runtime_access)
+                            {
+                                auto scan_iter = db_->storage_engine()->createScan(info.table_id, nullptr);
+                                if (!scan_iter)
+                                {
+                                    return ExecutionResult("Failed to create scan for SELECT");
+                                }
+                                core::Tuple tuple;
+                                while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                                {
+                                    std::vector<Value> row_values;
+                                    if (!deserializeTuple(tuple.data, tuple.data_size, cols, row_values))
+                                    {
+                                        continue;
+                                    }
+                                    rows.push_back(std::move(row_values));
+                                }
                             }
                             out.info = info;
                             out.columns = std::move(cols);
                             out.rows = std::move(rows);
-                            out.alias = alias.empty() ? path : alias;
+                            out.alias = alias.empty() ? access_path : alias;
                             return ExecutionResult();
                         };
 
@@ -60327,15 +60623,21 @@ namespace scratchbird
                         std::string table_alias;
                         std::optional<scratchbird::sblr::v3::Instruction> from_query;
                         std::optional<scratchbird::sblr::v3::Instruction> from_function;
+                        size_t from_source_relation_index = std::numeric_limits<size_t>::max();
                         if (!getTableRef(payload.at("from"),
                                          table_path,
                                          table_alias,
                                          &from_query,
-                                         &from_function))
+                                         &from_function,
+                                         &from_source_relation_index))
                         {
                             {
                             }
                             return ExecutionResult("V3 SELECT FROM requires table reference");
+                        }
+                        if (from_source_relation_index == std::numeric_limits<size_t>::max())
+                        {
+                            from_source_relation_index = 0;
                         }
 
                         TableData base_table;
@@ -60343,6 +60645,7 @@ namespace scratchbird
                                                   table_alias,
                                                   from_query,
                                                   from_function,
+                                                  from_source_relation_index,
                                                   base_table);
                         if (!base_res.success())
                         {
@@ -60547,19 +60850,27 @@ namespace scratchbird
                                 std::string right_alias;
                                 std::optional<scratchbird::sblr::v3::Instruction> right_query;
                                 std::optional<scratchbird::sblr::v3::Instruction> right_function;
+                                size_t right_source_relation_index =
+                                    std::numeric_limits<size_t>::max();
                                 if (!getTableRef(it_right->second,
                                                  right_path,
                                                  right_alias,
                                                  &right_query,
-                                                 &right_function))
+                                                 &right_function,
+                                                 &right_source_relation_index))
                                 {
                                     return ExecutionResult("V3 SELECT join right table invalid");
+                                }
+                                if (right_source_relation_index == std::numeric_limits<size_t>::max())
+                                {
+                                    right_source_relation_index = joins.size() + 1;
                                 }
                                 TableData right_table;
                                 auto right_res = loadTable(right_path,
                                                            right_alias,
                                                            right_query,
                                                            right_function,
+                                                           right_source_relation_index,
                                                            right_table);
                                 if (!right_res.success())
                                 {
@@ -62370,8 +62681,195 @@ namespace scratchbird
                             return out;
                         };
 
+                        auto formatPlanNodeLabel =
+                            [&](const optimizer::RuntimePlanNode& node) {
+                                std::ostringstream line;
+                                line << node.node_type;
+                                if (!node.table_path.empty())
+                                {
+                                    line << " table=" << node.table_path;
+                                }
+                                if (!node.index_name.empty())
+                                {
+                                    line << " index=" << node.index_name;
+                                }
+                                if (!node.join_type.empty())
+                                {
+                                    line << " join=" << node.join_type;
+                                }
+                                if (!node.condition_text.empty())
+                                {
+                                    line << " cond=" << node.condition_text;
+                                }
+                                if (!node.detail_text.empty())
+                                {
+                                    line << " detail=" << node.detail_text;
+                                }
+                                if (costs)
+                                {
+                                    line << " rows=" << node.estimated_rows
+                                         << " startup=" << node.startup_cost
+                                         << " total=" << node.total_cost;
+                                }
+                                return line.str();
+                            };
+
+                        std::function<void(const optimizer::RuntimePlanNode&, size_t,
+                                           std::vector<std::string>&)> appendPlanLines;
+                        appendPlanLines =
+                            [&](const optimizer::RuntimePlanNode& node,
+                                size_t depth,
+                                std::vector<std::string>& out_lines) {
+                                out_lines.push_back(
+                                    std::string(depth * 2, ' ') + formatPlanNodeLabel(node));
+                                for (const auto& child : node.children)
+                                {
+                                    appendPlanLines(child, depth + 1, out_lines);
+                                }
+                            };
+
+                        std::function<void(const optimizer::RuntimePlanNode&, std::ostringstream&)>
+                            appendPlanJson;
+                        appendPlanJson =
+                            [&](const optimizer::RuntimePlanNode& node, std::ostringstream& out) {
+                                out << "{";
+                                out << "\"node_type\":\"" << escape_json(node.node_type) << "\"";
+                                if (!node.table_path.empty())
+                                {
+                                    out << ",\"table_path\":\""
+                                        << escape_json(node.table_path) << "\"";
+                                }
+                                if (!node.index_name.empty())
+                                {
+                                    out << ",\"index_name\":\""
+                                        << escape_json(node.index_name) << "\"";
+                                }
+                                if (!node.join_type.empty())
+                                {
+                                    out << ",\"join_type\":\""
+                                        << escape_json(node.join_type) << "\"";
+                                }
+                                if (!node.condition_text.empty())
+                                {
+                                    out << ",\"condition\":\""
+                                        << escape_json(node.condition_text) << "\"";
+                                }
+                                if (!node.detail_text.empty())
+                                {
+                                    out << ",\"detail\":\""
+                                        << escape_json(node.detail_text) << "\"";
+                                }
+                                out << ",\"estimated_rows\":" << node.estimated_rows
+                                    << ",\"startup_cost\":" << node.startup_cost
+                                    << ",\"total_cost\":" << node.total_cost;
+                                out << ",\"children\":[";
+                                for (size_t i = 0; i < node.children.size(); ++i)
+                                {
+                                    if (i > 0)
+                                    {
+                                        out << ",";
+                                    }
+                                    appendPlanJson(node.children[i], out);
+                                }
+                                out << "]}";
+                            };
+
+                        std::function<void(const optimizer::RuntimePlanNode&, std::ostringstream&, size_t)>
+                            appendPlanXml;
+                        appendPlanXml =
+                            [&](const optimizer::RuntimePlanNode& node,
+                                std::ostringstream& out,
+                                size_t depth) {
+                                const std::string indent(depth * 2, ' ');
+                                out << indent << "<node type=\"" << escape_xml(node.node_type)
+                                    << "\" rows=\"" << node.estimated_rows
+                                    << "\" startup_cost=\"" << node.startup_cost
+                                    << "\" total_cost=\"" << node.total_cost << "\"";
+                                if (!node.table_path.empty())
+                                {
+                                    out << " table_path=\"" << escape_xml(node.table_path) << "\"";
+                                }
+                                if (!node.index_name.empty())
+                                {
+                                    out << " index_name=\"" << escape_xml(node.index_name) << "\"";
+                                }
+                                if (!node.join_type.empty())
+                                {
+                                    out << " join_type=\"" << escape_xml(node.join_type) << "\"";
+                                }
+                                if (!node.condition_text.empty())
+                                {
+                                    out << " condition=\"" << escape_xml(node.condition_text) << "\"";
+                                }
+                                if (!node.detail_text.empty())
+                                {
+                                    out << " detail=\"" << escape_xml(node.detail_text) << "\"";
+                                }
+                                if (node.children.empty())
+                                {
+                                    out << "/>";
+                                    return;
+                                }
+                                out << ">";
+                                for (const auto& child : node.children)
+                                {
+                                    out << "\n";
+                                    appendPlanXml(child, out, depth + 1);
+                                }
+                                out << "\n" << indent << "</node>";
+                            };
+
+                        std::function<void(const optimizer::RuntimePlanNode&, std::ostringstream&, size_t)>
+                            appendPlanYaml;
+                        appendPlanYaml =
+                            [&](const optimizer::RuntimePlanNode& node,
+                                std::ostringstream& out,
+                                size_t depth) {
+                                const std::string indent(depth * 2, ' ');
+                                out << indent << "node_type: \"" << escape_json(node.node_type) << "\"\n";
+                                if (!node.table_path.empty())
+                                {
+                                    out << indent << "table_path: \"" << escape_json(node.table_path)
+                                        << "\"\n";
+                                }
+                                if (!node.index_name.empty())
+                                {
+                                    out << indent << "index_name: \"" << escape_json(node.index_name)
+                                        << "\"\n";
+                                }
+                                if (!node.join_type.empty())
+                                {
+                                    out << indent << "join_type: \"" << escape_json(node.join_type)
+                                        << "\"\n";
+                                }
+                                if (!node.condition_text.empty())
+                                {
+                                    out << indent << "condition: \"" << escape_json(node.condition_text)
+                                        << "\"\n";
+                                }
+                                if (!node.detail_text.empty())
+                                {
+                                    out << indent << "detail: \"" << escape_json(node.detail_text)
+                                        << "\"\n";
+                                }
+                                out << indent << "estimated_rows: " << node.estimated_rows << "\n"
+                                    << indent << "startup_cost: " << node.startup_cost << "\n"
+                                    << indent << "total_cost: " << node.total_cost << "\n";
+                                if (!node.children.empty())
+                                {
+                                    out << indent << "children:\n";
+                                    for (const auto& child : node.children)
+                                    {
+                                        out << indent << "- \n";
+                                        appendPlanYaml(child, out, depth + 1);
+                                    }
+                                }
+                            };
+
                         std::vector<std::string> plan_lines;
                         std::string plan_hash;
+                        optimizer::RuntimePlan runtime_plan;
+                        bool has_runtime_plan = false;
                         if (static_cast<Opcode>(query_inst.opcode) == Opcode::SBLR3_SELECT)
                         {
                             scratchbird::sblr::v3::Value::Object query_payload;
@@ -62389,7 +62887,6 @@ namespace scratchbird
                                     return ExecutionResult("V3 EXPLAIN plan payload invalid");
                                 }
 
-                                optimizer::RuntimePlan runtime_plan;
                                 std::string plan_error;
                                 if (!optimizer::decodeRuntimePlan(*bytes, runtime_plan, plan_error))
                                 {
@@ -62397,13 +62894,21 @@ namespace scratchbird
                                         plan_error.empty() ? "V3 EXPLAIN failed to decode plan" :
                                                              plan_error);
                                 }
+                                has_runtime_plan = true;
                                 plan_hash = runtime_plan.plan_hash;
-                                std::istringstream explain_stream(runtime_plan.explain_text);
-                                for (std::string line; std::getline(explain_stream, line);)
+                                if (!runtime_plan.root.node_type.empty())
                                 {
-                                    if (!line.empty())
+                                    appendPlanLines(runtime_plan.root, 0, plan_lines);
+                                }
+                                else
+                                {
+                                    std::istringstream explain_stream(runtime_plan.explain_text);
+                                    for (std::string line; std::getline(explain_stream, line);)
                                     {
-                                        plan_lines.push_back(line);
+                                        if (!line.empty())
+                                        {
+                                            plan_lines.push_back(line);
+                                        }
                                     }
                                 }
                             }
@@ -62494,6 +62999,11 @@ namespace scratchbird
                                 formatted << "\"" << escape_json(plan_lines[i]) << "\"";
                             }
                             formatted << "]";
+                            if (has_runtime_plan && !runtime_plan.root.node_type.empty())
+                            {
+                                formatted << ",\"plan_root\":";
+                                appendPlanJson(runtime_plan.root, formatted);
+                            }
                             if (analyze)
                             {
                                 formatted << ",\"analyze\":{\"rows\":" << analyzed_rows << "}";
@@ -62519,6 +63029,12 @@ namespace scratchbird
                                 formatted << "<line>" << escape_xml(line) << "</line>";
                             }
                             formatted << "</plan>";
+                            if (has_runtime_plan && !runtime_plan.root.node_type.empty())
+                            {
+                                formatted << "<plan_root>";
+                                appendPlanXml(runtime_plan.root, formatted, 1);
+                                formatted << "</plan_root>";
+                            }
                             if (analyze)
                             {
                                 formatted << "<analyze rows=\"" << analyzed_rows << "\"/>";
@@ -62542,6 +63058,11 @@ namespace scratchbird
                             for (const auto& line : plan_lines)
                             {
                                 formatted << "  - \"" << escape_json(line) << "\"\n";
+                            }
+                            if (has_runtime_plan && !runtime_plan.root.node_type.empty())
+                            {
+                                formatted << "plan_root:\n";
+                                appendPlanYaml(runtime_plan.root, formatted, 1);
                             }
                             if (analyze)
                             {

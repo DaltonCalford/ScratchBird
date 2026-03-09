@@ -14,9 +14,11 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/domain_manager.h"
+#include "scratchbird/core/table_stats_manager.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/debug.h"
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <unordered_map>
 #include <random>
@@ -99,6 +101,85 @@ namespace scratchbird::optimizer
         return true;
     }
 
+    auto readStringValue(const std::vector<uint8_t> &value, std::string &out) -> bool
+    {
+        if (value.empty())
+        {
+            out.clear();
+            return true;
+        }
+        size_t offset = 0;
+        uint32_t len = 0;
+        if (!core::readUint32LE(value.data(), value.size(), offset, len) ||
+            offset + len > value.size())
+        {
+            return false;
+        }
+        out.assign(reinterpret_cast<const char *>(value.data() + offset), len);
+        return true;
+    }
+
+    auto encodeStringValue(const std::string &text) -> std::vector<uint8_t>
+    {
+        std::vector<uint8_t> out(sizeof(uint32_t) + text.size());
+        uint32_t len = static_cast<uint32_t>(text.size());
+        std::memcpy(out.data(), &len, sizeof(len));
+        if (!text.empty())
+        {
+            std::memcpy(out.data() + sizeof(uint32_t), text.data(), text.size());
+        }
+        return out;
+    }
+
+    auto decodeNumericValue(const std::vector<uint8_t> &value,
+                            core::DataType data_type,
+                            double &out) -> bool
+    {
+        if (value.empty())
+        {
+            return false;
+        }
+
+        switch (data_type)
+        {
+            case core::DataType::INT8:
+                if (value.size() < sizeof(int8_t)) return false;
+                out = static_cast<double>(*reinterpret_cast<const int8_t *>(value.data()));
+                return true;
+            case core::DataType::INT16:
+                if (value.size() < sizeof(int16_t)) return false;
+                out = static_cast<double>(*reinterpret_cast<const int16_t *>(value.data()));
+                return true;
+            case core::DataType::INT32:
+            case core::DataType::DATE:
+                if (value.size() < sizeof(int32_t)) return false;
+                out = static_cast<double>(*reinterpret_cast<const int32_t *>(value.data()));
+                return true;
+            case core::DataType::INT64:
+            case core::DataType::TIMESTAMP:
+            case core::DataType::TIME:
+                if (value.size() < sizeof(int64_t)) return false;
+                out = static_cast<double>(*reinterpret_cast<const int64_t *>(value.data()));
+                return true;
+            case core::DataType::FLOAT32:
+                if (value.size() < sizeof(float)) return false;
+                out = static_cast<double>(*reinterpret_cast<const float *>(value.data()));
+                return true;
+            case core::DataType::FLOAT64:
+                if (value.size() < sizeof(double)) return false;
+                out = *reinterpret_cast<const double *>(value.data());
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    auto canonicalExpressionKey(const std::string &func_name,
+                                const std::string &column_name) -> std::string
+    {
+        return func_name + "(" + core::IdentifierUtils::toUpper(column_name) + ")";
+    }
+
     bool isLengthPrefixedType(core::DataType type)
     {
         switch (type)
@@ -136,25 +217,24 @@ namespace scratchbird::optimizer
     }
 
     auto StatisticsManager::analyzeTable(const ID &table_id, float sample_rate,
-                                          ErrorContext *ctx) -> Status
+                                         ErrorContext *ctx) -> Status
+    {
+        return analyzeTableInternal(table_id, sample_rate, false, ctx);
+    }
+
+    auto StatisticsManager::analyzeTableInternal(const ID &table_id,
+                                                 float sample_rate,
+                                                 bool automatic,
+                                                 ErrorContext *ctx) -> Status
     {
         DEBUG_LOG_DB("Analyzing table");
 
-        // Phase 1, Task 1.1: Complete statistics collection implementation
-        //
-        // Steps:
-        // 1. Get table info from catalog
-        // 2. Determine sample size
-        // 3. Sample table using Vitter's Algorithm S
-        // 4. For each column, compute statistics
-        // 5. Store statistics in catalog (cache)
-        // 6. Update statistics cache
-
-        // Get table information from catalog
         if (!catalog_)
         {
             catalog_ = db_->catalog_manager();
         }
+
+        const auto started_at = std::chrono::steady_clock::now();
 
         std::vector<core::CatalogManager::ColumnInfo> columns;
         Status status = catalog_->getColumns(table_id, columns, ctx);
@@ -170,20 +250,12 @@ namespace scratchbird::optimizer
             return Status::OK;
         }
 
-        // Determine sample size
-        // Default: 30,000 rows or 10% of table (PostgreSQL-style)
-        // If sample_rate is provided, use that instead
-        uint64_t sample_size = 30000; // Default
-
+        uint64_t sample_size = 30000;
         if (sample_rate > 0.0f && sample_rate <= 1.0f)
         {
-            // User specified sample rate
-            // We'll use it directly in sampleTable
-            // For now, use default sample size and let sampleTable handle it
             sample_size = 30000;
         }
 
-        // Sample the table using Vitter's Algorithm S
         std::vector<std::vector<uint8_t>> sample_rows;
         status = sampleTable(table_id, sample_size, sample_rows, ctx);
         if (status != Status::OK)
@@ -195,18 +267,20 @@ namespace scratchbird::optimizer
         if (sample_rows.empty())
         {
             DEBUG_LOG_DB("No rows sampled, table may be empty");
+            if (db_ && db_->table_stats_manager())
+            {
+                db_->table_stats_manager()->recordAnalyze(table_id, automatic, 0);
+            }
             return Status::OK;
         }
 
+        const uint64_t analyzed_time = static_cast<uint64_t>(std::time(nullptr));
         DEBUG_LOG_DB("Sampled " + std::to_string(sample_rows.size()) + " rows");
 
-        // Analyze each column
         for (const auto &column_info : columns)
         {
             DEBUG_LOG_DB("Analyzing column " + column_info.column_name);
 
-            // Extract column values and compute basic statistics
-            // We need to extract column values separately for histogram and MCV
             std::vector<std::vector<uint8_t>> column_values =
                 extractColumnValues(table_id, column_info.column_id, sample_rows, columns, ctx);
 
@@ -216,21 +290,19 @@ namespace scratchbird::optimizer
                 continue;
             }
 
-            // Compute column statistics
             ColumnStatistics col_stats;
             col_stats.table_id = table_id;
             col_stats.column_id = column_info.column_id;
             col_stats.column_name = column_info.column_name;
             col_stats.data_type = static_cast<core::DataType>(column_info.data_type);
 
-            // Basic statistics
             uint64_t null_count = 0;
             uint64_t total_width = 0;
             for (const auto &val : column_values)
             {
                 if (val.empty())
                 {
-                    null_count++;
+                    ++null_count;
                 }
                 else
                 {
@@ -240,65 +312,58 @@ namespace scratchbird::optimizer
 
             col_stats.num_rows = column_values.size();
             col_stats.num_nulls = null_count;
-            col_stats.null_fraction = static_cast<float>(null_count) / static_cast<float>(column_values.size());
+            col_stats.null_fraction =
+                static_cast<float>(null_count) / static_cast<float>(column_values.size());
 
-            uint64_t non_null_count = column_values.size() - null_count;
-            if (non_null_count > 0)
-            {
-                col_stats.avg_width = static_cast<float>(total_width) / static_cast<float>(non_null_count);
-            }
-            else
-            {
-                col_stats.avg_width = 0.0f;
-            }
-
-            // n_distinct estimation
-            col_stats.num_distinct = estimateNDistinct(column_values, col_stats.num_rows, column_values.size());
-
-            // Set metadata
-            col_stats.last_analyzed_time = std::time(nullptr);
+            const uint64_t non_null_count = column_values.size() - null_count;
+            col_stats.avg_width = non_null_count > 0
+                ? static_cast<float>(total_width) / static_cast<float>(non_null_count)
+                : 0.0f;
+            col_stats.num_distinct =
+                estimateNDistinct(column_values, col_stats.num_rows, column_values.size());
+            col_stats.last_analyzed_time = analyzed_time;
             col_stats.sample_size = sample_rows.size();
             col_stats.sample_rate = sample_rate;
 
-            // Generate histogram (equal-height, 100 buckets)
-            status = generateHistogram(column_values, 100, HistogramType::EQUAL_HEIGHT,
-                                       col_stats.histogram_buckets, ctx);
-            if (status != Status::OK)
-            {
-                DEBUG_LOG_DB("Failed to generate histogram for column " +
-                             column_info.column_name);
-                // Continue without histogram
-            }
-            else
+            status = generateHistogram(column_values,
+                                       100,
+                                       HistogramType::EQUAL_HEIGHT,
+                                       col_stats.histogram_buckets,
+                                       ctx);
+            if (status == Status::OK)
             {
                 col_stats.histogram_type = HistogramType::EQUAL_HEIGHT;
+                col_stats.histogram_bucket_count =
+                    static_cast<uint32_t>(col_stats.histogram_buckets.size());
             }
 
-            // Identify MCVs (top 100)
             status = identifyMCVs(column_values, 100, col_stats.mcv_list, ctx);
             if (status != Status::OK)
             {
-                DEBUG_LOG_DB("Failed to identify MCVs for column " +
-                             column_info.column_name);
-                // Continue without MCVs
+                DEBUG_LOG_DB("Failed to identify MCVs for column " + column_info.column_name);
             }
 
-            // Store statistics
             status = storeColumnStatistics(col_stats, ctx);
             if (status != Status::OK)
             {
-                DEBUG_LOG_DB("Failed to store statistics for column " +
-                             column_info.column_name);
-                // Continue with other columns
-            }
-            else
-            {
-                DEBUG_LOG_DB("Successfully analyzed column " + column_info.column_name);
+                DEBUG_LOG_DB("Failed to store statistics for column " + column_info.column_name);
             }
         }
 
-        DEBUG_LOG_DB("Successfully analyzed table with " + std::to_string(columns.size()) + " columns");
+        computeCorrelationStatistics(table_id, columns, sample_rows, analyzed_time, ctx);
+        computeExpressionStatistics(table_id, columns, sample_rows, analyzed_time, ctx);
 
+        if (db_ && db_->table_stats_manager())
+        {
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started_at);
+            db_->table_stats_manager()->recordAnalyze(
+                table_id,
+                automatic,
+                static_cast<uint64_t>(std::max<int64_t>(0, elapsed.count())));
+        }
+
+        DEBUG_LOG_DB("Successfully analyzed table with " + std::to_string(columns.size()) + " columns");
         return Status::OK;
     }
 
@@ -388,31 +453,61 @@ namespace scratchbird::optimizer
                                                  ColumnStatistics &stats,
                                                  ErrorContext *ctx) -> Status
     {
-        std::lock_guard<std::mutex> lock(cache_mutex_);
+        auto load_column_statistics = [&]() -> Status {
+            {
+                std::lock_guard<std::mutex> lock(cache_mutex_);
+                uint64_t cache_key = getCacheKey(table_id, column_id);
+                auto it = column_stats_cache_.find(cache_key);
+                if (it != column_stats_cache_.end())
+                {
+                    stats = it->second;
+                    return Status::OK;
+                }
+            }
 
-        // Check cache first
-        uint64_t cache_key = getCacheKey(table_id, column_id);
-        auto it = column_stats_cache_.find(cache_key);
-        if (it != column_stats_cache_.end())
+            Status status = loadColumnStatistics(table_id, column_id, stats, ctx);
+            if (status == Status::OK)
+            {
+                std::lock_guard<std::mutex> lock(cache_mutex_);
+                column_stats_cache_[getCacheKey(table_id, column_id)] = stats;
+            }
+            return status;
+        };
+
+        Status auto_status = maybeAutoAnalyze(table_id, ctx);
+        if (auto_status != Status::OK)
         {
-            stats = it->second;
-            return Status::OK;
+            return auto_status;
         }
 
-        // Load from catalog
-        Status status = loadColumnStatistics(table_id, column_id, stats, ctx);
-        if (status == Status::OK)
+        Status status = load_column_statistics();
+        if (status == Status::OK || status != Status::NOT_FOUND)
         {
-            // Cache for future use
-            column_stats_cache_[cache_key] = stats;
+            return status;
         }
 
-        return status;
+        ErrorContext analyze_ctx;
+        status = analyzeTableInternal(table_id, 0.10f, true, &analyze_ctx);
+        if (status != Status::OK)
+        {
+            if (ctx != nullptr && ctx->message.empty())
+            {
+                ctx->message = analyze_ctx.message;
+            }
+            return status;
+        }
+        return load_column_statistics();
     }
 
     auto StatisticsManager::getTableStatistics(const ID &table_id, TableStatistics &stats,
                                                 ErrorContext *ctx) -> Status
     {
+        Status auto_status = maybeAutoAnalyze(table_id, ctx);
+        if (auto_status != Status::OK)
+        {
+            return auto_status;
+        }
+
         std::lock_guard<std::mutex> lock(cache_mutex_);
 
         // Check cache first
@@ -542,6 +637,119 @@ namespace scratchbird::optimizer
         return Status::OK;
     }
 
+    auto StatisticsManager::getColumnCorrelation(const ID &table_id,
+                                                 const ID &left_column_id,
+                                                 const ID &right_column_id,
+                                                 ColumnCorrelationStatistics &stats_out,
+                                                 ErrorContext *ctx) -> Status
+    {
+        const auto key = getCorrelationCacheKey(table_id, left_column_id, right_column_id);
+        Status auto_status = maybeAutoAnalyze(table_id, ctx);
+        if (auto_status != Status::OK)
+        {
+            return auto_status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            auto it = correlation_stats_cache_.find(key);
+            if (it != correlation_stats_cache_.end())
+            {
+                stats_out = it->second;
+                return Status::OK;
+            }
+        }
+
+        Status status =
+            loadCorrelationStatistic(table_id, left_column_id, right_column_id, stats_out, ctx);
+        if (status == Status::OK)
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            correlation_stats_cache_[key] = stats_out;
+            return Status::OK;
+        }
+        if (status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        ErrorContext analyze_ctx;
+        status = analyzeTableInternal(table_id, 0.10f, true, &analyze_ctx);
+        if (status != Status::OK)
+        {
+            if (ctx != nullptr && ctx->message.empty())
+            {
+                ctx->message = analyze_ctx.message;
+            }
+            return status;
+        }
+
+        status =
+            loadCorrelationStatistic(table_id, left_column_id, right_column_id, stats_out, ctx);
+        if (status == Status::OK)
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            correlation_stats_cache_[key] = stats_out;
+        }
+        return status;
+    }
+
+    auto StatisticsManager::getExpressionStatistics(const ID &table_id,
+                                                    const std::string &expression_key,
+                                                    ExpressionStatistics &stats_out,
+                                                    ErrorContext *ctx) -> Status
+    {
+        const auto key = getExpressionCacheKey(table_id, expression_key);
+        Status auto_status = maybeAutoAnalyze(table_id, ctx);
+        if (auto_status != Status::OK)
+        {
+            return auto_status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            auto it = expression_stats_cache_.find(key);
+            if (it != expression_stats_cache_.end())
+            {
+                stats_out = it->second;
+                return Status::OK;
+            }
+        }
+
+        ColumnStatistics stored_stats;
+        const ID synthetic_column_id =
+            makeSyntheticStatisticId(table_id, "EXPR", key);
+        Status status = loadColumnStatistics(table_id, synthetic_column_id, stored_stats, ctx);
+        if (status != Status::OK && status == Status::NOT_FOUND)
+        {
+            ErrorContext analyze_ctx;
+            status = analyzeTableInternal(table_id, 0.10f, true, &analyze_ctx);
+            if (status != Status::OK)
+            {
+                if (ctx != nullptr && ctx->message.empty())
+                {
+                    ctx->message = analyze_ctx.message;
+                }
+                return status;
+            }
+            status = loadColumnStatistics(table_id, synthetic_column_id, stored_stats, ctx);
+        }
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        stats_out.table_id = table_id;
+        stats_out.expression_key = key;
+        stored_stats.column_name = key;
+        stats_out.stats = std::move(stored_stats);
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            expression_stats_cache_[key] = stats_out;
+        }
+        return Status::OK;
+    }
+
     auto StatisticsManager::dropStatistics(const ID &table_id, ErrorContext *ctx) -> Status
     {
         DEBUG_LOG_DB("Dropping statistics for table " << table_id.toString());
@@ -576,10 +784,46 @@ namespace scratchbird::optimizer
             DEBUG_LOG_DB("Removed " << keys_to_remove.size() << " column statistics from cache");
         }
 
-        // Step 2: Delete from sb_statistic catalog table
-        // Note: Since storeColumnStatistics may not have catalog persistence implemented yet,
-        // we don't fail if catalog deletion is not available
-        // Future enhancement: Delete records from sb_statistic catalog table
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            for (auto it = correlation_stats_cache_.begin();
+                 it != correlation_stats_cache_.end();)
+            {
+                if (it->second.table_id == table_id)
+                {
+                    it = correlation_stats_cache_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+            for (auto it = expression_stats_cache_.begin();
+                 it != expression_stats_cache_.end();)
+            {
+                if (it->second.table_id == table_id)
+                {
+                    it = expression_stats_cache_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
+        if (catalog_ != nullptr)
+        {
+            Status delete_status = catalog_->deleteStatisticsForTable(table_id, ctx);
+            if (delete_status != Status::OK)
+            {
+                return delete_status;
+            }
+        }
 
         DEBUG_LOG_DB("Statistics dropped successfully for table");
 
@@ -596,6 +840,8 @@ namespace scratchbird::optimizer
             // Clear entire cache if table_id is zero
             column_stats_cache_.clear();
             table_stats_cache_.clear();
+            correlation_stats_cache_.clear();
+            expression_stats_cache_.clear();
             DEBUG_LOG_DB("Cleared entire statistics cache");
         }
         else
@@ -627,6 +873,32 @@ namespace scratchbird::optimizer
             for (uint64_t key : keys_to_remove)
             {
                 column_stats_cache_.erase(key);
+            }
+
+            for (auto it = correlation_stats_cache_.begin();
+                 it != correlation_stats_cache_.end();)
+            {
+                if (it->second.table_id == table_id)
+                {
+                    it = correlation_stats_cache_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
+            for (auto it = expression_stats_cache_.begin();
+                 it != expression_stats_cache_.end();)
+            {
+                if (it->second.table_id == table_id)
+                {
+                    it = expression_stats_cache_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
             }
 
             DEBUG_LOG_DB("Invalidated statistics cache for table: removed " +
@@ -1708,6 +1980,226 @@ namespace scratchbird::optimizer
         return Status::OK;
     }
 
+    auto StatisticsManager::getCorrelationCacheKey(const ID &table_id,
+                                                   const ID &left_column_id,
+                                                   const ID &right_column_id) const
+        -> std::string
+    {
+        const bool left_first = left_column_id < right_column_id;
+        const ID &first = left_first ? left_column_id : right_column_id;
+        const ID &second = left_first ? right_column_id : left_column_id;
+        return table_id.toString() + "|" + first.toString() + "|" + second.toString();
+    }
+
+    auto StatisticsManager::getExpressionCacheKey(const ID &table_id,
+                                                  const std::string &expression_key) const
+        -> std::string
+    {
+        return table_id.toString() + "|" + core::IdentifierUtils::toUpper(expression_key);
+    }
+
+    auto StatisticsManager::makeSyntheticStatisticId(const ID &table_id,
+                                                     const std::string &kind,
+                                                     const std::string &key) -> ID
+    {
+        const std::string material =
+            kind + "|" + table_id.toString() + "|" + core::IdentifierUtils::toUpper(key);
+        uint64_t hash_a = 14695981039346656037ULL;
+        uint64_t hash_b = 1099511628211ULL;
+        for (unsigned char byte : material)
+        {
+            hash_a ^= static_cast<uint64_t>(byte);
+            hash_a *= 1099511628211ULL;
+            hash_b ^= (static_cast<uint64_t>(byte) + 0x9e3779b97f4a7c15ULL);
+            hash_b *= 14029467366897019727ULL;
+        }
+
+        ID id{};
+        std::memcpy(id.bytes.data(), &hash_a, sizeof(hash_a));
+        std::memcpy(id.bytes.data() + sizeof(hash_a), &hash_b, sizeof(hash_b));
+        id.bytes[6] = static_cast<uint8_t>((id.bytes[6] & 0x0F) | 0x50);
+        id.bytes[8] = static_cast<uint8_t>((id.bytes[8] & 0x3F) | 0x80);
+        return id;
+    }
+
+    auto StatisticsManager::makeCorrelationStatisticKey(const ID &left_column_id,
+                                                        const ID &right_column_id) -> std::string
+    {
+        const bool left_first = left_column_id < right_column_id;
+        const ID &first = left_first ? left_column_id : right_column_id;
+        const ID &second = left_first ? right_column_id : left_column_id;
+        return first.toString() + "|" + second.toString();
+    }
+
+    auto StatisticsManager::storeCorrelationStatistic(const ColumnCorrelationStatistics &stats,
+                                                      ErrorContext *ctx) -> Status
+    {
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
+        if (catalog_ == nullptr)
+        {
+            return Status::INTERNAL_ERROR;
+        }
+
+        core::CatalogManager::StatisticInfo info;
+        info.statistic_id =
+            makeSyntheticStatisticId(stats.table_id,
+                                     "CORR_ID",
+                                     makeCorrelationStatisticKey(stats.left_column_id,
+                                                                 stats.right_column_id));
+        info.table_id = stats.table_id;
+        info.column_id =
+            makeSyntheticStatisticId(stats.table_id,
+                                     "CORR",
+                                     makeCorrelationStatisticKey(stats.left_column_id,
+                                                                 stats.right_column_id));
+        info.data_type = static_cast<uint16_t>(core::DataType::FLOAT64);
+        info.num_rows = stats.sample_size;
+        info.num_distinct = 1;
+        info.avg_width = static_cast<float>(stats.coefficient);
+        info.null_fraction = static_cast<float>(stats.coefficient);
+        info.last_analyzed_time = stats.last_analyzed_time;
+        info.sample_size = stats.sample_size;
+        info.sample_rate = 0.0f;
+        return catalog_->storeStatistic(info, ctx);
+    }
+
+    auto StatisticsManager::loadCorrelationStatistic(const ID &table_id,
+                                                     const ID &left_column_id,
+                                                     const ID &right_column_id,
+                                                     ColumnCorrelationStatistics &stats_out,
+                                                     ErrorContext *ctx) -> Status
+    {
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
+        if (catalog_ == nullptr)
+        {
+            return Status::INTERNAL_ERROR;
+        }
+
+        core::CatalogManager::StatisticInfo info;
+        const ID synthetic_column_id =
+            makeSyntheticStatisticId(table_id,
+                                     "CORR",
+                                     makeCorrelationStatisticKey(left_column_id, right_column_id));
+        Status status = catalog_->getStatistic(table_id, synthetic_column_id, info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (isZeroId(info.histogram_oid))
+        {
+            stats_out.table_id = table_id;
+            stats_out.left_column_id = left_column_id;
+            stats_out.right_column_id = right_column_id;
+            stats_out.coefficient = static_cast<double>(info.null_fraction);
+            stats_out.sample_size = info.sample_size;
+            stats_out.last_analyzed_time = info.last_analyzed_time;
+
+            std::vector<core::CatalogManager::ColumnInfo> columns;
+            if (catalog_->getColumns(table_id, columns, ctx) == Status::OK)
+            {
+                for (const auto &column : columns)
+                {
+                    if (column.column_id == left_column_id)
+                    {
+                        stats_out.left_column_name = column.column_name;
+                    }
+                    else if (column.column_id == right_column_id)
+                    {
+                        stats_out.right_column_name = column.column_name;
+                    }
+                }
+            }
+            return Status::OK;
+        }
+
+        std::string payload_text;
+        status = catalog_->loadStringFromToast(info.histogram_oid, 0, payload_text, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        try
+        {
+            const auto payload = nlohmann::json::parse(payload_text);
+            stats_out.table_id = table_id;
+            stats_out.left_column_id = left_column_id;
+            stats_out.right_column_id = right_column_id;
+            stats_out.left_column_name =
+                payload.value("left_column_name", std::string());
+            stats_out.right_column_name =
+                payload.value("right_column_name", std::string());
+            stats_out.coefficient = payload.value("coefficient", 0.0);
+            stats_out.sample_size = payload.value("sample_size", uint64_t{0});
+            stats_out.last_analyzed_time =
+                payload.value("last_analyzed_time", uint64_t{0});
+            return Status::OK;
+        }
+        catch (const nlohmann::json::exception &)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "Failed to parse persisted correlation statistics");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+
+    auto StatisticsManager::maybeAutoAnalyze(const ID &table_id, ErrorContext *ctx) -> Status
+    {
+        if (db_ == nullptr || db_->table_stats_manager() == nullptr || isZeroId(table_id))
+        {
+            return Status::OK;
+        }
+
+        core::TableStatsSnapshot snapshot;
+        if (!db_->table_stats_manager()->snapshotForTable(table_id, snapshot))
+        {
+            ErrorContext auto_ctx;
+            Status status = analyzeTableInternal(table_id, 0.10f, true, &auto_ctx);
+            if (status != Status::OK)
+            {
+                if (ctx != nullptr && ctx->message.empty())
+                {
+                    ctx->message = auto_ctx.message;
+                }
+                return status;
+            }
+            return Status::OK;
+        }
+
+        const bool never_analyzed =
+            snapshot.last_analyze_at == 0 && snapshot.last_autoanalyze_at == 0;
+        uint64_t live_rows = snapshot.live_rows_estimate > 0
+            ? static_cast<uint64_t>(snapshot.live_rows_estimate)
+            : (snapshot.rows_inserted + snapshot.rows_updated + snapshot.rows_deleted);
+        if (live_rows == 0)
+        {
+            live_rows = 1000;
+        }
+        const uint64_t threshold = std::max<uint64_t>(64, live_rows / 5);
+        if (!never_analyzed && snapshot.mod_since_analyze < threshold)
+        {
+            return Status::OK;
+        }
+
+        ErrorContext auto_ctx;
+        Status status = analyzeTableInternal(table_id, 0.10f, true, &auto_ctx);
+        if (status != Status::OK)
+        {
+            if (ctx != nullptr && ctx->message.empty())
+            {
+                ctx->message = auto_ctx.message;
+            }
+            return status;
+        }
+        return Status::OK;
+    }
+
     auto StatisticsManager::getCacheKey(const ID &table_id, const ID &column_id) -> uint64_t
     {
         // Combine table_id and column_id into a single uint64_t key
@@ -1717,6 +2209,229 @@ namespace scratchbird::optimizer
         std::memcpy(&table_key, table_id.bytes.data(), sizeof(uint64_t));
         std::memcpy(&column_key, column_id.bytes.data(), sizeof(uint64_t));
         return table_key ^ column_key;
+    }
+
+    auto StatisticsManager::computeCorrelationStatistics(
+        const ID &table_id,
+        const std::vector<core::CatalogManager::ColumnInfo> &columns,
+        const std::vector<std::vector<uint8_t>> &sample_rows,
+        uint64_t analyzed_time,
+        ErrorContext *ctx) -> void
+    {
+        for (size_t left_idx = 0; left_idx < columns.size(); ++left_idx)
+        {
+            const auto left_type = static_cast<core::DataType>(columns[left_idx].data_type);
+            std::vector<std::vector<uint8_t>> left_values =
+                extractColumnValues(table_id, columns[left_idx].column_id, sample_rows, columns, nullptr);
+            if (left_values.empty())
+            {
+                continue;
+            }
+
+            for (size_t right_idx = left_idx + 1; right_idx < columns.size(); ++right_idx)
+            {
+                const auto right_type = static_cast<core::DataType>(columns[right_idx].data_type);
+                std::vector<std::vector<uint8_t>> right_values =
+                    extractColumnValues(table_id,
+                                        columns[right_idx].column_id,
+                                        sample_rows,
+                                        columns,
+                                        nullptr);
+                if (right_values.empty())
+                {
+                    continue;
+                }
+
+                double sum_x = 0.0;
+                double sum_y = 0.0;
+                double sum_x2 = 0.0;
+                double sum_y2 = 0.0;
+                double sum_xy = 0.0;
+                uint64_t count = 0;
+
+                const size_t value_count = std::min(left_values.size(), right_values.size());
+                for (size_t i = 0; i < value_count; ++i)
+                {
+                    double x = 0.0;
+                    double y = 0.0;
+                    if (!decodeNumericValue(left_values[i], left_type, x) ||
+                        !decodeNumericValue(right_values[i], right_type, y))
+                    {
+                        continue;
+                    }
+                    ++count;
+                    sum_x += x;
+                    sum_y += y;
+                    sum_x2 += x * x;
+                    sum_y2 += y * y;
+                    sum_xy += x * y;
+                }
+
+                if (count < 8)
+                {
+                    continue;
+                }
+
+                const double numerator = static_cast<double>(count) * sum_xy - (sum_x * sum_y);
+                const double denom_left = static_cast<double>(count) * sum_x2 - (sum_x * sum_x);
+                const double denom_right = static_cast<double>(count) * sum_y2 - (sum_y * sum_y);
+                if (denom_left <= 0.0 || denom_right <= 0.0)
+                {
+                    continue;
+                }
+
+                ColumnCorrelationStatistics corr;
+                corr.table_id = table_id;
+                corr.left_column_id = columns[left_idx].column_id;
+                corr.right_column_id = columns[right_idx].column_id;
+                corr.left_column_name = columns[left_idx].column_name;
+                corr.right_column_name = columns[right_idx].column_name;
+                corr.coefficient = numerator / std::sqrt(denom_left * denom_right);
+                corr.sample_size = count;
+                corr.last_analyzed_time = analyzed_time;
+                {
+                    std::lock_guard<std::mutex> lock(cache_mutex_);
+                    correlation_stats_cache_[getCorrelationCacheKey(table_id,
+                                                                   corr.left_column_id,
+                                                                   corr.right_column_id)] = corr;
+                }
+                Status persist_status = storeCorrelationStatistic(corr, ctx);
+                if (persist_status != Status::OK)
+                {
+                    DEBUG_LOG_DB("Failed to persist correlation statistics for " +
+                                 corr.left_column_name + "/" + corr.right_column_name);
+                }
+            }
+        }
+    }
+
+    auto StatisticsManager::computeExpressionStatistics(
+        const ID &table_id,
+        const std::vector<core::CatalogManager::ColumnInfo> &columns,
+        const std::vector<std::vector<uint8_t>> &sample_rows,
+        uint64_t analyzed_time,
+        ErrorContext *ctx) -> void
+    {
+        for (const auto &column : columns)
+        {
+            const auto type = static_cast<core::DataType>(column.data_type);
+            if (type != core::DataType::VARCHAR &&
+                type != core::DataType::TEXT &&
+                type != core::DataType::CHAR)
+            {
+                continue;
+            }
+
+            std::vector<std::vector<uint8_t>> column_values =
+                extractColumnValues(table_id, column.column_id, sample_rows, columns, ctx);
+            if (column_values.empty())
+            {
+                continue;
+            }
+
+            auto store_expression = [&](const std::string &expression_key,
+                                        bool upper_case) {
+                std::vector<std::vector<uint8_t>> expr_values;
+                expr_values.reserve(column_values.size());
+                for (const auto &value : column_values)
+                {
+                    if (value.empty())
+                    {
+                        expr_values.push_back({});
+                        continue;
+                    }
+                    std::string text;
+                    if (!readStringValue(value, text))
+                    {
+                        return;
+                    }
+                    if (upper_case)
+                    {
+                        text = core::IdentifierUtils::toUpper(text);
+                    }
+                    else
+                    {
+                        std::transform(text.begin(),
+                                       text.end(),
+                                       text.begin(),
+                                       [](unsigned char ch) {
+                                           return static_cast<char>(std::tolower(ch));
+                                       });
+                    }
+                    expr_values.push_back(encodeStringValue(text));
+                }
+
+                ColumnStatistics expr_stats;
+                expr_stats.table_id = table_id;
+                expr_stats.column_id = column.column_id;
+                expr_stats.column_name = column.column_name;
+                expr_stats.data_type = type;
+                expr_stats.num_rows = expr_values.size();
+                expr_stats.sample_size = expr_values.size();
+                expr_stats.sample_rate = 0.0f;
+                expr_stats.last_analyzed_time = analyzed_time;
+                uint64_t null_count = 0;
+                uint64_t total_width = 0;
+                for (const auto &value : expr_values)
+                {
+                    if (value.empty())
+                    {
+                        ++null_count;
+                    }
+                    else
+                    {
+                        total_width += value.size();
+                    }
+                }
+                expr_stats.num_nulls = null_count;
+                expr_stats.null_fraction = expr_values.empty()
+                    ? 0.0f
+                    : static_cast<float>(null_count) /
+                          static_cast<float>(expr_values.size());
+                expr_stats.avg_width = expr_values.empty()
+                    ? 0.0f
+                    : static_cast<float>(total_width) /
+                          static_cast<float>(std::max<uint64_t>(1, expr_values.size() - null_count));
+                expr_stats.num_distinct =
+                    estimateNDistinct(expr_values, expr_stats.num_rows, expr_values.size());
+                (void)generateHistogram(expr_values,
+                                        32,
+                                        HistogramType::EQUAL_HEIGHT,
+                                        expr_stats.histogram_buckets,
+                                        nullptr);
+                expr_stats.histogram_type = expr_stats.histogram_buckets.empty()
+                    ? HistogramType::NONE
+                    : HistogramType::EQUAL_HEIGHT;
+                expr_stats.histogram_bucket_count =
+                    static_cast<uint32_t>(expr_stats.histogram_buckets.size());
+                (void)identifyMCVs(expr_values, 32, expr_stats.mcv_list, nullptr);
+
+                ExpressionStatistics info;
+                info.table_id = table_id;
+                info.expression_key = expression_key;
+                expr_stats.column_id =
+                    makeSyntheticStatisticId(table_id,
+                                             "EXPR",
+                                             getExpressionCacheKey(table_id, expression_key));
+                expr_stats.column_name = expression_key;
+                info.stats = expr_stats;
+
+                {
+                    std::lock_guard<std::mutex> lock(cache_mutex_);
+                    expression_stats_cache_[getExpressionCacheKey(table_id, expression_key)] =
+                        info;
+                }
+
+                Status persist_status = storeColumnStatistics(expr_stats, ctx);
+                if (persist_status != Status::OK)
+                {
+                    DEBUG_LOG_DB("Failed to persist expression statistics for " + expression_key);
+                }
+            };
+
+            store_expression(canonicalExpressionKey("LOWER", column.column_name), false);
+            store_expression(canonicalExpressionKey("UPPER", column.column_name), true);
+        }
     }
 
     auto StatisticsManager::extractColumnValues(

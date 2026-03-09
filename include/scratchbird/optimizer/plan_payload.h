@@ -11,6 +11,8 @@ namespace scratchbird::optimizer
     struct RuntimePlanIndexPredicate
     {
         bool valid = false;
+        std::string index_name;
+        std::string index_id_text;
         std::string column_name;
         std::string operator_name;
         std::string literal_kind;
@@ -21,12 +23,18 @@ namespace scratchbird::optimizer
     {
         size_t source_relation_index = 0;
         std::string table_path;
+        std::string physical_table_path;
         std::string alias;
         std::string table_id_text;
         std::string scan_kind;
         std::string index_name;
         std::string index_id_text;
         RuntimePlanIndexPredicate index_predicate;
+        std::vector<RuntimePlanIndexPredicate> index_predicates;
+        std::string bitmap_op;
+        bool covering_index = false;
+        bool exact_key_lookup = false;
+        bool flattened_derived = false;
         double startup_cost = 0.0;
         double total_cost = 0.0;
         uint64_t estimated_rows = 0;
@@ -63,6 +71,7 @@ namespace scratchbird::optimizer
         std::string join_type;
         std::string condition_text;
         std::string index_name;
+        std::string detail_text;
         double startup_cost = 0.0;
         double total_cost = 0.0;
         uint64_t estimated_rows = 0;

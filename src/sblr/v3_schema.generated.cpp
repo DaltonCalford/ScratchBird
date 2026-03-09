@@ -98,6 +98,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"query", FieldType::OPT, "stmt"},
         FieldDef{"function", FieldType::OPT, "expr"},
         FieldDef{"alias", FieldType::OPT, "ident"},
+        FieldDef{"source_relation_index", FieldType::OPT, "u64"},
         FieldDef{"table_flags", FieldType::U16, ""},
     }}},
     {"JOIN", SchemaDef{"JOIN", {
