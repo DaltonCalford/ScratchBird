@@ -4747,6 +4747,42 @@ public:
             bool is_valid = true;
         };
 
+        struct SchemaEpochCatalogInfo
+        {
+            ID schema_epoch_uuid;
+            ID database_id;
+            bool has_commit_seqno = false;
+            uint64_t commit_seqno = 0;
+            ID origin_tx_uuid;
+            uint64_t origin_txid = 0;
+            bool has_parent_schema_epoch_uuid = false;
+            ID parent_schema_epoch_uuid;
+            std::string definition_manifest;
+            uint64_t created_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ForensicSnapshotCapsuleCatalogInfo
+        {
+            ID capsule_id;
+            ID database_id;
+            ID tx_uuid;
+            uint64_t txid = 0;
+            bool has_commit_seqno = false;
+            uint64_t commit_seqno = 0;
+            std::string snapshot_kind;
+            ID schema_epoch_uuid;
+            std::string active_tx_manifest;
+            std::string visibility_manifest;
+            ID lineage_root_event_id;
+            uint64_t created_time = 0;
+            uint64_t retention_deadline_time = 0;
+            bool has_archive_locator_uuid = false;
+            ID archive_locator_uuid;
+            std::string status;
+            bool is_valid = true;
+        };
+
         struct RuntimeConnectionCatalogInfo
         {
             ID connection_id;
@@ -4787,6 +4823,7 @@ public:
         struct RuntimeTransactionCatalogInfo
         {
             uint64_t txid = 0;
+            ID tx_uuid;
             ID database_id;
             ID session_id;
             ID connection_id;
@@ -4800,6 +4837,10 @@ public:
             uint64_t start_time = 0;
             bool has_end_time = false;
             uint64_t end_time = 0;
+            bool has_commit_seqno = false;
+            uint64_t commit_seqno = 0;
+            ID schema_epoch_uuid;
+            ID forensic_snapshot_capsule_uuid;
             bool has_last_statement_hash = false;
             uint64_t last_statement_hash = 0;
             bool has_last_statement_time = false;
@@ -8278,6 +8319,20 @@ public:
             std::vector<TransactionLineageEventCatalogInfo>& rows_out,
             ErrorContext* ctx = nullptr) -> Status;
 
+        auto appendSchemaEpochCatalogEntry(SchemaEpochCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getSchemaEpochCatalogEntry(const ID& schema_epoch_uuid,
+                                        SchemaEpochCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listSchemaEpochCatalogEntries(const ID& database_id,
+                                           std::vector<SchemaEpochCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getLatestSchemaEpochCatalogEntry(const ID& database_id,
+                                              SchemaEpochCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto buildCurrentSchemaEpochDefinitionManifest(std::string& manifest_out,
+                                                       ErrorContext* ctx = nullptr) -> Status;
+
         auto appendPageAuditFindingCatalogEntry(PageAuditFindingCatalogInfo& info,
                                                 ErrorContext* ctx = nullptr) -> Status;
         auto getPageAuditFindingCatalogEntry(const ID& finding_id,
@@ -8293,6 +8348,15 @@ public:
                                                   ErrorContext* ctx = nullptr) -> Status;
         auto listShadowCaptureManifestCatalogEntries(
             std::vector<ShadowCaptureManifestCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto appendForensicSnapshotCapsuleCatalogEntry(ForensicSnapshotCapsuleCatalogInfo& info,
+                                                       ErrorContext* ctx = nullptr) -> Status;
+        auto getForensicSnapshotCapsuleCatalogEntry(const ID& capsule_id,
+                                                    ForensicSnapshotCapsuleCatalogInfo& info_out,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listForensicSnapshotCapsuleCatalogEntries(
+            std::vector<ForensicSnapshotCapsuleCatalogInfo>& rows_out,
             ErrorContext* ctx = nullptr) -> Status;
 
         // ============================================================================
@@ -12989,6 +13053,9 @@ public:
         std::unordered_map<ID, std::string, IDHash> toast_fallback_cache_;
         std::mutex toast_fallback_mutex_;
         ID toast_fallback_next_oid_{};
+        std::unordered_map<ID, std::string, IDHash> schema_epoch_manifest_cache_;
+        std::unordered_map<ID, std::pair<std::string, std::string>, IDHash>
+            forensic_snapshot_capsule_manifest_cache_;
 
         // Object permissions cache (Phase 3.1 - SQL Object Permissions)
         std::unordered_map<ID, std::vector<ObjectPermissionInfo>> object_permissions_cache_;  // object_id -> permissions
@@ -13271,8 +13338,10 @@ public:
         uint32_t audit_sink_profile_table_page_ = 0; // Audit sink profile catalog (NCW-034)
         uint32_t audit_export_segment_table_page_ = 0; // Audit export segment catalog (NCW-034)
         uint32_t transaction_lineage_event_table_page_ = 0; // Retained transaction lineage catalog (NCW-040)
+        uint32_t schema_epoch_table_page_ = 0; // Historical schema epoch catalog (NCW-046)
         uint32_t page_audit_finding_table_page_ = 0; // Sweep page audit findings catalog (NCW-043)
         uint32_t shadow_capture_manifest_table_page_ = 0; // Sweep shadow capture manifest catalog (NCW-044)
+        uint32_t forensic_snapshot_capsule_table_page_ = 0; // Retained replay snapshot capsule catalog (NCW-045)
         uint32_t connection_table_page_ = 0; // Runtime connection attribution catalog (CAT-019)
         uint32_t transaction_table_page_ = 0; // Runtime transaction attribution catalog (CAT-019)
         uint32_t principal_account_table_page_ = 0; // Principal account catalog (CAT-020)

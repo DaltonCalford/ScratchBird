@@ -1462,6 +1462,16 @@ namespace scratchbird::core
             // Get current connection context to determine isolation level
             ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
 
+            if (conn_ctx != nullptr)
+            {
+                const auto* replay_snapshot = conn_ctx->getForensicReplaySnapshot();
+                if (replay_snapshot != nullptr)
+                {
+                    return tm->isRecordVersionVisibleInSnapshot(
+                        xmin, xmax, current_xid, *replay_snapshot);
+                }
+            }
+
             // "See own changes" logic - transaction always sees its own modifications
             if (xmin == current_xid)
             {

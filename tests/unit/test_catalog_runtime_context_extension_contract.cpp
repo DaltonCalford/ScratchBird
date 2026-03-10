@@ -165,6 +165,7 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
 
     CatalogManager::RuntimeTransactionCatalogInfo invalid_inprogress{};
     invalid_inprogress.txid = 100;
+    invalid_inprogress.tx_uuid = generateUuidV7();
     invalid_inprogress.database_id = db_->uuid();
     invalid_inprogress.session_id = session.session_id;
     invalid_inprogress.emulation_engine = CatalogManager::EmulationEngine::NATIVE;
@@ -179,6 +180,7 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
 
     CatalogManager::RuntimeTransactionCatalogInfo invalid_terminal{};
     invalid_terminal.txid = 101;
+    invalid_terminal.tx_uuid = generateUuidV7();
     invalid_terminal.database_id = db_->uuid();
     invalid_terminal.session_id = session.session_id;
     invalid_terminal.emulation_engine = CatalogManager::EmulationEngine::NATIVE;
@@ -192,6 +194,7 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
 
     CatalogManager::RuntimeTransactionCatalogInfo missing_session{};
     missing_session.txid = 102;
+    missing_session.tx_uuid = generateUuidV7();
     missing_session.database_id = db_->uuid();
     missing_session.session_id = generateUuidV7();
     missing_session.emulation_engine = CatalogManager::EmulationEngine::NATIVE;
@@ -204,6 +207,7 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
 
     CatalogManager::RuntimeTransactionCatalogInfo missing_connection{};
     missing_connection.txid = 103;
+    missing_connection.tx_uuid = generateUuidV7();
     missing_connection.database_id = db_->uuid();
     missing_connection.session_id = session.session_id;
     missing_connection.connection_id = generateUuidV7();
@@ -217,6 +221,7 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
 
     CatalogManager::RuntimeTransactionCatalogInfo tx{};
     tx.txid = 200;
+    tx.tx_uuid = generateUuidV7();
     tx.database_id = db_->uuid();
     tx.session_id = session.session_id;
     tx.connection_id = connection.connection_id;
@@ -233,6 +238,10 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
     tx.state = CatalogManager::RuntimeTransactionState::COMMITTED;
     tx.has_end_time = true;
     tx.end_time = 4010;
+    tx.has_commit_seqno = true;
+    tx.commit_seqno = 17;
+    tx.schema_epoch_uuid = generateUuidV7();
+    tx.forensic_snapshot_capsule_uuid = generateUuidV7();
     tx.has_last_statement_hash = true;
     tx.last_statement_hash = 0x11223344ULL;
     tx.has_last_statement_time = true;
@@ -247,8 +256,13 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, TransactionContracts)
     ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(200, loaded, &ctx), Status::OK)
         << ctx.message;
     EXPECT_EQ(loaded.state, CatalogManager::RuntimeTransactionState::COMMITTED);
+    EXPECT_EQ(loaded.tx_uuid, tx.tx_uuid);
     EXPECT_TRUE(loaded.has_end_time);
     EXPECT_EQ(loaded.end_time, 4010u);
+    EXPECT_TRUE(loaded.has_commit_seqno);
+    EXPECT_EQ(loaded.commit_seqno, 17u);
+    EXPECT_EQ(loaded.schema_epoch_uuid, tx.schema_epoch_uuid);
+    EXPECT_EQ(loaded.forensic_snapshot_capsule_uuid, tx.forensic_snapshot_capsule_uuid);
     EXPECT_EQ(loaded.last_sqlstate, "00000");
 
     std::vector<CatalogManager::RuntimeTransactionCatalogInfo> tx_rows;
@@ -354,15 +368,29 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, LiveTransactionPersistsRetain
     ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(txid, tx_row, &ctx), Status::OK)
         << ctx.message;
     EXPECT_EQ(tx_row.state, CatalogManager::RuntimeTransactionState::COMMITTED);
+    EXPECT_EQ(tx_row.tx_uuid, tx_uuid);
     EXPECT_EQ(tx_row.session_id, session.session_id);
     EXPECT_EQ(tx_row.user_id, system_user_id);
     EXPECT_TRUE(tx_row.has_end_time);
     EXPECT_GE(tx_row.end_time, tx_row.start_time);
+    EXPECT_TRUE(tx_row.has_commit_seqno);
+    EXPECT_EQ(tx_row.commit_seqno, tx_row.end_time);
+    EXPECT_NE(tx_row.forensic_snapshot_capsule_uuid, ID{});
 
     std::vector<CatalogManager::TransactionLineageEventCatalogInfo> rows;
     ASSERT_EQ(catalog_->listTransactionLineageEventCatalogEntries(tx_uuid, txid, rows, &ctx), Status::OK)
         << ctx.message;
     ASSERT_EQ(rows.size(), 3u);
+
+    CatalogManager::ForensicSnapshotCapsuleCatalogInfo capsule{};
+    ASSERT_EQ(catalog_->getForensicSnapshotCapsuleCatalogEntry(
+                  tx_row.forensic_snapshot_capsule_uuid, capsule, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(capsule.tx_uuid, tx_uuid);
+    EXPECT_EQ(capsule.txid, txid);
+    EXPECT_EQ(capsule.snapshot_kind, "TRANSACTION_START");
+    EXPECT_EQ(capsule.status, "COMMITTED");
+    EXPECT_EQ(capsule.lineage_root_event_id, rows.front().lineage_event_id);
     EXPECT_EQ(rows[0].event_kind, CatalogManager::TransactionLineageEventKind::TX_BEGIN);
     EXPECT_EQ(rows[1].event_kind, CatalogManager::TransactionLineageEventKind::TX_CONTEXT_BOUND);
     EXPECT_EQ(rows[2].event_kind, CatalogManager::TransactionLineageEventKind::TX_COMMIT);

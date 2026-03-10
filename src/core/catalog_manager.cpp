@@ -75,6 +75,7 @@
 #include <unordered_set>  // Phase 1.4: Visited set for group transitive closure
 #include <filesystem>  // WP-2 CAT-5: Tablespace file deletion
 #include <regex>
+#include <nlohmann/json.hpp>
 #include "scratchbird/core/connection_context.h"  // Phase 3.1: Object permissions grantor tracking
 #include "scratchbird/core/tablespace.h"
 #include "scratchbird/security/scram_auth.h"
@@ -82,6 +83,8 @@
 
 namespace scratchbird::core
 {
+
+using json = nlohmann::json;
 
 using CatalogMutex = CatalogManager::CatalogMutex;
 
@@ -145,6 +148,102 @@ std::string normalizeCatalogName(std::string value)
         }
     }
     return out;
+}
+
+void copyErrorContextLocal(const ErrorContext& from, ErrorContext* to)
+{
+    if (to == nullptr)
+    {
+        return;
+    }
+
+    to->code = from.code;
+    to->sqlstate_text = from.sqlstate_text;
+    to->sqlstate = to->sqlstate_text.empty() ? from.sqlstate : to->sqlstate_text.c_str();
+    to->message = from.message;
+    to->vnext_code = from.vnext_code;
+    to->file = from.file;
+    to->line = from.line;
+    to->function = from.function;
+    to->constraint_name = from.constraint_name;
+    to->table_name = from.table_name;
+    to->column_name = from.column_name;
+    to->violating_value = from.violating_value;
+    to->referenced_table = from.referenced_table;
+    to->referenced_column = from.referenced_column;
+    to->check_expression = from.check_expression;
+    to->hint = from.hint;
+    to->cause = nullptr;
+}
+
+CatalogManager::TableInfo toCatalogTableInfo(
+    const ConnectionContext::HistoricalTableInfo& historical)
+{
+    CatalogManager::TableInfo info{};
+    info.table_id = historical.table_id;
+    info.schema_id = historical.schema_id;
+    info.table_name = historical.table_name;
+    info.name_is_delimited = historical.name_is_delimited;
+    info.owner_id = historical.owner_id;
+    info.root_gpid = historical.root_gpid;
+    info.column_count = historical.column_count;
+    info.row_count = historical.row_count;
+    info.table_type = static_cast<CatalogManager::TableType>(historical.table_type);
+    info.has_toast = historical.has_toast;
+    info.toast_table_id = historical.toast_table_id;
+    info.tablespace_id = historical.tablespace_id;
+    info.tablespace_uuid = historical.tablespace_uuid;
+    info.default_charset = historical.default_charset;
+    info.default_charset_uuid = historical.default_charset_uuid;
+    info.default_collation_id = historical.default_collation_id;
+    info.created_time = historical.created_time;
+    info.last_modified_time = historical.last_modified_time;
+    info.policy_epoch = historical.policy_epoch;
+    info.rls_enabled = historical.rls_enabled;
+    info.rls_forced = historical.rls_forced;
+    return info;
+}
+
+CatalogManager::ColumnInfo toCatalogColumnInfo(
+    const ConnectionContext::HistoricalColumnInfo& historical)
+{
+    CatalogManager::ColumnInfo info{};
+    info.table_id = historical.table_id;
+    info.column_id = historical.column_id;
+    info.column_name = historical.column_name;
+    info.name_is_delimited = historical.name_is_delimited;
+    info.ordinal = historical.ordinal;
+    info.data_type = historical.data_type;
+    info.type_precision = historical.type_precision;
+    info.type_scale = historical.type_scale;
+    info.max_length = historical.max_length;
+    info.nullable = historical.nullable;
+    info.has_default = historical.has_default;
+    info.is_primary_key = historical.is_primary_key;
+    info.is_unique = historical.is_unique;
+    info.is_foreign_key = historical.is_foreign_key;
+    info.is_generated = historical.is_generated;
+    info.generated_type =
+        static_cast<CatalogManager::GeneratedColumnType>(historical.generated_type);
+    info.generation_expression = historical.generation_expression;
+    info.is_identity = historical.is_identity;
+    info.identity_always = historical.identity_always;
+    info.identity_sequence_id = historical.identity_sequence_id;
+    info.storage_type = historical.storage_type;
+    info.with_timezone = historical.with_timezone;
+    info.charset = historical.charset;
+    info.charset_uuid = historical.charset_uuid;
+    info.domain_id = historical.domain_id;
+    info.is_array = historical.is_array;
+    info.array_size = historical.array_size;
+    info.timezone_hint = historical.timezone_hint;
+    info.timezone_uuid = historical.timezone_uuid;
+    info.collation_id = historical.collation_id;
+    info.default_value = historical.default_value;
+    info.default_expr = historical.default_expr;
+    info.check_expr = historical.check_expr;
+    info.created_time = historical.created_time;
+    return info;
 }
 
 constexpr const char* kVirtualEmulatedTablespacePrefix = "sb://emu-ts/";
@@ -711,6 +810,21 @@ bool isValidShadowCaptureFormat(const std::string& format)
     return format == "LOGICAL_TX_SUMMARY" ||
            format == "LOGICAL_OBJECT_SET" ||
            format == "PHYSICAL_PAGE_MANIFEST";
+}
+
+bool isValidForensicSnapshotKind(const std::string& kind)
+{
+    return kind == "TRANSACTION_START" ||
+           kind == "STATEMENT_SNAPSHOT" ||
+           kind == "HISTORICAL_RECONSTRUCTED";
+}
+
+bool isValidForensicSnapshotStatus(const std::string& status)
+{
+    return status == "AVAILABLE" ||
+           status == "COMMITTED" ||
+           status == "ABORTED" ||
+           status == "ARCHIVED";
 }
 
 bool isValidStorageProfile(CatalogManager::StorageProfile profile)
@@ -4893,10 +5007,12 @@ bool hasTriggerNameConflictInTable(
         uint32_t audit_sink_profile_page; // Page containing audit_sink_profile table
         uint32_t audit_export_segment_page; // Page containing audit_export_segment table
         uint32_t transaction_lineage_event_page; // Page containing transaction_lineage_event table
+        uint32_t schema_epoch_page; // Page containing schema_epoch table
         uint32_t page_audit_finding_page; // Page containing page_audit_finding table
         uint32_t shadow_capture_manifest_page; // Page containing shadow_capture_manifest table
+        uint32_t forensic_snapshot_capsule_page; // Page containing forensic_snapshot_capsule table
 
-        uint8_t reserved[2900];       // Padding for 4KB page
+        uint8_t reserved[2892];       // Padding for 4KB page
     };
 
     // Database record on disk
@@ -5716,6 +5832,7 @@ bool hasTriggerNameConflictInTable(
     struct RuntimeTransactionRecord
     {
         uint64_t txid;
+        ID tx_uuid;
         ID database_id;
         ID session_id;
         ID connection_id;
@@ -5727,13 +5844,17 @@ bool hasTriggerNameConflictInTable(
         uint8_t autocommit;
         uint8_t state;                  // RuntimeTransactionState
         uint8_t has_end_time;
+        uint8_t has_commit_seqno;
         uint8_t has_last_statement_hash;
         uint8_t has_last_statement_time;
         uint8_t has_last_error_code;
         uint8_t has_last_sqlstate;
-        uint8_t reserved0[6];
+        uint8_t reserved0[5];
         uint64_t start_time;
         uint64_t end_time;
+        uint64_t commit_seqno;
+        ID schema_epoch_uuid;
+        ID forensic_snapshot_capsule_uuid;
         uint64_t last_statement_hash;
         uint64_t last_statement_time;
         uint32_t last_error_code;
@@ -9772,6 +9893,45 @@ bool hasTriggerNameConflictInTable(
         uint64_t created_time;
         uint64_t retention_deadline_time;
         uint32_t padding;
+    };
+
+    struct ForensicSnapshotCapsuleRecord
+    {
+        ID capsule_id;
+        ID database_id;
+        ID tx_uuid;
+        uint64_t txid;
+        uint64_t commit_seqno;
+        char snapshot_kind[32];
+        ID schema_epoch_uuid;
+        ID active_tx_manifest_oid;
+        ID visibility_manifest_oid;
+        ID lineage_root_event_id;
+        uint64_t created_time;
+        uint64_t retention_deadline_time;
+        ID archive_locator_uuid;
+        uint8_t has_commit_seqno;
+        uint8_t has_archive_locator_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+        char status[32];
+        uint32_t padding;
+    };
+
+    struct SchemaEpochRecord
+    {
+        ID schema_epoch_uuid;
+        ID database_id;
+        ID origin_tx_uuid;
+        uint64_t origin_txid;
+        uint64_t commit_seqno;
+        ID parent_schema_epoch_uuid;
+        ID definition_manifest_oid;
+        uint64_t created_time;
+        uint8_t has_commit_seqno;
+        uint8_t has_parent_schema_epoch_uuid;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
     };
 
     // UDR (User-Defined Resource) record on disk (Phase 3 - Stored Code Tables)
@@ -18689,6 +18849,18 @@ bool hasTriggerNameConflictInTable(
 
     auto CatalogManager::getTable(const ID &table_id, TableInfo &info, ErrorContext *ctx) -> Status
     {
+        if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+            conn_ctx != nullptr && conn_ctx->isForensicReplayActive())
+        {
+            ConnectionContext::HistoricalTableInfo historical{};
+            Status replay_status = conn_ctx->getForensicReplayTable(table_id, historical, nullptr);
+            if (replay_status == Status::OK)
+            {
+                info = toCatalogTableInfo(historical);
+                return Status::OK;
+            }
+        }
+
         std::lock_guard<CatalogMutex> lock(mutex_);
         auto it = table_cache_.find(table_id);
         if (it == table_cache_.end())
@@ -18719,6 +18891,27 @@ bool hasTriggerNameConflictInTable(
     auto CatalogManager::getTable(const ID &schema_id, const std::string &table_name,
                                   TableInfo &info, ErrorContext *ctx) -> Status
     {
+        if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+            conn_ctx != nullptr && conn_ctx->isForensicReplayActive())
+        {
+            std::vector<ConnectionContext::HistoricalTableInfo> replay_tables;
+            Status replay_status = conn_ctx->listForensicReplayTables(schema_id, replay_tables, nullptr);
+            if (replay_status == Status::OK)
+            {
+                for (const auto& table_info : replay_tables)
+                {
+                    if (IdentifierUtils::namesMatch(table_name,
+                                                    false,
+                                                    table_info.table_name,
+                                                    table_info.name_is_delimited))
+                    {
+                        info = toCatalogTableInfo(table_info);
+                        return Status::OK;
+                    }
+                }
+            }
+        }
+
         std::lock_guard<CatalogMutex> lock(mutex_);
         ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
         ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
@@ -18804,6 +18997,24 @@ bool hasTriggerNameConflictInTable(
     auto CatalogManager::listTables(const ID &schema_id, std::vector<TableInfo> &tables,
                                     ErrorContext *ctx) -> Status
     {
+        if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+            conn_ctx != nullptr && conn_ctx->isForensicReplayActive())
+        {
+            std::vector<ConnectionContext::HistoricalTableInfo> replay_tables;
+            Status replay_status =
+                conn_ctx->listForensicReplayTables(schema_id, replay_tables, nullptr);
+            if (replay_status == Status::OK)
+            {
+                tables.clear();
+                tables.reserve(replay_tables.size());
+                for (const auto& table_info : replay_tables)
+                {
+                    tables.push_back(toCatalogTableInfo(table_info));
+                }
+                return Status::OK;
+            }
+        }
+
         std::lock_guard<CatalogMutex> lock(mutex_);
         tables.clear();
         ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
@@ -18873,6 +19084,27 @@ bool hasTriggerNameConflictInTable(
                                     ErrorContext *ctx,
                                     uint32_t required_privilege) -> Status
     {
+        if (required_privilege == 0)
+        {
+            if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+                conn_ctx != nullptr && conn_ctx->isForensicReplayActive())
+            {
+                std::vector<ConnectionContext::HistoricalColumnInfo> replay_columns;
+                Status replay_status =
+                    conn_ctx->getForensicReplayColumns(table_id, replay_columns, nullptr);
+                if (replay_status == Status::OK)
+                {
+                    columns.clear();
+                    columns.reserve(replay_columns.size());
+                    for (const auto& column_info : replay_columns)
+                    {
+                        columns.push_back(toCatalogColumnInfo(column_info));
+                    }
+                    return Status::OK;
+                }
+            }
+        }
+
         if (required_privilege != 0)
         {
             ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
@@ -19413,6 +19645,19 @@ bool hasTriggerNameConflictInTable(
     auto CatalogManager::getColumn(const ID &table_id, const std::string &column_name,
                                    ColumnInfo &info, ErrorContext *ctx) -> Status
     {
+        if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent();
+            conn_ctx != nullptr && conn_ctx->isForensicReplayActive())
+        {
+            ConnectionContext::HistoricalColumnInfo historical{};
+            Status replay_status =
+                conn_ctx->getForensicReplayColumn(table_id, column_name, historical, nullptr);
+            if (replay_status == Status::OK)
+            {
+                info = toCatalogColumnInfo(historical);
+                return Status::OK;
+            }
+        }
+
         std::lock_guard<CatalogMutex> lock(mutex_);
         return getColumnInternal(table_id, column_name, info, ctx);
     }
@@ -20307,8 +20552,10 @@ bool hasTriggerNameConflictInTable(
         root->audit_sink_profile_page = audit_sink_profile_table_page_;
         root->audit_export_segment_page = audit_export_segment_table_page_;
         root->transaction_lineage_event_page = transaction_lineage_event_table_page_;
+        root->schema_epoch_page = schema_epoch_table_page_;
         root->page_audit_finding_page = page_audit_finding_table_page_;
         root->shadow_capture_manifest_page = shadow_capture_manifest_table_page_;
+        root->forensic_snapshot_capsule_page = forensic_snapshot_capsule_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -20638,8 +20885,10 @@ bool hasTriggerNameConflictInTable(
         audit_sink_profile_table_page_ = root->audit_sink_profile_page;
         audit_export_segment_table_page_ = root->audit_export_segment_page;
         transaction_lineage_event_table_page_ = root->transaction_lineage_event_page;
+        schema_epoch_table_page_ = root->schema_epoch_page;
         page_audit_finding_table_page_ = root->page_audit_finding_page;
         shadow_capture_manifest_table_page_ = root->shadow_capture_manifest_page;
+        forensic_snapshot_capsule_table_page_ = root->forensic_snapshot_capsule_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
@@ -30647,6 +30896,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
 
     // 3. Create new ColumnInfo with generated UUID
     ColumnInfo new_column = column_info;
+    new_column.table_id = table_id;
     new_column.column_id = generateUuidV7();
     new_column.ordinal = next_ordinal;
 
@@ -30721,6 +30971,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     record.check_expr_oid = new_column.check_expr_oid;
     record.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     record.is_valid = 1;
+    new_column.created_time = record.created_time;
 
     status = writeRecordToHeapPage(columns_table_page_, record, ctx);
 
@@ -30785,6 +31036,21 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
                 LOG_ERROR(CATALOG, "Failed to create dependency for default sequence");
                 return status;
             }
+        }
+    }
+
+    new_column.default_value_oid = record.default_value_oid;
+    auto cache_it = column_cache_.find(table_id);
+    if (cache_it != column_cache_.end())
+    {
+        cache_it->second.push_back(new_column);
+    }
+    else
+    {
+        status = readColumnRecords(table_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
         }
     }
 
@@ -31017,6 +31283,26 @@ Status CatalogManager::dropColumn(const ID &table_id, const std::string &column_
     status = clearDependenciesFor(column_id, ctx);
     if (status != Status::OK) {
         LOG_ERROR(CATALOG, "Failed to clear dependencies for column");
+    }
+
+    auto cache_it = column_cache_.find(table_id);
+    if (cache_it != column_cache_.end())
+    {
+        auto& cached_columns = cache_it->second;
+        cached_columns.erase(
+            std::remove_if(cached_columns.begin(), cached_columns.end(),
+                           [&column_id](const ColumnInfo& col) {
+                               return col.column_id == column_id;
+                           }),
+            cached_columns.end());
+    }
+    else
+    {
+        status = readColumnRecords(table_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
     }
 
     return Status::OK;
@@ -62505,6 +62791,356 @@ auto CatalogManager::listTransactionLineageEventCatalogEntries(
     return Status::OK;
 }
 
+auto CatalogManager::buildCurrentSchemaEpochDefinitionManifest(std::string& manifest_out,
+                                                               ErrorContext* ctx) -> Status
+{
+    manifest_out.clear();
+
+    std::vector<SchemaInfo> schemas;
+    Status status = listSchemas(schemas, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::sort(schemas.begin(), schemas.end(), [](const SchemaInfo& lhs, const SchemaInfo& rhs) {
+        if (lhs.schema_name != rhs.schema_name)
+        {
+            return lhs.schema_name < rhs.schema_name;
+        }
+        return compareUuidBytesLocal(lhs.schema_id, rhs.schema_id) < 0;
+    });
+
+    json manifest = json::object();
+    manifest["version"] = 1;
+    manifest["schemas"] = json::array();
+
+    for (const auto& schema : schemas)
+    {
+        json schema_doc = json::object();
+        schema_doc["schema_uuid"] = schema.schema_id.toString();
+        schema_doc["schema_name"] = schema.schema_name;
+        schema_doc["schema_name_is_delimited"] = schema.name_is_delimited;
+        schema_doc["owner_uuid"] = schema.owner_id.toString();
+        schema_doc["tables"] = json::array();
+
+        std::vector<TableInfo> tables;
+        status = listTables(schema.schema_id, tables, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::sort(tables.begin(), tables.end(), [](const TableInfo& lhs, const TableInfo& rhs) {
+            if (lhs.table_name != rhs.table_name)
+            {
+                return lhs.table_name < rhs.table_name;
+            }
+            return compareUuidBytesLocal(lhs.table_id, rhs.table_id) < 0;
+        });
+
+        for (const auto& table : tables)
+        {
+            json table_doc = json::object();
+            table_doc["table_uuid"] = table.table_id.toString();
+            table_doc["schema_uuid"] = table.schema_id.toString();
+            table_doc["schema_name"] = schema.schema_name;
+            table_doc["table_name"] = table.table_name;
+            table_doc["table_name_is_delimited"] = table.name_is_delimited;
+            table_doc["owner_uuid"] = table.owner_id.toString();
+            table_doc["root_gpid"] = table.root_gpid;
+            table_doc["column_count"] = table.column_count;
+            table_doc["row_count"] = table.row_count;
+            table_doc["table_type"] = static_cast<uint8_t>(table.table_type);
+            table_doc["has_toast"] = table.has_toast;
+            table_doc["toast_table_uuid"] = table.toast_table_id.toString();
+            table_doc["tablespace_uuid"] = table.tablespace_uuid.toString();
+            table_doc["tablespace_id"] = table.tablespace_id;
+            table_doc["default_charset_uuid"] = table.default_charset_uuid.toString();
+            table_doc["default_charset"] = table.default_charset;
+            table_doc["default_collation_id"] = table.default_collation_id;
+            table_doc["created_time"] = table.created_time;
+            table_doc["last_modified_time"] = table.last_modified_time;
+            table_doc["policy_epoch"] = table.policy_epoch;
+            table_doc["rls_enabled"] = table.rls_enabled;
+            table_doc["rls_forced"] = table.rls_forced;
+            table_doc["columns"] = json::array();
+
+            std::vector<ColumnInfo> columns;
+            status = getColumns(table.table_id, columns, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            std::sort(columns.begin(), columns.end(), [](const ColumnInfo& lhs, const ColumnInfo& rhs) {
+                if (lhs.ordinal != rhs.ordinal)
+                {
+                    return lhs.ordinal < rhs.ordinal;
+                }
+                return compareUuidBytesLocal(lhs.column_id, rhs.column_id) < 0;
+            });
+
+            for (const auto& column : columns)
+            {
+                json column_doc = json::object();
+                column_doc["column_uuid"] = column.column_id.toString();
+                column_doc["table_uuid"] = column.table_id.toString();
+                column_doc["column_name"] = column.column_name;
+                column_doc["column_name_is_delimited"] = column.name_is_delimited;
+                column_doc["ordinal"] = column.ordinal;
+                column_doc["data_type"] = column.data_type;
+                column_doc["type_precision"] = column.type_precision;
+                column_doc["type_scale"] = column.type_scale;
+                column_doc["max_length"] = column.max_length;
+                column_doc["nullable"] = column.nullable;
+                column_doc["has_default"] = column.has_default;
+                column_doc["is_primary_key"] = column.is_primary_key;
+                column_doc["is_unique"] = column.is_unique;
+                column_doc["is_foreign_key"] = column.is_foreign_key;
+                column_doc["is_generated"] = column.is_generated;
+                column_doc["generated_type"] = static_cast<uint8_t>(column.generated_type);
+                column_doc["generation_expression"] = column.generation_expression;
+                column_doc["is_identity"] = column.is_identity;
+                column_doc["identity_always"] = column.identity_always;
+                column_doc["identity_sequence_uuid"] = column.identity_sequence_id.toString();
+                column_doc["storage_type"] = column.storage_type;
+                column_doc["with_timezone"] = column.with_timezone;
+                column_doc["charset_uuid"] = column.charset_uuid.toString();
+                column_doc["charset"] = column.charset;
+                column_doc["domain_uuid"] = column.domain_id.toString();
+                column_doc["is_array"] = column.is_array;
+                column_doc["array_size"] = column.array_size;
+                column_doc["timezone_uuid"] = column.timezone_uuid.toString();
+                column_doc["timezone_hint"] = column.timezone_hint;
+                column_doc["collation_id"] = column.collation_id;
+                column_doc["default_value"] = column.default_value;
+                column_doc["default_expr"] = column.default_expr;
+                column_doc["check_expr"] = column.check_expr;
+                column_doc["created_time"] = column.created_time;
+                table_doc["columns"].push_back(std::move(column_doc));
+            }
+
+            schema_doc["tables"].push_back(std::move(table_doc));
+        }
+
+        manifest["schemas"].push_back(std::move(schema_doc));
+    }
+
+    manifest_out = manifest.dump();
+    return Status::OK;
+}
+
+auto CatalogManager::appendSchemaEpochCatalogEntry(SchemaEpochCatalogInfo& info,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.database_id) ||
+        isZeroUuidLocal(info.origin_tx_uuid) ||
+        info.origin_txid == 0 ||
+        info.definition_manifest.empty())
+    {
+        SET_ERROR_CONTEXT(
+            ctx,
+            Status::INVALID_ARGUMENT,
+            "schema_epoch database_uuid/origin_tx_uuid/origin_txid/definition_manifest are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (isZeroUuidLocal(info.schema_epoch_uuid))
+    {
+        info.schema_epoch_uuid = generateUuidV7();
+    }
+    if (schema_epoch_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(schema_epoch_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate = [&info](const SchemaEpochRecord& rec) {
+        return rec.is_valid == 1 && rec.schema_epoch_uuid == info.schema_epoch_uuid;
+    };
+    auto existing = findRecordInHeapPage<SchemaEpochRecord>(schema_epoch_table_page_, duplicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "schema_epoch rows are immutable");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    SchemaEpochRecord rec{};
+    rec.schema_epoch_uuid = info.schema_epoch_uuid;
+    rec.database_id = info.database_id;
+    rec.origin_tx_uuid = info.origin_tx_uuid;
+    rec.origin_txid = info.origin_txid;
+    rec.has_commit_seqno = info.has_commit_seqno ? 1 : 0;
+    rec.commit_seqno = info.has_commit_seqno ? info.commit_seqno : 0;
+    rec.has_parent_schema_epoch_uuid = info.has_parent_schema_epoch_uuid ? 1 : 0;
+    rec.parent_schema_epoch_uuid =
+        info.has_parent_schema_epoch_uuid ? info.parent_schema_epoch_uuid : ID{};
+    rec.created_time = info.created_time == 0 ? catalogNowTicks() : info.created_time;
+    rec.is_valid = info.is_valid ? 1 : 0;
+
+    uint64_t xmin = 0;
+    Status status =
+        storeStringInToast(info.definition_manifest, xmin, rec.definition_manifest_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    schema_epoch_manifest_cache_[info.schema_epoch_uuid] = info.definition_manifest;
+    return writeRecordToHeapPage(schema_epoch_table_page_, rec, ctx);
+}
+
+auto CatalogManager::getSchemaEpochCatalogEntry(const ID& schema_epoch_uuid,
+                                                SchemaEpochCatalogInfo& info_out,
+                                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (schema_epoch_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    auto predicate = [&schema_epoch_uuid](const SchemaEpochRecord& rec) {
+        return rec.is_valid == 1 && rec.schema_epoch_uuid == schema_epoch_uuid;
+    };
+    auto result = findRecordInHeapPage<SchemaEpochRecord>(schema_epoch_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = SchemaEpochCatalogInfo{};
+    info_out.schema_epoch_uuid = result.record.schema_epoch_uuid;
+    info_out.database_id = result.record.database_id;
+    info_out.origin_tx_uuid = result.record.origin_tx_uuid;
+    info_out.origin_txid = result.record.origin_txid;
+    info_out.has_commit_seqno = result.record.has_commit_seqno != 0;
+    info_out.commit_seqno = result.record.commit_seqno;
+    info_out.has_parent_schema_epoch_uuid = result.record.has_parent_schema_epoch_uuid != 0;
+    info_out.parent_schema_epoch_uuid =
+        info_out.has_parent_schema_epoch_uuid ? result.record.parent_schema_epoch_uuid : ID{};
+    info_out.created_time = result.record.created_time;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    auto cached = schema_epoch_manifest_cache_.find(schema_epoch_uuid);
+    uint64_t xmin = 0;
+    ErrorContext load_ctx;
+    Status status = loadStringFromToast(result.record.definition_manifest_oid,
+                                        xmin,
+                                        info_out.definition_manifest,
+                                        &load_ctx);
+    if (status != Status::OK)
+    {
+        if (cached == schema_epoch_manifest_cache_.end())
+        {
+            copyErrorContextLocal(load_ctx, ctx);
+            return status;
+        }
+        info_out.definition_manifest = cached->second;
+    }
+
+    schema_epoch_manifest_cache_[schema_epoch_uuid] = info_out.definition_manifest;
+    return Status::OK;
+}
+
+auto CatalogManager::listSchemaEpochCatalogEntries(const ID& database_id,
+                                                   std::vector<SchemaEpochCatalogInfo>& rows_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (schema_epoch_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    auto filter = [&database_id](const SchemaEpochRecord& rec) {
+        return rec.is_valid == 1 &&
+               (isZeroUuidLocal(database_id) || rec.database_id == database_id);
+    };
+    auto converter = [this](const SchemaEpochRecord& rec, SchemaEpochCatalogInfo& info) {
+        info = SchemaEpochCatalogInfo{};
+        info.schema_epoch_uuid = rec.schema_epoch_uuid;
+        info.database_id = rec.database_id;
+        info.origin_tx_uuid = rec.origin_tx_uuid;
+        info.origin_txid = rec.origin_txid;
+        info.has_commit_seqno = rec.has_commit_seqno != 0;
+        info.commit_seqno = rec.commit_seqno;
+        info.has_parent_schema_epoch_uuid = rec.has_parent_schema_epoch_uuid != 0;
+        info.parent_schema_epoch_uuid =
+            info.has_parent_schema_epoch_uuid ? rec.parent_schema_epoch_uuid : ID{};
+        info.created_time = rec.created_time;
+        info.is_valid = rec.is_valid == 1;
+
+        uint64_t xmin = 0;
+        ErrorContext load_ctx;
+        if (loadStringFromToast(rec.definition_manifest_oid, xmin, info.definition_manifest, &load_ctx) !=
+            Status::OK)
+        {
+            auto cached = schema_epoch_manifest_cache_.find(rec.schema_epoch_uuid);
+            if (cached != schema_epoch_manifest_cache_.end())
+            {
+                info.definition_manifest = cached->second;
+            }
+        }
+        schema_epoch_manifest_cache_[rec.schema_epoch_uuid] = info.definition_manifest;
+    };
+    Status status = readRecordsToVector<SchemaEpochRecord, SchemaEpochCatalogInfo>(
+        schema_epoch_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const SchemaEpochCatalogInfo& lhs, const SchemaEpochCatalogInfo& rhs) {
+                  if (lhs.has_commit_seqno != rhs.has_commit_seqno)
+                  {
+                      return lhs.has_commit_seqno > rhs.has_commit_seqno;
+                  }
+                  if (lhs.commit_seqno != rhs.commit_seqno)
+                  {
+                      return lhs.commit_seqno > rhs.commit_seqno;
+                  }
+                  if (lhs.created_time != rhs.created_time)
+                  {
+                      return lhs.created_time > rhs.created_time;
+                  }
+                  return compareUuidBytesLocal(lhs.schema_epoch_uuid, rhs.schema_epoch_uuid) > 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::getLatestSchemaEpochCatalogEntry(const ID& database_id,
+                                                      SchemaEpochCatalogInfo& info_out,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::vector<SchemaEpochCatalogInfo> rows;
+    Status status = listSchemaEpochCatalogEntries(database_id, rows, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (rows.empty())
+    {
+        return Status::NOT_FOUND;
+    }
+    info_out = rows.front();
+    return Status::OK;
+}
+
 auto CatalogManager::appendPageAuditFindingCatalogEntry(PageAuditFindingCatalogInfo& info,
                                                         ErrorContext* ctx) -> Status
 {
@@ -62896,6 +63532,338 @@ auto CatalogManager::listShadowCaptureManifestCatalogEntries(
     return Status::OK;
 }
 
+auto CatalogManager::appendForensicSnapshotCapsuleCatalogEntry(
+    ForensicSnapshotCapsuleCatalogInfo& info,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.database_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.database_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (isZeroUuidLocal(info.tx_uuid))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.tx_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.txid == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.txid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidForensicSnapshotKind(info.snapshot_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.snapshot_kind is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.active_tx_manifest.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.active_tx_manifest is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.visibility_manifest.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.visibility_manifest is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (isZeroUuidLocal(info.lineage_root_event_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.lineage_root_event_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.retention_deadline_time == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.retention_deadline_time is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidForensicSnapshotStatus(info.status))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "forensic_snapshot_capsule.status is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (isZeroUuidLocal(info.capsule_id))
+    {
+        info.capsule_id = generateUuidV7();
+    }
+
+    if (forensic_snapshot_capsule_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(forensic_snapshot_capsule_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_id = [&info](const ForensicSnapshotCapsuleRecord& row) {
+        return row.is_valid == 1 && row.capsule_id == info.capsule_id;
+    };
+    auto existing_id = findRecordInHeapPage<ForensicSnapshotCapsuleRecord>(
+        forensic_snapshot_capsule_table_page_, duplicate_id, ctx);
+    if (existing_id.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "forensic_snapshot_capsule rows are immutable");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing_id.status != Status::NOT_FOUND)
+    {
+        return existing_id.status;
+    }
+
+    ForensicSnapshotCapsuleRecord rec{};
+    rec.capsule_id = info.capsule_id;
+    rec.database_id = info.database_id;
+    rec.tx_uuid = info.tx_uuid;
+    rec.txid = info.txid;
+    rec.has_commit_seqno = info.has_commit_seqno ? 1 : 0;
+    rec.commit_seqno = info.has_commit_seqno ? info.commit_seqno : 0;
+    copyStringField(rec.snapshot_kind, info.snapshot_kind);
+    rec.schema_epoch_uuid = info.schema_epoch_uuid;
+    rec.lineage_root_event_id = info.lineage_root_event_id;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.retention_deadline_time = info.retention_deadline_time;
+    rec.has_archive_locator_uuid = info.has_archive_locator_uuid ? 1 : 0;
+    rec.archive_locator_uuid = info.has_archive_locator_uuid ? info.archive_locator_uuid : ID{};
+    rec.is_valid = info.is_valid ? 1 : 0;
+    copyStringField(rec.status, info.status);
+
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(info.active_tx_manifest,
+                                       xmin,
+                                       rec.active_tx_manifest_oid,
+                                       ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    status = storeStringInToast(info.visibility_manifest,
+                                xmin,
+                                rec.visibility_manifest_oid,
+                                ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    info.created_time = rec.created_time;
+    status = writeRecordToHeapPage(forensic_snapshot_capsule_table_page_, rec, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    forensic_snapshot_capsule_manifest_cache_[info.capsule_id] =
+        std::make_pair(info.active_tx_manifest, info.visibility_manifest);
+    return Status::OK;
+}
+
+auto CatalogManager::getForensicSnapshotCapsuleCatalogEntry(
+    const ID& capsule_id,
+    ForensicSnapshotCapsuleCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (forensic_snapshot_capsule_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&capsule_id](const ForensicSnapshotCapsuleRecord& rec) {
+        return rec.is_valid == 1 && rec.capsule_id == capsule_id;
+    };
+    auto result = findRecordInHeapPage<ForensicSnapshotCapsuleRecord>(
+        forensic_snapshot_capsule_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    const std::string snapshot_kind =
+        fixedNameFromBuffer(result.record.snapshot_kind, sizeof(result.record.snapshot_kind));
+    if (!isValidForensicSnapshotKind(snapshot_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                          "forensic_snapshot_capsule.snapshot_kind is invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    const std::string status_text =
+        fixedNameFromBuffer(result.record.status, sizeof(result.record.status));
+    if (!isValidForensicSnapshotStatus(status_text))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                          "forensic_snapshot_capsule.status is invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = ForensicSnapshotCapsuleCatalogInfo{};
+    info_out.capsule_id = result.record.capsule_id;
+    info_out.database_id = result.record.database_id;
+    info_out.tx_uuid = result.record.tx_uuid;
+    info_out.txid = result.record.txid;
+    info_out.has_commit_seqno = result.record.has_commit_seqno != 0;
+    info_out.commit_seqno = result.record.commit_seqno;
+    info_out.snapshot_kind = snapshot_kind;
+    info_out.schema_epoch_uuid = result.record.schema_epoch_uuid;
+    info_out.lineage_root_event_id = result.record.lineage_root_event_id;
+    info_out.created_time = result.record.created_time;
+    info_out.retention_deadline_time = result.record.retention_deadline_time;
+    info_out.has_archive_locator_uuid = result.record.has_archive_locator_uuid != 0;
+    info_out.archive_locator_uuid =
+        info_out.has_archive_locator_uuid ? result.record.archive_locator_uuid : ID{};
+    info_out.status = status_text;
+    info_out.is_valid = result.record.is_valid == 1;
+
+    auto cached_manifests = forensic_snapshot_capsule_manifest_cache_.find(capsule_id);
+    uint64_t xmin = 0;
+    ErrorContext active_load_ctx;
+    Status status = loadStringFromToast(result.record.active_tx_manifest_oid,
+                                        xmin,
+                                        info_out.active_tx_manifest,
+                                        &active_load_ctx);
+    if (status != Status::OK)
+    {
+        if (cached_manifests == forensic_snapshot_capsule_manifest_cache_.end())
+        {
+            if (ctx != nullptr && !active_load_ctx.message.empty())
+            {
+                copyErrorContextLocal(active_load_ctx, ctx);
+            }
+            return status;
+        }
+        info_out.active_tx_manifest = cached_manifests->second.first;
+    }
+
+    ErrorContext visibility_load_ctx;
+    status = loadStringFromToast(result.record.visibility_manifest_oid,
+                                 xmin,
+                                 info_out.visibility_manifest,
+                                 &visibility_load_ctx);
+    if (status != Status::OK)
+    {
+        if (cached_manifests == forensic_snapshot_capsule_manifest_cache_.end())
+        {
+            if (ctx != nullptr && !visibility_load_ctx.message.empty())
+            {
+                copyErrorContextLocal(visibility_load_ctx, ctx);
+            }
+            return status;
+        }
+        info_out.visibility_manifest = cached_manifests->second.second;
+    }
+
+    forensic_snapshot_capsule_manifest_cache_[capsule_id] =
+        std::make_pair(info_out.active_tx_manifest, info_out.visibility_manifest);
+    return Status::OK;
+}
+
+auto CatalogManager::listForensicSnapshotCapsuleCatalogEntries(
+    std::vector<ForensicSnapshotCapsuleCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (forensic_snapshot_capsule_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const ForensicSnapshotCapsuleRecord& rec) { return rec.is_valid == 1; };
+    auto converter = [this](const ForensicSnapshotCapsuleRecord& rec,
+                                 ForensicSnapshotCapsuleCatalogInfo& info) {
+        info = ForensicSnapshotCapsuleCatalogInfo{};
+        info.capsule_id = rec.capsule_id;
+        info.database_id = rec.database_id;
+        info.tx_uuid = rec.tx_uuid;
+        info.txid = rec.txid;
+        info.has_commit_seqno = rec.has_commit_seqno != 0;
+        info.commit_seqno = rec.commit_seqno;
+        info.snapshot_kind = fixedNameFromBuffer(rec.snapshot_kind, sizeof(rec.snapshot_kind));
+        info.schema_epoch_uuid = rec.schema_epoch_uuid;
+        info.lineage_root_event_id = rec.lineage_root_event_id;
+        info.created_time = rec.created_time;
+        info.retention_deadline_time = rec.retention_deadline_time;
+        info.has_archive_locator_uuid = rec.has_archive_locator_uuid != 0;
+        info.archive_locator_uuid =
+            info.has_archive_locator_uuid ? rec.archive_locator_uuid : ID{};
+        info.status = fixedNameFromBuffer(rec.status, sizeof(rec.status));
+        info.is_valid = rec.is_valid == 1;
+        uint64_t xmin = 0;
+        ErrorContext active_load_ctx;
+        if (loadStringFromToast(rec.active_tx_manifest_oid,
+                                xmin,
+                                info.active_tx_manifest,
+                                &active_load_ctx) !=
+            Status::OK)
+        {
+            auto cached = forensic_snapshot_capsule_manifest_cache_.find(rec.capsule_id);
+            if (cached != forensic_snapshot_capsule_manifest_cache_.end())
+            {
+                info.active_tx_manifest = cached->second.first;
+            }
+        }
+        ErrorContext visibility_load_ctx;
+        if (loadStringFromToast(rec.visibility_manifest_oid,
+                                xmin,
+                                info.visibility_manifest,
+                                &visibility_load_ctx) !=
+            Status::OK)
+        {
+            auto cached = forensic_snapshot_capsule_manifest_cache_.find(rec.capsule_id);
+            if (cached != forensic_snapshot_capsule_manifest_cache_.end())
+            {
+                info.visibility_manifest = cached->second.second;
+            }
+        }
+        forensic_snapshot_capsule_manifest_cache_[rec.capsule_id] =
+            std::make_pair(info.active_tx_manifest, info.visibility_manifest);
+    };
+    Status status =
+        readRecordsToVector<ForensicSnapshotCapsuleRecord, ForensicSnapshotCapsuleCatalogInfo>(
+            forensic_snapshot_capsule_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (const auto& row : rows_out)
+    {
+        if (!isValidForensicSnapshotKind(row.snapshot_kind) ||
+            !isValidForensicSnapshotStatus(row.status))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "forensic_snapshot_capsule enum value is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ForensicSnapshotCapsuleCatalogInfo& lhs,
+                 const ForensicSnapshotCapsuleCatalogInfo& rhs) {
+                  if (lhs.created_time != rhs.created_time)
+                  {
+                      return lhs.created_time < rhs.created_time;
+                  }
+                  return std::memcmp(lhs.capsule_id.bytes.data(),
+                                     rhs.capsule_id.bytes.data(),
+                                     lhs.capsule_id.bytes.size()) < 0;
+              });
+    return Status::OK;
+}
+
 // ============================================================================
 // Canonical runtime context catalog CRUD operations (CAT-019)
 // ============================================================================
@@ -63228,6 +64196,11 @@ auto CatalogManager::upsertRuntimeTransactionCatalogEntry(const RuntimeTransacti
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "transaction.txid is required");
         return Status::INVALID_ARGUMENT;
     }
+    if (isZeroUuidLocal(info.tx_uuid))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "transaction.tx_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
     if (isZeroUuidLocal(info.database_id))
     {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "transaction.database_uuid is required");
@@ -63358,6 +64331,7 @@ auto CatalogManager::upsertRuntimeTransactionCatalogEntry(const RuntimeTransacti
     const uint64_t now = catalogNowTicks();
     RuntimeTransactionRecord rec{};
     rec.txid = info.txid;
+    rec.tx_uuid = info.tx_uuid;
     rec.database_id = info.database_id;
     rec.session_id = info.session_id;
     rec.connection_id = info.connection_id;
@@ -63371,6 +64345,10 @@ auto CatalogManager::upsertRuntimeTransactionCatalogEntry(const RuntimeTransacti
     rec.start_time = info.start_time;
     rec.has_end_time = info.has_end_time ? 1 : 0;
     rec.end_time = info.has_end_time ? info.end_time : 0;
+    rec.has_commit_seqno = info.has_commit_seqno ? 1 : 0;
+    rec.commit_seqno = info.has_commit_seqno ? info.commit_seqno : 0;
+    rec.schema_epoch_uuid = info.schema_epoch_uuid;
+    rec.forensic_snapshot_capsule_uuid = info.forensic_snapshot_capsule_uuid;
     rec.has_last_statement_hash = info.has_last_statement_hash ? 1 : 0;
     rec.last_statement_hash = info.has_last_statement_hash ? info.last_statement_hash : 0;
     rec.has_last_statement_time = info.has_last_statement_time ? 1 : 0;
@@ -63398,6 +64376,22 @@ auto CatalogManager::upsertRuntimeTransactionCatalogEntry(const RuntimeTransacti
     else if (existing.status != Status::NOT_FOUND)
     {
         return existing.status;
+    }
+
+    auto duplicate_tx_uuid = [&info](const RuntimeTransactionRecord& row) {
+        return row.is_valid == 1 && row.tx_uuid == info.tx_uuid && row.txid != info.txid;
+    };
+    auto duplicate = findRecordInHeapPage<RuntimeTransactionRecord>(
+        transaction_table_page_, duplicate_tx_uuid, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "transaction.tx_uuid must be unique");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
     }
 
     auto matcher = [&info](const RuntimeTransactionRecord& row) {
@@ -63455,6 +64449,7 @@ auto CatalogManager::getRuntimeTransactionCatalogEntry(uint64_t txid,
 
     info_out = RuntimeTransactionCatalogInfo{};
     info_out.txid = result.record.txid;
+    info_out.tx_uuid = result.record.tx_uuid;
     info_out.database_id = result.record.database_id;
     info_out.session_id = result.record.session_id;
     info_out.connection_id = result.record.connection_id;
@@ -63468,6 +64463,10 @@ auto CatalogManager::getRuntimeTransactionCatalogEntry(uint64_t txid,
     info_out.start_time = result.record.start_time;
     info_out.has_end_time = result.record.has_end_time != 0;
     info_out.end_time = result.record.end_time;
+    info_out.has_commit_seqno = result.record.has_commit_seqno != 0;
+    info_out.commit_seqno = result.record.commit_seqno;
+    info_out.schema_epoch_uuid = result.record.schema_epoch_uuid;
+    info_out.forensic_snapshot_capsule_uuid = result.record.forensic_snapshot_capsule_uuid;
     info_out.has_last_statement_hash = result.record.has_last_statement_hash != 0;
     info_out.last_statement_hash = result.record.last_statement_hash;
     info_out.has_last_statement_time = result.record.has_last_statement_time != 0;
@@ -63498,6 +64497,7 @@ auto CatalogManager::listRuntimeTransactionCatalogEntries(
     auto converter = [](const RuntimeTransactionRecord& rec, RuntimeTransactionCatalogInfo& info) {
         info = RuntimeTransactionCatalogInfo{};
         info.txid = rec.txid;
+        info.tx_uuid = rec.tx_uuid;
         info.database_id = rec.database_id;
         info.session_id = rec.session_id;
         info.connection_id = rec.connection_id;
@@ -63511,6 +64511,10 @@ auto CatalogManager::listRuntimeTransactionCatalogEntries(
         info.start_time = rec.start_time;
         info.has_end_time = rec.has_end_time != 0;
         info.end_time = rec.end_time;
+        info.has_commit_seqno = rec.has_commit_seqno != 0;
+        info.commit_seqno = rec.commit_seqno;
+        info.schema_epoch_uuid = rec.schema_epoch_uuid;
+        info.forensic_snapshot_capsule_uuid = rec.forensic_snapshot_capsule_uuid;
         info.has_last_statement_hash = rec.has_last_statement_hash != 0;
         info.last_statement_hash = rec.last_statement_hash;
         info.has_last_statement_time = rec.has_last_statement_time != 0;

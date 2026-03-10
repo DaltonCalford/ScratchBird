@@ -573,7 +573,9 @@ namespace scratchbird::core
         // In a real implementation, this would use an index on chunk_id
         // For now, we'll scan the TOAST table (inefficient but correct)
 
-        auto scan = storage->createScan(toast_table_id_, ctx);
+        // TOAST visibility is resolved here from chunk xmin/xmax, so the underlying
+        // scan must not pre-filter chunks through the caller's current transaction.
+        auto scan = storage->createScanAll(toast_table_id_, ctx);
         if (!scan)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to scan TOAST table");

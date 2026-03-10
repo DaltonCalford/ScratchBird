@@ -12,6 +12,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/gpid.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/monitoring_stats.h"
 #include <cstdint>
@@ -28,7 +29,6 @@ namespace scratchbird::core
     class Database;
     class TransactionManager;
     class CatalogManager;
-
     // Isolation levels supported by ScratchBird
     enum class IsolationLevel : uint8_t
     {
@@ -218,6 +218,117 @@ namespace scratchbird::core
         void clearSessionVariable(const std::string& name);
         void clearSessionVariables();
         std::vector<std::pair<std::string, std::string>> listSessionVariables() const;
+
+        struct ForensicReplayStatus
+        {
+            ID capsule_uuid;
+            ID resolved_tx_uuid;
+            uint64_t resolved_txid = 0;
+            ID schema_epoch_uuid;
+            std::string snapshot_kind;
+            bool is_active = false;
+        };
+
+        struct HistoricalTableInfo
+        {
+            ID table_id;
+            ID schema_id;
+            std::string table_name;
+            bool name_is_delimited = false;
+            ID owner_id;
+            GPID root_gpid = 0;
+            uint32_t column_count = 0;
+            uint64_t row_count = 0;
+            uint8_t table_type = 0;
+            bool has_toast = false;
+            ID toast_table_id;
+            uint16_t tablespace_id = 0;
+            ID tablespace_uuid;
+            uint16_t default_charset = 0;
+            ID default_charset_uuid;
+            uint32_t default_collation_id = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            uint64_t policy_epoch = 0;
+            bool rls_enabled = false;
+            bool rls_forced = false;
+        };
+
+        struct HistoricalColumnInfo
+        {
+            ID table_id;
+            ID column_id;
+            std::string column_name;
+            bool name_is_delimited = false;
+            uint16_t ordinal = 0;
+            uint16_t data_type = 0;
+            uint32_t type_precision = 0;
+            uint32_t type_scale = 0;
+            uint32_t max_length = 0;
+            bool nullable = true;
+            bool has_default = false;
+            bool is_primary_key = false;
+            bool is_unique = false;
+            bool is_foreign_key = false;
+            bool is_generated = false;
+            uint8_t generated_type = 0;
+            std::string generation_expression;
+            bool is_identity = false;
+            bool identity_always = true;
+            ID identity_sequence_id;
+            uint8_t storage_type = 0;
+            bool with_timezone = false;
+            uint16_t charset = 0;
+            ID charset_uuid;
+            ID domain_id;
+            bool is_array = false;
+            uint32_t array_size = 0;
+            uint16_t timezone_hint = 0;
+            ID timezone_uuid;
+            uint32_t collation_id = 0;
+            std::string default_value;
+            std::string default_expr;
+            std::string check_expr;
+            uint64_t created_time = 0;
+        };
+
+        Status openForensicReplayByTransactionUuid(const ID& tx_uuid,
+                                                   ErrorContext* ctx = nullptr);
+        Status openForensicReplayByTxid(uint64_t txid,
+                                        ErrorContext* ctx = nullptr);
+        Status openForensicReplayByCapsuleUuid(const ID& capsule_uuid,
+                                               ErrorContext* ctx = nullptr);
+        Status closeForensicReplay(ErrorContext* ctx = nullptr);
+        bool isForensicReplayActive() const;
+        ForensicReplayStatus getForensicReplayStatus() const;
+        const TransactionSnapshot* getForensicReplaySnapshot() const;
+        const ID& getCurrentSchemaEpochUuid() const { return current_schema_epoch_uuid_; }
+        void setCurrentSchemaEpochUuid(const ID& schema_epoch_uuid)
+        {
+            current_schema_epoch_uuid_ = schema_epoch_uuid;
+        }
+        void stageTransactionalDdlBatch(uint8_t object_type_code,
+                                        const ID& object_id,
+                                        const std::string& operation_class,
+                                        uint64_t statement_hash,
+                                        const std::string& statement_text);
+        auto resolveForensicReplayTablePath(const std::string& qualified_name,
+                                            ID& table_id_out,
+                                            ErrorContext* ctx = nullptr,
+                                            bool allow_search_path = true) const -> Status;
+        auto getForensicReplayTable(const ID& table_id,
+                                    HistoricalTableInfo& table_out,
+                                    ErrorContext* ctx = nullptr) const -> Status;
+        auto getForensicReplayColumns(const ID& table_id,
+                                      std::vector<HistoricalColumnInfo>& columns_out,
+                                      ErrorContext* ctx = nullptr) const -> Status;
+        auto getForensicReplayColumn(const ID& table_id,
+                                     const std::string& column_name,
+                                     HistoricalColumnInfo& column_out,
+                                     ErrorContext* ctx = nullptr) const -> Status;
+        auto listForensicReplayTables(const ID& schema_id,
+                                      std::vector<HistoricalTableInfo>& tables_out,
+                                      ErrorContext* ctx = nullptr) const -> Status;
 
         // Security context types (Phase 3.1 - SQL Object Permissions)
         enum class RoleSwitchPolicy : uint8_t
@@ -466,6 +577,11 @@ namespace scratchbird::core
     private:
         Status persistRuntimeTransactionState(uint8_t state_code,
                                              uint64_t txid,
+                                             const ID& tx_uuid,
+                                             const ID& capsule_uuid,
+                                             const ID& schema_epoch_uuid,
+                                             bool has_commit_seqno,
+                                             uint64_t commit_seqno,
                                              uint64_t end_time,
                                              ErrorContext* ctx);
         Status appendTransactionLineageBegin(ErrorContext* ctx);
@@ -475,6 +591,14 @@ namespace scratchbird::core
                                                uint64_t start_time,
                                                uint64_t end_time,
                                                ErrorContext* ctx);
+        Status createForensicSnapshotCapsule(bool committed,
+                                            uint64_t txid,
+                                            const ID& tx_uuid,
+                                            uint64_t end_time,
+                                            ID& capsule_uuid_out,
+                                            ErrorContext* ctx);
+        Status flushCommittedTransactionalDdl(uint64_t commit_seqno,
+                                              ErrorContext* ctx);
         void refreshActiveTransactionAttribution();
 
         // Core state
@@ -484,6 +608,40 @@ namespace scratchbird::core
         uint64_t current_xid_;                      // Current transaction XID (NEVER 0)
         ID current_transaction_uuid_;               // Stable UUID lineage identity for current transaction
         std::chrono::microseconds xact_start_time_; // Transaction start time
+        ID lineage_root_event_id_;
+
+        struct ForensicReplayBinding
+        {
+            struct HistoricalTableBinding
+            {
+                HistoricalTableInfo table_info;
+                std::vector<HistoricalColumnInfo> columns;
+                std::string qualified_name_upper;
+                std::string unqualified_name_upper;
+            };
+
+            ID capsule_uuid;
+            ID tx_uuid;
+            uint64_t txid = 0;
+            ID schema_epoch_uuid;
+            std::string snapshot_kind;
+            std::string schema_definition_manifest;
+            TransactionSnapshot snapshot;
+            std::unordered_map<ID, HistoricalTableBinding, IDHash> tables_by_id;
+            std::unordered_map<std::string, ID> table_path_index;
+        };
+        struct PendingTransactionalDdlBatch
+        {
+            uint8_t object_type = 0;
+            ID object_id;
+            std::string operation_class;
+            uint64_t statement_hash = 0;
+            std::string statement_text;
+        };
+        ID current_schema_epoch_uuid_;
+        ID transaction_start_schema_epoch_uuid_;
+        std::unique_ptr<TransactionSnapshot> retained_transaction_snapshot_;
+        std::unique_ptr<ForensicReplayBinding> forensic_replay_binding_;
 
         // Security context (Phase 2 - Security System)
         ID current_user_id_;    // Effective user UUID (can be changed by SET SESSION AUTHORIZATION)
@@ -571,6 +729,7 @@ namespace scratchbird::core
         bool statement_io_active_ = false;
         uint64_t statement_id_ = 0;
         std::unordered_map<ID, TableDmlDelta, IDHash> pending_table_deltas_;
+        std::vector<PendingTransactionalDdlBatch> pending_transactional_ddl_batches_;
 
         // Default transaction settings (for AND NO CHAIN resets)
         IsolationLevel default_isolation_level_;
@@ -587,8 +746,7 @@ namespace scratchbird::core
         bool next_wait_for_locks_;            // Staged wait mode
         uint32_t next_lock_timeout_seconds_;  // Staged lock timeout
 
-        // FIREBIRD MGA: No snapshot structures needed
-        // Transaction visibility is determined by current_xid_ and TIP lookups
+        // Retained start snapshot used for forensic replay capsule materialization.
 
         // Statement XID for READ_COMMITTED_READ_CONSISTENCY
         // Captures XID at statement start for consistent reads within statement
@@ -878,6 +1036,10 @@ namespace scratchbird::core
         Status cleanupTempTablesOnSessionEnd(ErrorContext *ctx);
 
     private:
+        auto ensureCurrentSchemaEpochInitialized(ErrorContext* ctx) -> Status;
+        auto parseForensicReplaySchemaManifest(const std::string& manifest,
+                                               ForensicReplayBinding& binding_out,
+                                               ErrorContext* ctx) const -> Status;
         // P2-7: Deferred constraint tracking
         std::unordered_map<ID, bool, IDHash> constraint_deferred_state_; // Per-constraint deferral
         std::vector<DeferredConstraintCheck> deferred_checks_;           // Pending checks

@@ -18,12 +18,18 @@
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
+#include <nlohmann/json.hpp>
+#include <algorithm>
 #include <cassert>
+#include <cerrno>
 #include <cctype>
 #include <cstdio>
+#include <limits>
 
 namespace scratchbird::core
 {
+    using json = nlohmann::json;
+
     // Thread-local storage for current connection context
     thread_local ConnectionContext *ConnectionContext::current_ = nullptr;
 
@@ -55,6 +61,63 @@ namespace scratchbird::core
                 out.push_back(static_cast<char>(std::toupper(c)));
             }
             return out;
+        }
+
+        bool parseUuidTextLocal(const std::string& text, ID& out)
+        {
+            std::string hex;
+            hex.reserve(32);
+            for (char c : text)
+            {
+                if (c != '-')
+                {
+                    hex.push_back(c);
+                }
+            }
+            if (hex.size() != 32)
+            {
+                return false;
+            }
+            auto from_hex = [](char c) -> int {
+                if (c >= '0' && c <= '9')
+                {
+                    return c - '0';
+                }
+                if (c >= 'a' && c <= 'f')
+                {
+                    return 10 + (c - 'a');
+                }
+                if (c >= 'A' && c <= 'F')
+                {
+                    return 10 + (c - 'A');
+                }
+                return -1;
+            };
+            for (size_t i = 0; i < out.bytes.size(); ++i)
+            {
+                int hi = from_hex(hex[i * 2]);
+                int lo = from_hex(hex[i * 2 + 1]);
+                if (hi < 0 || lo < 0)
+                {
+                    return false;
+                }
+                out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
+            }
+            return true;
+        }
+
+        const char* objectTypeLabel(uint8_t type_code)
+        {
+            using OT = CatalogManager::ObjectType;
+            switch (static_cast<OT>(type_code))
+            {
+                case OT::SCHEMA:
+                    return "SCHEMA";
+                case OT::TABLE:
+                    return "TABLE";
+                default:
+                    return "OBJECT";
+            }
         }
 
         std::string digestHex(uint64_t value)
@@ -486,6 +549,145 @@ namespace scratchbird::core
             payload.push_back('}');
             return payload;
         }
+
+        constexpr uint64_t kForensicReplayRetentionMicros =
+            7ULL * 24ULL * 60ULL * 60ULL * 1000000ULL;
+
+        bool parseUint64Ascii(const std::string& text, uint64_t& value_out)
+        {
+            if (text.empty())
+            {
+                return false;
+            }
+            char* end = nullptr;
+            errno = 0;
+            const unsigned long long parsed = std::strtoull(text.c_str(), &end, 10);
+            if (errno != 0 || end != text.c_str() + text.size())
+            {
+                return false;
+            }
+            value_out = static_cast<uint64_t>(parsed);
+            return true;
+        }
+
+        std::string getManifestValue(const std::string& manifest, const char* key)
+        {
+            const std::string prefix = std::string(key) + "=";
+            size_t offset = 0;
+            while (offset < manifest.size())
+            {
+                const size_t line_end = manifest.find('\n', offset);
+                const size_t current_end =
+                    (line_end == std::string::npos) ? manifest.size() : line_end;
+                if (manifest.compare(offset, prefix.size(), prefix) == 0)
+                {
+                    return manifest.substr(offset + prefix.size(),
+                                           current_end - offset - prefix.size());
+                }
+                if (line_end == std::string::npos)
+                {
+                    break;
+                }
+                offset = line_end + 1;
+            }
+            return {};
+        }
+
+        std::string buildActiveTxManifest(
+            const TransactionSnapshot& snapshot)
+        {
+            std::string manifest = "active_txids=";
+            for (size_t i = 0; i < snapshot.active_txid_set.size(); ++i)
+            {
+                if (i != 0)
+                {
+                    manifest.push_back(',');
+                }
+                manifest += std::to_string(snapshot.active_txid_set[i]);
+            }
+            manifest.push_back('\n');
+            return manifest;
+        }
+
+        std::string buildVisibilityManifest(
+            const TransactionSnapshot& snapshot,
+            IsolationLevel isolation_level)
+        {
+            std::string manifest;
+            manifest += "snapshot_txid_high=";
+            manifest += std::to_string(snapshot.snapshot_txid_high);
+            manifest.push_back('\n');
+            manifest += "snapshot_commit_seqno_high=";
+            manifest += std::to_string(snapshot.snapshot_commit_seqno_high);
+            manifest.push_back('\n');
+            manifest += "isolation_level=";
+            manifest += std::to_string(static_cast<uint32_t>(isolation_level));
+            manifest.push_back('\n');
+            return manifest;
+        }
+
+        Status parseForensicReplaySnapshot(const std::string& active_manifest,
+                                           const std::string& visibility_manifest,
+                                           TransactionSnapshot& snapshot_out,
+                                           ErrorContext* ctx)
+        {
+            snapshot_out = TransactionSnapshot{};
+            const std::string txid_high_text =
+                getManifestValue(visibility_manifest, "snapshot_txid_high");
+            if (!parseUint64Ascii(txid_high_text, snapshot_out.snapshot_txid_high))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::DATA_CORRUPTED,
+                                  "forensic visibility manifest missing snapshot_txid_high");
+                return Status::DATA_CORRUPTED;
+            }
+
+            const std::string commit_seqno_text =
+                getManifestValue(visibility_manifest, "snapshot_commit_seqno_high");
+            if (!commit_seqno_text.empty() &&
+                !parseUint64Ascii(commit_seqno_text, snapshot_out.snapshot_commit_seqno_high))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::DATA_CORRUPTED,
+                                  "forensic visibility manifest has invalid snapshot_commit_seqno_high");
+                return Status::DATA_CORRUPTED;
+            }
+
+            const std::string active_list = getManifestValue(active_manifest, "active_txids");
+            snapshot_out.active_txid_set.clear();
+            size_t offset = 0;
+            while (offset < active_list.size())
+            {
+                const size_t comma = active_list.find(',', offset);
+                const size_t token_end =
+                    (comma == std::string::npos) ? active_list.size() : comma;
+                const std::string token = active_list.substr(offset, token_end - offset);
+                if (!token.empty())
+                {
+                    uint64_t value = 0;
+                    if (!parseUint64Ascii(token, value))
+                    {
+                        SET_ERROR_CONTEXT(ctx,
+                                          Status::DATA_CORRUPTED,
+                                          "forensic active transaction manifest is invalid");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    snapshot_out.active_txid_set.push_back(value);
+                }
+                if (comma == std::string::npos)
+                {
+                    break;
+                }
+                offset = comma + 1;
+            }
+
+            std::sort(snapshot_out.active_txid_set.begin(), snapshot_out.active_txid_set.end());
+            snapshot_out.active_txid_set.erase(
+                std::unique(snapshot_out.active_txid_set.begin(),
+                            snapshot_out.active_txid_set.end()),
+                snapshot_out.active_txid_set.end());
+            return Status::OK;
+        }
     }
 
     ConnectionContext::ConnectionContext(Database *db, uint32_t proc_id)
@@ -494,6 +696,11 @@ namespace scratchbird::core
           ,
           current_transaction_uuid_(),
           xact_start_time_(std::chrono::microseconds(0)),
+          lineage_root_event_id_(),
+          current_schema_epoch_uuid_(),
+          transaction_start_schema_epoch_uuid_(),
+          retained_transaction_snapshot_(nullptr),
+          forensic_replay_binding_(nullptr),
           current_user_id_(), // Zero UUID - will be set during authentication
           active_role_id_(),  // Zero UUID - no role active initially
           is_superuser_(false), // Will be set during authentication
@@ -546,6 +753,9 @@ namespace scratchbird::core
         std::memset(&current_user_id_, 0, sizeof(current_user_id_));
         std::memset(&active_role_id_, 0, sizeof(active_role_id_));
         std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
+        std::memset(&lineage_root_event_id_, 0, sizeof(lineage_root_event_id_));
+        std::memset(&current_schema_epoch_uuid_, 0, sizeof(current_schema_epoch_uuid_));
+        std::memset(&transaction_start_schema_epoch_uuid_, 0, sizeof(transaction_start_schema_epoch_uuid_));
         std::memset(&current_schema_id_, 0, sizeof(current_schema_id_));
         std::memset(&session_user_id_, 0, sizeof(session_user_id_));  // WP-5 EXEC-M3
         std::memset(&protocol_session_id_, 0, sizeof(protocol_session_id_));
@@ -596,6 +806,11 @@ namespace scratchbird::core
         : db_(other.db_), txn_manager_(other.txn_manager_), proc_id_(other.proc_id_),
           current_xid_(other.current_xid_), current_transaction_uuid_(other.current_transaction_uuid_),
           xact_start_time_(other.xact_start_time_),
+          lineage_root_event_id_(other.lineage_root_event_id_),
+          current_schema_epoch_uuid_(other.current_schema_epoch_uuid_),
+          transaction_start_schema_epoch_uuid_(other.transaction_start_schema_epoch_uuid_),
+          retained_transaction_snapshot_(std::move(other.retained_transaction_snapshot_)),
+          forensic_replay_binding_(std::move(other.forensic_replay_binding_)),
           current_user_id_(other.current_user_id_), active_role_id_(other.active_role_id_),
           is_superuser_(other.is_superuser_),
           session_user_id_(other.session_user_id_),  // WP-5 EXEC-M3
@@ -654,6 +869,7 @@ namespace scratchbird::core
           statement_io_active_(other.statement_io_active_),
           statement_id_(other.statement_id_),
           pending_table_deltas_(std::move(other.pending_table_deltas_)),
+          pending_transactional_ddl_batches_(std::move(other.pending_transactional_ddl_batches_)),
           default_isolation_level_(other.default_isolation_level_),
           default_read_committed_mode_(other.default_read_committed_mode_),
           default_is_read_only_(other.default_is_read_only_),
@@ -682,6 +898,9 @@ namespace scratchbird::core
         std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
         std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
         std::memset(&other.current_transaction_uuid_, 0, sizeof(other.current_transaction_uuid_));
+        std::memset(&other.lineage_root_event_id_, 0, sizeof(other.lineage_root_event_id_));
+        std::memset(&other.current_schema_epoch_uuid_, 0, sizeof(other.current_schema_epoch_uuid_));
+        std::memset(&other.transaction_start_schema_epoch_uuid_, 0, sizeof(other.transaction_start_schema_epoch_uuid_));
         std::memset(&other.current_schema_id_, 0, sizeof(other.current_schema_id_));
         std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
         std::memset(&other.attachment_id_, 0, sizeof(other.attachment_id_));
@@ -725,6 +944,7 @@ namespace scratchbird::core
         other.statement_io_active_ = false;
         other.statement_id_ = 0;
         other.pending_table_deltas_.clear();
+        other.pending_transactional_ddl_batches_.clear();
         other.role_switch_policy_ = RoleSwitchPolicy::REJECT;
     }
 
@@ -758,6 +978,11 @@ namespace scratchbird::core
             current_xid_ = other.current_xid_;
             current_transaction_uuid_ = other.current_transaction_uuid_;
             xact_start_time_ = other.xact_start_time_;
+            lineage_root_event_id_ = other.lineage_root_event_id_;
+            current_schema_epoch_uuid_ = other.current_schema_epoch_uuid_;
+            transaction_start_schema_epoch_uuid_ = other.transaction_start_schema_epoch_uuid_;
+            retained_transaction_snapshot_ = std::move(other.retained_transaction_snapshot_);
+            forensic_replay_binding_ = std::move(other.forensic_replay_binding_);
             current_user_id_ = other.current_user_id_;
             active_role_id_ = other.active_role_id_;
             is_superuser_ = other.is_superuser_;
@@ -817,6 +1042,8 @@ namespace scratchbird::core
             statement_io_active_ = other.statement_io_active_;
             statement_id_ = other.statement_id_;
             pending_table_deltas_ = std::move(other.pending_table_deltas_);
+            pending_transactional_ddl_batches_ =
+                std::move(other.pending_transactional_ddl_batches_);
             default_isolation_level_ = other.default_isolation_level_;
             default_read_committed_mode_ = other.default_read_committed_mode_;
             default_is_read_only_ = other.default_is_read_only_;
@@ -845,6 +1072,9 @@ namespace scratchbird::core
             std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
             std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
             std::memset(&other.current_transaction_uuid_, 0, sizeof(other.current_transaction_uuid_));
+            std::memset(&other.lineage_root_event_id_, 0, sizeof(other.lineage_root_event_id_));
+            std::memset(&other.current_schema_epoch_uuid_, 0, sizeof(other.current_schema_epoch_uuid_));
+            std::memset(&other.transaction_start_schema_epoch_uuid_, 0, sizeof(other.transaction_start_schema_epoch_uuid_));
             std::memset(&other.current_schema_id_, 0, sizeof(other.current_schema_id_));
             std::memset(&other.session_user_id_, 0, sizeof(other.session_user_id_));  // WP-5 EXEC-M3
             std::memset(&other.attachment_id_, 0, sizeof(other.attachment_id_));
@@ -888,6 +1118,7 @@ namespace scratchbird::core
             other.statement_io_active_ = false;
             other.statement_id_ = 0;
             other.pending_table_deltas_.clear();
+            other.pending_transactional_ddl_batches_.clear();
             other.role_switch_policy_ = RoleSwitchPolicy::REJECT;
         }
         return *this;
@@ -923,6 +1154,401 @@ namespace scratchbird::core
         return ctx->current_xid_;
     }
 
+    bool ConnectionContext::isForensicReplayActive() const
+    {
+        return forensic_replay_binding_ != nullptr;
+    }
+
+    ConnectionContext::ForensicReplayStatus ConnectionContext::getForensicReplayStatus() const
+    {
+        ForensicReplayStatus status{};
+        if (!forensic_replay_binding_)
+        {
+            return status;
+        }
+        status.capsule_uuid = forensic_replay_binding_->capsule_uuid;
+        status.resolved_tx_uuid = forensic_replay_binding_->tx_uuid;
+        status.resolved_txid = forensic_replay_binding_->txid;
+        status.schema_epoch_uuid = forensic_replay_binding_->schema_epoch_uuid;
+        status.snapshot_kind = forensic_replay_binding_->snapshot_kind;
+        status.is_active = true;
+        return status;
+    }
+
+    const TransactionSnapshot*
+    ConnectionContext::getForensicReplaySnapshot() const
+    {
+        return forensic_replay_binding_ ? &forensic_replay_binding_->snapshot : nullptr;
+    }
+
+    Status ConnectionContext::ensureCurrentSchemaEpochInitialized(ErrorContext* ctx)
+    {
+        if (isForensicReplayActive())
+        {
+            current_schema_epoch_uuid_ = forensic_replay_binding_->schema_epoch_uuid;
+            return Status::OK;
+        }
+        if (!db_ || isZeroUuidLocal(current_transaction_uuid_) || current_xid_ == 0)
+        {
+            return Status::OK;
+        }
+        if (!isZeroUuidLocal(current_schema_epoch_uuid_))
+        {
+            return Status::OK;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            return Status::OK;
+        }
+
+        CatalogManager::SchemaEpochCatalogInfo latest{};
+        Status status = catalog->getLatestSchemaEpochCatalogEntry(db_->uuid(), latest, ctx);
+        if (status == Status::OK)
+        {
+            current_schema_epoch_uuid_ = latest.schema_epoch_uuid;
+            return Status::OK;
+        }
+        if (status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        std::string manifest;
+        status = catalog->buildCurrentSchemaEpochDefinitionManifest(manifest, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        CatalogManager::SchemaEpochCatalogInfo epoch{};
+        epoch.database_id = db_->uuid();
+        epoch.origin_tx_uuid = current_transaction_uuid_;
+        epoch.origin_txid = current_xid_;
+        epoch.definition_manifest = manifest;
+        epoch.created_time = nowMicros();
+        status = catalog->appendSchemaEpochCatalogEntry(epoch, ctx);
+        if (status == Status::OK)
+        {
+            current_schema_epoch_uuid_ = epoch.schema_epoch_uuid;
+        }
+        return status;
+    }
+
+    Status ConnectionContext::parseForensicReplaySchemaManifest(
+        const std::string& manifest,
+        ForensicReplayBinding& binding_out,
+        ErrorContext* ctx) const
+    {
+        binding_out.schema_definition_manifest = manifest;
+        binding_out.tables_by_id.clear();
+        binding_out.table_path_index.clear();
+        if (manifest.empty())
+        {
+            return Status::OK;
+        }
+
+        json parsed;
+        try
+        {
+            parsed = json::parse(manifest);
+        }
+        catch (const json::exception&)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::PAGE_CORRUPT,
+                              "FORENSIC_SCHEMA_HISTORY_PRUNED: schema epoch manifest is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+
+        const auto schemas_it = parsed.find("schemas");
+        if (schemas_it == parsed.end() || !schemas_it->is_array())
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::PAGE_CORRUPT,
+                              "FORENSIC_SCHEMA_HISTORY_PRUNED: schema epoch manifest is incomplete");
+            return Status::PAGE_CORRUPT;
+        }
+
+        for (const auto& schema_doc : *schemas_it)
+        {
+            if (!schema_doc.is_object())
+            {
+                continue;
+            }
+            const std::string schema_name = schema_doc.value("schema_name", std::string());
+            ID schema_id{};
+            const std::string schema_uuid = schema_doc.value("schema_uuid", std::string());
+            if (!schema_uuid.empty() && !parseUuidTextLocal(schema_uuid, schema_id))
+            {
+                continue;
+            }
+
+            const auto tables_it = schema_doc.find("tables");
+            if (tables_it == schema_doc.end() || !tables_it->is_array())
+            {
+                continue;
+            }
+
+            for (const auto& table_doc : *tables_it)
+            {
+                if (!table_doc.is_object())
+                {
+                    continue;
+                }
+
+                ID table_id{};
+                if (!parseUuidTextLocal(table_doc.value("table_uuid", std::string()), table_id))
+                {
+                    continue;
+                }
+
+                ForensicReplayBinding::HistoricalTableBinding binding{};
+                auto& table = binding.table_info;
+                table.table_id = table_id;
+                table.schema_id = schema_id;
+                table.table_name = table_doc.value("table_name", std::string());
+                table.name_is_delimited = table_doc.value("table_name_is_delimited", false);
+                (void)parseUuidTextLocal(table_doc.value("owner_uuid", std::string()), table.owner_id);
+                table.root_gpid = table_doc.value("root_gpid", static_cast<GPID>(0));
+                table.column_count = table_doc.value("column_count", 0u);
+                table.row_count = table_doc.value("row_count", static_cast<uint64_t>(0));
+                table.table_type = static_cast<uint8_t>(table_doc.value("table_type", 0));
+                table.has_toast = table_doc.value("has_toast", false);
+                (void)parseUuidTextLocal(table_doc.value("toast_table_uuid", std::string()), table.toast_table_id);
+                (void)parseUuidTextLocal(table_doc.value("tablespace_uuid", std::string()), table.tablespace_uuid);
+                table.tablespace_id = table_doc.value("tablespace_id", static_cast<uint16_t>(0));
+                (void)parseUuidTextLocal(table_doc.value("default_charset_uuid", std::string()),
+                                         table.default_charset_uuid);
+                table.default_charset = table_doc.value("default_charset", static_cast<uint16_t>(0));
+                table.default_collation_id = table_doc.value("default_collation_id", 0u);
+                table.created_time = table_doc.value("created_time", static_cast<uint64_t>(0));
+                table.last_modified_time =
+                    table_doc.value("last_modified_time", static_cast<uint64_t>(0));
+                table.policy_epoch = table_doc.value("policy_epoch", static_cast<uint64_t>(0));
+                table.rls_enabled = table_doc.value("rls_enabled", false);
+                table.rls_forced = table_doc.value("rls_forced", false);
+
+                const auto columns_it = table_doc.find("columns");
+                if (columns_it != table_doc.end() && columns_it->is_array())
+                {
+                    for (const auto& column_doc : *columns_it)
+                    {
+                        if (!column_doc.is_object())
+                        {
+                            continue;
+                        }
+                        HistoricalColumnInfo column{};
+                        column.table_id = table.table_id;
+                        (void)parseUuidTextLocal(column_doc.value("column_uuid", std::string()),
+                                                 column.column_id);
+                        column.column_name = column_doc.value("column_name", std::string());
+                        column.name_is_delimited =
+                            column_doc.value("column_name_is_delimited", false);
+                        column.ordinal = column_doc.value("ordinal", static_cast<uint16_t>(0));
+                        column.data_type = column_doc.value("data_type", static_cast<uint16_t>(0));
+                        column.type_precision = column_doc.value("type_precision", 0u);
+                        column.type_scale = column_doc.value("type_scale", 0u);
+                        column.max_length = column_doc.value("max_length", 0u);
+                        column.nullable = column_doc.value("nullable", true);
+                        column.has_default = column_doc.value("has_default", false);
+                        column.is_primary_key = column_doc.value("is_primary_key", false);
+                        column.is_unique = column_doc.value("is_unique", false);
+                        column.is_foreign_key = column_doc.value("is_foreign_key", false);
+                        column.is_generated = column_doc.value("is_generated", false);
+                        column.generated_type =
+                            static_cast<uint8_t>(column_doc.value("generated_type", 0));
+                        column.generation_expression =
+                            column_doc.value("generation_expression", std::string());
+                        column.is_identity = column_doc.value("is_identity", false);
+                        column.identity_always = column_doc.value("identity_always", true);
+                        (void)parseUuidTextLocal(column_doc.value("identity_sequence_uuid", std::string()),
+                                                 column.identity_sequence_id);
+                        column.storage_type = column_doc.value("storage_type", static_cast<uint8_t>(0));
+                        column.with_timezone = column_doc.value("with_timezone", false);
+                        (void)parseUuidTextLocal(column_doc.value("charset_uuid", std::string()),
+                                                 column.charset_uuid);
+                        column.charset = column_doc.value("charset", static_cast<uint16_t>(0));
+                        (void)parseUuidTextLocal(column_doc.value("domain_uuid", std::string()),
+                                                 column.domain_id);
+                        column.is_array = column_doc.value("is_array", false);
+                        column.array_size = column_doc.value("array_size", 0u);
+                        (void)parseUuidTextLocal(column_doc.value("timezone_uuid", std::string()),
+                                                 column.timezone_uuid);
+                        column.timezone_hint =
+                            column_doc.value("timezone_hint", static_cast<uint16_t>(0));
+                        column.collation_id = column_doc.value("collation_id", 0u);
+                        column.default_value = column_doc.value("default_value", std::string());
+                        column.default_expr = column_doc.value("default_expr", std::string());
+                        column.check_expr = column_doc.value("check_expr", std::string());
+                        column.created_time =
+                            column_doc.value("created_time", static_cast<uint64_t>(0));
+                        binding.columns.push_back(std::move(column));
+                    }
+                }
+
+                binding.qualified_name_upper =
+                    IdentifierUtils::toUpper(schema_name + "." + table.table_name);
+                binding.unqualified_name_upper = IdentifierUtils::toUpper(table.table_name);
+                binding_out.table_path_index[binding.qualified_name_upper] = table.table_id;
+                binding_out.tables_by_id[table.table_id] = std::move(binding);
+            }
+        }
+
+        return Status::OK;
+    }
+
+    Status ConnectionContext::resolveForensicReplayTablePath(const std::string& qualified_name,
+                                                             ID& table_id_out,
+                                                             ErrorContext* ctx,
+                                                             bool allow_search_path) const
+    {
+        table_id_out = ID{};
+        if (!forensic_replay_binding_)
+        {
+            return Status::NOT_FOUND;
+        }
+
+        const std::string query_upper = IdentifierUtils::toUpper(qualified_name);
+        auto direct = forensic_replay_binding_->table_path_index.find(query_upper);
+        if (direct != forensic_replay_binding_->table_path_index.end())
+        {
+            table_id_out = direct->second;
+            return Status::OK;
+        }
+
+        if (qualified_name.find('.') == std::string::npos && allow_search_path)
+        {
+            for (const auto& schema_name : search_path_)
+            {
+                if (schema_name.empty())
+                {
+                    continue;
+                }
+                const std::string candidate =
+                    IdentifierUtils::toUpper(schema_name + "." + qualified_name);
+                auto it = forensic_replay_binding_->table_path_index.find(candidate);
+                if (it != forensic_replay_binding_->table_path_index.end())
+                {
+                    table_id_out = it->second;
+                    return Status::OK;
+                }
+            }
+        }
+
+        SET_ERROR_CONTEXT(ctx,
+                          Status::NOT_FOUND,
+                          "FORENSIC_SCHEMA_HISTORY_PRUNED: historical table definition is unavailable");
+        return Status::NOT_FOUND;
+    }
+
+    Status ConnectionContext::getForensicReplayTable(const ID& table_id,
+                                                     HistoricalTableInfo& table_out,
+                                                     ErrorContext* ctx) const
+    {
+        if (!forensic_replay_binding_)
+        {
+            return Status::NOT_FOUND;
+        }
+        auto it = forensic_replay_binding_->tables_by_id.find(table_id);
+        if (it == forensic_replay_binding_->tables_by_id.end())
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::NOT_FOUND,
+                              "FORENSIC_SCHEMA_HISTORY_PRUNED: historical table definition is unavailable");
+            return Status::NOT_FOUND;
+        }
+        table_out = it->second.table_info;
+        return Status::OK;
+    }
+
+    Status ConnectionContext::getForensicReplayColumns(
+        const ID& table_id,
+        std::vector<HistoricalColumnInfo>& columns_out,
+        ErrorContext* ctx) const
+    {
+        if (!forensic_replay_binding_)
+        {
+            return Status::NOT_FOUND;
+        }
+        auto it = forensic_replay_binding_->tables_by_id.find(table_id);
+        if (it == forensic_replay_binding_->tables_by_id.end())
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::NOT_FOUND,
+                              "FORENSIC_SCHEMA_HISTORY_PRUNED: historical column definitions are unavailable");
+            return Status::NOT_FOUND;
+        }
+        columns_out = it->second.columns;
+        return Status::OK;
+    }
+
+    Status ConnectionContext::getForensicReplayColumn(const ID& table_id,
+                                                      const std::string& column_name,
+                                                      HistoricalColumnInfo& column_out,
+                                                      ErrorContext* ctx) const
+    {
+        std::vector<HistoricalColumnInfo> columns;
+        Status status = getForensicReplayColumns(table_id, columns, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const auto& column : columns)
+        {
+            if (IdentifierUtils::namesMatch(column_name,
+                                            false,
+                                            column.column_name,
+                                            column.name_is_delimited))
+            {
+                column_out = column;
+                return Status::OK;
+            }
+        }
+
+        SET_ERROR_CONTEXT(ctx,
+                          Status::NOT_FOUND,
+                          "FORENSIC_SCHEMA_HISTORY_PRUNED: historical column definition is unavailable");
+        return Status::NOT_FOUND;
+    }
+
+    Status ConnectionContext::listForensicReplayTables(
+        const ID& schema_id,
+        std::vector<HistoricalTableInfo>& tables_out,
+        ErrorContext* ctx) const
+    {
+        tables_out.clear();
+        if (!forensic_replay_binding_)
+        {
+            return Status::NOT_FOUND;
+        }
+        for (const auto& entry : forensic_replay_binding_->tables_by_id)
+        {
+            if (isZeroUuidLocal(schema_id) || entry.second.table_info.schema_id == schema_id)
+            {
+                tables_out.push_back(entry.second.table_info);
+            }
+        }
+        if (tables_out.empty() && !isZeroUuidLocal(schema_id))
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::NOT_FOUND,
+                              "FORENSIC_SCHEMA_HISTORY_PRUNED: historical schema has no retained tables");
+            return Status::NOT_FOUND;
+        }
+        std::sort(tables_out.begin(), tables_out.end(), [](const HistoricalTableInfo& lhs,
+                                                           const HistoricalTableInfo& rhs) {
+            if (lhs.table_name != rhs.table_name)
+            {
+                return lhs.table_name < rhs.table_name;
+            }
+            return lhs.table_id.bytes < rhs.table_id.bytes;
+        });
+        return Status::OK;
+    }
+
     Status ConnectionContext::initialize(ErrorContext *ctx)
     {
         // Start initial transaction
@@ -945,9 +1571,392 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status ConnectionContext::openForensicReplayByTransactionUuid(const ID& tx_uuid,
+                                                                  ErrorContext* ctx)
+    {
+        if (!db_ || isZeroUuidLocal(tx_uuid))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "FORENSIC_SELECTOR_INVALID: tx_uuid is required");
+            return Status::INVALID_ARGUMENT;
+        }
+        if (isForensicReplayActive())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_TRANSACTION_STATE,
+                              "forensic replay session is already bound");
+            return Status::INVALID_TRANSACTION_STATE;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::RuntimeTransactionCatalogInfo> rows;
+        Status status = catalog->listRuntimeTransactionCatalogEntries(db_->uuid(), rows, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        const auto score_row = [](const CatalogManager::RuntimeTransactionCatalogInfo& row) {
+            int score = 0;
+            if (row.state != CatalogManager::RuntimeTransactionState::IN_PROGRESS)
+            {
+                score += 4;
+            }
+            if (!isZeroUuidLocal(row.forensic_snapshot_capsule_uuid))
+            {
+                score += 2;
+            }
+            if (row.has_end_time)
+            {
+                score += 1;
+            }
+            return score;
+        };
+
+        const CatalogManager::RuntimeTransactionCatalogInfo* selected = nullptr;
+        for (const auto& row : rows)
+        {
+            if (row.tx_uuid != tx_uuid)
+            {
+                continue;
+            }
+            if (selected == nullptr)
+            {
+                selected = &row;
+                continue;
+            }
+
+            const int row_score = score_row(row);
+            const int selected_score = score_row(*selected);
+            if (row_score > selected_score ||
+                (row_score == selected_score &&
+                 (row.last_modified_time > selected->last_modified_time ||
+                  (row.last_modified_time == selected->last_modified_time &&
+                   row.txid > selected->txid))))
+            {
+                selected = &row;
+            }
+        }
+
+        if (selected == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              "FORENSIC_SELECTOR_INVALID: tx_uuid was not found");
+            return Status::NOT_FOUND;
+        }
+        if (isZeroUuidLocal(selected->forensic_snapshot_capsule_uuid))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              "FORENSIC_CAPSULE_UNAVAILABLE: retained snapshot capsule missing");
+            return Status::NOT_FOUND;
+        }
+        return openForensicReplayByTxid(selected->txid, ctx);
+    }
+
+    Status ConnectionContext::openForensicReplayByTxid(uint64_t txid, ErrorContext* ctx)
+    {
+        if (!db_ || txid == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "FORENSIC_SELECTOR_INVALID: txid is required");
+            return Status::INVALID_ARGUMENT;
+        }
+        if (isForensicReplayActive())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_TRANSACTION_STATE,
+                              "forensic replay session is already bound");
+            return Status::INVALID_TRANSACTION_STATE;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::RuntimeTransactionCatalogInfo row{};
+        Status status = catalog->getRuntimeTransactionCatalogEntry(txid, row, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              "FORENSIC_SELECTOR_INVALID: txid was not found");
+            return Status::NOT_FOUND;
+        }
+        if (isZeroUuidLocal(row.forensic_snapshot_capsule_uuid))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              "FORENSIC_CAPSULE_UNAVAILABLE: retained snapshot capsule missing");
+            return Status::NOT_FOUND;
+        }
+        return openForensicReplayByCapsuleUuid(row.forensic_snapshot_capsule_uuid, ctx);
+    }
+
+    Status ConnectionContext::openForensicReplayByCapsuleUuid(const ID& capsule_uuid,
+                                                              ErrorContext* ctx)
+    {
+        if (!db_ || isZeroUuidLocal(capsule_uuid))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "FORENSIC_SELECTOR_INVALID: capsule_uuid is required");
+            return Status::INVALID_ARGUMENT;
+        }
+        if (isForensicReplayActive())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_TRANSACTION_STATE,
+                              "forensic replay session is already bound");
+            return Status::INVALID_TRANSACTION_STATE;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "catalog manager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::ForensicSnapshotCapsuleCatalogInfo capsule{};
+        Status status = catalog->getForensicSnapshotCapsuleCatalogEntry(capsule_uuid, capsule, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              "FORENSIC_CAPSULE_UNAVAILABLE: capsule was not found");
+            return Status::NOT_FOUND;
+        }
+        if (capsule.database_id != db_->uuid())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PERMISSION_DENIED,
+                              "FORENSIC_REPLAY_NOT_ALLOWED: capsule belongs to another database");
+            return Status::PERMISSION_DENIED;
+        }
+
+        auto replay_binding = std::make_unique<ForensicReplayBinding>();
+        replay_binding->capsule_uuid = capsule.capsule_id;
+        replay_binding->tx_uuid = capsule.tx_uuid;
+        replay_binding->txid = capsule.txid;
+        replay_binding->schema_epoch_uuid = capsule.schema_epoch_uuid;
+        replay_binding->snapshot_kind = capsule.snapshot_kind;
+        status = parseForensicReplaySnapshot(capsule.active_tx_manifest,
+                                             capsule.visibility_manifest,
+                                             replay_binding->snapshot,
+                                             ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!isZeroUuidLocal(capsule.schema_epoch_uuid))
+        {
+            CatalogManager::SchemaEpochCatalogInfo schema_epoch{};
+            status = catalog->getSchemaEpochCatalogEntry(capsule.schema_epoch_uuid, schema_epoch, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::NOT_FOUND,
+                                  "FORENSIC_SCHEMA_HISTORY_PRUNED: schema epoch could not be resolved");
+                return Status::NOT_FOUND;
+            }
+            status = parseForensicReplaySchemaManifest(
+                schema_epoch.definition_manifest, *replay_binding, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        stageTransactionSettings(IsolationLevel::SNAPSHOT,
+                                 true,
+                                 wait_for_locks_,
+                                 lock_timeout_seconds_,
+                                 ReadCommittedMode::READ_CONSISTENCY);
+
+        if (current_xid_ != 0)
+        {
+            status = endCurrentTransaction(false, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        applyStagedSettings();
+        forensic_replay_binding_ = std::move(replay_binding);
+        current_schema_epoch_uuid_ = forensic_replay_binding_->schema_epoch_uuid;
+        status = beginNewTransaction(ctx);
+        if (status != Status::OK)
+        {
+            forensic_replay_binding_.reset();
+            std::memset(&current_schema_epoch_uuid_, 0, sizeof(current_schema_epoch_uuid_));
+            return status;
+        }
+
+        return Status::OK;
+    }
+
+    Status ConnectionContext::closeForensicReplay(ErrorContext* ctx)
+    {
+        if (!isForensicReplayActive())
+        {
+            return Status::OK;
+        }
+
+        stageTransactionSettings(default_isolation_level_,
+                                 default_is_read_only_,
+                                 default_wait_for_locks_,
+                                 default_lock_timeout_seconds_,
+                                 default_read_committed_mode_);
+
+        Status status = Status::OK;
+        if (current_xid_ != 0)
+        {
+            status = endCurrentTransaction(false, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        forensic_replay_binding_.reset();
+        std::memset(&current_schema_epoch_uuid_, 0, sizeof(current_schema_epoch_uuid_));
+        applyStagedSettings();
+        return beginNewTransaction(ctx);
+    }
+
+    void ConnectionContext::stageTransactionalDdlBatch(uint8_t object_type,
+                                                       const ID& object_id,
+                                                       const std::string& operation_class,
+                                                       uint64_t statement_hash,
+                                                       const std::string& statement_text)
+    {
+        if (current_xid_ == 0 || isForensicReplayActive() || isZeroUuidLocal(object_id))
+        {
+            return;
+        }
+
+        PendingTransactionalDdlBatch batch{};
+        batch.object_type = object_type;
+        batch.object_id = object_id;
+        batch.operation_class = operation_class.empty() ? "DDL" : operation_class;
+        batch.statement_hash = statement_hash;
+        batch.statement_text = statement_text;
+
+        if (!pending_transactional_ddl_batches_.empty())
+        {
+            const auto& prior = pending_transactional_ddl_batches_.back();
+            if (prior.object_type == batch.object_type &&
+                prior.object_id == batch.object_id &&
+                prior.operation_class == batch.operation_class &&
+                prior.statement_hash == batch.statement_hash &&
+                prior.statement_text == batch.statement_text)
+            {
+                return;
+            }
+        }
+
+        pending_transactional_ddl_batches_.push_back(std::move(batch));
+    }
+
+    Status ConnectionContext::flushCommittedTransactionalDdl(uint64_t commit_seqno,
+                                                             ErrorContext* ctx)
+    {
+        if (!db_ ||
+            current_xid_ == 0 ||
+            isZeroUuidLocal(current_transaction_uuid_) ||
+            pending_transactional_ddl_batches_.empty())
+        {
+            return Status::OK;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            return Status::OK;
+        }
+
+        const ID schema_epoch_before_uuid = current_schema_epoch_uuid_;
+        std::string definition_manifest;
+        Status status = catalog->buildCurrentSchemaEpochDefinitionManifest(definition_manifest, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        CatalogManager::SchemaEpochCatalogInfo schema_epoch{};
+        schema_epoch.database_id = db_->uuid();
+        schema_epoch.has_commit_seqno = commit_seqno != 0;
+        schema_epoch.commit_seqno = commit_seqno;
+        schema_epoch.origin_tx_uuid = current_transaction_uuid_;
+        schema_epoch.origin_txid = current_xid_;
+        schema_epoch.has_parent_schema_epoch_uuid = !isZeroUuidLocal(schema_epoch_before_uuid);
+        schema_epoch.parent_schema_epoch_uuid = schema_epoch_before_uuid;
+        schema_epoch.definition_manifest = definition_manifest;
+        status = catalog->appendSchemaEpochCatalogEntry(schema_epoch, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        json payload = json::object();
+        payload["database_uuid"] = db_->uuid().toString();
+        payload["tx_uuid"] = current_transaction_uuid_.toString();
+        payload["txid"] = current_xid_;
+        payload["schema_epoch_before_uuid"] = schema_epoch_before_uuid.toString();
+        payload["schema_epoch_after_uuid"] = schema_epoch.schema_epoch_uuid.toString();
+        payload["operation_count"] = pending_transactional_ddl_batches_.size();
+        payload["operations"] = json::array();
+
+        for (const auto& op : pending_transactional_ddl_batches_)
+        {
+            json op_doc = json::object();
+            op_doc["object_uuid"] = op.object_id.toString();
+            op_doc["object_type"] = objectTypeLabel(op.object_type);
+            op_doc["operation_class"] = op.operation_class;
+            op_doc["statement_hash"] = op.statement_hash;
+            op_doc["statement_text"] = op.statement_text;
+            payload["operations"].push_back(std::move(op_doc));
+        }
+
+        CatalogManager::TransactionLineageEventCatalogInfo ddl_event{};
+        ddl_event.tx_uuid = current_transaction_uuid_;
+        ddl_event.txid = current_xid_;
+        ddl_event.event_kind = CatalogManager::TransactionLineageEventKind::TX_DDL_BATCH;
+        ddl_event.session_id = effectiveSessionId();
+        ddl_event.connection_id = attachment_id_;
+        ddl_event.user_id = current_user_id_;
+        ddl_event.role_id = active_role_id_;
+        if (pending_transactional_ddl_batches_.size() == 1)
+        {
+            ddl_event.object_id = pending_transactional_ddl_batches_.front().object_id;
+        }
+        if (pending_transactional_ddl_batches_.back().statement_hash != 0)
+        {
+            ddl_event.has_statement_hash = true;
+            ddl_event.statement_hash = pending_transactional_ddl_batches_.back().statement_hash;
+        }
+        ddl_event.payload_json = payload.dump();
+        status = catalog->appendTransactionLineageEventCatalogEntry(ddl_event, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        current_schema_epoch_uuid_ = schema_epoch.schema_epoch_uuid;
+        pending_transactional_ddl_batches_.clear();
+        return Status::OK;
+    }
+
     Status ConnectionContext::persistRuntimeTransactionState(
         uint8_t state_code,
         uint64_t txid,
+        const ID& tx_uuid,
+        const ID& capsule_uuid,
+        const ID& schema_epoch_uuid,
+        bool has_commit_seqno,
+        uint64_t commit_seqno,
         uint64_t end_time,
         ErrorContext* ctx)
     {
@@ -964,6 +1973,7 @@ namespace scratchbird::core
 
         CatalogManager::RuntimeTransactionCatalogInfo info{};
         info.txid = txid;
+        info.tx_uuid = tx_uuid;
         info.database_id = db_->uuid();
         info.session_id = session_id_;
         info.connection_id = ID{};
@@ -977,6 +1987,10 @@ namespace scratchbird::core
         info.start_time = static_cast<uint64_t>(xact_start_time_.count());
         info.has_end_time = info.state != CatalogManager::RuntimeTransactionState::IN_PROGRESS;
         info.end_time = info.has_end_time ? end_time : 0;
+        info.has_commit_seqno = has_commit_seqno;
+        info.commit_seqno = has_commit_seqno ? commit_seqno : 0;
+        info.schema_epoch_uuid = schema_epoch_uuid;
+        info.forensic_snapshot_capsule_uuid = capsule_uuid;
         info.has_last_statement_hash = last_statement_hash_ != 0;
         info.last_statement_hash = last_statement_hash_;
         info.has_last_statement_time = last_statement_time_ != 0;
@@ -1009,7 +2023,12 @@ namespace scratchbird::core
         begin.user_id = current_user_id_;
         begin.role_id = active_role_id_;
         begin.payload_json = buildTransactionBeginPayload(db_, this);
-        return catalog->appendTransactionLineageEventCatalogEntry(begin, ctx);
+        Status status = catalog->appendTransactionLineageEventCatalogEntry(begin, ctx);
+        if (status == Status::OK)
+        {
+            lineage_root_event_id_ = begin.lineage_event_id;
+        }
+        return status;
     }
 
     Status ConnectionContext::appendTransactionLineageTerminal(bool committed,
@@ -1062,6 +2081,59 @@ namespace scratchbird::core
         return catalog->appendTransactionLineageEventCatalogEntry(terminal, ctx);
     }
 
+    Status ConnectionContext::createForensicSnapshotCapsule(bool committed,
+                                                            uint64_t txid,
+                                                            const ID& tx_uuid,
+                                                            uint64_t end_time,
+                                                            ID& capsule_uuid_out,
+                                                            ErrorContext* ctx)
+    {
+        capsule_uuid_out = ID{};
+        if (!db_ ||
+            txid == 0 ||
+            isZeroUuidLocal(tx_uuid) ||
+            !retained_transaction_snapshot_ ||
+            isZeroUuidLocal(lineage_root_event_id_) ||
+            isForensicReplayActive())
+        {
+            return Status::OK;
+        }
+
+        CatalogManager* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            return Status::OK;
+        }
+
+        CatalogManager::ForensicSnapshotCapsuleCatalogInfo capsule{};
+        capsule.database_id = db_->uuid();
+        capsule.tx_uuid = tx_uuid;
+        capsule.txid = txid;
+        capsule.has_commit_seqno = committed;
+        capsule.commit_seqno = committed ? end_time : 0;
+        capsule.snapshot_kind = "TRANSACTION_START";
+        capsule.schema_epoch_uuid = current_schema_epoch_uuid_;
+        capsule.active_tx_manifest = buildActiveTxManifest(*retained_transaction_snapshot_);
+        capsule.visibility_manifest =
+            buildVisibilityManifest(*retained_transaction_snapshot_, isolation_level_);
+        capsule.lineage_root_event_id = lineage_root_event_id_;
+        capsule.created_time = (end_time == 0) ? nowMicros() : end_time;
+        capsule.retention_deadline_time =
+            (std::numeric_limits<uint64_t>::max() - capsule.created_time <
+             kForensicReplayRetentionMicros)
+                ? std::numeric_limits<uint64_t>::max()
+                : capsule.created_time + kForensicReplayRetentionMicros;
+        capsule.status = committed ? "COMMITTED" : "ABORTED";
+        capsule.is_valid = true;
+
+        Status status = catalog->appendForensicSnapshotCapsuleCatalogEntry(capsule, ctx);
+        if (status == Status::OK)
+        {
+            capsule_uuid_out = capsule.capsule_id;
+        }
+        return status;
+    }
+
     void ConnectionContext::refreshActiveTransactionAttribution()
     {
         if (current_xid_ == 0)
@@ -1073,6 +2145,11 @@ namespace scratchbird::core
         Status status = persistRuntimeTransactionState(
             static_cast<uint8_t>(CatalogManager::RuntimeTransactionState::IN_PROGRESS),
             current_xid_,
+            current_transaction_uuid_,
+            forensic_replay_binding_ ? forensic_replay_binding_->capsule_uuid : ID{},
+            current_schema_epoch_uuid_,
+            false,
+            0,
             0,
             &ctx);
         if (status != Status::OK)
@@ -1261,6 +2338,10 @@ namespace scratchbird::core
 
     Status ConnectionContext::commit(ErrorContext *ctx)
     {
+        if (isForensicReplayActive())
+        {
+            return closeForensicReplay(ctx);
+        }
         if (current_xid_ == 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction to commit");
@@ -1325,6 +2406,10 @@ namespace scratchbird::core
 
     Status ConnectionContext::rollback(ErrorContext *ctx)
     {
+        if (isForensicReplayActive())
+        {
+            return closeForensicReplay(ctx);
+        }
         if (current_xid_ == 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "No active transaction to rollback");
@@ -1476,6 +2561,13 @@ namespace scratchbird::core
                                                ReadCommittedMode read_committed_mode,
                                                bool commit_outstanding, ErrorContext *ctx)
     {
+        if (isForensicReplayActive())
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::READ_ONLY_TRANSACTION,
+                              "FORENSIC_REPLAY_MUTATION_FORBIDDEN: close replay before changing transaction mode");
+            return Status::READ_ONLY_TRANSACTION;
+        }
         ReadCommittedMode effective_mode = read_committed_mode;
         if (effective_mode == ReadCommittedMode::DEFAULT)
         {
@@ -2034,6 +3126,7 @@ namespace scratchbird::core
 
     Status ConnectionContext::beginNewTransaction(ErrorContext *ctx)
     {
+        pending_transactional_ddl_batches_.clear();
         // Allocate new XID
         uint64_t new_xid = 0;
         Status s = txn_manager_->beginTransaction(proc_id_, new_xid, ctx);
@@ -2091,9 +3184,11 @@ namespace scratchbird::core
             // Non-fatal - continue with transaction
         }
 
-        // Create snapshot if using SNAPSHOT or SNAPSHOT_TABLE_STABILITY isolation
-        if (isolation_level_ == IsolationLevel::SNAPSHOT ||
-            isolation_level_ == IsolationLevel::SNAPSHOT_TABLE_STABILITY)
+        // Capture a retained transaction-start snapshot only for ordinary snapshot-style
+        // transactions. Replay-bound sessions already have an immutable retained boundary.
+        if (!isForensicReplayActive() &&
+            (isolation_level_ == IsolationLevel::SNAPSHOT ||
+             isolation_level_ == IsolationLevel::SNAPSHOT_TABLE_STABILITY))
         {
             s = createSnapshot(ctx);
             if (s != Status::OK)
@@ -2171,6 +3266,16 @@ namespace scratchbird::core
         }
 
         current_transaction_uuid_ = generateUuidV7();
+        std::memset(&lineage_root_event_id_, 0, sizeof(lineage_root_event_id_));
+        s = ensureCurrentSchemaEpochInitialized(ctx);
+        if (s != Status::OK)
+        {
+            txn_manager_->rollbackTransaction(proc_id_, current_xid_, nullptr);
+            current_xid_ = 0;
+            std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
+            return s;
+        }
+        transaction_start_schema_epoch_uuid_ = current_schema_epoch_uuid_;
 
         auto rollback_begin = [this]() {
             if (db_)
@@ -2189,12 +3294,20 @@ namespace scratchbird::core
             txn_manager_->rollbackTransaction(proc_id_, current_xid_, nullptr);
             current_xid_ = 0;
             std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
+            std::memset(&lineage_root_event_id_, 0, sizeof(lineage_root_event_id_));
             xact_start_time_ = std::chrono::microseconds(0);
+            retained_transaction_snapshot_.reset();
+            pending_transactional_ddl_batches_.clear();
         };
 
         s = persistRuntimeTransactionState(
             static_cast<uint8_t>(CatalogManager::RuntimeTransactionState::IN_PROGRESS),
             current_xid_,
+            current_transaction_uuid_,
+            forensic_replay_binding_ ? forensic_replay_binding_->capsule_uuid : ID{},
+            current_schema_epoch_uuid_,
+            false,
+            0,
             0,
             ctx);
         if (s != Status::OK)
@@ -2251,10 +3364,39 @@ namespace scratchbird::core
         {
             CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
             const uint64_t end_time = nowMicros();
+            if (commit && !isForensicReplayActive())
+            {
+                Status ddl_status = flushCommittedTransactionalDdl(end_time, nullptr);
+                if (ddl_status != Status::OK)
+                {
+                    LOG_WARNING(TRANSACTION,
+                                "Failed to persist transactional DDL lineage/schema epoch: proc_id=%u, xid=%lu, status=%d",
+                                proc_id_, ended_xid, static_cast<int>(ddl_status));
+                }
+            }
+            ID terminal_capsule_uuid =
+                forensic_replay_binding_ ? forensic_replay_binding_->capsule_uuid : ID{};
+            ID terminal_schema_epoch_uuid = current_schema_epoch_uuid_;
+            if (!isForensicReplayActive())
+            {
+                Status capsule_status = createForensicSnapshotCapsule(
+                    commit, ended_xid, ended_tx_uuid, end_time, terminal_capsule_uuid, nullptr);
+                if (capsule_status != Status::OK)
+                {
+                    LOG_WARNING(TRANSACTION,
+                                "Failed to materialize forensic snapshot capsule: proc_id=%u, xid=%lu, status=%d",
+                                proc_id_, ended_xid, static_cast<int>(capsule_status));
+                }
+            }
             Status runtime_status = persistRuntimeTransactionState(
                 static_cast<uint8_t>(commit ? CatalogManager::RuntimeTransactionState::COMMITTED
                                             : CatalogManager::RuntimeTransactionState::ABORTED),
                 ended_xid,
+                ended_tx_uuid,
+                terminal_capsule_uuid,
+                terminal_schema_epoch_uuid,
+                commit && !isForensicReplayActive(),
+                commit && !isForensicReplayActive() ? end_time : 0,
                 end_time,
                 nullptr);
             if (runtime_status != Status::OK)
@@ -2302,10 +3444,15 @@ namespace scratchbird::core
             }
         }
         pending_table_deltas_.clear();
+        pending_transactional_ddl_batches_.clear();
         transaction_io_stats_.reset();
         statement_io_stats_.reset();
         statement_io_active_ = false;
         statement_id_ = 0;
+        if (!commit)
+        {
+            current_schema_epoch_uuid_ = transaction_start_schema_epoch_uuid_;
+        }
 
         // Clear statement XID (FIREBIRD MGA: No snapshots)
         statement_xid_ = 0;
@@ -2314,9 +3461,12 @@ namespace scratchbird::core
         savepoint_stack_.clear();
         savepoint_level_ = 0;
         command_id_ = 0;
+        retained_transaction_snapshot_.reset();
 
         // Clear transaction state (will be reset by beginNewTransaction)
         std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
+        std::memset(&lineage_root_event_id_, 0, sizeof(lineage_root_event_id_));
+        std::memset(&transaction_start_schema_epoch_uuid_, 0, sizeof(transaction_start_schema_epoch_uuid_));
         current_xid_ = 0;
         xact_start_time_ = std::chrono::microseconds(0);
 
@@ -2404,14 +3554,20 @@ namespace scratchbird::core
         applyStagedSecurityContext();
     }
 
-    // FIREBIRD MGA: No snapshot creation needed
-    // Transaction visibility is determined by current_xid and TIP lookups
-    // This function is kept for API compatibility but does nothing
     Status ConnectionContext::createSnapshot(ErrorContext *ctx)
     {
-        // For SNAPSHOT isolation, current_xid_ is already set at transaction start
-        // No additional snapshot structure needed
-        LOG_DEBUG(TRANSACTION, "Transaction visibility using XID %lu (Firebird MGA)", current_xid_);
+        retained_transaction_snapshot_ = std::make_unique<TransactionSnapshot>();
+        Status status = txn_manager_->captureSnapshot(*retained_transaction_snapshot_, ctx);
+        if (status != Status::OK)
+        {
+            retained_transaction_snapshot_.reset();
+            return status;
+        }
+        LOG_DEBUG(TRANSACTION,
+                  "Captured retained transaction snapshot: proc_id=%u, xid=%lu, active=%zu",
+                  proc_id_,
+                  current_xid_,
+                  retained_transaction_snapshot_->active_txid_set.size());
         return Status::OK;
     }
 

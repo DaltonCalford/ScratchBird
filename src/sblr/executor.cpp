@@ -256,6 +256,50 @@ namespace scratchbird
                 return input.substr(begin, end - begin);
             }
 
+            static bool tracksForensicSchemaEpoch(core::CatalogManager::ObjectType type)
+            {
+                using OT = core::CatalogManager::ObjectType;
+                return type == OT::SCHEMA || type == OT::TABLE;
+            }
+
+            static std::string classifyTransactionalDdl(const std::string& sql,
+                                                        bool delete_operation)
+            {
+                std::vector<std::string> tokens;
+                std::string current;
+                current.reserve(16);
+                for (unsigned char c : sql)
+                {
+                    if (std::isalnum(c) != 0 || c == '_')
+                    {
+                        current.push_back(static_cast<char>(std::toupper(c)));
+                    }
+                    else if (!current.empty())
+                    {
+                        tokens.push_back(std::move(current));
+                        current.clear();
+                        if (tokens.size() >= 3)
+                        {
+                            break;
+                        }
+                    }
+                }
+                if (!current.empty() && tokens.size() < 3)
+                {
+                    tokens.push_back(std::move(current));
+                }
+
+                if (tokens.empty())
+                {
+                    return delete_operation ? "DROP_OBJECT" : "DDL_OBJECT";
+                }
+                if (tokens.size() >= 2)
+                {
+                    return tokens[0] + "_" + tokens[1];
+                }
+                return tokens[0];
+            }
+
             static thread_local std::string g_v3_module_dialect_override;
 
             static bool isPostgreSqlDialectContext(const core::ConnectionContext* conn_ctx)
@@ -7328,6 +7372,37 @@ namespace scratchbird
                 SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR,
                                   "Catalog manager not available");
                 return core::Status::INTERNAL_ERROR;
+            }
+
+            if (conn_ctx_ &&
+                conn_ctx_->isForensicReplayActive() &&
+                expected_type == core::CatalogManager::ObjectType::TABLE)
+            {
+                core::ID replay_table_id;
+                core::ErrorContext replay_ctx;
+                if (conn_ctx_->resolveForensicReplayTablePath(
+                        qualified_name, replay_table_id, &replay_ctx, allow_search_path) ==
+                    core::Status::OK)
+                {
+                    object_id_out = replay_table_id;
+                    resolved_type_out = core::CatalogManager::ObjectType::TABLE;
+                    if (resolved_out != nullptr)
+                    {
+                        core::ConnectionContext::HistoricalTableInfo replay_table;
+                        if (conn_ctx_->getForensicReplayTable(
+                                replay_table_id, replay_table, nullptr) == core::Status::OK)
+                        {
+                            resolved_out->object_id = replay_table.table_id;
+                            resolved_out->object_type = core::CatalogManager::ObjectType::TABLE;
+                            resolved_out->schema_id = replay_table.schema_id;
+                            resolved_out->parent_object_id = core::ID{};
+                            resolved_out->object_name = replay_table.table_name;
+                            resolved_out->schema_path.clear();
+                            resolved_out->full_path = qualified_name;
+                        }
+                    }
+                    return core::Status::OK;
+                }
             }
 
             std::string expanded_name;
@@ -54264,6 +54339,12 @@ namespace scratchbird
                     return ExecutionResult();
                 };
 
+                auto finishAlterTableSuccess = [&]() -> ExecutionResult {
+                    recordObjectDefinition(core::CatalogManager::ObjectType::TABLE,
+                                           table_info.table_id);
+                    return ExecutionResult();
+                };
+
                 core::ErrorContext ctx;
                 switch (action)
                 {
@@ -54286,7 +54367,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ADD COLUMN failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 3: { // DROP_COLUMN
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DROP_COLUMN", {
@@ -54312,7 +54393,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE DROP COLUMN failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 5: { // ALTER_COLUMN_TYPE
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_ALTER_COLUMN_TYPE", {
@@ -54404,7 +54485,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ALTER COLUMN failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 6: { // ALTER_COLUMN_POSITION
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_ALTER_COLUMN_POSITION", {
@@ -54431,7 +54512,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ALTER COLUMN POSITION failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 7: { // ALTER_COLUMN_SET_DEFAULT
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_DEFAULT", {
@@ -54469,7 +54550,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE SET DEFAULT failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 8: { // ALTER_COLUMN_DROP_DEFAULT
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DROP_DEFAULT", {
@@ -54495,7 +54576,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE DROP DEFAULT failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 9: { // ALTER_COLUMN_SET_NOT_NULL
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_NOT_NULL", {
@@ -54520,7 +54601,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE SET NOT NULL failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 10: { // ALTER_COLUMN_DROP_NOT_NULL
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DROP_NOT_NULL", {
@@ -54545,7 +54626,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE DROP NOT NULL failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 15: { // RENAME_COLUMN
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_RENAME_COLUMN", {
@@ -54572,7 +54653,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE RENAME COLUMN failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 11: { // RENAME_TABLE
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_RENAME_TABLE", {
@@ -54598,7 +54679,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE RENAME TABLE failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 12: { // RENAME_CONSTRAINT
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_RENAME_CONSTRAINT", {
@@ -54633,7 +54714,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE RENAME CONSTRAINT failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 13: { // SET_SCHEMA
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_SCHEMA", {
@@ -54667,7 +54748,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE SET SCHEMA failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 2: { // ADD_CONSTRAINT
                         const auto* schema = scratchbird::sblr::v3::lookupSchema("TABLE_CONSTRAINT");
@@ -54753,7 +54834,7 @@ namespace scratchbird
                                     return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ADD CONSTRAINT index failed" : ctx.message);
                                 }
                             }
-                            return ExecutionResult();
+                            return finishAlterTableSuccess();
                         }
 
                         if (ctype == 3)
@@ -54818,7 +54899,7 @@ namespace scratchbird
                             {
                                 return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ADD FOREIGN KEY failed" : ctx.message);
                             }
-                            return ExecutionResult();
+                            return finishAlterTableSuccess();
                         }
 
                         return ExecutionResult("ALTER TABLE ADD CONSTRAINT unsupported type");
@@ -54853,7 +54934,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE DROP CONSTRAINT failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 16: { // SET_STATISTICS
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_STATISTICS", {
@@ -54883,7 +54964,7 @@ namespace scratchbird
                         {
                             return persist;
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 17: { // SET_STORAGE
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_STORAGE", {
@@ -54913,7 +54994,7 @@ namespace scratchbird
                         {
                             return persist;
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 18: // INHERIT
                     case 19: { // NO_INHERIT
@@ -55049,7 +55130,7 @@ namespace scratchbird
                         {
                             return persist;
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 20: // ENABLE_TRIGGER
                     case 21: { // DISABLE_TRIGGER
@@ -55145,7 +55226,7 @@ namespace scratchbird
                                 return ExecutionResult(err_msg);
                             }
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 22: // ENABLE_RLS
                     case 23: // DISABLE_RLS
@@ -55165,7 +55246,7 @@ namespace scratchbird
                         {
                             return ExecutionResult(ctx.message.empty() ? "ALTER TABLE RLS failed" : ctx.message);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 26: { // ATTACH_PARTITION
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_ATTACH_PARTITION", {
@@ -55264,7 +55345,7 @@ namespace scratchbird
                         {
                             return persist_child;
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 27: { // DETACH_PARTITION
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DETACH_PARTITION", {
@@ -55350,7 +55431,7 @@ namespace scratchbird
                         {
                             return persist_child;
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     case 28: { // VALIDATE_CONSTRAINT
                         scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_VALIDATE_CONSTRAINT", {
@@ -55398,7 +55479,7 @@ namespace scratchbird
                             }
                             return ExecutionResult(err_msg);
                         }
-                        return ExecutionResult();
+                        return finishAlterTableSuccess();
                     }
                     default:
                         return ExecutionResult("ALTER TABLE action not supported in V3 executor");
@@ -98434,13 +98515,27 @@ namespace scratchbird
         void Executor::recordObjectDefinition(core::CatalogManager::ObjectType object_type,
                                               const core::ID& object_id)
         {
-            if (!conn_ctx_ || isZeroUuid(object_id) || !current_bytecode_vec_)
+            if (!conn_ctx_ || isZeroUuid(object_id))
             {
                 return;
             }
 
             const std::string& sql = conn_ctx_->lastStatementText();
             if (sql.empty() || sql == "SBLR")
+            {
+                return;
+            }
+
+            if (tracksForensicSchemaEpoch(object_type))
+            {
+                conn_ctx_->stageTransactionalDdlBatch(static_cast<uint8_t>(object_type),
+                                                      object_id,
+                                                      classifyTransactionalDdl(sql, false),
+                                                      conn_ctx_->lastStatementHash(),
+                                                      sql);
+            }
+
+            if (!current_bytecode_vec_)
             {
                 return;
             }
@@ -98463,18 +98558,27 @@ namespace scratchbird
         void Executor::deleteObjectDefinition(core::CatalogManager::ObjectType object_type,
                                               const core::ID& object_id)
         {
-            (void)object_type;
-            if (isZeroUuid(object_id))
+            if (!conn_ctx_ || isZeroUuid(object_id))
             {
                 return;
             }
 
+            const std::string sql = conn_ctx_->lastStatementText();
             core::ErrorContext ctx;
             auto status = db_->catalog_manager()->deleteObjectDefinition(object_id, &ctx);
             if (status != core::Status::OK && status != core::Status::NOT_FOUND)
             {
                 LOG_WARNING(EXECUTOR, "Failed to delete object definition: %s",
                             ctx.message.empty() ? "unknown error" : ctx.message.c_str());
+            }
+
+            if (!sql.empty() && sql != "SBLR" && tracksForensicSchemaEpoch(object_type))
+            {
+                conn_ctx_->stageTransactionalDdlBatch(static_cast<uint8_t>(object_type),
+                                                      object_id,
+                                                      classifyTransactionalDdl(sql, true),
+                                                      conn_ctx_->lastStatementHash(),
+                                                      sql);
             }
         }
 
