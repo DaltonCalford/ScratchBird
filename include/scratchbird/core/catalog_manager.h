@@ -4732,6 +4732,21 @@ public:
             bool is_valid = true;
         };
 
+        struct ShadowCaptureManifestCatalogInfo
+        {
+            ID manifest_id;
+            ID tx_uuid;
+            ID object_uuid;
+            std::string capture_scope;
+            std::string capture_format;
+            ID sink_profile_uuid;
+            std::string payload_manifest;
+            uint64_t created_time = 0;
+            bool has_retention_deadline_time = false;
+            uint64_t retention_deadline_time = 0;
+            bool is_valid = true;
+        };
+
         struct RuntimeConnectionCatalogInfo
         {
             ID connection_id;
@@ -8270,6 +8285,15 @@ public:
                                              ErrorContext* ctx = nullptr) -> Status;
         auto listPageAuditFindingCatalogEntries(std::vector<PageAuditFindingCatalogInfo>& rows_out,
                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto appendShadowCaptureManifestCatalogEntry(ShadowCaptureManifestCatalogInfo& info,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+        auto getShadowCaptureManifestCatalogEntry(const ID& manifest_id,
+                                                  ShadowCaptureManifestCatalogInfo& info_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listShadowCaptureManifestCatalogEntries(
+            std::vector<ShadowCaptureManifestCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
 
         // ============================================================================
         // Canonical runtime context catalog operations (CAT-019)
@@ -13248,6 +13272,7 @@ public:
         uint32_t audit_export_segment_table_page_ = 0; // Audit export segment catalog (NCW-034)
         uint32_t transaction_lineage_event_table_page_ = 0; // Retained transaction lineage catalog (NCW-040)
         uint32_t page_audit_finding_table_page_ = 0; // Sweep page audit findings catalog (NCW-043)
+        uint32_t shadow_capture_manifest_table_page_ = 0; // Sweep shadow capture manifest catalog (NCW-044)
         uint32_t connection_table_page_ = 0; // Runtime connection attribution catalog (CAT-019)
         uint32_t transaction_table_page_ = 0; // Runtime transaction attribution catalog (CAT-019)
         uint32_t principal_account_table_page_ = 0; // Principal account catalog (CAT-020)

@@ -36,6 +36,8 @@ namespace scratchbird::core
         constexpr const char* kSweepManifestMagic = "SB_SWEEP_EVIDENCE_MANIFEST_v1";
         constexpr const char* kWalAfterLogProfileName = "__sweep_wal_after_log__";
         constexpr const char* kWalAfterLogManifestMagic = "SB_WAL_AFTER_LOG_SEGMENT_v1";
+        constexpr const char* kShadowCaptureProfileName = "__sweep_shadow_capture__";
+        constexpr const char* kShadowCaptureManifestMagic = "SB_SHADOW_CAPTURE_MANIFEST_v1";
 
         bool isZeroIdLocal(const ID& id)
         {
@@ -54,6 +56,19 @@ namespace scratchbird::core
             return std::chrono::duration_cast<std::chrono::microseconds>(
                        std::chrono::system_clock::now().time_since_epoch())
                 .count();
+        }
+
+        std::string hashBytesToHex(const std::array<uint8_t, 32>& hash)
+        {
+            static constexpr char kHex[] = "0123456789abcdef";
+            std::string out;
+            out.resize(hash.size() * 2);
+            for (size_t i = 0; i < hash.size(); ++i)
+            {
+                out[i * 2] = kHex[(hash[i] >> 4) & 0x0F];
+                out[(i * 2) + 1] = kHex[hash[i] & 0x0F];
+            }
+            return out;
         }
 
         bool parseUuidFromString(const std::string& text, ID& out)
@@ -247,6 +262,14 @@ namespace scratchbird::core
             return root;
         }
 
+        std::filesystem::path buildShadowCaptureRoot(const Database* db)
+        {
+            std::filesystem::path root(db ? db->path() : std::string());
+            root += ".forensics";
+            root /= "shadow_capture";
+            return root;
+        }
+
         auto ensureSweepSpoolRoot(const Database* db,
                                   std::filesystem::path& root_out,
                                   ErrorContext* ctx) -> Status
@@ -286,6 +309,29 @@ namespace scratchbird::core
             {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
                                   "WAL_AFTER_EXPORT_PERSIST_FAILED: failed to create wal_after_log directory");
+                return Status::IO_ERROR;
+            }
+            return Status::OK;
+        }
+
+        auto ensureShadowCaptureRoot(const Database* db,
+                                     std::filesystem::path& root_out,
+                                     ErrorContext* ctx) -> Status
+        {
+            if (!db)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "shadow capture requires an open database");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            root_out = buildShadowCaptureRoot(db);
+            std::error_code ec;
+            std::filesystem::create_directories(root_out, ec);
+            if (ec)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                  "SWEEP_SHADOW_CAPTURE_BLOCKED: failed to create shadow_capture directory");
                 return Status::IO_ERROR;
             }
             return Status::OK;
@@ -380,6 +426,12 @@ namespace scratchbird::core
             return "TX_BEGIN";
         }
 
+        bool isTerminalTransactionLineageKind(CatalogManager::TransactionLineageEventKind kind)
+        {
+            using TLEK = CatalogManager::TransactionLineageEventKind;
+            return kind == TLEK::TX_COMMIT || kind == TLEK::TX_ROLLBACK;
+        }
+
         void appendOrderedUnique(std::vector<std::string>& values, const std::string& value)
         {
             if (value.empty())
@@ -435,6 +487,16 @@ namespace scratchbird::core
             std::string lineage_event_ids_csv;
             std::string lineage_event_kinds_csv;
             std::string schema_epoch_refs_csv;
+        };
+
+        struct ShadowCapturePayload
+        {
+            ID primary_object_uuid{};
+            std::string object_ids_csv;
+            std::string statement_hashes_csv;
+            std::string lineage_event_ids_csv;
+            std::string lineage_event_kinds_csv;
+            std::string terminal_event_kind;
         };
 
         auto hasTerminalEvent(const SweepLineageGroup& group) -> bool
@@ -612,6 +674,152 @@ namespace scratchbird::core
             payload_out.lineage_event_kinds_csv = joinStrings(lineage_event_kinds);
             payload_out.schema_epoch_refs_csv = joinStrings(schema_epoch_refs);
             return Status::OK;
+        }
+
+        auto loadShadowCapturePayload(CatalogManager* catalog,
+                                      const ID& tx_uuid,
+                                      uint64_t txid,
+                                      ShadowCapturePayload& payload_out,
+                                      ErrorContext* ctx) -> Status
+        {
+            payload_out = ShadowCapturePayload{};
+            if (!catalog)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "shadow capture requires a catalog");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            std::vector<CatalogManager::TransactionLineageEventCatalogInfo> rows;
+            Status status =
+                catalog->listTransactionLineageEventCatalogEntries(tx_uuid, txid, rows, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (rows.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "SWEEP_SHADOW_CAPTURE_BLOCKED: transaction lineage missing for shadow capture");
+                return Status::DATA_CORRUPTED;
+            }
+
+            std::vector<std::string> object_ids;
+            std::vector<std::string> statement_hashes;
+            std::vector<std::string> lineage_event_ids;
+            std::vector<std::string> lineage_event_kinds;
+            ID primary_object_uuid{};
+            bool multiple_objects = false;
+            bool saw_terminal = false;
+
+            for (const auto& row : rows)
+            {
+                appendOrderedUnique(lineage_event_ids, row.lineage_event_id.toString());
+                appendOrderedUnique(
+                    lineage_event_kinds,
+                    transactionLineageEventKindToString(row.event_kind));
+                if (row.has_statement_hash)
+                {
+                    appendOrderedUnique(statement_hashes,
+                                        std::to_string(row.statement_hash));
+                }
+                if (!isZeroIdLocal(row.object_id))
+                {
+                    appendOrderedUnique(object_ids, row.object_id.toString());
+                    if (isZeroIdLocal(primary_object_uuid))
+                    {
+                        primary_object_uuid = row.object_id;
+                    }
+                    else if (primary_object_uuid != row.object_id)
+                    {
+                        multiple_objects = true;
+                    }
+                }
+                if (isTerminalTransactionLineageKind(row.event_kind))
+                {
+                    payload_out.terminal_event_kind =
+                        transactionLineageEventKindToString(row.event_kind);
+                    saw_terminal = true;
+                }
+            }
+
+            if (!saw_terminal)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "SWEEP_SHADOW_CAPTURE_BLOCKED: terminal lineage event missing for shadow capture");
+                return Status::DATA_CORRUPTED;
+            }
+
+            if (multiple_objects)
+            {
+                primary_object_uuid = ID{};
+            }
+
+            payload_out.primary_object_uuid = primary_object_uuid;
+            payload_out.object_ids_csv = joinStrings(object_ids);
+            payload_out.statement_hashes_csv = joinStrings(statement_hashes);
+            payload_out.lineage_event_ids_csv = joinStrings(lineage_event_ids);
+            payload_out.lineage_event_kinds_csv = joinStrings(lineage_event_kinds);
+            return Status::OK;
+        }
+
+        std::string buildShadowCaptureManifest(const Database* db,
+                                               const SweepEvidenceWorkItem& source,
+                                               const CatalogManager::AuditExportSegmentCatalogInfo& source_segment,
+                                               const ShadowCapturePayload& payload,
+                                               const ID& sink_profile_id,
+                                               const ID& manifest_id,
+                                               const std::filesystem::path& shadow_path,
+                                               uint64_t created_time,
+                                               const std::string& capture_scope,
+                                               const std::string& capture_format)
+        {
+            const std::array<uint8_t, 32> zero_hash{};
+            const std::string source_manifest_hash =
+                hashBytesToHex(AuditLogger::computeExportSegmentHash(source_segment.payload_manifest,
+                                                                    zero_hash));
+
+            std::ostringstream payload_block;
+            payload_block << "tx_uuid=" << source.tx_uuid.toString() << "\n"
+                          << "txid=" << source.txid << "\n"
+                          << "capture_scope=" << capture_scope << "\n"
+                          << "capture_format=" << capture_format << "\n"
+                          << "object_ids=" << payload.object_ids_csv << "\n"
+                          << "statement_hashes=" << payload.statement_hashes_csv << "\n"
+                          << "lineage_event_ids=" << payload.lineage_event_ids_csv << "\n"
+                          << "lineage_event_kinds=" << payload.lineage_event_kinds_csv << "\n"
+                          << "terminal_event_kind=" << payload.terminal_event_kind << "\n";
+            const std::string payload_hash =
+                hashBytesToHex(AuditLogger::computeExportSegmentHash(payload_block.str(), zero_hash));
+
+            std::ostringstream out;
+            out << kShadowCaptureManifestMagic << "\n"
+                << "manifest_id=" << manifest_id.toString() << "\n"
+                << "database_id=" << (db ? db->uuid().toString() : ID{}.toString()) << "\n"
+                << "sink_profile_uuid=" << sink_profile_id.toString() << "\n"
+                << "tx_uuid=" << source.tx_uuid.toString() << "\n"
+                << "txid=" << source.txid << "\n"
+                << "object_uuid="
+                << (isZeroIdLocal(payload.primary_object_uuid) ? std::string()
+                                                               : payload.primary_object_uuid.toString())
+                << "\n"
+                << "capture_scope=" << capture_scope << "\n"
+                << "capture_format=" << capture_format << "\n"
+                << "source_work_item_uuid=" << source.work_item_id.toString() << "\n"
+                << "source_sink_profile_uuid=" << source.sink_profile_id.toString() << "\n"
+                << "source_segment_seq=" << source.segment_seq << "\n"
+                << "source_delivery_state=" << source.delivery_state << "\n"
+                << "source_manifest_path=" << source.spool_path << "\n"
+                << "source_manifest_hash=" << source_manifest_hash << "\n"
+                << "shadow_path=" << shadow_path.string() << "\n"
+                << "payload_hash=" << payload_hash << "\n"
+                << "created_time=" << created_time << "\n"
+                << "object_ids=" << payload.object_ids_csv << "\n"
+                << "statement_hashes=" << payload.statement_hashes_csv << "\n"
+                << "lineage_event_ids=" << payload.lineage_event_ids_csv << "\n"
+                << "lineage_event_kinds=" << payload.lineage_event_kinds_csv << "\n"
+                << "terminal_event_kind=" << payload.terminal_event_kind << "\n";
+            return out.str();
         }
 
         std::string buildWalAfterLogManifest(const Database* db,
@@ -1159,6 +1367,44 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status SweepManager::listShadowCaptureManifests(
+        std::vector<SweepShadowCaptureManifest>& rows_out,
+        ErrorContext* ctx) const
+    {
+        rows_out.clear();
+        if (!db_ || !db_->catalog_manager())
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::ShadowCaptureManifestCatalogInfo> manifests;
+        Status status =
+            db_->catalog_manager()->listShadowCaptureManifestCatalogEntries(manifests, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        rows_out.reserve(manifests.size());
+        for (const auto& manifest : manifests)
+        {
+            SweepShadowCaptureManifest row{};
+            row.manifest_id = manifest.manifest_id;
+            row.tx_uuid = manifest.tx_uuid;
+            row.object_uuid = manifest.object_uuid;
+            row.sink_profile_id = manifest.sink_profile_uuid;
+            row.created_time = manifest.created_time;
+            row.has_retention_deadline_time = manifest.has_retention_deadline_time;
+            row.retention_deadline_time = manifest.retention_deadline_time;
+            row.capture_scope = manifest.capture_scope;
+            row.capture_format = manifest.capture_format;
+            row.payload_manifest = manifest.payload_manifest;
+            row.is_valid = manifest.is_valid;
+            rows_out.push_back(std::move(row));
+        }
+        return Status::OK;
+    }
+
     bool SweepManager::checkSweepTrigger(ErrorContext *ctx)
     {
         // Don't trigger if sweep is already in progress
@@ -1237,8 +1483,20 @@ namespace scratchbird::core
             uint64_t duration_ms =
                 std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
                     .count();
-            updateStatistics(
-                oit_before, oit_before, duration_ms, 0, 0, 0, 0, false, false, false, false, false);
+            updateStatistics(oit_before,
+                             oit_before,
+                             duration_ms,
+                             0,
+                             0,
+                             0,
+                             0,
+                             0,
+                             false,
+                             false,
+                             false,
+                             false,
+                             false,
+                             false);
 
             sweep_in_progress_.store(false, std::memory_order_release);
             return Status::OK;
@@ -1257,10 +1515,12 @@ namespace scratchbird::core
         uint64_t wal_after_segments_emitted = 0;
         uint64_t wal_after_backlog_depth = 0;
         uint64_t page_audit_findings_emitted = 0;
+        uint64_t shadow_capture_manifests_emitted = 0;
         bool prune_blocked = false;
         bool evidence_failure = false;
         bool page_audit_failure = false;
         bool page_audit_mode_downgraded = false;
+        bool shadow_capture_failure = false;
         bool wal_after_failure = false;
 
         // 3. Mandatory local evidence spool for non-normal lanes before prune handoff
@@ -1282,8 +1542,10 @@ namespace scratchbird::core
                              0,
                              0,
                              0,
+                             0,
                              true,
                              true,
+                             false,
                              false,
                              false,
                              false);
@@ -1317,10 +1579,12 @@ namespace scratchbird::core
                              0,
                              0,
                              page_audit_findings_emitted,
+                             0,
                              true,
                              evidence_failure,
                              true,
                              page_audit_mode_downgraded,
+                             false,
                              false);
 
             if (db_->garbage_collector() != nullptr)
@@ -1332,7 +1596,43 @@ namespace scratchbird::core
             return s;
         }
 
-        // 5. Derivative wal_after_log export is downstream of local immutable
+        // 5. Logical shadow capture is a separate local evidence lane and
+        // blocks prune when persistence fails.
+        s = emitShadowCaptureManifests(&shadow_capture_manifests_emitted, ctx);
+        if (s != Status::OK)
+        {
+            shadow_capture_failure = true;
+            prune_blocked = true;
+
+            auto end_time = std::chrono::steady_clock::now();
+            uint64_t duration_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
+                    .count();
+            updateStatistics(oit_before,
+                             new_oit,
+                             duration_ms,
+                             evidence_items_emitted,
+                             0,
+                             0,
+                             page_audit_findings_emitted,
+                             shadow_capture_manifests_emitted,
+                             true,
+                             evidence_failure,
+                             page_audit_failure,
+                             page_audit_mode_downgraded,
+                             true,
+                             false);
+
+            if (db_->garbage_collector() != nullptr)
+            {
+                db_->garbage_collector()->notifySweepEvidenceBlocked(oit_before, new_oit);
+            }
+
+            sweep_in_progress_.store(false, std::memory_order_release);
+            return s;
+        }
+
+        // 6. Derivative wal_after_log export is downstream of local immutable
         // evidence and never becomes prune or recovery truth.
         {
             ErrorContext wal_ctx;
@@ -1348,7 +1648,7 @@ namespace scratchbird::core
             }
         }
 
-        // 6. Optional: Remove old tuple versions (if foreground)
+        // 7. Optional: Remove old tuple versions (if foreground)
         if (foreground)
         {
             s = reclaimSpace(new_oit, ctx);
@@ -1359,7 +1659,7 @@ namespace scratchbird::core
             }
         }
 
-        // 7. Update statistics
+        // 8. Update statistics
         auto end_time = std::chrono::steady_clock::now();
         uint64_t duration_ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
@@ -1371,16 +1671,18 @@ namespace scratchbird::core
                          wal_after_segments_emitted,
                          wal_after_backlog_depth,
                          page_audit_findings_emitted,
+                         shadow_capture_manifests_emitted,
                          prune_blocked,
                          evidence_failure,
                          page_audit_failure,
                          page_audit_mode_downgraded,
+                         shadow_capture_failure,
                          wal_after_failure);
 
         LOG_INFO(VACUUM, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums", oit_before,
                  new_oit, duration_ms);
 
-        // 8. Notify garbage collector that OIT has advanced and the local evidence gate is clear
+        // 9. Notify garbage collector that OIT has advanced and the local evidence gate is clear
         // This allows GC to identify more garbage tuples for removal
         if (db_->garbage_collector() != nullptr)
         {
@@ -2003,6 +2305,194 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status SweepManager::emitShadowCaptureManifests(uint64_t* manifests_emitted,
+                                                    ErrorContext* ctx)
+    {
+        if (manifests_emitted)
+        {
+            *manifests_emitted = 0;
+        }
+
+        if (!db_ || !db_->catalog_manager())
+        {
+            return Status::OK;
+        }
+
+        SweepPolicyBinding binding{};
+        Status status = resolvePolicyBinding(
+            {SweepPolicyScope{SweepScopeKind::DATABASE, db_->uuid()}}, binding, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!hasSweepPolicyLane(binding.lanes, SweepPolicyLane::SHADOW_CAPTURE))
+        {
+            return Status::OK;
+        }
+
+        std::filesystem::path shadow_root;
+        status = ensureShadowCaptureRoot(db_, shadow_root, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<CatalogManager::AuditSinkProfileCatalogInfo> profiles;
+        status = db_->catalog_manager()->listAuditSinkProfileCatalogEntries(profiles, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        CatalogManager::AuditSinkProfileCatalogInfo shadow_profile{};
+        auto existing_profile =
+            std::find_if(profiles.begin(), profiles.end(), [](const auto& profile) {
+                return profile.profile_name == kShadowCaptureProfileName;
+            });
+        if (existing_profile != profiles.end())
+        {
+            shadow_profile = *existing_profile;
+        }
+        else
+        {
+            shadow_profile.audit_sink_profile_id = generateUuidV7();
+            shadow_profile.profile_name = kShadowCaptureProfileName;
+            shadow_profile.sink_type = "LOCAL_APPEND_ONLY";
+        }
+        shadow_profile.failure_policy = binding.strict_audit ? "STRICT_AUDIT" : "BEST_EFFORT";
+        shadow_profile.is_enabled = true;
+        shadow_profile.config_json =
+            "{\"profile_kind\":\"SWEEP_SHADOW_CAPTURE\",\"queue_root\":\"" +
+            shadow_root.string() + "\",\"capture_format\":\"LOGICAL_TX_SUMMARY\"}";
+        status = db_->catalog_manager()->upsertAuditSinkProfileCatalogEntry(shadow_profile, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SweepEvidenceWorkItem> evidence_items;
+        status = listEvidenceWorkItems(evidence_items, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SweepShadowCaptureManifest> existing_manifests;
+        status = listShadowCaptureManifests(existing_manifests, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<std::string> captured_source_ids;
+        captured_source_ids.reserve(existing_manifests.size());
+        for (const auto& manifest : existing_manifests)
+        {
+            std::string source_work_item_uuid;
+            if (!extractManifestField(manifest.payload_manifest,
+                                      "source_work_item_uuid",
+                                      source_work_item_uuid))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::DATA_CORRUPTED,
+                                  "Persisted shadow capture manifest is missing source_work_item_uuid");
+                return Status::DATA_CORRUPTED;
+            }
+            captured_source_ids.push_back(std::move(source_work_item_uuid));
+        }
+
+        for (const auto& item : evidence_items)
+        {
+            std::vector<SweepPolicyLane> lanes;
+            if (!parseSweepPolicyLanes(item.lanes_csv, lanes))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "Persisted sweep manifest carries invalid policy_lanes");
+                return Status::DATA_CORRUPTED;
+            }
+            if (!hasSweepPolicyLane(lanes, SweepPolicyLane::SHADOW_CAPTURE))
+            {
+                continue;
+            }
+            if (std::find(captured_source_ids.begin(),
+                          captured_source_ids.end(),
+                          item.work_item_id.toString()) != captured_source_ids.end())
+            {
+                continue;
+            }
+
+            CatalogManager::AuditExportSegmentCatalogInfo source_segment{};
+            status = db_->catalog_manager()->getAuditExportSegmentCatalogEntry(
+                item.work_item_id, source_segment, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            ShadowCapturePayload payload{};
+            status = loadShadowCapturePayload(
+                db_->catalog_manager(), item.tx_uuid, item.txid, payload, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            const std::string capture_scope =
+                isZeroIdLocal(payload.primary_object_uuid) ? "TRANSACTION" : "OBJECT";
+            const std::string capture_format = "LOGICAL_TX_SUMMARY";
+            const ID manifest_id = generateUuidV7();
+            const uint64_t created_time = currentSystemMicros();
+            const std::filesystem::path shadow_path =
+                shadow_root /
+                (std::to_string(item.segment_seq) + "-" + std::to_string(item.txid) + "-" +
+                 item.tx_uuid.toString() + ".sbshadow");
+            const std::string manifest = buildShadowCaptureManifest(db_,
+                                                                    item,
+                                                                    source_segment,
+                                                                    payload,
+                                                                    shadow_profile.audit_sink_profile_id,
+                                                                    manifest_id,
+                                                                    shadow_path,
+                                                                    created_time,
+                                                                    capture_scope,
+                                                                    capture_format);
+
+            status = writeDurableTextFile(shadow_path, manifest, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  status,
+                                  "SWEEP_SHADOW_CAPTURE_BLOCKED: failed to persist logical shadow capture");
+                return status;
+            }
+
+            CatalogManager::ShadowCaptureManifestCatalogInfo manifest_info{};
+            manifest_info.manifest_id = manifest_id;
+            manifest_info.tx_uuid = item.tx_uuid;
+            manifest_info.object_uuid = payload.primary_object_uuid;
+            manifest_info.capture_scope = capture_scope;
+            manifest_info.capture_format = capture_format;
+            manifest_info.sink_profile_uuid = shadow_profile.audit_sink_profile_id;
+            manifest_info.payload_manifest = manifest;
+            manifest_info.created_time = created_time;
+            manifest_info.is_valid = true;
+            status = db_->catalog_manager()->appendShadowCaptureManifestCatalogEntry(
+                manifest_info, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            captured_source_ids.push_back(item.work_item_id.toString());
+            if (manifests_emitted)
+            {
+                ++(*manifests_emitted);
+            }
+        }
+
+        return Status::OK;
+    }
+
     Status SweepManager::emitDerivativeWalAfterLog(uint64_t* segments_emitted,
                                                    uint64_t* backlog_depth,
                                                    ErrorContext* ctx)
@@ -2272,10 +2762,12 @@ namespace scratchbird::core
                                         uint64_t wal_after_segments_emitted,
                                         uint64_t wal_after_backlog_depth,
                                         uint64_t page_audit_findings_emitted,
+                                        uint64_t shadow_capture_manifests_emitted,
                                         bool prune_blocked,
                                         bool evidence_failure,
                                         bool page_audit_failure,
                                         bool page_audit_mode_downgraded,
+                                        bool shadow_capture_failure,
                                         bool wal_after_failure)
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -2293,6 +2785,8 @@ namespace scratchbird::core
         stats_.wal_after_backlog_depth = wal_after_backlog_depth;
         stats_.total_page_audit_findings_emitted += page_audit_findings_emitted;
         stats_.last_page_audit_findings_emitted = page_audit_findings_emitted;
+        stats_.total_shadow_capture_manifests_emitted += shadow_capture_manifests_emitted;
+        stats_.last_shadow_capture_manifests_emitted = shadow_capture_manifests_emitted;
         stats_.prune_blocked = prune_blocked;
         if (evidence_failure)
         {
@@ -2306,6 +2800,10 @@ namespace scratchbird::core
         {
             stats_.page_audit_mode_downgrades++;
         }
+        if (shadow_capture_failure)
+        {
+            stats_.shadow_capture_failures++;
+        }
         if (wal_after_failure)
         {
             stats_.wal_after_export_failures++;
@@ -2313,10 +2811,11 @@ namespace scratchbird::core
         stats_.sweep_in_progress = false;
 
         LOG_DEBUG(VACUUM,
-                  "Statistics updated: count=%lu, transactions_swept=%lu, evidence_items=%lu, page_audit_findings=%lu, wal_after_segments=%lu, wal_after_backlog=%lu, prune_blocked=%d",
+                  "Statistics updated: count=%lu, transactions_swept=%lu, evidence_items=%lu, page_audit_findings=%lu, shadow_manifests=%lu, wal_after_segments=%lu, wal_after_backlog=%lu, prune_blocked=%d",
                   stats_.sweep_count, stats_.total_transactions_swept,
                   stats_.total_evidence_items_emitted,
                   stats_.total_page_audit_findings_emitted,
+                  stats_.total_shadow_capture_manifests_emitted,
                   stats_.total_wal_after_segments_emitted,
                   stats_.wal_after_backlog_depth,
                   prune_blocked ? 1 : 0);

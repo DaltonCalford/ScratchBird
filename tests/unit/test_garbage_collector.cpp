@@ -191,6 +191,24 @@ protected:
         return out.str();
     }
 
+    std::string extractManifestField(const std::string& manifest, const std::string& key) const
+    {
+        const std::string prefix = key + "=";
+        const size_t start = manifest.find(prefix);
+        if (start == std::string::npos)
+        {
+            return {};
+        }
+
+        const size_t value_start = start + prefix.size();
+        const size_t end = manifest.find('\n', value_start);
+        if (end == std::string::npos)
+        {
+            return manifest.substr(value_start);
+        }
+        return manifest.substr(value_start, end - value_start);
+    }
+
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> test_db_;
 };
 
@@ -1038,6 +1056,109 @@ TEST_F(GarbageCollectorTest, SweepPageSpotAuditDowngradesToLightUnderForegroundP
     EXPECT_EQ(it->scan_mode, "DIAGNOSTIC");
     EXPECT_EQ(it->trigger_source, "SWEEP_BACKGROUND");
     EXPECT_EQ(it->severity, "ERROR");
+}
+
+TEST_F(GarbageCollectorTest, SweepShadowCaptureEmitsLogicalManifestFromRetainedEvidence)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+
+    ID tx_uuid{};
+    uint64_t txid = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION, SweepPolicyLane::SHADOW_CAPTURE};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+
+    auto stats = sweep_mgr->getStatistics();
+    EXPECT_EQ(stats.last_shadow_capture_manifests_emitted, 1u);
+    EXPECT_EQ(stats.shadow_capture_failures, 0u);
+
+    std::vector<SweepEvidenceWorkItem> items;
+    ASSERT_EQ(sweep_mgr->listEvidenceWorkItems(items, &ctx), Status::OK) << ctx.message;
+    auto item_it = std::find_if(items.begin(), items.end(),
+                                [txid](const SweepEvidenceWorkItem& item) {
+                                    return item.txid == txid;
+                                });
+    ASSERT_NE(item_it, items.end());
+
+    std::vector<SweepShadowCaptureManifest> manifests;
+    ASSERT_EQ(sweep_mgr->listShadowCaptureManifests(manifests, &ctx), Status::OK) << ctx.message;
+    auto manifest_it = std::find_if(manifests.begin(), manifests.end(),
+                                    [tx_uuid](const SweepShadowCaptureManifest& manifest) {
+                                        return manifest.tx_uuid == tx_uuid;
+                                    });
+    ASSERT_NE(manifest_it, manifests.end());
+    EXPECT_EQ(manifest_it->capture_scope, "TRANSACTION");
+    EXPECT_EQ(manifest_it->capture_format, "LOGICAL_TX_SUMMARY");
+    EXPECT_NE(manifest_it->payload_manifest.find("source_work_item_uuid=" +
+                                                 item_it->work_item_id.toString()),
+              std::string::npos);
+    EXPECT_NE(manifest_it->payload_manifest.find("source_manifest_path=" + item_it->spool_path),
+              std::string::npos);
+    const std::string shadow_path =
+        extractManifestField(manifest_it->payload_manifest, "shadow_path");
+    ASSERT_FALSE(shadow_path.empty());
+    EXPECT_TRUE(std::filesystem::exists(shadow_path));
+}
+
+TEST_F(GarbageCollectorTest, SweepBlocksPruneWhenShadowCapturePersistenceFails)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    auto gc = db.garbage_collector();
+    ASSERT_NE(sweep_mgr, nullptr);
+    ASSERT_NE(gc, nullptr);
+
+    ID tx_uuid{};
+    uint64_t txid = 0;
+    ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+
+    SweepPolicyBinding binding{};
+    binding.scope_kind = SweepScopeKind::DATABASE;
+    binding.scope_id = db.uuid();
+    binding.lanes = {SweepPolicyLane::LINEAGE_RETENTION, SweepPolicyLane::SHADOW_CAPTURE};
+    binding.strict_audit = true;
+
+    ErrorContext ctx;
+    ASSERT_EQ(sweep_mgr->setPolicyBindings({binding}, &ctx), Status::OK) << ctx.message;
+
+    std::filesystem::path blocking_root(db.path());
+    blocking_root += ".forensics";
+    ASSERT_TRUE(std::filesystem::create_directories(blocking_root) || std::filesystem::exists(blocking_root));
+    std::filesystem::path blocking_path = blocking_root / "shadow_capture";
+    {
+        std::ofstream out(blocking_path, std::ios::binary | std::ios::trunc);
+        ASSERT_TRUE(out.is_open());
+        out << "blocked";
+    }
+
+    EXPECT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::IO_ERROR);
+    EXPECT_TRUE(gc->isSweepPruneBlocked());
+
+    auto stats = sweep_mgr->getStatistics();
+    EXPECT_EQ(stats.shadow_capture_failures, 1u);
+    EXPECT_EQ(stats.last_shadow_capture_manifests_emitted, 0u);
+    EXPECT_TRUE(stats.prune_blocked);
+
+    std::vector<SweepShadowCaptureManifest> manifests;
+    ASSERT_EQ(sweep_mgr->listShadowCaptureManifests(manifests, &ctx), Status::OK) << ctx.message;
+    EXPECT_TRUE(std::none_of(manifests.begin(), manifests.end(),
+                             [tx_uuid](const SweepShadowCaptureManifest& manifest) {
+                                 return manifest.tx_uuid == tx_uuid;
+                             }));
 }
 
 TEST_F(GarbageCollectorTest, ConcurrentAccess)

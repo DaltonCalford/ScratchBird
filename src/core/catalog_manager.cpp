@@ -697,6 +697,22 @@ bool isValidPageAuditErrorCode(const std::string& code)
            code == "FSM_MISMATCH";
 }
 
+bool isValidShadowCaptureScope(const std::string& scope)
+{
+    return scope == "DATABASE" ||
+           scope == "SCHEMA" ||
+           scope == "TABLE" ||
+           scope == "OBJECT" ||
+           scope == "TRANSACTION";
+}
+
+bool isValidShadowCaptureFormat(const std::string& format)
+{
+    return format == "LOGICAL_TX_SUMMARY" ||
+           format == "LOGICAL_OBJECT_SET" ||
+           format == "PHYSICAL_PAGE_MANIFEST";
+}
+
 bool isValidStorageProfile(CatalogManager::StorageProfile profile)
 {
     using SP = CatalogManager::StorageProfile;
@@ -3157,6 +3173,8 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"audit_export_segment_page", "[sb_dom]PAGE_ID"},
     {"page_audit_finding_id", "[sb_dom]UUID_V7"},
     {"page_audit_finding_page", "[sb_dom]PAGE_ID"},
+    {"shadow_capture_manifest_id", "[sb_dom]UUID_V7"},
+    {"shadow_capture_manifest_page", "[sb_dom]PAGE_ID"},
     {"array_size", "[sb_dom]U32"},
     {"attachment_id", "[sb_dom]KEY_ATTACHMENT"},
     {"audit_log_page", "[sb_dom]PAGE_ID"},
@@ -3612,6 +3630,7 @@ const std::unordered_map<std::string, const char*> kSystemTableAliasMap = {
     {"audit_export_segment", "sys.auditexportsegmentrecord"},
     {"audit_sink_profile", "sys.auditsinkprofilerecord"},
     {"page_audit_finding", "sys.pageauditfindingrecord"},
+    {"shadow_capture_manifest", "sys.shadowcapturemanifestrecord"},
     {"authkeys", "sys.authkeyrecord"},
     {"charsets", "sys.charsetrecord"},
     {"collations", "sys.collationrecord"},
@@ -4875,8 +4894,9 @@ bool hasTriggerNameConflictInTable(
         uint32_t audit_export_segment_page; // Page containing audit_export_segment table
         uint32_t transaction_lineage_event_page; // Page containing transaction_lineage_event table
         uint32_t page_audit_finding_page; // Page containing page_audit_finding table
+        uint32_t shadow_capture_manifest_page; // Page containing shadow_capture_manifest table
 
-        uint8_t reserved[2904];       // Padding for 4KB page
+        uint8_t reserved[2900];       // Padding for 4KB page
     };
 
     // Database record on disk
@@ -9734,6 +9754,23 @@ bool hasTriggerNameConflictInTable(
         uint8_t is_valid;
         uint8_t reserved0[6];
         uint64_t created_time;
+        uint32_t padding;
+    };
+
+    struct ShadowCaptureManifestRecord
+    {
+        ID manifest_id;
+        ID tx_uuid;
+        ID object_uuid;
+        char capture_scope[32];
+        char capture_format[32];
+        ID sink_profile_uuid;
+        ID payload_manifest_oid;
+        uint8_t has_retention_deadline_time;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+        uint64_t created_time;
+        uint64_t retention_deadline_time;
         uint32_t padding;
     };
 
@@ -20271,6 +20308,7 @@ bool hasTriggerNameConflictInTable(
         root->audit_export_segment_page = audit_export_segment_table_page_;
         root->transaction_lineage_event_page = transaction_lineage_event_table_page_;
         root->page_audit_finding_page = page_audit_finding_table_page_;
+        root->shadow_capture_manifest_page = shadow_capture_manifest_table_page_;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, true, ctx);
     }
@@ -20601,6 +20639,7 @@ bool hasTriggerNameConflictInTable(
         audit_export_segment_table_page_ = root->audit_export_segment_page;
         transaction_lineage_event_table_page_ = root->transaction_lineage_event_page;
         page_audit_finding_table_page_ = root->page_audit_finding_page;
+        shadow_capture_manifest_table_page_ = root->shadow_capture_manifest_page;
 
         return bp->unpinPage(CATALOG_ROOT_PAGE, false, ctx);
     }
@@ -62667,6 +62706,192 @@ auto CatalogManager::listPageAuditFindingCatalogEntries(
                   return std::memcmp(lhs.finding_id.bytes.data(),
                                      rhs.finding_id.bytes.data(),
                                      lhs.finding_id.bytes.size()) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::appendShadowCaptureManifestCatalogEntry(ShadowCaptureManifestCatalogInfo& info,
+                                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (!isValidShadowCaptureScope(info.capture_scope))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "shadow_capture_manifest.capture_scope is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidShadowCaptureFormat(info.capture_format))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "shadow_capture_manifest.capture_format is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (isZeroUuidLocal(info.tx_uuid) && isZeroUuidLocal(info.object_uuid))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "shadow_capture_manifest requires tx_uuid or object_uuid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.payload_manifest.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "shadow_capture_manifest.payload_manifest is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_retention_deadline_time && info.retention_deadline_time == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "shadow_capture_manifest.retention_deadline_time cannot be zero");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (isZeroUuidLocal(info.manifest_id))
+    {
+        info.manifest_id = generateUuidV7();
+    }
+
+    if (shadow_capture_manifest_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(shadow_capture_manifest_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_id = [&info](const ShadowCaptureManifestRecord& row) {
+        return row.is_valid == 1 && row.manifest_id == info.manifest_id;
+    };
+    auto existing_id = findRecordInHeapPage<ShadowCaptureManifestRecord>(
+        shadow_capture_manifest_table_page_, duplicate_id, ctx);
+    if (existing_id.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "shadow_capture_manifest rows are immutable");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing_id.status != Status::NOT_FOUND)
+    {
+        return existing_id.status;
+    }
+
+    ShadowCaptureManifestRecord rec{};
+    rec.manifest_id = info.manifest_id;
+    rec.tx_uuid = info.tx_uuid;
+    rec.object_uuid = info.object_uuid;
+    copyStringField(rec.capture_scope, info.capture_scope);
+    copyStringField(rec.capture_format, info.capture_format);
+    rec.sink_profile_uuid = info.sink_profile_uuid;
+    rec.has_retention_deadline_time = info.has_retention_deadline_time ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.retention_deadline_time =
+        info.has_retention_deadline_time ? info.retention_deadline_time : 0;
+
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(info.payload_manifest, xmin, rec.payload_manifest_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    info.created_time = rec.created_time;
+    return writeRecordToHeapPage(shadow_capture_manifest_table_page_, rec, ctx);
+}
+
+auto CatalogManager::getShadowCaptureManifestCatalogEntry(const ID& manifest_id,
+                                                          ShadowCaptureManifestCatalogInfo& info_out,
+                                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (shadow_capture_manifest_table_page_ == 0)
+    {
+        return Status::NOT_FOUND;
+    }
+    auto predicate = [&manifest_id](const ShadowCaptureManifestRecord& rec) {
+        return rec.is_valid == 1 && rec.manifest_id == manifest_id;
+    };
+    auto result = findRecordInHeapPage<ShadowCaptureManifestRecord>(
+        shadow_capture_manifest_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = ShadowCaptureManifestCatalogInfo{};
+    info_out.manifest_id = result.record.manifest_id;
+    info_out.tx_uuid = result.record.tx_uuid;
+    info_out.object_uuid = result.record.object_uuid;
+    info_out.capture_scope = result.record.capture_scope;
+    info_out.capture_format = result.record.capture_format;
+    info_out.sink_profile_uuid = result.record.sink_profile_uuid;
+    info_out.created_time = result.record.created_time;
+    info_out.has_retention_deadline_time = result.record.has_retention_deadline_time != 0;
+    info_out.retention_deadline_time =
+        info_out.has_retention_deadline_time ? result.record.retention_deadline_time : 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    uint64_t xmin = 0;
+    return loadStringFromToast(result.record.payload_manifest_oid,
+                               xmin,
+                               info_out.payload_manifest,
+                               ctx);
+}
+
+auto CatalogManager::listShadowCaptureManifestCatalogEntries(
+    std::vector<ShadowCaptureManifestCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    if (shadow_capture_manifest_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+    auto filter = [](const ShadowCaptureManifestRecord& rec) { return rec.is_valid == 1; };
+    auto converter = [this, ctx](const ShadowCaptureManifestRecord& rec,
+                                 ShadowCaptureManifestCatalogInfo& info) {
+        info = ShadowCaptureManifestCatalogInfo{};
+        info.manifest_id = rec.manifest_id;
+        info.tx_uuid = rec.tx_uuid;
+        info.object_uuid = rec.object_uuid;
+        info.capture_scope = rec.capture_scope;
+        info.capture_format = rec.capture_format;
+        info.sink_profile_uuid = rec.sink_profile_uuid;
+        info.created_time = rec.created_time;
+        info.has_retention_deadline_time = rec.has_retention_deadline_time != 0;
+        info.retention_deadline_time =
+            info.has_retention_deadline_time ? rec.retention_deadline_time : 0;
+        info.is_valid = rec.is_valid == 1;
+        uint64_t xmin = 0;
+        std::string payload_manifest;
+        if (loadStringFromToast(rec.payload_manifest_oid, xmin, payload_manifest, ctx) ==
+            Status::OK)
+        {
+            info.payload_manifest = std::move(payload_manifest);
+        }
+    };
+    Status status =
+        readRecordsToVector<ShadowCaptureManifestRecord, ShadowCaptureManifestCatalogInfo>(
+            shadow_capture_manifest_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ShadowCaptureManifestCatalogInfo& lhs,
+                 const ShadowCaptureManifestCatalogInfo& rhs) {
+                  if (lhs.created_time != rhs.created_time)
+                  {
+                      return lhs.created_time < rhs.created_time;
+                  }
+                  return std::memcmp(lhs.manifest_id.bytes.data(),
+                                     rhs.manifest_id.bytes.data(),
+                                     lhs.manifest_id.bytes.size()) < 0;
               });
     return Status::OK;
 }

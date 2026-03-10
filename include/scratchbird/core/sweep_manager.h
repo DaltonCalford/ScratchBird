@@ -47,6 +47,9 @@ namespace scratchbird::core
         uint64_t last_page_audit_findings_emitted = 0;
         uint64_t page_audit_persist_failures = 0;
         uint64_t page_audit_mode_downgrades = 0;
+        uint64_t total_shadow_capture_manifests_emitted = 0;
+        uint64_t last_shadow_capture_manifests_emitted = 0;
+        uint64_t shadow_capture_failures = 0;
         bool prune_blocked = false;
     };
 
@@ -136,6 +139,21 @@ namespace scratchbird::core
         bool is_valid = true;
     };
 
+    struct SweepShadowCaptureManifest
+    {
+        ID manifest_id{};
+        ID tx_uuid{};
+        ID object_uuid{};
+        ID sink_profile_id{};
+        uint64_t created_time = 0;
+        bool has_retention_deadline_time = false;
+        uint64_t retention_deadline_time = 0;
+        std::string capture_scope;
+        std::string capture_format;
+        std::string payload_manifest;
+        bool is_valid = true;
+    };
+
     // SweepManager - Manages database sweep operations
     //
     // Sweep advances the Oldest Interesting Transaction (OIT) marker by:
@@ -195,6 +213,10 @@ namespace scratchbird::core
         Status listPageAuditFindings(std::vector<SweepPageAuditFinding>& rows_out,
                                      ErrorContext* ctx = nullptr) const;
 
+        // List persisted logical shadow-capture manifests emitted by the sweep worker.
+        Status listShadowCaptureManifests(std::vector<SweepShadowCaptureManifest>& rows_out,
+                                          ErrorContext* ctx = nullptr) const;
+
         // Get current sweep statistics
         SweepStatistics getStatistics() const;
 
@@ -235,10 +257,12 @@ namespace scratchbird::core
                               uint64_t wal_after_segments_emitted,
                               uint64_t wal_after_backlog_depth,
                               uint64_t page_audit_findings_emitted,
+                              uint64_t shadow_capture_manifests_emitted,
                               bool prune_blocked,
                               bool evidence_failure,
                               bool page_audit_failure,
                               bool page_audit_mode_downgraded,
+                              bool shadow_capture_failure,
                               bool wal_after_failure);
 
         Status emitLocalEvidenceForSweep(uint64_t oit_before, uint64_t oit_after,
@@ -249,6 +273,8 @@ namespace scratchbird::core
                                          uint64_t* findings_emitted,
                                          bool* mode_downgraded,
                                          ErrorContext* ctx);
+        Status emitShadowCaptureManifests(uint64_t* manifests_emitted,
+                                          ErrorContext* ctx);
         Status emitDerivativeWalAfterLog(uint64_t* segments_emitted,
                                          uint64_t* backlog_depth,
                                          ErrorContext* ctx);
