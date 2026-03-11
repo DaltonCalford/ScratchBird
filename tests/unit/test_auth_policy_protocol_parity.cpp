@@ -309,6 +309,7 @@ private:
 struct ProtocolProfile {
     std::string name;
     std::vector<AuthMethod> preferred_methods;
+    std::string client_name;
 };
 
 class AuthPolicyProtocolParityTest : public ::testing::Test {
@@ -345,6 +346,7 @@ protected:
                                     const std::string& database_name = "auth_policy_protocol_parity") {
         ConnectionConfig config;
         config.database_name = database_name;
+        config.client_name = profile.client_name.empty() ? "scratchbird_client" : profile.client_name;
         config.username = "SysArch";
         config.password = "replaceme";
         config.preferred_auth_methods = profile.preferred_methods;
@@ -410,6 +412,77 @@ TEST_F(AuthPolicyProtocolParityTest, StrictScramPolicyAllowsAllProtocolProfiles)
         core::Status connect_status = connectWithProfile(profile, socket_path, &last_error, &ctx);
         EXPECT_EQ(connect_status, core::Status::OK)
             << "profile=" << profile.name << " ctx=" << ctx.message << " last_error=" << last_error;
+
+        server_thread.stop();
+    }
+}
+
+TEST_F(AuthPolicyProtocolParityTest, MySqlParserBridgeAllowsPasswordCompatUnderStrictScramPolicy) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string policy_name = makeUniquePolicyName("MYSQL_BRIDGE_PASSWORD_COMPAT");
+    ScopedEnvVar policy_env("SCRATCHBIRD_AUTH_POLICY_NAME", policy_name);
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     policy_name,
+                                     CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256,
+                                     CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const ProtocolProfile generic_password_only = {
+        "generic_password_only",
+        {AuthMethod::PASSWORD},
+        "scratchbird_client",
+    };
+    std::string generic_last_error;
+    ErrorContext generic_ctx;
+    {
+        ScopedEnvVar required_method_env("SCRATCHBIRD_AUTH_REQUIRED_METHODS", "PASSWORD");
+        const std::string socket_path = makeUniqueSocketPath("auth_mysql_bridge_generic_password");
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&generic_ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(generic_ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << generic_ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << generic_ctx.message;
+
+        core::Status generic_status = connectWithProfile(
+            generic_password_only, socket_path, &generic_last_error, &generic_ctx);
+        EXPECT_NE(generic_status, core::Status::OK)
+            << "ctx=" << generic_ctx.message << " last_error=" << generic_last_error;
+
+        server_thread.stop();
+    }
+
+    const ProtocolProfile mysql_parser_bridge = {
+        "mysql_parser_bridge",
+        {AuthMethod::PASSWORD},
+        "sb_parser_mysql",
+    };
+    std::string mysql_last_error;
+    ErrorContext mysql_ctx;
+    {
+        ScopedEnvVar required_method_env("SCRATCHBIRD_AUTH_REQUIRED_METHODS", "PASSWORD");
+        const std::string socket_path = makeUniqueSocketPath("auth_mysql_bridge_parser_password");
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&mysql_ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(mysql_ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << mysql_ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << mysql_ctx.message;
+
+        core::Status mysql_status = connectWithProfile(
+            mysql_parser_bridge, socket_path, &mysql_last_error, &mysql_ctx);
+        EXPECT_EQ(mysql_status, core::Status::OK)
+            << "ctx=" << mysql_ctx.message << " last_error=" << mysql_last_error;
 
         server_thread.stop();
     }

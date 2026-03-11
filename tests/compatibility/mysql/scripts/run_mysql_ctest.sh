@@ -4,32 +4,34 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MY_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-DRIVER_DIR="${ROOT_DIR}-driver"
+CLIWORK_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+EXAMPLE_MANAGER="${ROOT_DIR}/tests/compatibility/scripts/manage_example_db.sh"
 
-DEFAULT_ISQL="${ROOT_DIR}/build/src/sb_my_isql"
-ISQL_FLAVOR="mysql"
-if [[ ! -x "$DEFAULT_ISQL" ]]; then
-  ALT_ISQL="${ROOT_DIR}/build/src/cli/sb_my_isql"
-  if [[ -x "$ALT_ISQL" ]]; then
-    DEFAULT_ISQL="$ALT_ISQL"
-  else
-    DRIVER_MY_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_my_isql"
-    DRIVER_GENERIC_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
-    if [[ -x "$DRIVER_MY_ISQL" ]]; then
-      DEFAULT_ISQL="$DRIVER_MY_ISQL"
-    elif [[ -x "$DRIVER_GENERIC_ISQL" ]]; then
-      DEFAULT_ISQL="$DRIVER_GENERIC_ISQL"
-      ISQL_FLAVOR="generic"
-    fi
+DEFAULT_MYSQL_CLI=""
+for candidate in \
+  "${CLIWORK_ROOT}/mysql-server/build_codex2/runtime_output_directory/mysql" \
+  "${CLIWORK_ROOT}/mysql-server/build_codex/runtime_output_directory/mysql" \
+  "${CLIWORK_ROOT}/mysql-server/build/runtime_output_directory/mysql"; do
+  if [[ -x "$candidate" ]]; then
+    DEFAULT_MYSQL_CLI="$candidate"
+    break
   fi
-fi
-ISQL_BIN="${SCRATCHBIRD_MY_ISQL:-$DEFAULT_ISQL}"
-if [[ -n "${SCRATCHBIRD_MY_ISQL:-}" ]]; then
-  case "$(basename "$ISQL_BIN")" in
-    sb_isql) ISQL_FLAVOR="generic" ;;
-    *) ISQL_FLAVOR="mysql" ;;
-  esac
-fi
+done
+
+MYSQL_CLI_BIN="${SCRATCHBIRD_MYSQL_CLI_BIN:-${SCRATCHBIRD_MY_ISQL:-$DEFAULT_MYSQL_CLI}}"
+CLIENT_MODE="${SCRATCHBIRD_MY_CLIENT_MODE:-auto}"
+case "$CLIENT_MODE" in
+  auto)
+    RESOLVED_CLIENT_MODE="mysql_cli"
+    ;;
+  mysql_cli)
+    RESOLVED_CLIENT_MODE="$CLIENT_MODE"
+    ;;
+  *)
+    echo "Error: invalid MySQL client mode '$CLIENT_MODE' (expected auto|mysql_cli; sb_my_isql is deprecated for compare runs)." >&2
+    exit 2
+    ;;
+esac
 LIST_MODE="${SCRATCHBIRD_MY_CTEST_LIST_MODE:-${SCRATCHBIRD_COMPAT_CTEST_LIST_MODE:-curated}}"
 case "$LIST_MODE" in
   curated)
@@ -49,16 +51,16 @@ esac
 LIST_FILE="${SCRATCHBIRD_MY_CTEST_LIST:-$DEFAULT_LIST_FILE}"
 CONVERTED_DIR="${MY_DIR}/converted"
 
-if [[ ! -x "$ISQL_BIN" ]]; then
-  echo "SKIP: sb_my_isql not found or not executable: $ISQL_BIN" >&2
+if [[ ! -x "$MYSQL_CLI_BIN" ]]; then
+  echo "SKIP: cloned mysql client not found or not executable: $MYSQL_CLI_BIN" >&2
   exit 77
 fi
 
-if [[ "$ISQL_FLAVOR" == "generic" ]]; then
-  cat >&2 <<'EOF'
-SKIP: generic sb_isql fallback is not valid for MySQL emulation compare runs.
-The generic client speaks native protocol only and cannot execute MySQL wire-protocol parity.
-Provide sb_my_isql via SCRATCHBIRD_MY_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
+if [[ "$(basename "$MYSQL_CLI_BIN")" != "mysql" ]]; then
+  cat >&2 <<EOF
+SKIP: ScratchBird MySQL wrapper clients are deprecated for compatibility compare runs.
+Provide the cloned donor mysql client via SCRATCHBIRD_MYSQL_CLI_BIN.
+Resolved path: ${MYSQL_CLI_BIN}
 EOF
   exit 77
 fi
@@ -72,6 +74,15 @@ fi
 if [[ ! -d "$CONVERTED_DIR" ]]; then
   echo "Error: MySQL converted tests missing: $CONVERTED_DIR" >&2
   exit 1
+fi
+
+DEFAULT_ENV_FILE="/tmp/scratchbird-example-dynamic/profiles/runtime.env"
+ENV_FILE="${SCRATCHBIRD_EXAMPLE_ENV_FILE:-${DEFAULT_ENV_FILE}}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
 fi
 
 HOST="${SCRATCHBIRD_MY_HOST:-localhost}"
@@ -93,6 +104,71 @@ RUN_ID="$(date +%Y%m%d_%H%M%S)"
 RESULTS_DIR="${MY_DIR}/results/ctest/${RUN_ID}"
 WORK_DIR="${RESULTS_DIR}/work"
 mkdir -p "$RESULTS_DIR" "$WORK_DIR"
+
+run_mysql_file_capture() {
+  local sql_file="$1"
+  local -a cmd=(
+    "$MYSQL_CLI_BIN"
+    --protocol=TCP
+    -h "$HOST"
+    -P "$PORT"
+    -u "$USER"
+  )
+  # The donor mysql client can hang against the ScratchBird MySQL listener when
+  # fed via direct file redirection; piping preserves the expected EOF behavior.
+  if [[ -n "$PASSWORD" ]]; then
+    cat "$sql_file" | env MYSQL_PWD="$PASSWORD" "${cmd[@]}"
+  else
+    cat "$sql_file" | "${cmd[@]}"
+  fi
+}
+
+run_mysql_file_to_log() {
+  local sql_file="$1"
+  local log_file="$2"
+  run_mysql_file_capture "$sql_file" > "$log_file" 2>&1
+}
+
+is_retryable_mysql_transport_failure() {
+  local log_file="$1"
+  [[ -f "$log_file" ]] || return 1
+  rg -q \
+    "Read timeout: incomplete message|Connection reset by peer|Lost connection to MySQL server|ERROR 2013|ERROR 2006" \
+    "$log_file"
+}
+
+refresh_example_fixture() {
+  if [[ -x "$EXAMPLE_MANAGER" ]]; then
+    SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE="${SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE:-0}" \
+      "$EXAMPLE_MANAGER" dynamic-setup > "${RESULTS_DIR}/fixture_refresh.log" 2>&1 || true
+  fi
+
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  fi
+}
+
+run_mysql_file_with_retry() {
+  local sql_file="$1"
+  local log_file="$2"
+
+  if run_mysql_file_to_log "$sql_file" "$log_file"; then
+    return 0
+  fi
+
+  if ! is_retryable_mysql_transport_failure "$log_file"; then
+    return 1
+  fi
+
+  cp "$log_file" "${log_file}.attempt1"
+  printf 'RETRY: transient MySQL transport failure detected, refreshing fixture and retrying once.\n' \
+    >> "$log_file"
+  refresh_example_fixture
+  run_mysql_file_to_log "$sql_file" "$log_file"
+}
 
 json_escape() {
   local value="$1"
@@ -119,7 +195,9 @@ write_run_manifest() {
   "parser_core": "v3",
   "parser_mode": "emulation_surface_only",
   "execution_mode": "$([[ "$USE_UPSTREAM_MTR" == "1" ]] && echo "upstream_mysql_test_run" || echo "converted_sql_ctest")",
-  "isql_binary": "$(json_escape "$ISQL_BIN")",
+  "client_mode": "$(json_escape "$RESOLVED_CLIENT_MODE")",
+  "client_binary": "$(json_escape "$MYSQL_CLI_BIN")",
+  "isql_binary": "",
   "ctest_list_mode": "$(json_escape "$LIST_MODE")",
   "ctest_list_file": "$(json_escape "$LIST_FILE")",
   "listed_tests": ${listed_tests},
@@ -237,6 +315,12 @@ sanitize_mysql_sql() {
         next
       }
 
+      # Plain converted comments are metadata only and just create extra
+      # round-trips when fed through the upstream mysql client.
+      if (t ~ /^--([[:space:]]|$)/ || t ~ /^#/) {
+        next
+      }
+
       # mysql-test control commands that are not SQL comments (e.g. --let, --if).
       if (t ~ /^--[A-Za-z_]/) {
         next
@@ -255,12 +339,28 @@ sanitize_mysql_sql() {
       if (lc ~ /^(let|inc|dec|echo|eval|source|connection|connect|disconnect|send|reap|sleep|replace_result|sorted_result|disable_[a-z0-9_]*|enable_[a-z0-9_]*|query|get_[a-z0-9_]*|remove_file|copy_file|mkdir|rmdir|chmod|perl|python|write_file|append_file)([[:space:](;]|$)/) {
         next
       }
+      if (lc ~ /^call[[:space:]]+mtr\.[a-z0-9_]+[[:space:]]*\(/) {
+        next
+      }
+      if (lc ~ /^reset[[:space:]]+binary[[:space:]]+logs([[:space:]]+and[[:space:]]+gtids)?[[:space:]]*;?[[:space:]]*$/) {
+        next
+      }
+      if (lc ~ /^reset[[:space:]]+persist([[:space:];]|$)/) {
+        next
+      }
+      if (lc ~ /^my[[:space:]]+\$/ || t == "EOF") {
+        next
+      }
 
       # Force a stable sql_mode baseline for converted execution.
       if (lc ~ /^set[[:space:]]+(@@[a-z0-9_.]+[[:space:]]*=[[:space:]]*)?sql_mode/ ||
           lc ~ /^set[[:space:]]+sql_mode[[:space:]]*=/ ||
           lc ~ /^set[[:space:]]+@@[a-z0-9_.]*sql_mode[[:space:]]*=/) {
         next
+      }
+      if (lc ~ /^set[[:space:]]+persist(_only)?[[:space:]]+/) {
+        sub(/^[[:space:]]*[Ss][Ee][Tt][[:space:]]+[Pp][Ee][Rr][Ss][Ii][Ss][Tt](_ONLY)?[[:space:]]+/, "SET GLOBAL ", line)
+        lc = tolower(trim(line))
       }
 
       # mysql routine + delimiter blocks are not directly executable in this runner.
@@ -405,11 +505,7 @@ cat > "$PRECHECK_FILE" <<'EOF'
 SHOW VARIABLES LIKE 'version_comment';
 EOF
 
-precheck_cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$PRECHECK_FILE" -q)
-if [[ -n "$PASSWORD" ]]; then
-  precheck_cmd+=("-p${PASSWORD}")
-fi
-if ! precheck_output="$("${precheck_cmd[@]}" 2>&1)"; then
+if ! precheck_output="$(run_mysql_file_capture "$PRECHECK_FILE" 2>&1)"; then
   if [[ "$COMPAT_RUN" == "1" ]]; then
     echo "FAIL: MySQL compatibility endpoint is not reachable with current client/auth settings." >&2
     write_run_manifest "failed" 1
@@ -542,11 +638,7 @@ BINLOG_CHECK_FILE="${WORK_DIR}/binlog_check.sql"
 cat > "$BINLOG_CHECK_FILE" <<'EOF'
 SET SESSION sql_log_bin = 0;
 EOF
-binlog_check_cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$BINLOG_CHECK_FILE" -q)
-if [[ -n "$PASSWORD" ]]; then
-  binlog_check_cmd+=("-p${PASSWORD}")
-fi
-if "${binlog_check_cmd[@]}" > /dev/null 2>&1; then
+if run_mysql_file_capture "$BINLOG_CHECK_FILE" > /dev/null 2>&1; then
   DISABLE_SQL_LOG_BIN_SQL="SET SESSION sql_log_bin = 0;"
 fi
 
@@ -554,11 +646,7 @@ TRUST_FUNC_CHECK_FILE="${WORK_DIR}/trust_function_creators_check.sql"
 cat > "$TRUST_FUNC_CHECK_FILE" <<'EOF'
 SET GLOBAL log_bin_trust_function_creators = 1;
 EOF
-trust_func_check_cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$TRUST_FUNC_CHECK_FILE" -q)
-if [[ -n "$PASSWORD" ]]; then
-  trust_func_check_cmd+=("-p${PASSWORD}")
-fi
-if "${trust_func_check_cmd[@]}" > /dev/null 2>&1; then
+if run_mysql_file_capture "$TRUST_FUNC_CHECK_FILE" > /dev/null 2>&1; then
   ENABLE_LOG_BIN_TRUST_SQL="SET GLOBAL log_bin_trust_function_creators = 1;"
 fi
 
@@ -594,11 +682,9 @@ while IFS= read -r rel_path; do
 
   sanitize_mysql_sql "$test_file" "$sanitized_file"
 
-  if [[ "$COMPAT_RUN" == "1" ]]; then
-    : > "$run_file"
-  else
-    cat > "$run_file" <<EOF
-CREATE DATABASE IF NOT EXISTS \`${db_name}\`;
+  cat > "$run_file" <<EOF
+DROP DATABASE IF EXISTS \`${db_name}\`;
+CREATE DATABASE \`${db_name}\`;
 DROP DATABASE IF EXISTS \`test\`;
 DROP DATABASE IF EXISTS \`db1\`;
 DROP DATABASE IF EXISTS \`db2\`;
@@ -607,7 +693,6 @@ DROP DATABASE IF EXISTS \`mysqltest\`;
 CREATE DATABASE \`test\`;
 USE \`${db_name}\`;
 EOF
-  fi
   if [[ -n "$DISABLE_SQL_LOG_BIN_SQL" ]]; then
     printf '%s\n' "$DISABLE_SQL_LOG_BIN_SQL" >> "$run_file"
   fi
@@ -616,12 +701,14 @@ EOF
   fi
   cat "$sanitized_file" >> "$run_file"
 
-  cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$run_file" -q)
-  if [[ -n "$PASSWORD" ]]; then
-    cmd+=("-p${PASSWORD}")
+  # Do not select the test database during connect: this runner recreates the
+  # logical database at the top of the script and then issues USE explicitly.
+  if ! run_mysql_file_with_retry "$run_file" "$log_file"; then
+    failures+=("$rel_path (see ${log_file})")
+    continue
   fi
 
-  if ! "${cmd[@]}" > "$log_file" 2>&1; then
+  if rg -q '^Error:' "$log_file"; then
     failures+=("$rel_path (see ${log_file})")
   fi
 done < "$LIST_FILE"
