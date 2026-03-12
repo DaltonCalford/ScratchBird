@@ -1220,6 +1220,7 @@ core::Status NativeAdapter::sendAuthResult(network::Connection* conn,
                        "28000", error_msg.empty() ? "Authentication failed" : error_msg);
         return sendBuffer(conn);
     }
+    in_transaction_ = true;
     sendAuthOk(conn, {});
     sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
     sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -1455,6 +1456,7 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
 
         auth_in_progress_ = false;
         scram_pending_ = false;
+        in_transaction_ = true;
         sendAuthOk(conn, {});
         sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
         sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -1497,6 +1499,7 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
         user_id_ = auth_response.user_id;
         auth_in_progress_ = false;
         scram_pending_ = false;
+        in_transaction_ = true;
         sendAuthOk(conn, auth_response.data);
         sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
         sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -1766,6 +1769,31 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
     offset += 2;
     offset += 2; // reserved
 
+    auto it = prepared_statements_.find(stmt_name);
+    if (it == prepared_statements_.end()) {
+        sendQueryError(conn, static_cast<uint32_t>(core::Status::NOT_FOUND),
+                      "26000", "Prepared statement not found");
+        return sendBuffer(conn);
+    }
+
+    size_t expected = countParameterPlaceholders(it->second);
+    if (expected != param_count) {
+        sendQueryError(conn, static_cast<uint32_t>(core::Status::INVALID_ARGUMENT),
+                      "07001", "Parameter count mismatch");
+        return sendBuffer(conn);
+    }
+
+    std::vector<uint32_t> param_type_oids(param_count, 0);
+    auto type_it = prepared_statement_param_types_.find(stmt_name);
+    if (type_it != prepared_statement_param_types_.end()) {
+        param_type_oids = type_it->second;
+        if (param_type_oids.size() < param_count) {
+            param_type_oids.resize(param_count, 0);
+        } else if (param_type_oids.size() > param_count) {
+            param_type_oids.resize(param_count);
+        }
+    }
+
     std::vector<std::string> param_values;
     std::vector<bool> param_nulls;
     std::vector<ProtocolCodec::ColumnValue> bound_param_values;
@@ -1775,22 +1803,79 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
     bound_param_values.reserve(param_count);
     bound_param_formats.reserve(param_count);
 
-    auto decode_param = [&](const uint8_t* data, size_t len, uint16_t format) -> std::string {
+    auto decode_param = [&](const uint8_t* data, size_t len, uint16_t format, uint32_t oid)
+        -> std::string {
         if (format == sbwp::kFormatBinary) {
-            if (len == sizeof(int16_t)) {
-                int16_t v = 0;
-                std::memcpy(&v, data, sizeof(int16_t));
-                return std::to_string(v);
-            }
-            if (len == sizeof(int32_t)) {
-                int32_t v = 0;
-                std::memcpy(&v, data, sizeof(int32_t));
-                return std::to_string(v);
-            }
-            if (len == sizeof(int64_t)) {
-                int64_t v = 0;
-                std::memcpy(&v, data, sizeof(int64_t));
-                return std::to_string(v);
+            const WireType wire_type = mapOidToWireTypeForNativeAdapter(oid);
+            switch (wire_type) {
+                case WireType::BOOLEAN:
+                    return (len > 0 && data[0] != 0) ? "1" : "0";
+                case WireType::INT16:
+                    if (len >= sizeof(int16_t)) {
+                        int16_t v = 0;
+                        std::memcpy(&v, data, sizeof(int16_t));
+                        return std::to_string(v);
+                    }
+                    break;
+                case WireType::INT32:
+                    if (len >= sizeof(int32_t)) {
+                        int32_t v = 0;
+                        std::memcpy(&v, data, sizeof(int32_t));
+                        return std::to_string(v);
+                    }
+                    break;
+                case WireType::INT64:
+                    if (len >= sizeof(int64_t)) {
+                        int64_t v = 0;
+                        std::memcpy(&v, data, sizeof(int64_t));
+                        return std::to_string(v);
+                    }
+                    break;
+                case WireType::FLOAT32:
+                    if (len >= sizeof(float)) {
+                        float v = 0.0f;
+                        std::memcpy(&v, data, sizeof(float));
+                        std::ostringstream out;
+                        out << std::setprecision(std::numeric_limits<float>::max_digits10)
+                            << static_cast<double>(v);
+                        return out.str();
+                    }
+                    break;
+                case WireType::FLOAT64:
+                    if (len >= sizeof(double)) {
+                        double v = 0.0;
+                        std::memcpy(&v, data, sizeof(double));
+                        std::ostringstream out;
+                        out << std::setprecision(std::numeric_limits<double>::max_digits10)
+                            << v;
+                        return out.str();
+                    }
+                    break;
+                case WireType::VARCHAR:
+                case WireType::CHAR:
+                case WireType::XML:
+                case WireType::INET:
+                case WireType::CIDR:
+                case WireType::MACADDR:
+                case WireType::TSVECTOR:
+                case WireType::TSQUERY:
+                case WireType::JSON:
+                case WireType::JSONB:
+                case WireType::DECIMAL:
+                case WireType::MONEY:
+                case WireType::BYTEA:
+                    if (len >= sizeof(uint32_t)) {
+                        uint32_t inner_len = 0;
+                        std::memcpy(&inner_len, data, sizeof(uint32_t));
+                        if (inner_len <= len - sizeof(uint32_t)) {
+                            return std::string(
+                                reinterpret_cast<const char*>(data + sizeof(uint32_t)),
+                                inner_len);
+                        }
+                    }
+                    break;
+                default:
+                    break;
             }
         }
         return std::string(reinterpret_cast<const char*>(data), len);
@@ -1820,7 +1905,8 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         if (!format_codes.empty()) {
             format = (format_codes.size() == 1) ? format_codes[0] : format_codes[i];
         }
-        param_values.push_back(decode_param(payload.data() + offset, len, format));
+        const uint32_t oid = i < param_type_oids.size() ? param_type_oids[i] : 0u;
+        param_values.push_back(decode_param(payload.data() + offset, len, format, oid));
         param_nulls.push_back(false);
         bound_param_values.push_back(makeBoundColumnValue(payload.data() + offset, len, false));
         bound_param_formats.push_back(format);
@@ -1839,31 +1925,6 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         sendQueryError(conn, static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
                       "42000", "Invalid BIND payload");
         return sendBuffer(conn);
-    }
-
-    auto it = prepared_statements_.find(stmt_name);
-    if (it == prepared_statements_.end()) {
-        sendQueryError(conn, static_cast<uint32_t>(core::Status::NOT_FOUND),
-                      "26000", "Prepared statement not found");
-        return sendBuffer(conn);
-    }
-
-    size_t expected = countParameterPlaceholders(it->second);
-    if (expected != param_count) {
-        sendQueryError(conn, static_cast<uint32_t>(core::Status::INVALID_ARGUMENT),
-                      "07001", "Parameter count mismatch");
-        return sendBuffer(conn);
-    }
-
-    std::vector<uint32_t> param_type_oids(param_count, 0);
-    auto type_it = prepared_statement_param_types_.find(stmt_name);
-    if (type_it != prepared_statement_param_types_.end()) {
-        param_type_oids = type_it->second;
-        if (param_type_oids.size() < param_count) {
-            param_type_oids.resize(param_count, 0);
-        } else if (param_type_oids.size() > param_count) {
-            param_type_oids.resize(param_count);
-        }
     }
 
     for (size_t i = 0; i < bound_param_values.size(); ++i) {
@@ -2132,7 +2193,8 @@ core::Status NativeAdapter::handleCommit(network::Connection* conn) {
         sendQueryError(conn, static_cast<uint32_t>(status), "25000",
                       "Failed to commit transaction");
     } else {
-        sendTransactionStatus(conn, false);
+        in_transaction_ = true;
+        sendTransactionStatus(conn, true);
     }
     sendReady(conn);
     return sendBuffer(conn);
@@ -2144,7 +2206,8 @@ core::Status NativeAdapter::handleRollback(network::Connection* conn) {
         sendQueryError(conn, static_cast<uint32_t>(status), "25000",
                       "Failed to rollback transaction");
     } else {
-        sendTransactionStatus(conn, false);
+        in_transaction_ = true;
+        sendTransactionStatus(conn, true);
     }
     sendReady(conn);
     return sendBuffer(conn);
