@@ -823,9 +823,9 @@ namespace scratchbird::core
         if (manifest_path.empty())
         {
             SET_ERROR_CONTEXT(ctx,
-                              Status::FILE_NOT_FOUND,
+                              Status::NOT_FOUND,
                               "Bootstrap auth manifest not found in runtime resources");
-            return Status::FILE_NOT_FOUND;
+            return Status::NOT_FOUND;
         }
 
         std::ifstream manifest_stream(manifest_path);
@@ -998,6 +998,27 @@ namespace scratchbird::core
         auto status = loadBootstrapAuthManifest(users, ctx);
         if (status != Status::OK)
         {
+            if (status == Status::NOT_FOUND)
+            {
+                CatalogManager::BootstrapState bootstrap_state =
+                    CatalogManager::BootstrapState::UNINITIALIZED;
+                ErrorContext bootstrap_ctx;
+                const Status bootstrap_status =
+                    catalog->getBootstrapState(bootstrap_state, &bootstrap_ctx);
+                if (bootstrap_status == Status::OK &&
+                    bootstrap_state != CatalogManager::BootstrapState::UNINITIALIZED)
+                {
+                    LOG_WARNING(GENERAL,
+                                "Bootstrap auth manifest unavailable; preserving existing "
+                                "catalog principals (state=%d)",
+                                static_cast<int>(bootstrap_state));
+                    if (ctx)
+                    {
+                        ctx->set(Status::OK, "", __FILE__, __LINE__, __func__);
+                    }
+                    return Status::OK;
+                }
+            }
             return status;
         }
 
@@ -2366,6 +2387,24 @@ namespace scratchbird::core
 
     auto Database::open(const std::string &path, ErrorContext *ctx) -> Status
     {
+        auto close_with_stage_error = [this, ctx](Status stage_status,
+                                                  const char* stage_name) -> Status
+        {
+            if (ctx)
+            {
+                if (!ctx->message.empty())
+                {
+                    ctx->message = std::string(stage_name) + ": " + ctx->message;
+                }
+                else
+                {
+                    ctx->set(stage_status, stage_name, __FILE__, __LINE__, __func__);
+                }
+            }
+            close();
+            return stage_status;
+        };
+
         std::string canonical_path;
         Status status = Database::validate_db_path(path, canonical_path, ctx);
         if (status != Status::OK)
@@ -2629,28 +2668,24 @@ namespace scratchbird::core
         status = transaction_manager_->load(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "transaction_manager.load");
         }
 
         status = catalog_manager_->initializePolicyToastIfNeeded(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "catalog_manager.initializePolicyToastIfNeeded");
         }
         status = ensureBootstrapUsersFromManifest(catalog_manager_.get(), ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "ensureBootstrapUsersFromManifest");
         }
 
         status = bootstrapI18nResources(this, ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "bootstrapI18nResources");
         }
 
         // Initialize TID resolver (Sprint 4 Task 5.4.2)
@@ -2679,8 +2714,7 @@ namespace scratchbird::core
         status = lock_manager_->initialize(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "lock_manager.initialize");
         }
 
         // Initialize GC manager
@@ -2709,8 +2743,7 @@ namespace scratchbird::core
         status = clog_->initialize(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "clog.initialize");
         }
 
         // Mark DEFAULT_INITIAL_XID as committed in CLOG
@@ -2737,8 +2770,7 @@ namespace scratchbird::core
         status = sweep_manager_->initialize(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "sweep_manager.initialize");
         }
 
         // Initialize garbage collector
@@ -2755,8 +2787,7 @@ namespace scratchbird::core
         status = garbage_collector_->initialize(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "garbage_collector.initialize");
         }
 
         // Initialize long transaction monitor
@@ -2773,16 +2804,14 @@ namespace scratchbird::core
         status = long_transaction_monitor_->initialize(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "long_transaction_monitor.initialize");
         }
 
         // Start long transaction monitoring thread
         status = long_transaction_monitor_->startMonitoring(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "long_transaction_monitor.startMonitoring");
         }
 
         // Initialize domain manager
@@ -2802,8 +2831,7 @@ namespace scratchbird::core
             // Domain catalog not initialized yet is OK
             if (status != Status::NOT_FOUND && status != Status::PAGE_CORRUPT)
             {
-                close();
-                return status;
+                return close_with_stage_error(status, "domain_manager.initialize");
             }
         }
         else
@@ -2811,14 +2839,12 @@ namespace scratchbird::core
             status = domain_manager_->load(ctx);
             if (status != Status::OK)
             {
-                close();
-                return status;
+                return close_with_stage_error(status, "domain_manager.load");
             }
             status = domain_manager_->ensureSystemDomains(ctx);
             if (status != Status::OK)
             {
-                close();
-                return status;
+                return close_with_stage_error(status, "domain_manager.ensureSystemDomains");
             }
         }
 
@@ -2836,14 +2862,12 @@ namespace scratchbird::core
         status = encryption_key_manager_->initialize(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "encryption_key_manager.initialize");
         }
         status = encryption_key_manager_->validateDatabaseEncryptionPolicy(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "encryption_key_manager.validateDatabaseEncryptionPolicy");
         }
 
         // Initialize optimizer runtime components (Phase 1, Task 1.3)
@@ -2887,8 +2911,7 @@ namespace scratchbird::core
         status = applySchedulerConfig(ctx);
         if (status != Status::OK)
         {
-            close();
-            return status;
+            return close_with_stage_error(status, "applySchedulerConfig");
         }
 
         // Initialize virtual catalog handlers (information_schema, pg_catalog, mysql, firebird).

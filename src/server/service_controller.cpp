@@ -15,6 +15,7 @@
 
 #include "scratchbird/server/service_controller.h"
 #include "scratchbird/version.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/permission_cache.h"
 #include "scratchbird/core/utf8_utils.h"
 #include "scratchbird/network/control_plane.h"
@@ -670,6 +671,17 @@ ServiceController::~ServiceController() {
 core::Status ServiceController::loadConfig(const std::string& path, core::ErrorContext* ctx) {
     config_.config_file = path;
 
+    core::ErrorContext core_config_ctx;
+    core::Status core_config_status = core::Config::getInstance().loadFile(path, &core_config_ctx);
+    if (core_config_status != core::Status::OK) {
+        if (ctx) {
+            const std::string& message =
+                core_config_ctx.message.empty() ? path : core_config_ctx.message;
+            ctx->set(core_config_status, message.c_str(), __FILE__, __LINE__, __func__);
+        }
+        return core_config_status;
+    }
+
     core::Status status = config_parser_->parseFile(path, ctx);
     if (status != core::Status::OK) {
         return status;
@@ -1073,6 +1085,20 @@ core::Status ServiceController::reload(core::ErrorContext* ctx) {
 
     // Reload config file
     if (!config_.config_file.empty()) {
+        core::ErrorContext core_config_ctx;
+        core::Status core_config_status =
+            core::Config::getInstance().loadFile(config_.config_file, &core_config_ctx);
+        if (core_config_status != core::Status::OK) {
+            log(ServiceConfig::LogLevel::ERROR, "Failed to reload core configuration");
+            state_ = ServiceState::RUNNING;
+            if (ctx) {
+                const std::string& message =
+                    core_config_ctx.message.empty() ? config_.config_file : core_config_ctx.message;
+                ctx->set(core_config_status, message.c_str(), __FILE__, __LINE__, __func__);
+            }
+            return core_config_status;
+        }
+
         ConfigParser new_parser;
         core::Status status = new_parser.parseFile(config_.config_file, ctx);
         if (status != core::Status::OK) {

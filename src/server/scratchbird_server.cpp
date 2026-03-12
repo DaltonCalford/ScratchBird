@@ -21,6 +21,7 @@
 #include <sstream>
 #include <cstring>
 #include <algorithm>
+#include <filesystem>
 
 namespace scratchbird {
 namespace server {
@@ -239,6 +240,17 @@ core::Status ScratchBirdServer::openDatabase(core::ErrorContext* ctx) {
     core::Status status = database_->open(config_.database_path, ctx);
 
     if (status == core::Status::FILE_NOT_FOUND && config_.auto_create_db) {
+        std::error_code exists_ec;
+        const bool database_file_exists =
+            std::filesystem::exists(config_.database_path, exists_ec) && !exists_ec;
+        if (database_file_exists) {
+            if (ctx && ctx->message.empty()) {
+                SET_ERROR_CONTEXT(ctx, core::Status::FILE_NOT_FOUND,
+                                  "Database open failed after locating the primary database file");
+            }
+            return status;
+        }
+
         // Create new database
         log("Creating new database: " + config_.database_path);
         status = core::Database::create(config_.database_path, config_.page_size, ctx);
@@ -251,8 +263,10 @@ core::Status ScratchBirdServer::openDatabase(core::ErrorContext* ctx) {
     }
 
     if (status != core::Status::OK) {
-        std::string err_msg = "Failed to open database: " + config_.database_path;
-        SET_ERROR_CONTEXT(ctx, status, err_msg.c_str());
+        if (ctx && ctx->message.empty()) {
+            std::string err_msg = "Failed to open database: " + config_.database_path;
+            SET_ERROR_CONTEXT(ctx, status, err_msg.c_str());
+        }
     } else {
         log("Database opened: " + config_.database_path);
     }

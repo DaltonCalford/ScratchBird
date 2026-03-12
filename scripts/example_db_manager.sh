@@ -73,6 +73,7 @@ COMPAT_FB_PASSWORD=""
 COMPAT_FB_EXTERNAL_ALIAS="${SCRATCHBIRD_EXAMPLE_COMPAT_FB_EXTERNAL_ALIAS:-public.user}"
 
 MAIN_DB="${SCRATCHBIRD_EXAMPLE_MAIN_DB:-main}"
+NATIVE_SSLMODE="${SCRATCHBIRD_EXAMPLE_NATIVE_SSLMODE:-disable}"
 AUTH_METHODS="${SCRATCHBIRD_EXAMPLE_AUTH_METHODS:-password}"
 AUTH_PASSWORD_HASH="${SCRATCHBIRD_EXAMPLE_AUTH_PASSWORD_HASH:-argon2id}"
 AUTH_ALLOW_SUPERUSER_REMOTE="${SCRATCHBIRD_EXAMPLE_ALLOW_SUPERUSER_REMOTE:-true}"
@@ -163,21 +164,24 @@ resolve_binaries() {
         "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_isql")" \
         || die "sb_isql not found. Build ScratchBird-driver CLI first."
 
-    PG_ISQL_BIN="$(resolve_binary SCRATCHBIRD_PG_ISQL \
-        "${REPO_ROOT}/build/src/sb_pg_isql" \
-        "${REPO_ROOT}/build/src/cli/sb_pg_isql" \
-        "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_pg_isql" || true)"
+    PG_ISQL_BIN="$(resolve_binary SCRATCHBIRD_PG_PSQL_BIN \
+        "${WORKSPACE_ROOT}/postgresql/build_codex/src/bin/psql/psql" \
+        "${WORKSPACE_ROOT}/postgresql/build_codex2/src/bin/psql/psql" \
+        "${WORKSPACE_ROOT}/postgresql/build/src/bin/psql/psql" \
+        "${SCRATCHBIRD_PG_ISQL:-}" || true)"
 
-    MY_ISQL_BIN="$(resolve_binary SCRATCHBIRD_MY_ISQL \
-        "${REPO_ROOT}/build/src/sb_my_isql" \
-        "${REPO_ROOT}/build/src/cli/sb_my_isql" \
-        "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_my_isql" || true)"
+    MY_ISQL_BIN="$(resolve_binary SCRATCHBIRD_MYSQL_CLI_BIN \
+        "${WORKSPACE_ROOT}/mysql-server/build_codex2/runtime_output_directory/mysql" \
+        "${WORKSPACE_ROOT}/mysql-server/build_codex/runtime_output_directory/mysql" \
+        "${WORKSPACE_ROOT}/mysql-server/build/runtime_output_directory/mysql" \
+        "${SCRATCHBIRD_MY_ISQL:-}" || true)"
 
-    FB_ISQL_BIN="$(resolve_binary SCRATCHBIRD_FB_ISQL \
-        "${REPO_ROOT}/build/src/sb_fb_isql" \
-        "${REPO_ROOT}/build/src/cli/sb_fb_isql" \
-        "${DRIVER_ROOT}/build/tracks/alpha/drivers/cli/sb_fb_isql" \
-        "$(command -v isql-fb 2>/dev/null || true)" || true)"
+    FB_ISQL_BIN="$(resolve_binary SCRATCHBIRD_FB_NATIVE_ISQL \
+        "${WORKSPACE_ROOT}/firebird/gen/Release/firebird/bin/isql" \
+        "${WORKSPACE_ROOT}/firebird/gen/Debug/firebird/bin/isql" \
+        "${WORKSPACE_ROOT}/firebird/build/bin/isql" \
+        "${WORKSPACE_ROOT}/firebird/build/isql" \
+        "${SCRATCHBIRD_FB_ISQL:-}" || true)"
 }
 
 set_mode_paths() {
@@ -230,6 +234,10 @@ load_auth_defaults() {
     [[ -f "${AUTH_MANIFEST}" ]] || die "auth manifest not found: ${AUTH_MANIFEST}"
     [[ -f "${SEED_RENDERER}" ]] || die "seed renderer not found: ${SEED_RENDERER}"
 
+    if [[ -n "${PROFILE_DIR}" ]]; then
+        mkdir -p "${PROFILE_DIR}"
+    fi
+
     local env_out=""
     local cleanup_env="0"
     local -a cmd=(
@@ -258,6 +266,7 @@ load_auth_defaults() {
     fi
 
     "${cmd[@]}" || die "failed to materialize auth defaults from ${AUTH_MANIFEST}"
+    [[ -f "${env_out}" ]] || die "auth defaults renderer did not create ${env_out}"
     # shellcheck disable=SC1090
     source "${env_out}"
     if [[ "${cleanup_env}" == "1" ]]; then
@@ -302,6 +311,9 @@ fb_port = ${FB_PORT}
 methods = ${AUTH_METHODS}
 password_hash = ${AUTH_PASSWORD_HASH}
 allow_superuser_remote = ${AUTH_ALLOW_SUPERUSER_REMOTE}
+
+[storage]
+tablespace_recovery_mode = allow_missing
 
 [logging]
 level = info
@@ -381,6 +393,128 @@ wait_for_port() {
     return 1
 }
 
+wait_for_socket_path() {
+    local path="$1"
+    local attempts="${2:-120}"
+    local sleep_sec="${3:-0.25}"
+    local i
+    for ((i = 0; i < attempts; i++)); do
+        if [[ -S "${path}" ]]; then
+            return 0
+        fi
+        sleep "${sleep_sec}"
+    done
+    return 1
+}
+
+run_native_probe() {
+    local user="$1"
+    local password="$2"
+
+    "${ISQL_BIN}" "${MAIN_DB}" \
+        --mode=local-ipc \
+        --ipc-method=tcp \
+        --sslmode="${NATIVE_SSLMODE}" \
+        -H "${BIND_HOST}" \
+        -p "${NATIVE_PORT}" \
+        -U "${user}" \
+        -P "${password}" \
+        -c "SELECT 1;" \
+        -q > /dev/null 2>&1
+}
+
+wait_for_native_probe() {
+    local user="$1"
+    local password="$2"
+    local attempts="${3:-120}"
+    local sleep_sec="${4:-0.25}"
+    local i
+
+    for ((i = 0; i < attempts; i++)); do
+        if run_native_probe "${user}" "${password}"; then
+            return 0
+        fi
+        sleep "${sleep_sec}"
+    done
+
+    return 1
+}
+
+wait_for_postgresql_probe() {
+    [[ -x "${PG_ISQL_BIN}" ]] || return 0
+
+    local attempts="${1:-120}"
+    local sleep_sec="${2:-0.25}"
+    local i
+
+    for ((i = 0; i < attempts; i++)); do
+        if PGPASSWORD="${PG_PASSWORD}" \
+            "${PG_ISQL_BIN}" \
+                -h "${BIND_HOST}" \
+                -p "${PG_PORT}" \
+                -U "${PG_USER}" \
+                -d "${MAIN_DB}" \
+                -c "SELECT 1;" \
+                -q > /dev/null 2>&1; then
+            return 0
+        fi
+        sleep "${sleep_sec}"
+    done
+
+    return 1
+}
+
+wait_for_mysql_probe() {
+    [[ -x "${MY_ISQL_BIN}" ]] || return 0
+
+    local attempts="${1:-120}"
+    local sleep_sec="${2:-0.25}"
+    local i
+
+    for ((i = 0; i < attempts; i++)); do
+        if [[ -n "${MYSQL_PASSWORD}" ]]; then
+            if "${MY_ISQL_BIN}" \
+                -h "${BIND_HOST}" \
+                -P "${MYSQL_PORT}" \
+                -u "${MYSQL_USER}" \
+                "-p${MYSQL_PASSWORD}" \
+                -e "SHOW VARIABLES LIKE 'version_comment';" \
+                -q > /dev/null 2>&1; then
+                return 0
+            fi
+        else
+            if "${MY_ISQL_BIN}" \
+                -h "${BIND_HOST}" \
+                -P "${MYSQL_PORT}" \
+                -u "${MYSQL_USER}" \
+                -e "SHOW VARIABLES LIKE 'version_comment';" \
+                -q > /dev/null 2>&1; then
+                return 0
+            fi
+        fi
+        sleep "${sleep_sec}"
+    done
+
+    return 1
+}
+
+wait_for_runtime_surfaces() {
+    if ! wait_for_native_probe "${ADMIN_USER}" "${ADMIN_PASSWORD}" 120 0.25; then
+        tail -n 100 "${SERVER_LOG}" >&2 || true
+        die "native runtime surface did not become query-ready on ${BIND_HOST}:${NATIVE_PORT}"
+    fi
+
+    if ! wait_for_postgresql_probe 120 0.25; then
+        tail -n 100 "${SERVER_LOG}" >&2 || true
+        die "postgres runtime surface did not become query-ready on ${BIND_HOST}:${PG_PORT}"
+    fi
+
+    if ! wait_for_mysql_probe 120 0.25; then
+        tail -n 100 "${SERVER_LOG}" >&2 || true
+        die "mysql runtime surface did not become query-ready on ${BIND_HOST}:${MYSQL_PORT}"
+    fi
+}
+
 stop_server() {
     local pid
     pid="$(load_pid)"
@@ -430,6 +564,16 @@ start_server() {
             startup_error="mysql listener failed to come up on ${BIND_HOST}:${MYSQL_PORT}"
         elif ! wait_for_port "${BIND_HOST}" "${FB_PORT}" 240 0.25; then
             startup_error="firebird listener failed to come up on ${BIND_HOST}:${FB_PORT}"
+        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_engine.main.sock" 120 0.25; then
+            startup_error="engine control socket did not come up at ${CONTROL_DIR}/sb_engine.main.sock"
+        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_listener.scratchbird.${NATIVE_PORT}.sock" 120 0.25; then
+            startup_error="native listener control socket did not come up at ${CONTROL_DIR}/sb_listener.scratchbird.${NATIVE_PORT}.sock"
+        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_listener.postgresql.${PG_PORT}.sock" 120 0.25; then
+            startup_error="postgres listener control socket did not come up at ${CONTROL_DIR}/sb_listener.postgresql.${PG_PORT}.sock"
+        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_listener.mysql.${MYSQL_PORT}.sock" 120 0.25; then
+            startup_error="mysql listener control socket did not come up at ${CONTROL_DIR}/sb_listener.mysql.${MYSQL_PORT}.sock"
+        elif ! wait_for_socket_path "${CONTROL_DIR}/sb_listener.firebird.${FB_PORT}.sock" 120 0.25; then
+            startup_error="firebird listener control socket did not come up at ${CONTROL_DIR}/sb_listener.firebird.${FB_PORT}.sock"
         else
             return 0
         fi
@@ -453,6 +597,7 @@ run_bootstrap_seed() {
     if ! "${ISQL_BIN}" "${MAIN_DB}" \
         --mode=local-ipc \
         --ipc-method=tcp \
+        --sslmode="${NATIVE_SSLMODE}" \
         -H "${BIND_HOST}" \
         -p "${NATIVE_PORT}" \
         -U "${BOOTSTRAP_USER}" \
@@ -474,6 +619,7 @@ run_post_bootstrap_seed() {
     if ! "${ISQL_BIN}" "${MAIN_DB}" \
         --mode=local-ipc \
         --ipc-method=tcp \
+        --sslmode="${NATIVE_SSLMODE}" \
         -H "${BIND_HOST}" \
         -p "${NATIVE_PORT}" \
         -U "${ADMIN_USER}" \
@@ -495,6 +641,7 @@ run_admin_sql() {
     if ! "${ISQL_BIN}" "${MAIN_DB}" \
         --mode=local-ipc \
         --ipc-method=tcp \
+        --sslmode="${NATIVE_SSLMODE}" \
         -H "${BIND_HOST}" \
         -p "${NATIVE_PORT}" \
         -U "${ADMIN_USER}" \
@@ -626,8 +773,11 @@ export SCRATCHBIRD_EXAMPLE_ROOT='${EXAMPLE_ROOT}'
 export SCRATCHBIRD_SB_SERVER='${SERVER_BIN}'
 export SCRATCHBIRD_SB_ISQL='${ISQL_BIN}'
 export SCRATCHBIRD_PG_ISQL='${PG_ISQL_BIN}'
+export SCRATCHBIRD_PG_PSQL_BIN='${PG_ISQL_BIN}'
 export SCRATCHBIRD_MY_ISQL='${MY_ISQL_BIN}'
+export SCRATCHBIRD_MYSQL_CLI_BIN='${MY_ISQL_BIN}'
 export SCRATCHBIRD_FB_ISQL='${FB_ISQL_BIN}'
+export SCRATCHBIRD_FB_NATIVE_ISQL='${FB_ISQL_BIN}'
 
 export SCRATCHBIRD_EXAMPLE_COMPAT_CANONICAL_USER='${COMPAT_CANONICAL_USER}'
 export SCRATCHBIRD_EXAMPLE_COMPAT_CANONICAL_USERID='${COMPAT_CANONICAL_USERID}'
@@ -714,9 +864,9 @@ EOF
   },
   "clients": {
     "sb_isql": "${ISQL_BIN}",
-    "sb_pg_isql": "${PG_ISQL_BIN}",
-    "sb_my_isql": "${MY_ISQL_BIN}",
-    "sb_fb_isql": "${FB_ISQL_BIN}"
+    "postgresql_psql": "${PG_ISQL_BIN}",
+    "mysql_cli": "${MY_ISQL_BIN}",
+    "firebird_isql": "${FB_ISQL_BIN}"
   },
   "native": {
     "host": "${BIND_HOST}",
@@ -786,12 +936,14 @@ dynamic_setup() {
     start_server
     run_seed_pipeline
     write_connection_profiles
+    wait_for_runtime_surfaces
     run_example_bundle_import
     if [[ "${DID_IMPORT_BUNDLE}" == "1" ]]; then
         log "restarting listeners after example bundle import"
         stop_server
         start_server
         write_connection_profiles
+        wait_for_runtime_surfaces
     fi
     print_status
 }
@@ -805,6 +957,7 @@ dynamic_teardown() {
 
 dynamic_status() {
     set_mode_paths dynamic
+    prepare_layout
     load_auth_defaults
     print_status
 }
@@ -831,6 +984,7 @@ static_up() {
         run_seed_pipeline
     fi
     write_connection_profiles
+    wait_for_runtime_surfaces
     if [[ ! -f "${EXAMPLE_BUNDLE_MARKER}" ]]; then
         run_example_bundle_import
         if [[ "${DID_IMPORT_BUNDLE}" == "1" ]]; then
@@ -838,6 +992,7 @@ static_up() {
             stop_server
             start_server
             write_connection_profiles
+            wait_for_runtime_surfaces
         fi
     fi
     print_status
@@ -861,18 +1016,21 @@ static_refresh() {
     start_server
     run_seed_pipeline
     write_connection_profiles
+    wait_for_runtime_surfaces
     run_example_bundle_import
     if [[ "${DID_IMPORT_BUNDLE}" == "1" ]]; then
         log "restarting listeners after example bundle import"
         stop_server
         start_server
         write_connection_profiles
+        wait_for_runtime_surfaces
     fi
     print_status
 }
 
 static_status() {
     set_mode_paths static
+    prepare_layout
     load_auth_defaults
     print_status
 }
