@@ -2951,6 +2951,12 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
                     multi_model_payload["object_name"] = Value(std::string("autoscale_actions"));
                 } else if (key_text == "cluster.show_admission_tuning_history") {
                     multi_model_payload["object_name"] = Value(std::string("admission_tuning_history"));
+                } else if (key_text == "cluster.show_alert_dashboard") {
+                    multi_model_payload["object_name"] = Value(std::string("alert_dashboard"));
+                } else if (key_text == "cluster.show_readiness_health") {
+                    multi_model_payload["object_name"] = Value(std::string("readiness_health"));
+                } else if (key_text == "cluster.show_support_bundle_safety") {
+                    multi_model_payload["object_name"] = Value(std::string("support_bundle_safety"));
                 } else if (key_text == "cluster.set_state") {
                     multi_model_payload["object_name"] = Value(std::string("cluster_state"));
                 }
@@ -3106,6 +3112,15 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
             }
             if (key_text == "cluster.show_admission_tuning_history") {
                 return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 59);
+            }
+            if (key_text == "cluster.show_alert_dashboard") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 60);
+            }
+            if (key_text == "cluster.show_readiness_health") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 61);
+            }
+            if (key_text == "cluster.show_support_bundle_safety") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 62);
             }
             if (key_text == "cluster.show_routing_plan") {
                 return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN, 46);

@@ -73,6 +73,7 @@
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/support_bundle_builder.h"
 #include "scratchbird/core/workload_governance.h"
 #include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/query_profiler.h"
@@ -71113,6 +71114,36 @@ namespace scratchbird
                                 return "UNKNOWN";
                             };
 
+                            auto formatAlertSeverity =
+                                [&](core::CatalogManager::AlertSeverity severity) -> std::string {
+                                switch (severity)
+                                {
+                                    case core::CatalogManager::AlertSeverity::INFO:
+                                        return "INFO";
+                                    case core::CatalogManager::AlertSeverity::WARNING:
+                                        return "WARNING";
+                                    case core::CatalogManager::AlertSeverity::CRITICAL:
+                                        return "CRITICAL";
+                                }
+                                return "UNKNOWN";
+                            };
+
+                            auto formatAlertEventState =
+                                [&](core::CatalogManager::AlertEventState state) -> std::string {
+                                switch (state)
+                                {
+                                    case core::CatalogManager::AlertEventState::OPEN:
+                                        return "OPEN";
+                                    case core::CatalogManager::AlertEventState::ACKED:
+                                        return "ACKED";
+                                    case core::CatalogManager::AlertEventState::RESOLVED:
+                                        return "RESOLVED";
+                                    case core::CatalogManager::AlertEventState::SUPPRESSED:
+                                        return "SUPPRESSED";
+                                }
+                                return "UNKNOWN";
+                            };
+
                             const std::array<core::CatalogManager::ClusterNodeRole, 15> all_node_roles = {{
                                 core::CatalogManager::ClusterNodeRole::METADATA,
                                 core::CatalogManager::ClusterNodeRole::OLTP_DATA,
@@ -71848,6 +71879,180 @@ namespace scratchbird
                                             Value::makeInt64(static_cast<int64_t>(row.event_time)),
                                         });
                                     }
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "ok", symbol);
+                                    return ExecutionResult(std::move(result_set));
+                                }
+
+                                if (object_name == "alert_dashboard")
+                                {
+                                    std::optional<uint64_t> window_minutes;
+                                    if (!tryParseWindowMinutes(window_minutes, local_ctx))
+                                    {
+                                        return ExecutionResult(local_ctx.message);
+                                    }
+
+                                    core::SupportBundleBuilder builder(db_);
+                                    core::AlertReadinessRequest request;
+                                    request.window_minutes = static_cast<uint32_t>(
+                                        std::min<uint64_t>(window_minutes.value_or(0),
+                                                           std::numeric_limits<uint32_t>::max()));
+                                    std::vector<core::AlertReadinessRow> rows;
+                                    core::ReadinessHealthSummary summary;
+                                    core::Status status =
+                                        builder.snapshotAlertReadiness(request, rows, summary, &local_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "SHOW ALERT DASHBOARD failed"
+                                                                   : local_ctx.message);
+                                    }
+
+                                    auto result_set = std::make_unique<ResultSet>();
+                                    result_set->addColumn("event_id", core::DataType::VARCHAR);
+                                    result_set->addColumn("rule_name", core::DataType::VARCHAR);
+                                    result_set->addColumn("severity", core::DataType::VARCHAR);
+                                    result_set->addColumn("event_state", core::DataType::VARCHAR);
+                                    result_set->addColumn("event_time", core::DataType::INT64);
+                                    result_set->addColumn("silenced", core::DataType::BOOLEAN);
+                                    result_set->addColumn("acked", core::DataType::BOOLEAN);
+                                    result_set->addColumn("ack_overdue", core::DataType::BOOLEAN);
+                                    result_set->addColumn("remediation_overdue", core::DataType::BOOLEAN);
+                                    result_set->addColumn("route_count", core::DataType::INT64);
+                                    result_set->addColumn("target_count", core::DataType::INT64);
+                                    result_set->addColumn("target_summary", core::DataType::VARCHAR);
+                                    for (const auto& row : rows)
+                                    {
+                                        result_set->addRow({
+                                            Value::makeVarchar(row.event_id.toString()),
+                                            Value::makeVarchar(row.rule_name),
+                                            Value::makeVarchar(formatAlertSeverity(row.severity)),
+                                            Value::makeVarchar(formatAlertEventState(row.event_state)),
+                                            Value::makeInt64(static_cast<int64_t>(row.event_time)),
+                                            Value::makeBool(row.silenced),
+                                            Value::makeBool(row.acked),
+                                            Value::makeBool(row.ack_overdue),
+                                            Value::makeBool(row.remediation_overdue),
+                                            Value::makeInt64(static_cast<int64_t>(row.route_count)),
+                                            Value::makeInt64(static_cast<int64_t>(row.target_count)),
+                                            Value::makeVarchar(row.target_summary),
+                                        });
+                                    }
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "ok", symbol);
+                                    return ExecutionResult(std::move(result_set));
+                                }
+
+                                if (object_name == "readiness_health")
+                                {
+                                    std::optional<uint64_t> window_minutes;
+                                    if (!tryParseWindowMinutes(window_minutes, local_ctx))
+                                    {
+                                        return ExecutionResult(local_ctx.message);
+                                    }
+
+                                    core::SupportBundleBuilder builder(db_);
+                                    core::AlertReadinessRequest request;
+                                    request.window_minutes = static_cast<uint32_t>(
+                                        std::min<uint64_t>(window_minutes.value_or(0),
+                                                           std::numeric_limits<uint32_t>::max()));
+                                    std::vector<core::AlertReadinessRow> rows;
+                                    core::ReadinessHealthSummary summary;
+                                    core::Status status =
+                                        builder.snapshotAlertReadiness(request, rows, summary, &local_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "SHOW READINESS HEALTH failed"
+                                                                   : local_ctx.message);
+                                    }
+
+                                    auto result_set = std::make_unique<ResultSet>();
+                                    result_set->addColumn("readiness_state", core::DataType::VARCHAR);
+                                    result_set->addColumn("open_event_count", core::DataType::INT64);
+                                    result_set->addColumn("visible_event_count", core::DataType::INT64);
+                                    result_set->addColumn("actionable_event_count", core::DataType::INT64);
+                                    result_set->addColumn("ack_overdue_count", core::DataType::INT64);
+                                    result_set->addColumn("remediation_overdue_count", core::DataType::INT64);
+                                    result_set->addColumn("critical_open_count", core::DataType::INT64);
+                                    result_set->addColumn("active_healing_run_count", core::DataType::INT64);
+                                    result_set->addColumn("failed_healing_run_count", core::DataType::INT64);
+                                    result_set->addColumn("high_burn_count", core::DataType::INT64);
+                                    result_set->addColumn("critical_burn_count", core::DataType::INT64);
+                                    result_set->addColumn("summary_text", core::DataType::VARCHAR);
+                                    result_set->addRow({
+                                        Value::makeVarchar(core::SupportBundleBuilder::readinessHealthStateName(
+                                            summary.state)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.open_event_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.visible_event_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.actionable_event_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.ack_overdue_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.remediation_overdue_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.critical_open_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.active_healing_run_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.failed_healing_run_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.high_burn_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.critical_burn_count)),
+                                        Value::makeVarchar(summary.summary_text),
+                                    });
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "ok", symbol);
+                                    return ExecutionResult(std::move(result_set));
+                                }
+
+                                if (object_name == "support_bundle_safety")
+                                {
+                                    std::optional<uint64_t> window_minutes;
+                                    if (!tryParseWindowMinutes(window_minutes, local_ctx))
+                                    {
+                                        return ExecutionResult(local_ctx.message);
+                                    }
+
+                                    core::SupportBundleBuilder builder(db_);
+                                    core::SupportBundleRequest request;
+                                    request.readiness.window_minutes = static_cast<uint32_t>(
+                                        std::min<uint64_t>(window_minutes.value_or(0),
+                                                           std::numeric_limits<uint32_t>::max()));
+                                    core::SupportBundleSafetySummary summary;
+                                    core::Status status =
+                                        builder.snapshotSupportBundleSafety(request, summary, &local_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "SHOW SUPPORT BUNDLE SAFETY failed"
+                                                                   : local_ctx.message);
+                                    }
+
+                                    auto result_set = std::make_unique<ResultSet>();
+                                    result_set->addColumn("readiness_state", core::DataType::VARCHAR);
+                                    result_set->addColumn("redaction_enforced", core::DataType::BOOLEAN);
+                                    result_set->addColumn("redacted_field_count", core::DataType::INT64);
+                                    result_set->addColumn("open_event_count", core::DataType::INT64);
+                                    result_set->addColumn("actionable_event_count", core::DataType::INT64);
+                                    result_set->addColumn("critical_open_count", core::DataType::INT64);
+                                    result_set->addColumn("shadow_capture_manifest_count", core::DataType::INT64);
+                                    result_set->addColumn("page_audit_finding_count", core::DataType::INT64);
+                                    result_set->addColumn("wal_after_segment_count", core::DataType::INT64);
+                                    result_set->addColumn("audit_export_segment_count", core::DataType::INT64);
+                                    result_set->addColumn("slo_status_count", core::DataType::INT64);
+                                    result_set->addColumn("error_budget_status_count", core::DataType::INT64);
+                                    result_set->addColumn("summary_text", core::DataType::VARCHAR);
+                                    result_set->addRow({
+                                        Value::makeVarchar(core::SupportBundleBuilder::readinessHealthStateName(
+                                            summary.readiness.state)),
+                                        Value::makeBool(summary.redaction_enforced),
+                                        Value::makeInt64(static_cast<int64_t>(summary.redacted_field_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.readiness.open_event_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.readiness.actionable_event_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.readiness.critical_open_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.shadow_capture_manifest_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.page_audit_finding_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.wal_after_segment_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.audit_export_segment_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.slo_status_count)),
+                                        Value::makeInt64(static_cast<int64_t>(summary.error_budget_status_count)),
+                                        Value::makeVarchar(summary.readiness.summary_text),
+                                    });
                                     core::VNextMetricsEventModel::recordExecutorEvent(
                                         "vnext_opcode_dispatch", "ok", symbol);
                                     return ExecutionResult(std::move(result_set));

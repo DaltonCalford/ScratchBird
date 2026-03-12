@@ -250,6 +250,9 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesAdminClusterAndServiceControlSurf
         {"SHOW AUTOSCALE ACTIONS ROLE OLTP_DATA WINDOW MINUTES 15", "cluster.show_autoscale_actions"},
         {"SHOW ADMISSION TUNING HISTORY ROLE OLTP_DATA WINDOW MINUTES 5",
          "cluster.show_admission_tuning_history"},
+        {"SHOW ALERT DASHBOARD WINDOW MINUTES 10", "cluster.show_alert_dashboard"},
+        {"SHOW READINESS HEALTH WINDOW MINUTES 10", "cluster.show_readiness_health"},
+        {"SHOW SUPPORT BUNDLE SAFETY WINDOW MINUTES 10", "cluster.show_support_bundle_safety"},
         {"SERVICE CHANNEL EVENTS 'SINCE=0'", "service.channel.events"},
     };
 

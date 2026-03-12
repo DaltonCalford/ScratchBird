@@ -850,7 +850,10 @@ Statement* Parser::parseStatementInternal() {
             if (caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "SLO") ||
                 caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "ERROR") ||
                 caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "AUTOSCALE") ||
-                caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "ADMISSION")) {
+                caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "ADMISSION") ||
+                caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "ALERT") ||
+                caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "READINESS") ||
+                caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "SUPPORT")) {
                 match(TokenType::KW_SHOW);
                 return parseShowSloControlSurface();
             }
@@ -16964,9 +16967,28 @@ Statement* Parser::parseShowSloControlSurface() {
         if (std::string window_filter = parseWindowFilter(); !window_filter.empty()) {
             filters.push_back(std::move(window_filter));
         }
+    } else if (matchContextual("ALERT")) {
+        expectContextual("DASHBOARD", "Expected DASHBOARD after SHOW ALERT");
+        stmt->name = stringPool().intern("cluster.show_alert_dashboard");
+        if (std::string window_filter = parseWindowFilter(); !window_filter.empty()) {
+            filters.push_back(std::move(window_filter));
+        }
+    } else if (matchContextual("READINESS")) {
+        expectContextual("HEALTH", "Expected HEALTH after SHOW READINESS");
+        stmt->name = stringPool().intern("cluster.show_readiness_health");
+        if (std::string window_filter = parseWindowFilter(); !window_filter.empty()) {
+            filters.push_back(std::move(window_filter));
+        }
+    } else if (matchContextual("SUPPORT")) {
+        expectContextual("BUNDLE", "Expected BUNDLE after SHOW SUPPORT");
+        expectContextual("SAFETY", "Expected SAFETY after SHOW SUPPORT BUNDLE");
+        stmt->name = stringPool().intern("cluster.show_support_bundle_safety");
+        if (std::string window_filter = parseWindowFilter(); !window_filter.empty()) {
+            filters.push_back(std::move(window_filter));
+        }
     } else {
         errorCode("PRS_0505",
-                  "Expected SLO STATUS, ERROR BUDGET STATUS, AUTOSCALE ACTIONS, or ADMISSION TUNING HISTORY after SHOW");
+                  "Expected SLO STATUS, ERROR BUDGET STATUS, AUTOSCALE ACTIONS, ADMISSION TUNING HISTORY, ALERT DASHBOARD, READINESS HEALTH, or SUPPORT BUNDLE SAFETY after SHOW");
     }
 
     if (!filters.empty()) {
