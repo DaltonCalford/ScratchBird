@@ -63,6 +63,103 @@ namespace scratchbird::core
             return out;
         }
 
+        std::string normalizeSchemaPathForContext(const std::string& value)
+        {
+            std::string normalized;
+            normalized.reserve(value.size());
+            for (char ch : value)
+            {
+                normalized.push_back(ch == '/' ? '.' : ch);
+            }
+            return normalized;
+        }
+
+        std::vector<std::string> splitSchemaComponentsLocal(const std::string& value)
+        {
+            std::vector<std::string> components;
+            std::string token;
+            for (char ch : value)
+            {
+                if (ch == '.')
+                {
+                    if (!token.empty())
+                    {
+                        components.push_back(token);
+                        token.clear();
+                    }
+                    continue;
+                }
+                token.push_back(ch);
+            }
+            if (!token.empty())
+            {
+                components.push_back(token);
+            }
+            return components;
+        }
+
+        bool isEmulatedDialect(const std::string& dialect_tag)
+        {
+            const std::string upper = IdentifierUtils::toUpper(dialect_tag);
+            return upper == "MYSQL" || upper == "POSTGRESQL" || upper == "FIREBIRD";
+        }
+
+        bool isEmulatedSchemaPathForDialect(const std::string& schema_path,
+                                            const std::string& dialect_tag)
+        {
+            const std::string normalized = normalizeSchemaPathForContext(schema_path);
+            const std::vector<std::string> components = splitSchemaComponentsLocal(normalized);
+            if (components.empty())
+            {
+                return false;
+            }
+
+            size_t start = 0;
+            if (IdentifierUtils::namesMatch(components[0], false, "root", false))
+            {
+                start = 1;
+            }
+            if (components.size() <= start)
+            {
+                return false;
+            }
+
+            const std::string upper_dialect = IdentifierUtils::toUpper(dialect_tag);
+            if (IdentifierUtils::namesMatch(components[start], false, "emulated", false) ||
+                IdentifierUtils::namesMatch(components[start], false, "emulation", false))
+            {
+                return components.size() > (start + 1) &&
+                       IdentifierUtils::namesMatch(components[start + 1],
+                                                   false,
+                                                   upper_dialect,
+                                                   false);
+            }
+            if (IdentifierUtils::namesMatch(components[start], false, "remote", false))
+            {
+                return components.size() > (start + 2) &&
+                       (IdentifierUtils::namesMatch(components[start + 1],
+                                                    false,
+                                                    "emulated",
+                                                    false) ||
+                        IdentifierUtils::namesMatch(components[start + 1],
+                                                    false,
+                                                    "emulation",
+                                                    false)) &&
+                       IdentifierUtils::namesMatch(components[start + 2],
+                                                   false,
+                                                   upper_dialect,
+                                                   false);
+            }
+            return false;
+        }
+
+        std::string lastSchemaComponentLocal(const std::string& schema_path)
+        {
+            const std::string normalized = normalizeSchemaPathForContext(schema_path);
+            const std::vector<std::string> components = splitSchemaComponentsLocal(normalized);
+            return components.empty() ? std::string() : components.back();
+        }
+
         bool parseUuidTextLocal(const std::string& text, ID& out)
         {
             std::string hex;
@@ -1124,6 +1221,93 @@ namespace scratchbird::core
         return *this;
     }
 
+    void ConnectionContext::set_current_schema(const std::string& schema)
+    {
+        current_schema_name_ = schema;
+        if (schema.empty() || !isEmulatedDialect(dialect_tag_))
+        {
+            return;
+        }
+
+        if (isEmulatedSchemaPathForDialect(schema, dialect_tag_))
+        {
+            current_schema_name_ = normalizeSchemaPathForContext(schema);
+            return;
+        }
+
+        const std::string schema_leaf = lastSchemaComponentLocal(schema);
+        if (schema_leaf.empty())
+        {
+            return;
+        }
+
+        for (const auto& entry : search_path_)
+        {
+            if (!isEmulatedSchemaPathForDialect(entry, dialect_tag_))
+            {
+                continue;
+            }
+            if (IdentifierUtils::namesMatch(lastSchemaComponentLocal(entry),
+                                            false,
+                                            schema_leaf,
+                                            false))
+            {
+                current_schema_name_ = normalizeSchemaPathForContext(entry);
+                return;
+            }
+        }
+    }
+
+    void ConnectionContext::set_search_path(const std::vector<std::string>& paths)
+    {
+        search_path_ = paths;
+        if (search_path_.empty() || !isEmulatedDialect(dialect_tag_))
+        {
+            return;
+        }
+
+        for (auto& entry : search_path_)
+        {
+            if (isEmulatedSchemaPathForDialect(entry, dialect_tag_))
+            {
+                entry = normalizeSchemaPathForContext(entry);
+            }
+        }
+
+        if (current_schema_name_.empty())
+        {
+            return;
+        }
+
+        if (isEmulatedSchemaPathForDialect(current_schema_name_, dialect_tag_))
+        {
+            current_schema_name_ = normalizeSchemaPathForContext(current_schema_name_);
+            return;
+        }
+
+        const std::string schema_leaf = lastSchemaComponentLocal(current_schema_name_);
+        if (schema_leaf.empty())
+        {
+            return;
+        }
+
+        for (const auto& entry : search_path_)
+        {
+            if (!isEmulatedSchemaPathForDialect(entry, dialect_tag_))
+            {
+                continue;
+            }
+            if (IdentifierUtils::namesMatch(lastSchemaComponentLocal(entry),
+                                            false,
+                                            schema_leaf,
+                                            false))
+            {
+                current_schema_name_ = entry;
+                return;
+            }
+        }
+    }
+
     ConnectionContext *ConnectionContext::getCurrent()
     {
         return current_;
@@ -1212,6 +1396,7 @@ namespace scratchbird::core
         }
         if (status != Status::NOT_FOUND)
         {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to load latest schema epoch catalog entry");
             return status;
         }
 
@@ -1219,6 +1404,7 @@ namespace scratchbird::core
         status = catalog->buildCurrentSchemaEpochDefinitionManifest(manifest, ctx);
         if (status != Status::OK)
         {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to build current schema epoch definition manifest");
             return status;
         }
 
@@ -1232,6 +1418,10 @@ namespace scratchbird::core
         if (status == Status::OK)
         {
             current_schema_epoch_uuid_ = epoch.schema_epoch_uuid;
+        }
+        else
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to append schema epoch catalog entry");
         }
         return status;
     }
@@ -1555,8 +1745,11 @@ namespace scratchbird::core
         Status s = beginNewTransaction(ctx);
         if (s != Status::OK)
         {
-            LOG_ERROR(TRANSACTION, "Failed to initialize connection context: %d",
-                      static_cast<int>(s));
+            LOG_ERROR(TRANSACTION,
+                      "Failed to initialize connection context: %d (%s)",
+                      static_cast<int>(s),
+                      (ctx != nullptr && !ctx->message.empty()) ? ctx->message.c_str()
+                                                                 : "no detail");
             return s;
         }
 
@@ -1976,6 +2169,17 @@ namespace scratchbird::core
         info.tx_uuid = tx_uuid;
         info.database_id = db_->uuid();
         info.session_id = session_id_;
+        if (!isZeroUuidLocal(info.session_id))
+        {
+            CatalogManager::SessionInfo session_info{};
+            ErrorContext session_ctx;
+            if (catalog->getSession(info.session_id, session_info, &session_ctx) != Status::OK)
+            {
+                // Runtime transaction retention must not fail user-visible commit/rollback
+                // just because the session row was already rotated or closed.
+                info.session_id = ID{};
+            }
+        }
         info.connection_id = ID{};
         info.user_id = current_user_id_;
         info.role_id = active_role_id_;
@@ -1998,7 +2202,12 @@ namespace scratchbird::core
         info.has_last_error_code = last_error_code_ != 0;
         info.last_error_code = last_error_code_;
         info.last_sqlstate = last_sqlstate_;
-        return catalog->upsertRuntimeTransactionCatalogEntry(info, ctx);
+        Status status = catalog->upsertRuntimeTransactionCatalogEntry(info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to upsert runtime transaction catalog entry");
+        }
+        return status;
     }
 
     Status ConnectionContext::appendTransactionLineageBegin(ErrorContext* ctx)
@@ -2027,6 +2236,10 @@ namespace scratchbird::core
         if (status == Status::OK)
         {
             lineage_root_event_id_ = begin.lineage_event_id;
+        }
+        else
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to append TX_BEGIN lineage event");
         }
         return status;
     }

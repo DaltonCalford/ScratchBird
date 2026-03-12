@@ -1448,7 +1448,11 @@ namespace scratchbird::core
             {
                 // Unregister backend on failure
                 ProcArrayManager::unregisterBackend(proc_id, nullptr);
-                SET_ERROR_CONTEXT(ctx, s, "Failed to initialize connection context");
+                const std::string detail =
+                    (ctx != nullptr && !ctx->message.empty()) ? ctx->message : "no detail";
+                SET_ERROR_CONTEXT(ctx,
+                                  s,
+                                  ("Failed to initialize connection context: " + detail).c_str());
                 return s;
             }
 

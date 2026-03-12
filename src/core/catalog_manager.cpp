@@ -14635,6 +14635,8 @@ bool hasTriggerNameConflictInTable(
                                                const ID& column_id,
                                                bool is_include,
                                                const ID& expression_sblr_id) -> Status {
+                    constexpr std::string_view kLegacyColumnBackfillSkipReason =
+                        "index_column.column_uuid not found for index table_uuid";
                     IndexColumnCatalogInfo info{};
                     info.index_id = index_id;
                     info.position = position;
@@ -14645,10 +14647,30 @@ bool hasTriggerNameConflictInTable(
                     info.is_include = is_include;
                     info.is_valid = true;
                     ID index_column_id{};
-                    Status insert_status = upsertIndexColumnCatalogEntry(info, index_column_id, ctx);
+                    ErrorContext insert_ctx;
+                    Status insert_status =
+                        upsertIndexColumnCatalogEntry(info, index_column_id, &insert_ctx);
+                    if (insert_status == Status::NOT_FOUND &&
+                        !isZeroUuidLocal(column_id) &&
+                        insert_ctx.message.find(kLegacyColumnBackfillSkipReason) != std::string::npos)
+                    {
+                        LOG_WARNING(CATALOG,
+                                    "Skipping legacy index metadata backfill for stale column "
+                                    "reference at position %u: %s",
+                                    static_cast<unsigned>(position),
+                                    insert_ctx.message.c_str());
+                        return Status::OK;
+                    }
                     if (insert_status == Status::OK)
                     {
                         metadata_backfilled = true;
+                    }
+                    else if (ctx != nullptr)
+                    {
+                        const char* message =
+                            insert_ctx.message.empty() ? "Failed to backfill index_column metadata"
+                                                       : insert_ctx.message.c_str();
+                        ctx->set(insert_status, message, __FILE__, __LINE__, __func__);
                     }
                     return insert_status;
                 };
@@ -15374,16 +15396,54 @@ bool hasTriggerNameConflictInTable(
             memset(&pointer, 0, sizeof(ToastPointer));
 
             // Store in TOAST using EXTENDED strategy (out-of-line storage)
-            Status status = policy_toast_manager_->toastValue(
-                data.data(), data.size(),
-                ToastStrategy::EXTENDED,
-                xmin,
-                &pointer,
-                ctx);
+            auto is_retryable_lock_conflict = [](Status st, const ErrorContext* err) {
+                if (st == Status::LOCK_CONFLICT)
+                {
+                    return true;
+                }
+                if (!err)
+                {
+                    return false;
+                }
+                return err->message.find("Failed to acquire page lock during B-tree traversal") !=
+                           std::string::npos ||
+                       err->message.find("Lock conflict") != std::string::npos;
+            };
+
+            auto toast_value_with_retry = [&](Status& status_out,
+                                              std::string& detail_out) {
+                constexpr int kMaxAttempts = 4;
+                detail_out.clear();
+                for (int attempt = 0; attempt < kMaxAttempts; ++attempt)
+                {
+                    ErrorContext toast_ctx;
+                    status_out = policy_toast_manager_->toastValue(
+                        data.data(), data.size(),
+                        ToastStrategy::EXTENDED,
+                        xmin,
+                        &pointer,
+                        &toast_ctx);
+                    detail_out = toast_ctx.message;
+                    if (status_out == Status::OK)
+                    {
+                        return;
+                    }
+                    if (!is_retryable_lock_conflict(status_out, &toast_ctx) ||
+                        attempt + 1 >= kMaxAttempts)
+                    {
+                        return;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(attempt + 1));
+                }
+            };
+
+            std::string toast_error_detail;
+            Status status = Status::OK;
+            toast_value_with_retry(status, toast_error_detail);
 
             if (status != Status::OK)
             {
-                auto is_missing_toast = [&](Status st, const ErrorContext* err) -> bool
+                auto is_missing_toast = [&](Status st, const std::string& detail) -> bool
                 {
                     if (st == Status::NOT_FOUND || st == Status::INVALID_ARGUMENT)
                     {
@@ -15391,12 +15451,12 @@ bool hasTriggerNameConflictInTable(
                     }
                     if (st == Status::INTERNAL_ERROR)
                     {
-                        if (!err)
+                        if (detail.empty())
                         {
                             return true;
                         }
-                        if (err->message.find("sb_toast_") != std::string::npos ||
-                            err->message.find("Table not found") != std::string::npos)
+                        if (detail.find("sb_toast_") != std::string::npos ||
+                            detail.find("Table not found") != std::string::npos)
                         {
                             return true;
                         }
@@ -15404,19 +15464,14 @@ bool hasTriggerNameConflictInTable(
                     return false;
                 };
 
-                if (is_missing_toast(status, ctx))
+                if (is_missing_toast(status, toast_error_detail))
                 {
                     ErrorContext init_ctx;
                     policy_toast_manager_.reset();
                     initializePolicyToast(&init_ctx);
                     if (policy_toast_manager_)
                     {
-                        status = policy_toast_manager_->toastValue(
-                            data.data(), data.size(),
-                            ToastStrategy::EXTENDED,
-                            xmin,
-                            &pointer,
-                            ctx);
+                        toast_value_with_retry(status, toast_error_detail);
                     }
                 }
 
@@ -15428,10 +15483,10 @@ bool hasTriggerNameConflictInTable(
                               policy_toast_table_id_.toString().c_str(),
                               policy_toast_manager_ ? policy_toast_manager_->toastTableId().toString().c_str() : "n/a",
                               data.size(),
-                              (ctx && !ctx->message.empty()) ? ctx->message.c_str() : "");
+                              toast_error_detail.empty() ? "" : toast_error_detail.c_str());
                     DEBUG_LOG_DB("Failed to TOAST policy expression: " << static_cast<int>(status));
 
-                    if (is_missing_toast(status, ctx))
+                    if (is_missing_toast(status, toast_error_detail))
                     {
                         // Fallback: retain values in memory if TOAST table is unavailable.
                         std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
@@ -15442,9 +15497,9 @@ bool hasTriggerNameConflictInTable(
                     }
 
                     std::string detail;
-                    if (ctx && !ctx->message.empty())
+                    if (!toast_error_detail.empty())
                     {
-                        detail = ctx->message;
+                        detail = toast_error_detail;
                     }
                     if (!detail.empty())
                     {
@@ -16726,8 +16781,8 @@ bool hasTriggerNameConflictInTable(
             auto table_it = table_by_id.find(trig.table_id);
             if (table_it == table_by_id.end())
             {
-                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Trigger table not found");
-                return Status::DATA_CORRUPTED;
+                // Keep resolver rebuild resilient when stale trigger rows outlive table drops.
+                continue;
             }
             const auto& table = table_it->second;
             std::string schema_path;
@@ -16756,8 +16811,8 @@ bool hasTriggerNameConflictInTable(
             auto table_it = table_by_id.find(con.table_id);
             if (table_it == table_by_id.end())
             {
-                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Constraint table not found");
-                return Status::DATA_CORRUPTED;
+                // Keep resolver rebuild resilient when stale constraint rows outlive table drops.
+                continue;
             }
             const auto& table = table_it->second;
             std::string schema_path;
@@ -18138,7 +18193,9 @@ bool hasTriggerNameConflictInTable(
 
         std::vector<DependencyInfo> blocking_deps;
         {
-            std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
+            std::scoped_lock lock(foreign_keys_cache_mutex_,
+                                  constraints_cache_mutex_,
+                                  dependency_cache_mutex_);
             for (const auto& [dep_id, dep] : dependency_cache_)
             {
                 if (drop_entries.find(dep.referenced_object_id) == drop_entries.end())
@@ -18152,6 +18209,22 @@ bool hasTriggerNameConflictInTable(
                 if (drop_entries.find(dep.dependent_object_id) != drop_entries.end())
                 {
                     continue;
+                }
+                if (dep.dependent_type == ObjectType::CONSTRAINT)
+                {
+                    auto constraint_it = constraints_cache_.find(dep.dependent_object_id);
+                    if (constraint_it != constraints_cache_.end() &&
+                        drop_entries.find(constraint_it->second.table_id) != drop_entries.end())
+                    {
+                        continue;
+                    }
+
+                    auto fk_it = foreign_keys_cache_.find(dep.dependent_object_id);
+                    if (fk_it != foreign_keys_cache_.end() &&
+                        drop_entries.find(fk_it->second.child_table_id) != drop_entries.end())
+                    {
+                        continue;
+                    }
                 }
                 blocking_deps.push_back(dep);
             }
@@ -18207,6 +18280,10 @@ bool hasTriggerNameConflictInTable(
             std::lock_guard<std::mutex> lock(dependency_cache_mutex_);
             for (const auto& [dep_id, dep] : dependency_cache_)
             {
+                if (dep.dependency_type == DependencyType::AUTO)
+                {
+                    continue;
+                }
                 if (indegree.find(dep.dependent_object_id) == indegree.end() ||
                     indegree.find(dep.referenced_object_id) == indegree.end())
                 {
@@ -18544,6 +18621,14 @@ bool hasTriggerNameConflictInTable(
             uint32_t next_page = heap->next_page;
             bp->unpinPage(current_page_id, false, ctx);
             current_page_id = next_page;
+        }
+
+        if (schema_cache_.find(schema_id) != schema_cache_.end())
+        {
+            LOG_WARNING(CATALOG,
+                        "Schema %s missing on disk during delete; removing stale cache entry",
+                        schema_id.toString().c_str());
+            return Status::OK;
         }
 
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema record not found on disk");
@@ -21419,6 +21504,23 @@ bool hasTriggerNameConflictInTable(
                             schema_id = table_it->second.schema_id;
                         }
                     }
+                    else
+                    {
+                        ForeignKeyInfo fk_info;
+                        if (getForeignKey(resolved.object_id, fk_info, ctx) == Status::OK)
+                        {
+                            parent_object_id = fk_info.child_table_id;
+                            created_time = fk_info.created_time;
+                            name_text = fk_info.fk_name;
+
+                            std::lock_guard<CatalogMutex> lock(mutex_);
+                            auto table_it = table_cache_.find(fk_info.child_table_id);
+                            if (table_it != table_cache_.end())
+                            {
+                                schema_id = table_it->second.schema_id;
+                            }
+                        }
+                    }
                     break;
                 }
                 case ObjectType::VIEW:
@@ -21679,9 +21781,12 @@ bool hasTriggerNameConflictInTable(
             }
             if (name_text.empty())
             {
-                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
-                                  "Resolved object has empty canonical name");
-                return Status::DATA_CORRUPTED;
+                LOG_WARNING(
+                    CATALOG,
+                    "Skipping stale resolved object during canonical sync: type=%s object_id=%s",
+                    objectTypeToString(resolved.object_type).c_str(),
+                    resolved.object_id.toString().c_str());
+                continue;
             }
 
             auto is_schema_parent = [&](const ID& candidate) -> bool {
@@ -22249,50 +22354,48 @@ bool hasTriggerNameConflictInTable(
                                                   ErrorContext *ctx) -> Status
     {
         BufferPool *bp = db_->buffer_pool();
-        void *page_buffer;
-        Status status = bp->pinPage(page_id, &page_buffer, ctx);
-        if (status != Status::OK)
+        uint32_t current_page_id = page_id;
+
+        while (current_page_id != 0)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
-            return status;
-        }
-
-        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-        uint32_t offset = sizeof(CatalogHeapPage);
-        bool found = false;
-
-        // Search for record to delete
-        for (uint32_t i = 0; i < heap->record_count; i++)
-        {
-            auto *record =
-                reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-            if (record->is_valid && matcher(*record))
+            void *page_buffer = nullptr;
+            Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
             {
-                // ✅ FOUND: Mark as deleted IN-PLACE (Firebird MGA)
-                // This is the key fix - we mark invalid, not remove
-                record->is_valid = 0;
-                found = true;
-
-                // Mark page dirty and increment generation
-                heap->header.generation++;
-
-                // Unpin and return success
-                return bp->unpinPage(page_id, true, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                return status;
             }
 
-            offset += sizeof(RecordType);
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            uint32_t offset = sizeof(CatalogHeapPage);
+
+            for (uint32_t i = 0; i < heap->record_count; i++)
+            {
+                auto *record =
+                    reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                if (record->is_valid && matcher(*record))
+                {
+                    // Firebird MGA delete: mark invalid in place.
+                    record->is_valid = 0;
+                    heap->header.generation++;
+                    return bp->unpinPage(current_page_id, true, ctx);
+                }
+
+                offset += sizeof(RecordType);
+            }
+
+            const uint32_t next_page = heap->next_page;
+            Status unpin_status = bp->unpinPage(current_page_id, false, ctx);
+            if (unpin_status != Status::OK)
+            {
+                return unpin_status;
+            }
+            current_page_id = next_page;
         }
 
-        // Record not found
-        bp->unpinPage(page_id, false, ctx);
-        if (!found)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Record not found for deletion");
-            return Status::NOT_FOUND;
-        }
-
-        return Status::OK;
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Record not found for deletion");
+        return Status::NOT_FOUND;
     }
 
     /**
@@ -34624,7 +34727,18 @@ auto CatalogManager::createSequence(const ID& schema_id, const std::string& name
     }
     state->owned_by_table_id = owned_by_table_id;
     state->owned_by_column_id = owned_by_column_id;
-    state->current_value.store(start_value);
+    // Sequences persist the last value returned, not the next value to return.
+    // Seed one increment before START so the first NEXTVAL yields START.
+    __int128 seed_value = static_cast<__int128>(start_value) -
+                          static_cast<__int128>(increment_by);
+    if (seed_value < static_cast<__int128>(std::numeric_limits<int64_t>::min()) ||
+        seed_value > static_cast<__int128>(std::numeric_limits<int64_t>::max()))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "Sequence start value/increment combination overflows initial seed");
+        return Status::INVALID_ARGUMENT;
+    }
+    state->current_value.store(static_cast<int64_t>(seed_value));
     state->increment_by = increment_by;
     state->min_value = min_value;
     state->max_value = max_value;
@@ -42763,6 +42877,68 @@ auto CatalogManager::updateUserMetadata(const ID& user_id, const std::string& us
     if (status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, status, "Failed to update user metadata");
+        return status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::renameUser(const ID& user_id,
+                                const std::string& new_username,
+                                ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    Status status = UTF8Utils::validateStorageCapacity(new_username,
+        CatalogConstants::MAX_IDENTIFIER_CHARS,
+        CatalogConstants::MAX_IDENTIFIER_BYTES);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Username too long or invalid UTF-8");
+        return status;
+    }
+
+    auto duplicate_predicate = [&new_username, &user_id](const UserRecord& rec) {
+        return rec.is_valid &&
+               rec.user_id != user_id &&
+               IdentifierUtils::namesMatch(new_username, false,
+                                           std::string(rec.username), false);
+    };
+    auto duplicate = findRecordInHeapPage<UserRecord>(users_table_page_,
+                                                      duplicate_predicate,
+                                                      ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "User already exists");
+        return Status::FILE_EXISTS;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        SET_ERROR_CONTEXT(ctx, duplicate.status, "User lookup failed");
+        return duplicate.status;
+    }
+
+    auto predicate = [&user_id](const UserRecord& rec) {
+        return rec.is_valid && rec.user_id == user_id;
+    };
+    auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "User not found");
+        return result.status;
+    }
+
+    UserRecord updated_rec = result.record;
+    std::memset(updated_rec.username, 0, sizeof(updated_rec.username));
+    std::string truncated_username = UTF8Utils::truncateToBytes(new_username,
+        sizeof(updated_rec.username));
+    std::strncpy(updated_rec.username, truncated_username.c_str(),
+                 sizeof(updated_rec.username) - 1);
+
+    status = updateRecordInHeapPage(users_table_page_, result.slot_index, updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to update user record");
         return status;
     }
 
