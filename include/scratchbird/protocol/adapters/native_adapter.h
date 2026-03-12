@@ -132,6 +132,10 @@ private:
     core::Status executeRemoteQuery(const std::string& sql,
                                     const std::vector<uint8_t>* bytecode,
                                     ResultContext& result);
+    core::Status executeRemoteTxnControl(network::Connection* conn,
+                                         const std::string& sql,
+                                         const std::string& sqlstate,
+                                         const std::string& fallback_error);
 
     // ========================================================================
     // Message Sending
@@ -222,6 +226,8 @@ private:
     bool sendStreamPayload(network::Connection* conn, uint64_t stream_id,
                            const uint8_t* data, size_t len, std::string& error);
     uint64_t serverFeatureMask() const;
+    auto bindAuthenticatedSessionContext(core::ErrorContext* ctx) -> core::Status;
+    void refreshTransactionStateFromContext();
 
     struct PortalState {
         std::string statement_name;

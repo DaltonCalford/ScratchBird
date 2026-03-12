@@ -217,6 +217,20 @@ std::string unquoteSqlIdentifier(const std::string& value) {
     return value;
 }
 
+std::string quoteSqlIdentifier(const std::string& value) {
+    std::string out;
+    out.reserve(value.size() + 2);
+    out.push_back('"');
+    for (char c : value) {
+        if (c == '"') {
+            out.push_back('"');
+        }
+        out.push_back(c);
+    }
+    out.push_back('"');
+    return out;
+}
+
 bool matchesTopLevelKeyword(const std::string& sql, size_t pos, const char* keyword) {
     const size_t len = std::strlen(keyword);
     if (pos + len > sql.size()) {
@@ -1081,6 +1095,101 @@ NativeAdapter::NativeAdapter(const ProtocolAdapterConfig& config)
 
 NativeAdapter::~NativeAdapter() = default;
 
+auto NativeAdapter::bindAuthenticatedSessionContext(core::ErrorContext* ctx) -> core::Status {
+    refreshTransactionStateFromContext();
+    if (!connection_ctx_) {
+        in_transaction_ = true;
+        transaction_id_ = 0;
+        return core::Status::OK;
+    }
+
+    connection_ctx_->setAutocommitMode(true);
+
+    core::Database* db = engineDatabase();
+    auto* catalog = db ? db->catalog_manager() : nullptr;
+    if (!catalog || username_.empty()) {
+        refreshTransactionStateFromContext();
+        return core::Status::OK;
+    }
+
+    core::CatalogManager::UserInfo user_info;
+    core::Status status = catalog->getUserByName(username_, user_info, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    connection_ctx_->setCurrentUser(user_info.user_id, user_info.is_superuser);
+
+    core::CatalogManager::SessionInfo session_info;
+    status = catalog->createSession(
+        user_info.user_id,
+        core::ID{},
+        connection_ctx_->emulationMode(),
+        session_info,
+        ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    connection_ctx_->setCurrentSchemaId(session_info.current_schema_id);
+    if (!session_info.search_path.empty()) {
+        connection_ctx_->set_search_path(session_info.search_path);
+    }
+
+    core::CatalogManager::SchemaInfo schema_info;
+    if (catalog->getSchema(session_info.current_schema_id, schema_info, nullptr) ==
+        core::Status::OK) {
+        connection_ctx_->set_current_schema(schema_info.schema_name);
+    }
+
+    connection_ctx_->setSessionContext(session_info.session_id,
+                                       core::ID{},
+                                       session_info.emulation_mode,
+                                       session_info.policy_epoch_global,
+                                       session_info.policy_epoch_table);
+
+    refreshTransactionStateFromContext();
+    return core::Status::OK;
+}
+
+void NativeAdapter::refreshTransactionStateFromContext() {
+    if (!config_.engine_endpoint.empty()) {
+        if (in_transaction_) {
+            transaction_id_ = 0;
+        }
+        return;
+    }
+    if (!connection_ctx_) {
+        return;
+    }
+    transaction_id_ = connection_ctx_->getCurrentXid();
+    in_transaction_ = transaction_id_ != 0;
+}
+
+core::Status NativeAdapter::executeRemoteTxnControl(network::Connection* conn,
+                                                    const std::string& sql,
+                                                    const std::string& sqlstate,
+                                                    const std::string& fallback_error) {
+    ResultContext result;
+    auto status = executeRemoteQuery(sql, nullptr, result);
+    if (status != core::Status::OK || result.has_error) {
+        const uint32_t error_code =
+            result.has_error ? result.error_code : static_cast<uint32_t>(status);
+        sendQueryError(conn,
+                       error_code,
+                       result.sqlstate.empty() ? sqlstate : result.sqlstate,
+                       result.error_message.empty() ? fallback_error : result.error_message);
+        sendReady(conn);
+        return sendBuffer(conn);
+    }
+
+    in_transaction_ = true;
+    transaction_id_ = 0;
+    sendTransactionStatus(conn, true);
+    sendReady(conn);
+    return sendBuffer(conn);
+}
+
 // ============================================================================
 // ProtocolAdapter Implementation
 // ============================================================================
@@ -1220,7 +1329,16 @@ core::Status NativeAdapter::sendAuthResult(network::Connection* conn,
                        "28000", error_msg.empty() ? "Authentication failed" : error_msg);
         return sendBuffer(conn);
     }
-    in_transaction_ = true;
+    core::ErrorContext ctx;
+    auto bind_status = bindAuthenticatedSessionContext(&ctx);
+    if (bind_status != core::Status::OK) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(bind_status),
+                       "58000",
+                       ctx.message.empty() ? "Failed to initialize session context"
+                                           : ctx.message);
+        return sendBuffer(conn);
+    }
     sendAuthOk(conn, {});
     sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
     sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -1456,7 +1574,15 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
 
         auth_in_progress_ = false;
         scram_pending_ = false;
-        in_transaction_ = true;
+        core::Status bind_status = bindAuthenticatedSessionContext(&ctx);
+        if (bind_status != core::Status::OK) {
+            sendQueryError(conn,
+                          static_cast<uint32_t>(bind_status),
+                          "58000",
+                          ctx.message.empty() ? "Failed to initialize session context"
+                                              : ctx.message);
+            return sendBuffer(conn);
+        }
         sendAuthOk(conn, {});
         sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
         sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -1499,7 +1625,15 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
         user_id_ = auth_response.user_id;
         auth_in_progress_ = false;
         scram_pending_ = false;
-        in_transaction_ = true;
+        core::Status bind_status = bindAuthenticatedSessionContext(&ctx);
+        if (bind_status != core::Status::OK) {
+            sendQueryError(conn,
+                          static_cast<uint32_t>(bind_status),
+                          "58000",
+                          ctx.message.empty() ? "Failed to initialize session context"
+                                              : ctx.message);
+            return sendBuffer(conn);
+        }
         sendAuthOk(conn, auth_response.data);
         sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
         sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
@@ -2171,6 +2305,15 @@ core::Status NativeAdapter::handleDescribe(network::Connection* conn) {
 }
 
 core::Status NativeAdapter::handleBeginTransaction(network::Connection* conn) {
+    if (!config_.engine_endpoint.empty()) {
+        sendQueryError(conn,
+                       static_cast<uint32_t>(core::Status::INVALID_TRANSACTION_STATE),
+                       "25001",
+                       "Transaction already active");
+        sendReady(conn);
+        return sendBuffer(conn);
+    }
+    refreshTransactionStateFromContext();
     auto status = beginTransaction();
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status), "25000",
@@ -2183,6 +2326,10 @@ core::Status NativeAdapter::handleBeginTransaction(network::Connection* conn) {
 }
 
 core::Status NativeAdapter::handleCommit(network::Connection* conn) {
+    if (!config_.engine_endpoint.empty()) {
+        return executeRemoteTxnControl(conn, "COMMIT", "25000", "Failed to commit transaction");
+    }
+    refreshTransactionStateFromContext();
     auto status = commitTransaction();
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status), "25000",
@@ -2196,6 +2343,10 @@ core::Status NativeAdapter::handleCommit(network::Connection* conn) {
 }
 
 core::Status NativeAdapter::handleRollback(network::Connection* conn) {
+    if (!config_.engine_endpoint.empty()) {
+        return executeRemoteTxnControl(conn, "ROLLBACK", "25000", "Failed to rollback transaction");
+    }
+    refreshTransactionStateFromContext();
     auto status = rollbackTransaction();
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status), "25000",
@@ -2223,6 +2374,14 @@ core::Status NativeAdapter::handleSavepoint(network::Connection* conn) {
     }
     std::string name(reinterpret_cast<const char*>(payload.data() + 4), name_len);
 
+    if (!config_.engine_endpoint.empty()) {
+        return executeRemoteTxnControl(conn,
+                                       "SAVEPOINT " + quoteSqlIdentifier(name),
+                                       "3B000",
+                                       "Failed to create savepoint");
+    }
+
+    refreshTransactionStateFromContext();
     auto status = savepoint(name);
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status), "3B000",
@@ -2249,6 +2408,14 @@ core::Status NativeAdapter::handleReleaseSavepoint(network::Connection* conn) {
     }
     std::string name(reinterpret_cast<const char*>(payload.data() + 4), name_len);
 
+    if (!config_.engine_endpoint.empty()) {
+        return executeRemoteTxnControl(conn,
+                                       "RELEASE SAVEPOINT " + quoteSqlIdentifier(name),
+                                       "3B000",
+                                       "Failed to release savepoint");
+    }
+
+    refreshTransactionStateFromContext();
     auto status = releaseSavepoint(name);
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status), "3B000",
@@ -2275,6 +2442,14 @@ core::Status NativeAdapter::handleRollbackTo(network::Connection* conn) {
     }
     std::string name(reinterpret_cast<const char*>(payload.data() + 4), name_len);
 
+    if (!config_.engine_endpoint.empty()) {
+        return executeRemoteTxnControl(conn,
+                                       "ROLLBACK TO SAVEPOINT " + quoteSqlIdentifier(name),
+                                       "3B000",
+                                       "Failed to rollback to savepoint");
+    }
+
+    refreshTransactionStateFromContext();
     auto status = rollbackToSavepoint(name);
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status), "3B000",
@@ -2543,6 +2718,7 @@ void NativeAdapter::sendPortalSuspended(network::Connection* conn) {
 }
 
 void NativeAdapter::sendReady(network::Connection* conn) {
+    refreshTransactionStateFromContext();
     std::vector<uint8_t> payload(20, 0);
     payload[0] = in_transaction_ ? 1 : 0;
     std::memcpy(payload.data() + 4, &transaction_id_, sizeof(transaction_id_));
@@ -2640,6 +2816,7 @@ void NativeAdapter::sendDescribeResponse(network::Connection* conn, uint32_t /*s
 }
 
 void NativeAdapter::sendTransactionStatus(network::Connection* conn, bool in_transaction) {
+    refreshTransactionStateFromContext();
     std::vector<uint8_t> payload;
     payload.reserve(32);
     payload.push_back(in_transaction ? 'T' : 'I');
