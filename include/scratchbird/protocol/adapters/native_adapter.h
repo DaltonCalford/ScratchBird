@@ -227,6 +227,9 @@ private:
         std::string statement_name;
         std::vector<std::string> param_values;
         std::vector<bool> param_nulls;
+        std::vector<ProtocolCodec::ColumnValue> bound_param_values;
+        std::vector<uint16_t> bound_param_formats;
+        std::vector<uint32_t> bound_param_type_oids;
         bool bound = false;
         std::vector<ProtocolCodec::ColumnInfo> columns;
         std::vector<std::vector<ProtocolCodec::ColumnValue>> rows;
@@ -242,7 +245,7 @@ private:
     core::Status sendPortalResults(network::Connection* conn,
                                    PortalState& portal,
                                    uint32_t max_rows,
-                                   bool backward);
+                                   bool send_ready);
 
     // ========================================================================
     // State
@@ -267,6 +270,7 @@ private:
     // Prepared statements (id -> query)
     uint32_t next_stmt_id_ = 1;
     std::unordered_map<uint32_t, std::string> native_prepared_statements_;
+    std::unordered_map<std::string, std::vector<uint32_t>> prepared_statement_param_types_;
     std::unordered_map<std::string, PortalState> portals_;
     std::unordered_set<std::string> subscribed_channels_;
 

@@ -18,6 +18,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/parser/parser_v3.h"
 #include "scratchbird/server/ipc_server.h"
 
 #include <algorithm>
@@ -118,6 +119,52 @@ std::string toUpperAscii(std::string value) {
     return value;
 }
 
+ProtocolCodec::ColumnValue makeBoundColumnValue(const uint8_t* data,
+                                                size_t len,
+                                                bool is_null) {
+    ProtocolCodec::ColumnValue value;
+    value.is_null = is_null;
+    if (!is_null && data != nullptr && len > 0) {
+        value.data.assign(data, data + len);
+    }
+    return value;
+}
+
+WireType mapOidToWireTypeForNativeAdapter(uint32_t oid) {
+    switch (oid) {
+        case sbwp::kOidBool: return WireType::BOOLEAN;
+        case sbwp::kOidInt2: return WireType::INT16;
+        case sbwp::kOidInt4: return WireType::INT32;
+        case sbwp::kOidInt8: return WireType::INT64;
+        case sbwp::kOidFloat4: return WireType::FLOAT32;
+        case sbwp::kOidFloat8: return WireType::FLOAT64;
+        case sbwp::kOidNumeric: return WireType::DECIMAL;
+        case sbwp::kOidVarchar: return WireType::VARCHAR;
+        case sbwp::kOidChar: return WireType::CHAR;
+        case sbwp::kOidText: return WireType::VARCHAR;
+        case sbwp::kOidBytea: return WireType::BYTEA;
+        case sbwp::kOidDate: return WireType::DATE;
+        case sbwp::kOidTime: return WireType::TIME;
+        case sbwp::kOidTimestamp: return WireType::TIMESTAMP;
+        case sbwp::kOidTimestamptz: return WireType::TIMESTAMPTZ;
+        case sbwp::kOidInterval: return WireType::INTERVAL;
+        case sbwp::kOidUuid: return WireType::UUID;
+        case sbwp::kOidJson: return WireType::JSON;
+        case sbwp::kOidJsonb: return WireType::JSONB;
+        case sbwp::kOidXml: return WireType::XML;
+        case sbwp::kOidInet: return WireType::INET;
+        case sbwp::kOidCidr: return WireType::CIDR;
+        case sbwp::kOidMacaddr: return WireType::MACADDR;
+        case sbwp::kOidTsVector: return WireType::TSVECTOR;
+        case sbwp::kOidTsQuery: return WireType::TSQUERY;
+        case sbwp::kOidSbVector: return WireType::VECTOR;
+        case sbwp::kOidMoney: return WireType::MONEY;
+        case sbwp::kOidRecord: return WireType::COMPOSITE;
+        default:
+            return WireType::UNKNOWN;
+    }
+}
+
 std::string toLowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -143,6 +190,366 @@ bool isTruthyEnv(const char* value) {
            normalized != "FALSE" &&
            normalized != "NO" &&
            normalized != "OFF";
+}
+
+bool isSyntheticExpressionColumnName(const std::string& name, size_t index) {
+    if (name.empty()) {
+        return true;
+    }
+    return toLowerAscii(name) == ("expr" + std::to_string(index + 1));
+}
+
+bool isIdentifierContinuationChar(char c) {
+    const unsigned char byte = static_cast<unsigned char>(c);
+    return std::isalnum(byte) || c == '_' || c == '$';
+}
+
+std::string unquoteSqlIdentifier(const std::string& value) {
+    if (value.size() >= 2) {
+        const char first = value.front();
+        const char last = value.back();
+        if ((first == '"' && last == '"') ||
+            (first == '`' && last == '`') ||
+            (first == '[' && last == ']')) {
+            return value.substr(1, value.size() - 2);
+        }
+    }
+    return value;
+}
+
+bool matchesTopLevelKeyword(const std::string& sql, size_t pos, const char* keyword) {
+    const size_t len = std::strlen(keyword);
+    if (pos + len > sql.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < len; ++i) {
+        if (std::toupper(static_cast<unsigned char>(sql[pos + i])) != keyword[i]) {
+            return false;
+        }
+    }
+    if (pos > 0 && isIdentifierContinuationChar(sql[pos - 1])) {
+        return false;
+    }
+    if (pos + len < sql.size() && isIdentifierContinuationChar(sql[pos + len])) {
+        return false;
+    }
+    return true;
+}
+
+std::string extractTrailingSelectAlias(const std::string& item) {
+    const std::string trimmed = trimAscii(item);
+    if (trimmed.empty()) {
+        return {};
+    }
+
+    size_t alias_end = trimmed.size();
+    while (alias_end > 0 &&
+           std::isspace(static_cast<unsigned char>(trimmed[alias_end - 1]))) {
+        --alias_end;
+    }
+    if (alias_end == 0) {
+        return {};
+    }
+
+    size_t alias_start = alias_end;
+    if (trimmed[alias_end - 1] == '"' ||
+        trimmed[alias_end - 1] == '`' ||
+        trimmed[alias_end - 1] == ']') {
+        const char close = trimmed[alias_end - 1];
+        const char open = close == ']' ? '[' : close;
+        alias_start = alias_end - 1;
+        while (alias_start > 0 && trimmed[alias_start - 1] != open) {
+            --alias_start;
+        }
+        if (alias_start == 0 || trimmed[alias_start - 1] != open) {
+            return {};
+        }
+        --alias_start;
+    } else {
+        while (alias_start > 0 && isIdentifierContinuationChar(trimmed[alias_start - 1])) {
+            --alias_start;
+        }
+    }
+    if (alias_start == alias_end) {
+        return {};
+    }
+
+    size_t cursor = alias_start;
+    while (cursor > 0 &&
+           std::isspace(static_cast<unsigned char>(trimmed[cursor - 1]))) {
+        --cursor;
+    }
+    if (cursor < 2) {
+        return {};
+    }
+
+    size_t kw_end = cursor;
+    size_t kw_start = kw_end;
+    while (kw_start > 0 &&
+           std::isalpha(static_cast<unsigned char>(trimmed[kw_start - 1]))) {
+        --kw_start;
+    }
+    if (toUpperAscii(trimmed.substr(kw_start, kw_end - kw_start)) != "AS") {
+        return {};
+    }
+    if (kw_start > 0 && isIdentifierContinuationChar(trimmed[kw_start - 1])) {
+        return {};
+    }
+
+    return unquoteSqlIdentifier(trimmed.substr(alias_start, alias_end - alias_start));
+}
+
+std::vector<std::string> extractSelectAliasesFallback(const std::string& sql) {
+    std::vector<std::string> aliases;
+    const std::string trimmed = trimAscii(sql);
+    if (!matchesTopLevelKeyword(trimmed, 0, "SELECT")) {
+        return aliases;
+    }
+
+    size_t list_start = 6;
+    while (list_start < trimmed.size() &&
+           std::isspace(static_cast<unsigned char>(trimmed[list_start]))) {
+        ++list_start;
+    }
+
+    bool in_single_quote = false;
+    bool in_double_quote = false;
+    bool in_backtick = false;
+    bool in_bracket = false;
+    int depth = 0;
+    size_t item_start = list_start;
+    auto push_alias = [&](size_t item_end) {
+        aliases.push_back(
+            extractTrailingSelectAlias(trimmed.substr(item_start, item_end - item_start)));
+    };
+
+    for (size_t i = list_start; i < trimmed.size(); ++i) {
+        const char c = trimmed[i];
+        if (in_single_quote) {
+            if (c == '\'' && i + 1 < trimmed.size() && trimmed[i + 1] == '\'') {
+                ++i;
+                continue;
+            }
+            if (c == '\'') {
+                in_single_quote = false;
+            }
+            continue;
+        }
+        if (in_double_quote) {
+            if (c == '"') {
+                in_double_quote = false;
+            }
+            continue;
+        }
+        if (in_backtick) {
+            if (c == '`') {
+                in_backtick = false;
+            }
+            continue;
+        }
+        if (in_bracket) {
+            if (c == ']') {
+                in_bracket = false;
+            }
+            continue;
+        }
+
+        if (c == '\'') {
+            in_single_quote = true;
+            continue;
+        }
+        if (c == '"') {
+            in_double_quote = true;
+            continue;
+        }
+        if (c == '`') {
+            in_backtick = true;
+            continue;
+        }
+        if (c == '[') {
+            in_bracket = true;
+            continue;
+        }
+        if (c == '(') {
+            ++depth;
+            continue;
+        }
+        if (c == ')' && depth > 0) {
+            --depth;
+            continue;
+        }
+        if (depth != 0) {
+            continue;
+        }
+        if (c == ',') {
+            push_alias(i);
+            item_start = i + 1;
+            continue;
+        }
+        if (c == ';' ||
+            matchesTopLevelKeyword(trimmed, i, "FROM") ||
+            matchesTopLevelKeyword(trimmed, i, "WHERE") ||
+            matchesTopLevelKeyword(trimmed, i, "GROUP") ||
+            matchesTopLevelKeyword(trimmed, i, "HAVING") ||
+            matchesTopLevelKeyword(trimmed, i, "ORDER") ||
+            matchesTopLevelKeyword(trimmed, i, "LIMIT") ||
+            matchesTopLevelKeyword(trimmed, i, "UNION")) {
+            push_alias(i);
+            return aliases;
+        }
+    }
+
+    if (item_start < trimmed.size()) {
+        push_alias(trimmed.size());
+    }
+    return aliases;
+}
+
+void applySelectAliasesFromSql(const std::string& sql, ResultContext& result) {
+    if (result.columns.empty()) {
+        return;
+    }
+
+    parser::v3::Parser parser(sql);
+    auto parsed = parser.parseStatement();
+    if (parsed.success() && parsed.statement() != nullptr &&
+        parsed.statement()->kind() == parser::v3::ASTKind::SelectStmt) {
+        auto* select = static_cast<parser::v3::SelectStmt*>(parsed.statement());
+        if (select->items.size() == result.columns.size()) {
+            for (size_t i = 0; i < select->items.size(); ++i) {
+                auto* item = select->items[i];
+                if (item == nullptr ||
+                    item->item_type != parser::v3::SelectItem::Type::EXPRESSION ||
+                    !item->has_alias ||
+                    item->alias == parser::v3::StringPool::INVALID_ID ||
+                    !isSyntheticExpressionColumnName(result.columns[i].name, i)) {
+                    continue;
+                }
+                result.columns[i].name =
+                    std::string(parser.stringPool().get(item->alias));
+            }
+        }
+    }
+
+    const auto fallback_aliases = extractSelectAliasesFallback(sql);
+    if (fallback_aliases.size() != result.columns.size()) {
+        return;
+    }
+    for (size_t i = 0; i < fallback_aliases.size(); ++i) {
+        if (fallback_aliases[i].empty() ||
+            !isSyntheticExpressionColumnName(result.columns[i].name, i)) {
+            continue;
+        }
+        result.columns[i].name = fallback_aliases[i];
+    }
+}
+
+ProtocolCodec::ColumnValue coerceBoundParameterValue(const std::string& decoded_value,
+                                                     uint32_t oid,
+                                                     uint16_t format,
+                                                     const ProtocolCodec::ColumnValue& raw_value) {
+    if (raw_value.is_null) {
+        return ProtocolCodec::ColumnValue(nullptr);
+    }
+
+    const WireType wire_type = mapOidToWireTypeForNativeAdapter(oid);
+    const bool binary_format = format == sbwp::kFormatBinary;
+    const auto raw_text = std::string(raw_value.data.begin(), raw_value.data.end());
+    const bool raw_looks_textual =
+        !raw_value.data.empty() &&
+        std::all_of(raw_value.data.begin(), raw_value.data.end(), [](uint8_t byte) {
+            return byte >= 0x20 && byte <= 0x7e;
+        });
+
+    auto raw_or_string = [&]() -> ProtocolCodec::ColumnValue {
+        if (binary_format) {
+            return raw_value;
+        }
+        return ProtocolCodec::ColumnValue::fromString(decoded_value);
+    };
+
+    auto parse_i64 = [&](const std::string& source, int64_t& out) -> bool {
+        try {
+            size_t consumed = 0;
+            out = std::stoll(source, &consumed);
+            return consumed == source.size();
+        } catch (...) {
+            return false;
+        }
+    };
+
+    auto parse_f64 = [&](const std::string& source, double& out) -> bool {
+        try {
+            size_t consumed = 0;
+            out = std::stod(source, &consumed);
+            return consumed == source.size();
+        } catch (...) {
+            return false;
+        }
+    };
+
+    switch (wire_type) {
+        case WireType::BOOLEAN: {
+            const std::string candidate = raw_looks_textual ? raw_text : decoded_value;
+            const std::string upper = toUpperAscii(candidate);
+            if (candidate == "1" || upper == "TRUE" || upper == "T") {
+                return ProtocolCodec::ColumnValue::fromBool(true);
+            }
+            if (candidate == "0" || upper == "FALSE" || upper == "F") {
+                return ProtocolCodec::ColumnValue::fromBool(false);
+            }
+            return raw_or_string();
+        }
+        case WireType::INT16:
+        case WireType::INT32: {
+            int64_t value = 0;
+            const std::string candidate = raw_looks_textual ? raw_text : decoded_value;
+            if (parse_i64(candidate, value)) {
+                return ProtocolCodec::ColumnValue::fromInt32(static_cast<int32_t>(value));
+            }
+            return raw_or_string();
+        }
+        case WireType::INT64: {
+            int64_t value = 0;
+            const std::string candidate = raw_looks_textual ? raw_text : decoded_value;
+            if (parse_i64(candidate, value)) {
+                return ProtocolCodec::ColumnValue::fromInt64(value);
+            }
+            return raw_or_string();
+        }
+        case WireType::FLOAT32:
+        case WireType::FLOAT64: {
+            double value = 0.0;
+            const std::string candidate = raw_looks_textual ? raw_text : decoded_value;
+            if (parse_f64(candidate, value)) {
+                return ProtocolCodec::ColumnValue::fromDouble(value);
+            }
+            return raw_or_string();
+        }
+        case WireType::VARCHAR:
+        case WireType::CHAR:
+        case WireType::XML:
+        case WireType::INET:
+        case WireType::CIDR:
+        case WireType::MACADDR:
+        case WireType::TSVECTOR:
+        case WireType::TSQUERY:
+        case WireType::JSON:
+        case WireType::JSONB:
+        case WireType::DECIMAL:
+        case WireType::MONEY:
+        case WireType::DATE:
+        case WireType::TIME:
+        case WireType::TIMESTAMP:
+        case WireType::TIMESTAMPTZ:
+        case WireType::INTERVAL:
+        case WireType::UUID:
+            return ProtocolCodec::ColumnValue::fromString(decoded_value);
+        case WireType::BYTEA:
+            return raw_value;
+        default:
+            return raw_or_string();
+    }
 }
 
 bool preferPasswordAuthForNativeAdapter() {
@@ -1158,6 +1565,8 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
         executeQuery(query_ctx, result);
     }
 
+    applySelectAliasesFromSql(query_ctx.query, result);
+
     if (max_rows > 0 && result.rows.size() > max_rows) {
         PortalState portal;
         portal.statement_name.clear();
@@ -1173,7 +1582,7 @@ core::Status NativeAdapter::handleQuery(network::Connection* conn) {
         portals_[""] = std::move(portal);
 
         auto& portal_ref = portals_[""];
-        auto status = sendPortalResults(conn, portal_ref, max_rows, false);
+        auto status = sendPortalResults(conn, portal_ref, max_rows, true);
         if (portal_ref.completed) {
             portals_.erase("");
         }
@@ -1256,16 +1665,45 @@ core::Status NativeAdapter::handlePrepare(network::Connection* conn) {
     uint16_t param_count = 0;
     if (offset + 2 <= payload.size()) {
         param_count = readU16(payload.data() + offset);
+        offset += 2;
     }
-    (void)param_count;
+    if (offset + 2 > payload.size()) {
+        sendQueryError(conn, static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
+                      "42000", "Invalid PARSE payload");
+        return sendBuffer(conn);
+    }
+    offset += 2; // reserved
 
-    std::vector<int32_t> param_types;
-    auto status = prepareStatement(stmt_name, query, param_types);
+    std::vector<uint32_t> requested_param_types;
+    requested_param_types.reserve(param_count);
+    for (uint16_t i = 0; i < param_count; ++i) {
+        if (offset + 4 > payload.size()) {
+            sendQueryError(conn, static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
+                          "42000", "Invalid PARSE payload");
+            return sendBuffer(conn);
+        }
+        requested_param_types.push_back(readU32(payload.data() + offset));
+        offset += 4;
+    }
+
+    std::vector<int32_t> prepared_param_types;
+    auto status = prepareStatement(stmt_name, query, prepared_param_types);
     if (status != core::Status::OK) {
         sendQueryError(conn, static_cast<uint32_t>(status),
                       "42000", "Failed to prepare statement");
         return sendBuffer(conn);
     }
+
+    std::vector<uint32_t> effective_param_types;
+    effective_param_types.reserve(std::max(requested_param_types.size(), prepared_param_types.size()));
+    if (!requested_param_types.empty()) {
+        effective_param_types = requested_param_types;
+    } else {
+        for (int32_t type_oid : prepared_param_types) {
+            effective_param_types.push_back(type_oid > 0 ? static_cast<uint32_t>(type_oid) : 0u);
+        }
+    }
+    prepared_statement_param_types_[stmt_name] = std::move(effective_param_types);
 
     sendParseComplete(conn);
     return sendBuffer(conn);
@@ -1330,8 +1768,12 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
 
     std::vector<std::string> param_values;
     std::vector<bool> param_nulls;
+    std::vector<ProtocolCodec::ColumnValue> bound_param_values;
+    std::vector<uint16_t> bound_param_formats;
     param_values.reserve(param_count);
     param_nulls.reserve(param_count);
+    bound_param_values.reserve(param_count);
+    bound_param_formats.reserve(param_count);
 
     auto decode_param = [&](const uint8_t* data, size_t len, uint16_t format) -> std::string {
         if (format == sbwp::kFormatBinary) {
@@ -1365,6 +1807,8 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         if (len == 0xFFFFFFFFu) {
             param_values.emplace_back();
             param_nulls.push_back(true);
+            bound_param_values.push_back(makeBoundColumnValue(nullptr, 0, true));
+            bound_param_formats.push_back(sbwp::kFormatText);
             continue;
         }
         if (offset + len > payload.size()) {
@@ -1378,6 +1822,8 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         }
         param_values.push_back(decode_param(payload.data() + offset, len, format));
         param_nulls.push_back(false);
+        bound_param_values.push_back(makeBoundColumnValue(payload.data() + offset, len, false));
+        bound_param_formats.push_back(format);
         offset += len;
     }
 
@@ -1409,10 +1855,34 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
+    std::vector<uint32_t> param_type_oids(param_count, 0);
+    auto type_it = prepared_statement_param_types_.find(stmt_name);
+    if (type_it != prepared_statement_param_types_.end()) {
+        param_type_oids = type_it->second;
+        if (param_type_oids.size() < param_count) {
+            param_type_oids.resize(param_count, 0);
+        } else if (param_type_oids.size() > param_count) {
+            param_type_oids.resize(param_count);
+        }
+    }
+
+    for (size_t i = 0; i < bound_param_values.size(); ++i) {
+        const uint32_t oid = i < param_type_oids.size() ? param_type_oids[i] : 0u;
+        const uint16_t format =
+            i < bound_param_formats.size() ? bound_param_formats[i] : sbwp::kFormatText;
+        bound_param_values[i] = coerceBoundParameterValue(param_values[i],
+                                                          oid,
+                                                          format,
+                                                          bound_param_values[i]);
+    }
+
     PortalState portal;
     portal.statement_name = stmt_name;
     portal.param_values = std::move(param_values);
     portal.param_nulls = std::move(param_nulls);
+    portal.bound_param_values = std::move(bound_param_values);
+    portal.bound_param_formats = std::move(bound_param_formats);
+    portal.bound_param_type_oids = std::move(param_type_oids);
     portal.bound = true;
     portals_[portal_name] = std::move(portal);
 
@@ -1488,12 +1958,28 @@ core::Status NativeAdapter::handleExecute(network::Connection* conn) {
 
         ResultContext result;
         if (!config_.engine_endpoint.empty()) {
-            std::vector<ProtocolCodec::ColumnValue> param_values;
-            param_values.reserve(ctx.parameter_values.size());
-            for (const auto& value : ctx.parameter_values) {
-                param_values.push_back(ProtocolCodec::ColumnValue::fromString(value));
+            std::vector<WireType> param_types;
+            param_types.reserve(portal.bound_param_type_oids.size());
+            for (uint32_t type_oid : portal.bound_param_type_oids) {
+                param_types.push_back(mapOidToWireTypeForNativeAdapter(type_oid));
             }
-            std::string exec_query = client::substituteParameters(ctx.query, param_values);
+            std::vector<ProtocolCodec::ColumnValue> execution_param_values =
+                portal.bound_param_values;
+            for (size_t i = 0; i < execution_param_values.size(); ++i) {
+                const uint32_t oid =
+                    i < portal.bound_param_type_oids.size() ? portal.bound_param_type_oids[i] : 0u;
+                const uint16_t format =
+                    i < portal.bound_param_formats.size()
+                        ? portal.bound_param_formats[i]
+                        : sbwp::kFormatText;
+                execution_param_values[i] = coerceBoundParameterValue(
+                    i < portal.param_values.size() ? portal.param_values[i] : std::string(),
+                    oid,
+                    format,
+                    execution_param_values[i]);
+            }
+            std::string exec_query =
+                client::substituteParameters(ctx.query, execution_param_values, param_types);
             auto exec_status = executeRemoteQuery(exec_query, nullptr, result);
             if (exec_status != core::Status::OK) {
                 native_state_ = NativeProtocolState::READY;
@@ -1511,6 +1997,7 @@ core::Status NativeAdapter::handleExecute(network::Connection* conn) {
             }
         }
 
+        applySelectAliasesFromSql(ctx.query, result);
         portal.columns = result.columns;
         portal.rows = result.rows;
         portal.command_tag = result.command_tag;
@@ -1521,7 +2008,7 @@ core::Status NativeAdapter::handleExecute(network::Connection* conn) {
         portal.bytes_sent = 0;
     }
 
-    auto status = sendPortalResults(conn, portal, max_rows, false);
+    auto status = sendPortalResults(conn, portal, max_rows, max_rows > 0);
     if (portal.completed) {
         portals_.erase(portal_it);
     }
@@ -1550,6 +2037,7 @@ core::Status NativeAdapter::handleCloseStatement(network::Connection* conn) {
 
     if (close_type == 'S') {
         prepared_statements_.erase(name);
+        prepared_statement_param_types_.erase(name);
         closePrepared(name);
         for (auto it = portals_.begin(); it != portals_.end();) {
             if (it->second.statement_name == name) {
@@ -1593,8 +2081,14 @@ core::Status NativeAdapter::handleDescribe(network::Connection* conn) {
                           "26000", "Prepared statement not found");
             return sendBuffer(conn);
         }
-        size_t param_count = countParameterPlaceholders(it->second);
-        std::vector<uint32_t> param_types(param_count, 0);
+        std::vector<uint32_t> param_types;
+        auto type_it = prepared_statement_param_types_.find(name);
+        if (type_it != prepared_statement_param_types_.end()) {
+            param_types = type_it->second;
+        } else {
+            size_t param_count = countParameterPlaceholders(it->second);
+            param_types.assign(param_count, 0);
+        }
         sendParameterDescription(conn, param_types);
         sendNoData(conn);
         return sendBuffer(conn);
@@ -2134,7 +2628,7 @@ void NativeAdapter::sendCopyData(network::Connection* conn, const uint8_t* data,
 core::Status NativeAdapter::sendPortalResults(network::Connection* conn,
                                               PortalState& portal,
                                               uint32_t max_rows,
-                                              bool /*backward*/) {
+                                              bool send_ready) {
     if (!portal.columns.empty() && portal.fetch_pos == 0) {
         sendRowDescription(conn, portal.columns);
         auto flush_status = flushWriteBuffer(conn);
@@ -2148,7 +2642,9 @@ core::Status NativeAdapter::sendPortalResults(network::Connection* conn,
             cancel_target_sequence_ = 0;
             sendQueryError(conn, static_cast<uint32_t>(core::Status::QUERY_CANCELED),
                            "57014", "Query canceled");
-            sendReady(conn);
+            if (send_ready) {
+                sendReady(conn);
+            }
             portal.completed = true;
             return core::Status::OK;
         }
@@ -2173,7 +2669,9 @@ core::Status NativeAdapter::sendPortalResults(network::Connection* conn,
             cancel_target_sequence_ = 0;
             sendQueryError(conn, static_cast<uint32_t>(core::Status::QUERY_CANCELED),
                            "57014", "Query canceled");
-            sendReady(conn);
+            if (send_ready) {
+                sendReady(conn);
+            }
             portal.completed = true;
             return core::Status::OK;
         }
@@ -2188,7 +2686,9 @@ core::Status NativeAdapter::sendPortalResults(network::Connection* conn,
     }
 
     sendCommandComplete(conn, portal.command_tag, portal.rows_affected);
-    sendReady(conn);
+    if (send_ready) {
+        sendReady(conn);
+    }
     portal.completed = true;
     return core::Status::OK;
 }
@@ -2342,19 +2842,10 @@ core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
     if (bytecode) {
         status = client_->executeBytecode(*bytecode, sql, &rs, &ctx);
     } else {
-        std::vector<uint8_t> compiled_bytecode;
-        std::string compile_error;
-        status = compileQuery(sql, compiled_bytecode, compile_error);
-        if (status != core::Status::OK) {
-            result.has_error = true;
-            result.error_code = static_cast<uint32_t>(status);
-            result.sqlstate = "42000";
-            result.error_message = compile_error.empty()
-                ? "Failed to compile query before submit"
-                : compile_error;
-            return status;
-        }
-        status = client_->executeBytecode(compiled_bytecode, sql, &rs, &ctx);
+        // In front-door remote mode the listener is not the execution engine and may
+        // not have a local database context. Forward raw SQL to the bound engine
+        // session so compilation happens against the real attached database.
+        status = client_->executeQuery(sql, &rs, &ctx);
     }
 
     if (status != core::Status::OK) {
@@ -2377,6 +2868,7 @@ core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
         info.type_modifier = col.type_modifier;
         result.columns.push_back(info);
     }
+    applySelectAliasesFromSql(sql, result);
 
     result.rows.clear();
     const auto row_count = static_cast<size_t>(rs.getRowCount());

@@ -655,7 +655,7 @@ uint32_t runSession(const ParserConfig& config,
         }
 
         if (status == scratchbird::core::Status::OK) {
-            need_read = true;
+            need_read = conn.getReadBuffer().empty();
             continue;
         }
         if (status == scratchbird::core::Status::IO_ERROR) {
