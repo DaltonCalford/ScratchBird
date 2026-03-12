@@ -987,20 +987,29 @@ namespace scratchbird::core
     auto ToastManager::readToastChunksHeapScan(const ID &value_id, std::vector<uint8_t> *data_out,
                                                uint64_t xmin, ErrorContext *ctx) -> Status
     {
-        StorageEngine *storage = db_->storage_engine();
+        CatalogManager *catalog = db_->catalog_manager();
+        BufferPool *buffer_pool = db_->buffer_pool();
+        if (catalog == nullptr || buffer_pool == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "TOAST heap scan requires catalog and buffer pool");
+            return Status::INVALID_ARGUMENT;
+        }
 
         // Use page-size-based chunk size for validation
         uint32_t max_chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
         uint32_t max_chunk_size_allowed = std::max(
             max_chunk_size, ToastSettings::getLegacyMaxChunkSize(db_->page_size()));
 
-        // Scan TOAST table for chunks with this value_id
-        // In a real implementation, we'd use an index
-        auto scan = storage->createScan(toast_table_id_, ctx);
-        if (!scan)
+        // Enumerate the actual heap pages for the TOAST table rather than using the
+        // generic scan iterator. The generic primary-tablespace scan walks every page
+        // in the file and has proven fragile on auth hot paths after reopen.
+        std::vector<GPID> toast_pages;
+        Status page_status = catalog->enumerateTablePages(toast_table_id_, toast_pages, ctx);
+        if (page_status != Status::OK)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to scan TOAST table");
-            return Status::INVALID_ARGUMENT;
+            SET_ERROR_CONTEXT(ctx, page_status, "Failed to enumerate TOAST table pages");
+            return page_status;
         }
 
         // Collect chunks
@@ -1011,64 +1020,83 @@ namespace scratchbird::core
         };
         std::vector<ChunkData> chunks;
 
-        Tuple tuple;
-        Status status;
-        while ((status = scan->next(&tuple, ctx)) == Status::OK)
+        for (GPID gpid : toast_pages)
         {
-            // Parse tuple format: TupleHeader | chunk_id | chunk_seq | chunk_size | data
-            if ((tuple.data == nullptr) ||
-                tuple.data_size < sizeof(TupleHeader) + 24)
+            void *page_buffer = nullptr;
+            Status pin_status = buffer_pool->pinPageGlobal(gpid, &page_buffer, ctx);
+            if (pin_status != Status::OK)
             {
                 continue;
             }
 
-            const uint8_t *ptr = tuple.data;
-            auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(ptr);
-            uint64_t chunk_xmin = tuple_hdr->xmin;
-            uint64_t chunk_xmax = tuple_hdr->xmax;
-            ptr += sizeof(TupleHeader);
-
-            // Parse chunk_id
-            ID chunk_id{};
-            std::memcpy(chunk_id.bytes.data(), ptr, chunk_id.bytes.size());
-            ptr += chunk_id.bytes.size();
-
-            if (chunk_id != value_id)
+            auto *header = static_cast<PageHeader *>(page_buffer);
+            if (header->page_type != PAGE_TYPE_HEAP)
             {
+                buffer_pool->unpinPageGlobal(gpid, false, ctx);
                 continue;
             }
 
-            // Parse chunk_seq
-            uint32_t chunk_seq = *reinterpret_cast<const uint32_t *>(ptr);
-            ptr += 4;
-
-            // Parse chunk_size
-            uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
-            ptr += 4;
-
-            if (xmin != 0)
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            HeapPage heap_page(page_data, db_->page_size());
+            ErrorContext validate_ctx;
+            if (heap_page.validate(&validate_ctx) != Status::OK)
             {
-                // Phase 2: TIP-based visibility check (Firebird MGA)
-                // Check if this chunk is visible to the current transaction
-                TransactionManager *tm = db_->transaction_manager();
-                if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+                buffer_pool->unpinPageGlobal(gpid, false, ctx);
+                continue;
+            }
+
+            for (uint16_t item = 0; item < heap_page.getItemCount(); ++item)
+            {
+                const uint8_t *tuple_data = nullptr;
+                uint32_t tuple_size = 0;
+                Status tuple_status = heap_page.getTuple(item, &tuple_data, &tuple_size, nullptr);
+                if (tuple_status != Status::OK ||
+                    tuple_data == nullptr ||
+                    tuple_size < sizeof(TupleHeader) + 24)
                 {
-                    continue; // Skip invisible chunk
+                    continue;
                 }
+
+                const uint8_t *ptr = tuple_data;
+                auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(ptr);
+                uint64_t chunk_xmin = tuple_hdr->xmin;
+                uint64_t chunk_xmax = tuple_hdr->xmax;
+                ptr += sizeof(TupleHeader);
+
+                ID chunk_id{};
+                std::memcpy(chunk_id.bytes.data(), ptr, chunk_id.bytes.size());
+                ptr += chunk_id.bytes.size();
+                if (chunk_id != value_id)
+                {
+                    continue;
+                }
+
+                uint32_t chunk_seq = *reinterpret_cast<const uint32_t *>(ptr);
+                ptr += 4;
+                uint32_t chunk_size = *reinterpret_cast<const uint32_t *>(ptr);
+                ptr += 4;
+
+                if (xmin != 0)
+                {
+                    TransactionManager *tm = db_->transaction_manager();
+                    if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+                    {
+                        continue;
+                    }
+                }
+
+                if (chunk_size > max_chunk_size_allowed ||
+                    sizeof(TupleHeader) + 24 + chunk_size > tuple_size)
+                {
+                    continue;
+                }
+
+                std::vector<uint8_t> chunk_data(chunk_size);
+                std::memcpy(chunk_data.data(), ptr, chunk_size);
+                chunks.push_back({chunk_seq, std::move(chunk_data)});
             }
 
-            // Validate chunk size against page-size-based maximum
-            if (chunk_size > max_chunk_size_allowed ||
-                sizeof(TupleHeader) + 24 + chunk_size > tuple.data_size)
-            {
-                continue;
-            }
-
-            // Extract chunk data
-            std::vector<uint8_t> chunk_data(chunk_size);
-            memcpy(chunk_data.data(), ptr, chunk_size);
-
-            chunks.push_back({chunk_seq, std::move(chunk_data)});
+            buffer_pool->unpinPageGlobal(gpid, false, ctx);
         }
 
         if (chunks.empty())

@@ -10659,6 +10659,8 @@ public:
                        ErrorContext* ctx = nullptr) -> Status;
         auto updateUserMetadata(const ID& user_id, const std::string& user_metadata,
                                ErrorContext* ctx = nullptr) -> Status;
+        auto renameUser(const ID& user_id, const std::string& new_username,
+                        ErrorContext* ctx = nullptr) -> Status;
 
         auto deleteUser(const ID& user_id, bool cascade = false, ErrorContext* ctx = nullptr) -> Status;
 
@@ -13054,6 +13056,7 @@ public:
         std::mutex toast_fallback_mutex_;
         ID toast_fallback_next_oid_{};
         std::unordered_map<ID, std::string, IDHash> schema_epoch_manifest_cache_;
+        bool schema_epoch_catalog_rebuild_required_ = false;
         std::unordered_map<ID, std::pair<std::string, std::string>, IDHash>
             forensic_snapshot_capsule_manifest_cache_;
 

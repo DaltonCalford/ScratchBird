@@ -1114,4 +1114,57 @@ TEST_F(AuthBootstrapClaimTest, DormantReattachAuthKeyRevokedOnDatabaseClose) {
     EXPECT_EQ(reloaded.status, CatalogManager::AuthKeyStatus::REVOKED);
 }
 
+TEST_F(AuthBootstrapClaimTest, LocalAuthReloadsToastedUserStateAfterReopen) {
+    ErrorContext ctx;
+
+    CatalogManager::UserInfo system_user{};
+    ASSERT_EQ(catalog_->getUserByName("SYSTEM", system_user, &ctx), Status::OK) << ctx.message;
+
+    const std::string username = "reopen_toast_user";
+    const std::string password_hash = PasswordHash::hashPassword("CorrectPass!1");
+    ASSERT_FALSE(password_hash.empty());
+
+    ID user_id{};
+    ASSERT_EQ(catalog_->createUser(username,
+                                   password_hash,
+                                   system_user.default_schema_id,
+                                   false,
+                                   user_id,
+                                   &ctx),
+              Status::OK)
+        << ctx.message;
+
+    const Json metadata = Json::object({
+        {"auth", Json::object({
+            {"last_success", true},
+            {"notes", "reopen regression"}
+        })}
+    });
+    ASSERT_EQ(catalog_->updateUserMetadata(user_id, metadata.dump(), &ctx), Status::OK)
+        << ctx.message;
+
+    db_->close();
+
+    ASSERT_EQ(db_->open(db_path_, &ctx), Status::OK) << ctx.message;
+    catalog_ = db_->catalog_manager();
+    ASSERT_NE(catalog_, nullptr);
+
+    std::unique_ptr<ConnectionContext> conn;
+    ASSERT_EQ(db_->connect(conn, &ctx), Status::OK) << ctx.message;
+    ASSERT_NE(conn, nullptr);
+    conn.reset();
+
+    CatalogManager::UserInfo loaded_user{};
+    ASSERT_EQ(catalog_->getUserByName(username, loaded_user, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(loaded_user.password_hash, password_hash);
+    EXPECT_EQ(loaded_user.user_metadata, metadata.dump());
+
+    LocalAuthProvider provider(catalog_, nullptr);
+    AuthUserInfo user_info{};
+    std::string error_message;
+    EXPECT_EQ(provider.authenticate(username, "CorrectPass!1", user_info, error_message),
+              AuthResult::SUCCESS)
+        << error_message;
+}
+
 }  // namespace

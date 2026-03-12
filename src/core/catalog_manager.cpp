@@ -22491,6 +22491,16 @@ bool hasTriggerNameConflictInTable(
         BufferPool *bp = db_->buffer_pool();
         results.clear();
         uint32_t current_page_id = page_id;
+        const uint32_t page_size = db_->page_size();
+
+        if (page_size < sizeof(CatalogHeapPage))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Catalog heap page size is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+
+        const uint32_t max_records_per_page =
+            static_cast<uint32_t>((page_size - sizeof(CatalogHeapPage)) / sizeof(RecordType));
 
         while (current_page_id != 0)
         {
@@ -22503,10 +22513,30 @@ bool hasTriggerNameConflictInTable(
             }
 
             auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            if (heap->free_offset < sizeof(CatalogHeapPage) ||
+                heap->free_offset > page_size ||
+                heap->record_count > max_records_per_page)
+            {
+                bp->unpinPage(current_page_id, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog heap page header is invalid");
+                return Status::PAGE_CORRUPT;
+            }
+
             uint32_t offset = sizeof(CatalogHeapPage);
+            const uint32_t max_offset = heap->free_offset;
 
             for (uint32_t i = 0; i < heap->record_count; i++)
             {
+                if (offset + sizeof(RecordType) > max_offset ||
+                    offset + sizeof(RecordType) > page_size)
+                {
+                    bp->unpinPage(current_page_id, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Catalog heap page record layout is invalid");
+                    return Status::PAGE_CORRUPT;
+                }
+
                 auto *record =
                     reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
 
@@ -22523,6 +22553,12 @@ bool hasTriggerNameConflictInTable(
             // Move to next page in chain
             uint32_t next_page = heap->next_page;
             bp->unpinPage(current_page_id, false, ctx);
+            if (next_page == current_page_id)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog heap page chain loops to itself");
+                return Status::PAGE_CORRUPT;
+            }
             current_page_id = next_page;
         }
 
@@ -42764,11 +42800,23 @@ auto CatalogManager::getUserByNameUnlocked(const std::string& username, UserInfo
     user_out.user_metadata = "";
     if (!isZeroUuidLocal(result.record.password_hash_oid))
     {
-        loadStringFromToast(result.record.password_hash_oid, xmin, user_out.password_hash, ctx);
+        Status load_status = loadStringFromToast(result.record.password_hash_oid, xmin,
+                                                 user_out.password_hash, ctx);
+        if (load_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, load_status, "Failed to load user password hash");
+            return load_status;
+        }
     }
     if (!isZeroUuidLocal(result.record.user_metadata_oid))
     {
-        loadStringFromToast(result.record.user_metadata_oid, xmin, user_out.user_metadata, ctx);
+        Status load_status = loadStringFromToast(result.record.user_metadata_oid, xmin,
+                                                 user_out.user_metadata, ctx);
+        if (load_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, load_status, "Failed to load user metadata");
+            return load_status;
+        }
     }
 
     user_out.default_schema_id = result.record.default_schema_id;
@@ -43086,15 +43134,36 @@ auto CatalogManager::getBootstrapState(BootstrapState& state_out,
 
     state_out = BootstrapState::UNINITIALIZED;
 
-    // Persisted state lives in a reserved internal auth provider row.
-    std::vector<AuthProviderCatalogInfo> providers;
-    ErrorContext provider_ctx;
-    Status provider_status = listAuthProviderCatalogEntries(providers, &provider_ctx);
-    if (provider_status != Status::OK && provider_status != Status::NOT_FOUND)
+    // Persisted state lives in a reserved internal auth provider row. Avoid
+    // detoasting arbitrary auth-provider payloads here because bootstrap/auth
+    // probes run on the hot path before user login and must fail closed rather
+    // than crash on stale TOAST rows.
+    struct BootstrapProviderRow
     {
-        // Older/newer catalogs may not have a readable auth_provider page yet.
-        // Bootstrap state can still be derived from persisted users below.
-        providers.clear();
+        ID provider_id;
+        std::string provider_name;
+        AuthProviderState provider_state;
+        ID config_payload_oid;
+    };
+    std::vector<BootstrapProviderRow> providers;
+    if (auth_provider_table_page_ != 0)
+    {
+        auto filter = [](const AuthProviderRecord& row) { return row.is_valid == 1; };
+        auto converter = [](const AuthProviderRecord& row, BootstrapProviderRow& out) {
+            out = BootstrapProviderRow{};
+            out.provider_id = row.provider_id;
+            out.provider_name = fixedNameFromBuffer(row.provider_name, sizeof(row.provider_name));
+            out.provider_state = static_cast<AuthProviderState>(row.provider_state);
+            out.config_payload_oid = row.config_payload_oid;
+        };
+
+        ErrorContext provider_ctx;
+        Status provider_status = readRecordsToVector<AuthProviderRecord, BootstrapProviderRow>(
+            auth_provider_table_page_, providers, filter, converter, &provider_ctx);
+        if (provider_status != Status::OK && provider_status != Status::NOT_FOUND)
+        {
+            providers.clear();
+        }
     }
 
     for (const auto& provider : providers)
@@ -43105,13 +43174,12 @@ auto CatalogManager::getBootstrapState(BootstrapState& state_out,
             continue;
         }
 
-        BootstrapState persisted_state = BootstrapState::UNINITIALIZED;
-        if (parseBootstrapStatePayload(provider.config_payload, persisted_state) &&
-            persisted_state == BootstrapState::LOCKED)
+        if (provider.provider_state == AuthProviderState::DISABLED)
         {
             state_out = BootstrapState::LOCKED;
             return Status::OK;
         }
+
         break;
     }
 
@@ -43180,23 +43248,69 @@ auto CatalogManager::transitionBootstrapState(BootstrapState expected_state,
 
     AuthProviderCatalogInfo provider_info{};
     bool found = false;
-    std::vector<AuthProviderCatalogInfo> providers;
-    ErrorContext provider_ctx;
-    status = listAuthProviderCatalogEntries(providers, &provider_ctx);
-    if (status != Status::OK && status != Status::NOT_FOUND)
+    if (auth_provider_table_page_ != 0)
     {
-        SET_ERROR_CONTEXT(ctx, status, "Failed to load bootstrap state record");
-        return status;
-    }
-
-    for (const auto& provider : providers)
-    {
-        if (IdentifierUtils::toUpper(provider.provider_name) ==
-            IdentifierUtils::toUpper(kBootstrapStateProviderName))
+        struct BootstrapProviderRow
         {
-            provider_info = provider;
-            found = true;
-            break;
+            ID provider_id;
+            std::string provider_name;
+            AuthProviderKind provider_kind;
+            AuthProviderState provider_state;
+            uint32_t priority_rank;
+            uint32_t timeout_ms;
+            uint32_t cache_ttl_ms;
+            AuthProviderFailMode fail_mode;
+            bool is_valid;
+            uint64_t created_time;
+            uint64_t last_modified_time;
+        };
+
+        std::vector<BootstrapProviderRow> providers;
+        auto filter = [](const AuthProviderRecord& row) { return row.is_valid == 1; };
+        auto converter = [](const AuthProviderRecord& row, BootstrapProviderRow& out) {
+            out = BootstrapProviderRow{};
+            out.provider_id = row.provider_id;
+            out.provider_name = fixedNameFromBuffer(row.provider_name, sizeof(row.provider_name));
+            out.provider_kind = static_cast<AuthProviderKind>(row.provider_kind);
+            out.provider_state = static_cast<AuthProviderState>(row.provider_state);
+            out.priority_rank = row.priority_rank;
+            out.timeout_ms = row.timeout_ms;
+            out.cache_ttl_ms = row.cache_ttl_ms;
+            out.fail_mode = static_cast<AuthProviderFailMode>(row.fail_mode);
+            out.is_valid = row.is_valid == 1;
+            out.created_time = row.created_time;
+            out.last_modified_time = row.last_modified_time;
+        };
+
+        ErrorContext provider_ctx;
+        status = readRecordsToVector<AuthProviderRecord, BootstrapProviderRow>(
+            auth_provider_table_page_, providers, filter, converter, &provider_ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to load bootstrap state record");
+            return status;
+        }
+
+        for (const auto& provider : providers)
+        {
+            if (IdentifierUtils::toUpper(provider.provider_name) ==
+                IdentifierUtils::toUpper(kBootstrapStateProviderName))
+            {
+                provider_info = AuthProviderCatalogInfo{};
+                provider_info.provider_id = provider.provider_id;
+                provider_info.provider_name = provider.provider_name;
+                provider_info.provider_kind = provider.provider_kind;
+                provider_info.provider_state = provider.provider_state;
+                provider_info.priority_rank = provider.priority_rank;
+                provider_info.timeout_ms = provider.timeout_ms;
+                provider_info.cache_ttl_ms = provider.cache_ttl_ms;
+                provider_info.fail_mode = provider.fail_mode;
+                provider_info.is_valid = provider.is_valid;
+                provider_info.created_time = provider.created_time;
+                provider_info.last_modified_time = provider.last_modified_time;
+                found = true;
+                break;
+            }
         }
     }
 
@@ -63125,13 +63239,16 @@ auto CatalogManager::appendSchemaEpochCatalogEntry(SchemaEpochCatalogInfo& info,
     {
         info.schema_epoch_uuid = generateUuidV7();
     }
-    if (schema_epoch_table_page_ == 0)
+    if (schema_epoch_table_page_ == 0 || schema_epoch_catalog_rebuild_required_)
     {
-        Status status = allocateCatalogPage(schema_epoch_table_page_, ctx);
+        uint32_t fresh_page_id = 0;
+        Status status = allocateCatalogPage(fresh_page_id, ctx);
         if (status != Status::OK)
         {
             return status;
         }
+        schema_epoch_table_page_ = fresh_page_id;
+        schema_epoch_catalog_rebuild_required_ = false;
         status = writeCatalogRoot(ctx);
         if (status != Status::OK)
         {
@@ -63305,6 +63422,22 @@ auto CatalogManager::getLatestSchemaEpochCatalogEntry(const ID& database_id,
 {
     std::vector<SchemaEpochCatalogInfo> rows;
     Status status = listSchemaEpochCatalogEntries(database_id, rows, ctx);
+    if (status == Status::PAGE_CORRUPT || status == Status::INVALID_ARGUMENT)
+    {
+        {
+            std::lock_guard<CatalogMutex> lock(mutex_);
+            schema_epoch_catalog_rebuild_required_ = true;
+        }
+        LOG_WARNING(CATALOG,
+                    "Schema epoch catalog unreadable for database %s; rebuilding current schema epoch",
+                    database_id.toString().c_str());
+        if (ctx)
+        {
+            ctx->code = Status::NOT_FOUND;
+            ctx->message.clear();
+        }
+        return Status::NOT_FOUND;
+    }
     if (status != Status::OK)
     {
         return status;
