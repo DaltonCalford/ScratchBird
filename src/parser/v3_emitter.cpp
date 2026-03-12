@@ -2943,6 +2943,14 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
                     multi_model_payload["object_name"] = Value(std::string("routing_plan"));
                 } else if (key_text == "cluster.show_admission_status") {
                     multi_model_payload["object_name"] = Value(std::string("admission_status"));
+                } else if (key_text == "cluster.show_slo_status") {
+                    multi_model_payload["object_name"] = Value(std::string("slo_status"));
+                } else if (key_text == "cluster.show_error_budget_status") {
+                    multi_model_payload["object_name"] = Value(std::string("error_budget_status"));
+                } else if (key_text == "cluster.show_autoscale_actions") {
+                    multi_model_payload["object_name"] = Value(std::string("autoscale_actions"));
+                } else if (key_text == "cluster.show_admission_tuning_history") {
+                    multi_model_payload["object_name"] = Value(std::string("admission_tuning_history"));
                 } else if (key_text == "cluster.set_state") {
                     multi_model_payload["object_name"] = Value(std::string("cluster_state"));
                 }
@@ -3086,6 +3094,18 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
             }
             if (key_text == "cluster.show_state") {
                 return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 45);
+            }
+            if (key_text == "cluster.show_slo_status") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 56);
+            }
+            if (key_text == "cluster.show_error_budget_status") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 57);
+            }
+            if (key_text == "cluster.show_autoscale_actions") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 58);
+            }
+            if (key_text == "cluster.show_admission_tuning_history") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 59);
             }
             if (key_text == "cluster.show_routing_plan") {
                 return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN, 46);

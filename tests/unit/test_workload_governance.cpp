@@ -191,6 +191,170 @@ protected:
         return descriptor;
     }
 
+    auto createNode(const ID& cluster_id,
+                    const std::string& node_name,
+                    CatalogManager::ClusterNodeRole role,
+                    uint16_t port = 7610) -> CatalogManager::NodeCatalogInfo
+    {
+        ErrorContext ctx;
+        CatalogManager::NodeCatalogInfo node{};
+        node.node_id = generateUuidV7();
+        node.cluster_id = cluster_id;
+        node.node_name = node_name;
+        node.node_role = role;
+        node.host = "127.0.0.1";
+        node.port = port;
+        node.transport = CatalogManager::ConnectionTransport::INET;
+        node.state = CatalogManager::ClusterNodeState::ONLINE;
+        EXPECT_EQ(db_.catalog_manager()->upsertNodeCatalogEntry(node, &ctx), Status::OK) << ctx.message;
+        return node;
+    }
+
+    auto createSloProfile(const std::string& profile_name,
+                          CatalogManager::ClusterNodeRole role,
+                          double availability_target_pct,
+                          double error_rate_target_pct,
+                          uint32_t short_window_minutes = 5,
+                          uint32_t long_window_minutes = 60,
+                          double moderate_burn_threshold = 2.0,
+                          double high_burn_threshold = 6.0,
+                          double critical_burn_threshold = 14.0)
+        -> CatalogManager::SloProfileCatalogInfo
+    {
+        ErrorContext ctx;
+        CatalogManager::SloProfileCatalogInfo profile{};
+        profile.slo_profile_id = generateUuidV7();
+        profile.profile_name = profile_name;
+        profile.role = role;
+        profile.availability_target_pct = availability_target_pct;
+        profile.latency_p95_target_ms = 25;
+        profile.latency_p99_target_ms = 75;
+        profile.error_rate_target_pct = error_rate_target_pct;
+        profile.window_minutes = long_window_minutes;
+        profile.short_burn_window_minutes = short_window_minutes;
+        profile.long_burn_window_minutes = long_window_minutes;
+        profile.moderate_burn_threshold = moderate_burn_threshold;
+        profile.high_burn_threshold = high_burn_threshold;
+        profile.critical_burn_threshold = critical_burn_threshold;
+        profile.version_u64 = 1;
+        EXPECT_EQ(db_.catalog_manager()->upsertSloProfileCatalogEntry(profile, &ctx), Status::OK)
+            << ctx.message;
+        return profile;
+    }
+
+    auto createSloBinding(const CatalogManager::SloProfileCatalogInfo& profile,
+                          CatalogManager::ClusterNodeRole role,
+                          uint64_t effective_from_time,
+                          uint16_t priority_rank = 1,
+                          const ID* node_id = nullptr) -> CatalogManager::SloBindingCatalogInfo
+    {
+        ErrorContext ctx;
+        CatalogManager::SloBindingCatalogInfo binding{};
+        binding.slo_binding_id = generateUuidV7();
+        binding.slo_profile_id = profile.slo_profile_id;
+        binding.role = role;
+        binding.priority_rank = priority_rank;
+        binding.effective_from_time = effective_from_time;
+        binding.version_u64 = 1;
+        if (node_id != nullptr)
+        {
+            binding.has_node_id = true;
+            binding.node_id = *node_id;
+        }
+        EXPECT_EQ(db_.catalog_manager()->upsertSloBindingCatalogEntry(binding, &ctx), Status::OK)
+            << ctx.message;
+        return binding;
+    }
+
+    auto createSloWindow(const ID& node_id,
+                         CatalogManager::ClusterNodeRole role,
+                         uint64_t window_start_time,
+                         uint64_t window_end_time,
+                         uint64_t request_count,
+                         uint64_t success_count,
+                         uint64_t error_count,
+                         uint32_t latency_p95_ms = 0,
+                         uint32_t latency_p99_ms = 0) -> CatalogManager::SloWindowCatalogInfo
+    {
+        ErrorContext ctx;
+        CatalogManager::SloWindowCatalogInfo window{};
+        window.slo_window_id = generateUuidV7();
+        window.node_id = node_id;
+        window.role = role;
+        window.window_start_time = window_start_time;
+        window.window_end_time = window_end_time;
+        window.request_count = request_count;
+        window.success_count = success_count;
+        window.error_count = error_count;
+        window.latency_p95_ms = latency_p95_ms;
+        window.latency_p99_ms = latency_p99_ms;
+        window.availability_sli_pct = request_count == 0
+            ? 100.0
+            : (static_cast<double>(success_count) / static_cast<double>(request_count)) * 100.0;
+        window.error_rate_sli_pct = request_count == 0
+            ? 0.0
+            : (static_cast<double>(error_count) / static_cast<double>(request_count)) * 100.0;
+        window.version_u64 = 1;
+        EXPECT_EQ(db_.catalog_manager()->upsertSloWindowCatalogEntry(window, &ctx), Status::OK)
+            << ctx.message;
+        return window;
+    }
+
+    auto createAutoscalePolicy(CatalogManager::ClusterNodeRole role,
+                               uint16_t min_nodes,
+                               uint16_t max_nodes,
+                               uint16_t scale_out_step = 1,
+                               uint16_t scale_in_step = 1,
+                               uint32_t scale_out_cooldown_ms = 30000,
+                               uint32_t scale_in_cooldown_ms = 60000)
+        -> CatalogManager::AutoscalePolicyCatalogInfo
+    {
+        ErrorContext ctx;
+        CatalogManager::AutoscalePolicyCatalogInfo policy{};
+        policy.autoscale_policy_id = generateUuidV7();
+        policy.role = role;
+        policy.min_nodes = min_nodes;
+        policy.max_nodes = max_nodes;
+        policy.scale_out_step = scale_out_step;
+        policy.scale_in_step = scale_in_step;
+        policy.scale_out_cooldown_ms = scale_out_cooldown_ms;
+        policy.scale_in_cooldown_ms = scale_in_cooldown_ms;
+        policy.cpu_scale_out_pct = 80;
+        policy.queue_scale_out_pct = 70;
+        policy.slo_burn_scale_out_threshold = 1.5;
+        policy.slo_recovery_scale_in_threshold = 0.7;
+        policy.version_u64 = 1;
+        EXPECT_EQ(db_.catalog_manager()->upsertAutoscalePolicyCatalogEntry(policy, &ctx), Status::OK)
+            << ctx.message;
+        return policy;
+    }
+
+    auto createAdmissionPolicy(const std::string& policy_name,
+                               uint32_t max_concurrent_queries,
+                               uint32_t max_queue_depth,
+                               uint32_t queue_timeout_ms,
+                               CatalogManager::AdmissionRejectMode reject_mode =
+                                   CatalogManager::AdmissionRejectMode::QUEUE)
+        -> CatalogManager::AdmissionPolicyCatalogInfo
+    {
+        ErrorContext ctx;
+        CatalogManager::AdmissionPolicyCatalogInfo policy{};
+        policy.policy_id = generateUuidV7();
+        policy.policy_name = policy_name;
+        policy.max_concurrent_sessions = 8;
+        policy.max_concurrent_queries = max_concurrent_queries;
+        policy.max_queue_depth = max_queue_depth;
+        policy.reject_mode = reject_mode;
+        policy.queue_timeout_ms = queue_timeout_ms;
+        policy.cpu_reject_pct = 80;
+        policy.mem_reject_pct = 80;
+        policy.io_reject_pct = 80;
+        policy.is_enabled = true;
+        EXPECT_EQ(db_.catalog_manager()->upsertAdmissionPolicyCatalogEntry(policy, &ctx), Status::OK)
+            << ctx.message;
+        return policy;
+    }
+
     Database db_{};
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<ConnectionContext> conn_;
@@ -555,4 +719,323 @@ TEST_F(WorkloadGovernanceTest, AltersAndDropsGovernanceObjectsThroughSqlSurface)
     admission_result = compileAndExecute("SHOW CLUSTER ADMISSION STATUS");
     ASSERT_TRUE(admission_result.success()) << admission_result.error();
     EXPECT_FALSE(resultSetHasRow(admission_result.resultSet(), {{2, "ap_manage"}}));
+}
+
+TEST_F(WorkloadGovernanceTest, ResolvesNodeSpecificSloBindingAndComputesBudgetStatus)
+{
+    ErrorContext ctx;
+    const ID cluster_id = generateUuidV7();
+    const auto node = createNode(cluster_id, "node-oltp-a", CatalogManager::ClusterNodeRole::OLTP_DATA);
+    const auto default_profile = createSloProfile(
+        "oltp_default",
+        CatalogManager::ClusterNodeRole::OLTP_DATA,
+        99.0,
+        5.0);
+    const auto specific_profile = createSloProfile(
+        "oltp_node_specific",
+        CatalogManager::ClusterNodeRole::OLTP_DATA,
+        99.0,
+        5.0);
+    createSloBinding(default_profile,
+                     CatalogManager::ClusterNodeRole::OLTP_DATA,
+                     1000,
+                     1,
+                     nullptr);
+    createSloBinding(specific_profile,
+                     CatalogManager::ClusterNodeRole::OLTP_DATA,
+                     1000,
+                     10,
+                     &node.node_id);
+    createSloWindow(node.node_id,
+                    CatalogManager::ClusterNodeRole::OLTP_DATA,
+                    1000,
+                    61000,
+                    100,
+                    96,
+                    4,
+                    17,
+                    46);
+
+    std::vector<WorkloadGovernance::SloStatusRow> slo_rows;
+    ASSERT_EQ(db_.workload_governance()->snapshotSloStatus(slo_rows, 61000, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(slo_rows.size(), 1u);
+    EXPECT_EQ(slo_rows.front().profile_name, "oltp_node_specific");
+    EXPECT_TRUE(slo_rows.front().binding_present);
+    EXPECT_TRUE(slo_rows.front().metrics_present);
+    EXPECT_NEAR(slo_rows.front().availability_sli_pct, 96.0, 0.0001);
+    EXPECT_NEAR(slo_rows.front().error_rate_sli_pct, 4.0, 0.0001);
+    EXPECT_NEAR(slo_rows.front().long_burn_rate, 0.8, 0.0001);
+    EXPECT_EQ(slo_rows.front().burn_severity, "NONE");
+
+    std::vector<WorkloadGovernance::ErrorBudgetStatusRow> budget_rows;
+    ASSERT_EQ(db_.workload_governance()->snapshotErrorBudgetStatus(budget_rows, 61000, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(budget_rows.size(), 1u);
+    EXPECT_NEAR(budget_rows.front().allowed_bad_requests, 5.0, 0.0001);
+    EXPECT_NEAR(budget_rows.front().observed_bad_requests, 4.0, 0.0001);
+    EXPECT_NEAR(budget_rows.front().remaining_bad_requests, 1.0, 0.0001);
+    EXPECT_NEAR(budget_rows.front().remaining_budget_pct, 20.0, 0.0001);
+}
+
+TEST_F(WorkloadGovernanceTest, ShowsSloBudgetAutoscaleAndTuningStateThroughSqlSurface)
+{
+    ErrorContext ctx;
+    const ID cluster_id = generateUuidV7();
+    const auto node = createNode(cluster_id, "node-oltp-sql", CatalogManager::ClusterNodeRole::OLTP_DATA);
+    const auto profile = createSloProfile(
+        "oltp_show",
+        CatalogManager::ClusterNodeRole::OLTP_DATA,
+        99.95,
+        1.0);
+    createSloBinding(profile,
+                     CatalogManager::ClusterNodeRole::OLTP_DATA,
+                     1000,
+                     1,
+                     &node.node_id);
+    createSloWindow(node.node_id,
+                    CatalogManager::ClusterNodeRole::OLTP_DATA,
+                    1000,
+                    61000,
+                    100,
+                    80,
+                    20,
+                    35,
+                    80);
+    createAdmissionPolicy("ap_slo_history", 100, 200, 500);
+    createAutoscalePolicy(CatalogManager::ClusterNodeRole::OLTP_DATA, 2, 8, 2, 1, 30000, 60000);
+    for (uint64_t sample_time = 56000; sample_time <= 60000; sample_time += 1000)
+    {
+        WorkloadGovernance::SloTelemetrySample sample{};
+        sample.node_id = node.node_id;
+        sample.role = CatalogManager::ClusterNodeRole::OLTP_DATA;
+        sample.sample_time = sample_time;
+        sample.cpu_utilization_pct = 90;
+        sample.queue_pressure_pct = 85;
+        sample.current_node_count = 2;
+        ASSERT_EQ(db_.workload_governance()->recordSloTelemetrySample(sample, &ctx), Status::OK)
+            << ctx.message;
+    }
+
+    ASSERT_EQ(db_.workload_governance()->evaluateSloPolicies(61000, &ctx), Status::OK)
+        << ctx.message;
+
+    auto slo_result = compileAndExecute("SHOW SLO STATUS ROLE OLTP_DATA");
+    ASSERT_TRUE(slo_result.success()) << slo_result.error();
+    ASSERT_TRUE(slo_result.hasResultSet());
+    EXPECT_TRUE(resultSetHasRow(slo_result.resultSet(),
+                                {{0, "OLTP_DATA"},
+                                 {1, "node-oltp-sql"},
+                                 {2, "oltp_show"},
+                                 {12, "CRITICAL"}}));
+
+    auto budget_result = compileAndExecute("SHOW ERROR BUDGET STATUS ROLE OLTP_DATA");
+    ASSERT_TRUE(budget_result.success()) << budget_result.error();
+    ASSERT_TRUE(budget_result.hasResultSet());
+    EXPECT_TRUE(resultSetHasRow(budget_result.resultSet(),
+                                {{0, "OLTP_DATA"},
+                                 {1, "node-oltp-sql"},
+                                 {2, "oltp_show"},
+                                 {9, "CRITICAL"}}));
+
+    auto autoscale_result =
+        compileAndExecute("SHOW AUTOSCALE ACTIONS ROLE OLTP_DATA WINDOW MINUTES 10");
+    ASSERT_TRUE(autoscale_result.success()) << autoscale_result.error();
+    ASSERT_TRUE(autoscale_result.hasResultSet());
+    EXPECT_TRUE(resultSetHasRow(autoscale_result.resultSet(),
+                                {{0, "OLTP_DATA"}, {1, "SCALE_OUT"}, {3, "2"}}));
+
+    auto tuning_result =
+        compileAndExecute("SHOW ADMISSION TUNING HISTORY ROLE OLTP_DATA WINDOW MINUTES 10");
+    ASSERT_TRUE(tuning_result.success()) << tuning_result.error();
+    ASSERT_TRUE(tuning_result.hasResultSet());
+    EXPECT_TRUE(resultSetHasRow(tuning_result.resultSet(),
+                                {{0, "OLTP_DATA"}, {1, "100"}, {2, "80"}, {7, "slo burn CRITICAL"}}));
+}
+
+TEST_F(WorkloadGovernanceTest, PersistsBurnEvidenceAndTightensAdmissionWithinBounds)
+{
+    ErrorContext ctx;
+    const ID cluster_id = generateUuidV7();
+    const auto node = createNode(cluster_id, "node-oltp-b", CatalogManager::ClusterNodeRole::OLTP_DATA);
+    const auto profile = createSloProfile(
+        "oltp_critical",
+        CatalogManager::ClusterNodeRole::OLTP_DATA,
+        99.95,
+        1.0);
+    createSloBinding(profile,
+                     CatalogManager::ClusterNodeRole::OLTP_DATA,
+                     1000,
+                     1,
+                     &node.node_id);
+    createSloWindow(node.node_id,
+                    CatalogManager::ClusterNodeRole::OLTP_DATA,
+                    1000,
+                    61000,
+                    100,
+                    80,
+                    20,
+                    35,
+                    80);
+    const auto policy = createAdmissionPolicy("ap_slo_govern", 100, 200, 500);
+
+    ASSERT_EQ(db_.workload_governance()->evaluateSloPolicies(61000, &ctx), Status::OK)
+        << ctx.message;
+
+    std::vector<CatalogManager::SloBurnEventCatalogInfo> burn_rows;
+    ASSERT_EQ(db_.catalog_manager()->listSloBurnEventCatalogEntries(node.node_id, burn_rows, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(burn_rows.size(), 1u);
+    EXPECT_EQ(burn_rows.front().burn_severity, CatalogManager::SloBurnSeverity::CRITICAL);
+    EXPECT_EQ(burn_rows.front().action_plan, CatalogManager::SloActionPlan::INCIDENT_PAGE);
+
+    CatalogManager::AdmissionPolicyCatalogInfo policy_out{};
+    ASSERT_EQ(db_.catalog_manager()->getAdmissionPolicyCatalogEntry(policy.policy_id, policy_out, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(policy_out.max_concurrent_queries, 80u);
+    EXPECT_EQ(policy_out.max_queue_depth, 160u);
+    EXPECT_EQ(policy_out.queue_timeout_ms, 400u);
+
+    std::vector<CatalogManager::AdmissionTuningEventCatalogInfo> tuning_rows;
+    ASSERT_EQ(db_.catalog_manager()->listAdmissionTuningEventCatalogEntries(
+                  CatalogManager::ClusterNodeRole::OLTP_DATA,
+                  tuning_rows,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(tuning_rows.size(), 1u);
+    EXPECT_EQ(tuning_rows.front().old_max_concurrent_queries, 100u);
+    EXPECT_EQ(tuning_rows.front().new_max_concurrent_queries, 80u);
+    EXPECT_EQ(tuning_rows.front().reason, "slo burn CRITICAL");
+}
+
+TEST_F(WorkloadGovernanceTest, TriggersScaleOutAndCooldownThenScaleInFromRecordedTelemetry)
+{
+    ErrorContext ctx;
+    const ID cluster_id = generateUuidV7();
+    const auto node = createNode(cluster_id, "node-oltp-c", CatalogManager::ClusterNodeRole::OLTP_DATA);
+    const auto profile = createSloProfile(
+        "oltp_autoscale",
+        CatalogManager::ClusterNodeRole::OLTP_DATA,
+        99.95,
+        1.0,
+        1,
+        1);
+    createSloBinding(profile,
+                     CatalogManager::ClusterNodeRole::OLTP_DATA,
+                     1000,
+                     1,
+                     &node.node_id);
+    createAutoscalePolicy(CatalogManager::ClusterNodeRole::OLTP_DATA, 2, 8, 2, 1, 30000, 60000);
+
+    createSloWindow(node.node_id,
+                    CatalogManager::ClusterNodeRole::OLTP_DATA,
+                    1,
+                    60000,
+                    100,
+                    80,
+                    20,
+                    40,
+                    90);
+    for (uint64_t sample_time = 56000; sample_time <= 60000; sample_time += 1000)
+    {
+        WorkloadGovernance::SloTelemetrySample sample{};
+        sample.node_id = node.node_id;
+        sample.role = CatalogManager::ClusterNodeRole::OLTP_DATA;
+        sample.sample_time = sample_time;
+        sample.cpu_utilization_pct = 90;
+        sample.queue_pressure_pct = 85;
+        sample.current_node_count = 2;
+        ASSERT_EQ(db_.workload_governance()->recordSloTelemetrySample(sample, &ctx), Status::OK)
+            << ctx.message;
+    }
+
+    ASSERT_EQ(db_.workload_governance()->evaluateSloPolicies(60000, &ctx), Status::OK)
+        << ctx.message;
+
+    std::vector<CatalogManager::AutoscaleActionCatalogInfo> action_rows;
+    ASSERT_EQ(db_.catalog_manager()->listAutoscaleActionCatalogEntries(
+                  CatalogManager::ClusterNodeRole::OLTP_DATA,
+                  action_rows,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(action_rows.size(), 1u);
+    EXPECT_EQ(action_rows.front().action_kind, CatalogManager::AutoscaleActionKind::SCALE_OUT);
+    EXPECT_EQ(action_rows.front().applied_count_delta, 2);
+
+    createSloWindow(node.node_id,
+                    CatalogManager::ClusterNodeRole::OLTP_DATA,
+                    60001,
+                    65000,
+                    100,
+                    80,
+                    20,
+                    40,
+                    90);
+    for (uint64_t sample_time = 61000; sample_time <= 65000; sample_time += 1000)
+    {
+        WorkloadGovernance::SloTelemetrySample sample{};
+        sample.node_id = node.node_id;
+        sample.role = CatalogManager::ClusterNodeRole::OLTP_DATA;
+        sample.sample_time = sample_time;
+        sample.cpu_utilization_pct = 90;
+        sample.queue_pressure_pct = 85;
+        sample.current_node_count = 4;
+        ASSERT_EQ(db_.workload_governance()->recordSloTelemetrySample(sample, &ctx), Status::OK)
+            << ctx.message;
+    }
+
+    ASSERT_EQ(db_.workload_governance()->evaluateSloPolicies(65000, &ctx), Status::OK)
+        << ctx.message;
+    action_rows.clear();
+    ASSERT_EQ(db_.catalog_manager()->listAutoscaleActionCatalogEntries(
+                  CatalogManager::ClusterNodeRole::OLTP_DATA,
+                  action_rows,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(action_rows.size(), 1u);
+
+    uint64_t window_start = 120000;
+    for (int i = 0; i < 24; ++i)
+    {
+        createSloWindow(node.node_id,
+                        CatalogManager::ClusterNodeRole::OLTP_DATA,
+                        window_start,
+                        window_start + 60000,
+                        100,
+                        100,
+                        0,
+                        10,
+                        20);
+        window_start += 60000;
+    }
+    uint64_t telemetry_time = 1560000;
+    for (int i = 0; i < 24; ++i)
+    {
+        WorkloadGovernance::SloTelemetrySample sample{};
+        sample.node_id = node.node_id;
+        sample.role = CatalogManager::ClusterNodeRole::OLTP_DATA;
+        sample.sample_time = telemetry_time;
+        sample.cpu_utilization_pct = 20;
+        sample.queue_pressure_pct = 10;
+        sample.current_node_count = 4;
+        ASSERT_EQ(db_.workload_governance()->recordSloTelemetrySample(sample, &ctx), Status::OK)
+            << ctx.message;
+        telemetry_time += 1000;
+    }
+
+    ASSERT_EQ(db_.workload_governance()->evaluateSloPolicies(telemetry_time - 1000, &ctx), Status::OK)
+        << ctx.message;
+    action_rows.clear();
+    ASSERT_EQ(db_.catalog_manager()->listAutoscaleActionCatalogEntries(
+                  CatalogManager::ClusterNodeRole::OLTP_DATA,
+                  action_rows,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(action_rows.size(), 2u);
+    EXPECT_EQ(action_rows.back().action_kind, CatalogManager::AutoscaleActionKind::SCALE_IN);
+    EXPECT_EQ(action_rows.back().applied_count_delta, -1);
 }

@@ -245,6 +245,11 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesAdminClusterAndServiceControlSurf
         {"DROP CLUSTER ADMISSION POLICY ap_main", "cluster.admission_policy.drop.ap_main"},
         {"CLUSTER SET STATE 'READ_WRITE'", "cluster.set_state"},
         {"SHOW CLUSTER ADMISSION STATUS", "cluster.show_admission_status"},
+        {"SHOW SLO STATUS ROLE OLTP_DATA", "cluster.show_slo_status"},
+        {"SHOW ERROR BUDGET STATUS ROLE ROUTER", "cluster.show_error_budget_status"},
+        {"SHOW AUTOSCALE ACTIONS ROLE OLTP_DATA WINDOW MINUTES 15", "cluster.show_autoscale_actions"},
+        {"SHOW ADMISSION TUNING HISTORY ROLE OLTP_DATA WINDOW MINUTES 5",
+         "cluster.show_admission_tuning_history"},
         {"SERVICE CHANNEL EVENTS 'SINCE=0'", "service.channel.events"},
     };
 

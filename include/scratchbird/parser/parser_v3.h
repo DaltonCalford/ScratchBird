@@ -370,6 +370,7 @@ private:
     Statement* parseDropClusterControl();
     Statement* parseClusterControlSurface();
     Statement* parseShowClusterControlSurface();
+    Statement* parseShowSloControlSurface();
     Statement* parseServiceChannelSurface();
     Statement* parseCubeControlSurface();
     Statement* parseShowCubeControlSurface();

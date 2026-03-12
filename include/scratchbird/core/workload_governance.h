@@ -122,18 +122,90 @@ public:
         bool route_enabled = false;
     };
 
+    struct SloTelemetrySample
+    {
+        ID node_id{};
+        CatalogManager::ClusterNodeRole role = CatalogManager::ClusterNodeRole::OLTP_DATA;
+        uint64_t sample_time = 0;
+        uint8_t cpu_utilization_pct = 0;
+        uint8_t queue_pressure_pct = 0;
+        uint16_t current_node_count = 0;
+        bool is_valid = true;
+    };
+
+    struct SloStatusRow
+    {
+        ID node_id{};
+        std::string node_name;
+        std::string role;
+        std::string profile_name;
+        uint64_t evaluation_time = 0;
+        uint64_t window_start_time = 0;
+        uint64_t window_end_time = 0;
+        uint64_t request_count = 0;
+        uint64_t success_count = 0;
+        uint64_t error_count = 0;
+        double availability_target_pct = 0.0;
+        double availability_sli_pct = 0.0;
+        uint32_t latency_p95_target_ms = 0;
+        uint32_t latency_p95_ms = 0;
+        uint32_t latency_p99_target_ms = 0;
+        uint32_t latency_p99_ms = 0;
+        double error_rate_target_pct = 0.0;
+        double error_rate_sli_pct = 0.0;
+        double short_burn_rate = 0.0;
+        double long_burn_rate = 0.0;
+        std::string burn_severity;
+        std::string action_plan;
+        bool binding_present = false;
+        bool metrics_present = false;
+    };
+
+    struct ErrorBudgetStatusRow
+    {
+        ID node_id{};
+        std::string node_name;
+        std::string role;
+        std::string profile_name;
+        uint64_t evaluation_time = 0;
+        uint64_t window_start_time = 0;
+        uint64_t window_end_time = 0;
+        double allowed_bad_requests = 0.0;
+        double observed_bad_requests = 0.0;
+        double remaining_bad_requests = 0.0;
+        double remaining_budget_pct = 0.0;
+        double short_burn_rate = 0.0;
+        double long_burn_rate = 0.0;
+        std::string burn_severity;
+        bool binding_present = false;
+        bool metrics_present = false;
+    };
+
     explicit WorkloadGovernance(Database* db);
 
     auto acquire(const QueryDescriptor& descriptor,
                  AdmissionLease& lease_out,
                  ErrorContext* ctx = nullptr) -> AdmissionDecision;
 
+    auto recordSloTelemetrySample(const SloTelemetrySample& sample,
+                                  ErrorContext* ctx = nullptr) -> Status;
+    auto evaluateSloPolicies(uint64_t evaluation_time = 0,
+                             ErrorContext* ctx = nullptr) -> Status;
+
     auto snapshotAdmissionStatus(std::vector<AdmissionStatusRow>& rows_out,
                                  ErrorContext* ctx = nullptr) const -> Status;
     auto snapshotRoutingPlan(std::vector<RoutingPlanRow>& rows_out,
                              ErrorContext* ctx = nullptr) const -> Status;
+    auto snapshotSloStatus(std::vector<SloStatusRow>& rows_out,
+                           uint64_t evaluation_time = 0,
+                           ErrorContext* ctx = nullptr) const -> Status;
+    auto snapshotErrorBudgetStatus(std::vector<ErrorBudgetStatusRow>& rows_out,
+                                   uint64_t evaluation_time = 0,
+                                   ErrorContext* ctx = nullptr) const -> Status;
 
 private:
+    struct SloEvaluationRow;
+
     struct CounterState
     {
         uint32_t active_queries = 0;
@@ -159,6 +231,9 @@ private:
     auto resolveBinding(const MatchState& match,
                         BindingState& state_out,
                         ErrorContext* ctx) const -> Status;
+    auto collectSloEvaluations(std::vector<SloEvaluationRow>& rows_out,
+                               uint64_t evaluation_time,
+                               ErrorContext* ctx) const -> Status;
 
     auto countActiveSessionsLocked(const BindingState& binding,
                                    const std::vector<uint32_t>& active_proc_ids,
@@ -172,6 +247,7 @@ private:
     std::unordered_map<ID, CounterState, IDHash> policy_counters_;
     std::unordered_map<uint32_t, ID> session_class_map_;
     std::unordered_map<uint32_t, ID> session_policy_map_;
+    std::unordered_map<std::string, std::vector<SloTelemetrySample>> slo_telemetry_history_;
 };
 
 } // namespace scratchbird::core

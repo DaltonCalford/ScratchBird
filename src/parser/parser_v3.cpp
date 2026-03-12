@@ -847,6 +847,13 @@ Statement* Parser::parseStatementInternal() {
                 match(TokenType::KW_SHOW);
                 return parseShowClusterControlSurface();
             }
+            if (caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "SLO") ||
+                caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "ERROR") ||
+                caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "AUTOSCALE") ||
+                caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "ADMISSION")) {
+                match(TokenType::KW_SHOW);
+                return parseShowSloControlSurface();
+            }
             if (caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "CUBE")) {
                 match(TokenType::KW_SHOW);
                 return parseShowCubeControlSurface();
@@ -16877,6 +16884,99 @@ Statement* Parser::parseShowClusterControlSurface() {
 
     std::string payload = captureStatementBody();
     if (!payload.empty()) {
+        stmt->value = make_payload_literal(payload);
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseShowSloControlSurface() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    auto parseRoleFilter = [&]() -> std::string {
+        if (!matchContextual("ROLE")) {
+            return {};
+        }
+        StringPool::StringId role_name =
+            expectIdentifier("Expected role name after ROLE");
+        if (role_name == StringPool::INVALID_ID) {
+            return {};
+        }
+        return "ROLE=" + std::string(stringPool().get(role_name));
+    };
+
+    auto parseWindowFilter = [&]() -> std::string {
+        if (!matchContextual("WINDOW")) {
+            return {};
+        }
+        expectContextual("MINUTES", "Expected MINUTES after WINDOW");
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            error("Expected integer after WINDOW MINUTES");
+            return {};
+        }
+        const int64_t minutes = current().value.int_value;
+        advance();
+        if (minutes < 1) {
+            error("WINDOW MINUTES requires n >= 1");
+            return {};
+        }
+        return "WINDOW_MINUTES=" + std::to_string(minutes);
+    };
+
+    std::vector<std::string> filters;
+    if (matchContextual("SLO")) {
+        expectContextual("STATUS", "Expected STATUS after SHOW SLO");
+        stmt->name = stringPool().intern("cluster.show_slo_status");
+        if (std::string role_filter = parseRoleFilter(); !role_filter.empty()) {
+            filters.push_back(std::move(role_filter));
+        }
+    } else if (matchContextual("ERROR")) {
+        expectContextual("BUDGET", "Expected BUDGET after SHOW ERROR");
+        expectContextual("STATUS", "Expected STATUS after SHOW ERROR BUDGET");
+        stmt->name = stringPool().intern("cluster.show_error_budget_status");
+        if (std::string role_filter = parseRoleFilter(); !role_filter.empty()) {
+            filters.push_back(std::move(role_filter));
+        }
+    } else if (matchContextual("AUTOSCALE")) {
+        expectContextual("ACTIONS", "Expected ACTIONS after SHOW AUTOSCALE");
+        stmt->name = stringPool().intern("cluster.show_autoscale_actions");
+        if (std::string role_filter = parseRoleFilter(); !role_filter.empty()) {
+            filters.push_back(std::move(role_filter));
+        }
+        if (std::string window_filter = parseWindowFilter(); !window_filter.empty()) {
+            filters.push_back(std::move(window_filter));
+        }
+    } else if (matchContextual("ADMISSION")) {
+        expectContextual("TUNING", "Expected TUNING after SHOW ADMISSION");
+        expectContextual("HISTORY", "Expected HISTORY after SHOW ADMISSION TUNING");
+        stmt->name = stringPool().intern("cluster.show_admission_tuning_history");
+        if (std::string role_filter = parseRoleFilter(); !role_filter.empty()) {
+            filters.push_back(std::move(role_filter));
+        }
+        if (std::string window_filter = parseWindowFilter(); !window_filter.empty()) {
+            filters.push_back(std::move(window_filter));
+        }
+    } else {
+        errorCode("PRS_0505",
+                  "Expected SLO STATUS, ERROR BUDGET STATUS, AUTOSCALE ACTIONS, or ADMISSION TUNING HISTORY after SHOW");
+    }
+
+    if (!filters.empty()) {
+        std::string payload;
+        for (size_t i = 0; i < filters.size(); ++i) {
+            if (i != 0) {
+                payload.push_back(';');
+            }
+            payload.append(filters[i]);
+        }
         stmt->value = make_payload_literal(payload);
     }
     stmt->span = makeSpan(start);

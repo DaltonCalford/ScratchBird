@@ -71045,6 +71045,92 @@ namespace scratchbird
                                 return false;
                             };
 
+                            auto formatNodeRole =
+                                [&](core::CatalogManager::ClusterNodeRole role) -> std::string {
+                                switch (role)
+                                {
+                                    case core::CatalogManager::ClusterNodeRole::METADATA:
+                                        return "METADATA";
+                                    case core::CatalogManager::ClusterNodeRole::OLTP_DATA:
+                                        return "OLTP_DATA";
+                                    case core::CatalogManager::ClusterNodeRole::ROUTER:
+                                        return "ROUTER";
+                                    case core::CatalogManager::ClusterNodeRole::PARSER:
+                                        return "PARSER";
+                                    case core::CatalogManager::ClusterNodeRole::LISTENER:
+                                        return "LISTENER";
+                                    case core::CatalogManager::ClusterNodeRole::BACKUP:
+                                        return "BACKUP";
+                                    case core::CatalogManager::ClusterNodeRole::SCHEDULER:
+                                        return "SCHEDULER";
+                                    case core::CatalogManager::ClusterNodeRole::METRICS:
+                                        return "METRICS";
+                                    case core::CatalogManager::ClusterNodeRole::OLAP_INGEST:
+                                        return "OLAP_INGEST";
+                                    case core::CatalogManager::ClusterNodeRole::OLAP_STORAGE:
+                                        return "OLAP_STORAGE";
+                                    case core::CatalogManager::ClusterNodeRole::OLAP_COMPUTE:
+                                        return "OLAP_COMPUTE";
+                                    case core::CatalogManager::ClusterNodeRole::VECTOR_INDEX:
+                                        return "VECTOR_INDEX";
+                                    case core::CatalogManager::ClusterNodeRole::SEARCH_INDEX:
+                                        return "SEARCH_INDEX";
+                                    case core::CatalogManager::ClusterNodeRole::GRAPH_COMPUTE:
+                                        return "GRAPH_COMPUTE";
+                                    case core::CatalogManager::ClusterNodeRole::CACHE:
+                                        return "CACHE";
+                                }
+                                return "UNKNOWN";
+                            };
+
+                            auto formatAutoscaleActionKind =
+                                [&](core::CatalogManager::AutoscaleActionKind kind) -> std::string {
+                                switch (kind)
+                                {
+                                    case core::CatalogManager::AutoscaleActionKind::SCALE_OUT:
+                                        return "SCALE_OUT";
+                                    case core::CatalogManager::AutoscaleActionKind::SCALE_IN:
+                                        return "SCALE_IN";
+                                    case core::CatalogManager::AutoscaleActionKind::NO_OP:
+                                        return "NO_OP";
+                                }
+                                return "UNKNOWN";
+                            };
+
+                            auto formatAutoscaleActionState =
+                                [&](core::CatalogManager::AutoscaleActionState state) -> std::string {
+                                switch (state)
+                                {
+                                    case core::CatalogManager::AutoscaleActionState::PENDING:
+                                        return "PENDING";
+                                    case core::CatalogManager::AutoscaleActionState::APPLIED:
+                                        return "APPLIED";
+                                    case core::CatalogManager::AutoscaleActionState::FAILED:
+                                        return "FAILED";
+                                    case core::CatalogManager::AutoscaleActionState::CANCELLED:
+                                        return "CANCELLED";
+                                }
+                                return "UNKNOWN";
+                            };
+
+                            const std::array<core::CatalogManager::ClusterNodeRole, 15> all_node_roles = {{
+                                core::CatalogManager::ClusterNodeRole::METADATA,
+                                core::CatalogManager::ClusterNodeRole::OLTP_DATA,
+                                core::CatalogManager::ClusterNodeRole::ROUTER,
+                                core::CatalogManager::ClusterNodeRole::PARSER,
+                                core::CatalogManager::ClusterNodeRole::LISTENER,
+                                core::CatalogManager::ClusterNodeRole::BACKUP,
+                                core::CatalogManager::ClusterNodeRole::SCHEDULER,
+                                core::CatalogManager::ClusterNodeRole::METRICS,
+                                core::CatalogManager::ClusterNodeRole::OLAP_INGEST,
+                                core::CatalogManager::ClusterNodeRole::OLAP_STORAGE,
+                                core::CatalogManager::ClusterNodeRole::OLAP_COMPUTE,
+                                core::CatalogManager::ClusterNodeRole::VECTOR_INDEX,
+                                core::CatalogManager::ClusterNodeRole::SEARCH_INDEX,
+                                core::CatalogManager::ClusterNodeRole::GRAPH_COMPUTE,
+                                core::CatalogManager::ClusterNodeRole::CACHE,
+                            }};
+
                             auto parseServiceType = [&](const std::string& raw,
                                                         core::CatalogManager::ClusterServiceType& out) -> bool {
                                 const std::string upper = normalizeConfigKey(raw);
@@ -71306,6 +71392,71 @@ namespace scratchbird
                                 return result;
                             };
 
+                            auto tryParseRoleFilter =
+                                [&](std::optional<core::CatalogManager::ClusterNodeRole>& role_filter,
+                                    core::ErrorContext& local_ctx) -> bool {
+                                auto role_it = assignments.find("ROLE");
+                                if (role_it == assignments.end())
+                                {
+                                    return true;
+                                }
+                                core::CatalogManager::ClusterNodeRole parsed_role{};
+                                if (!parseNodeRole(role_it->second, parsed_role))
+                                {
+                                    SET_ERROR_CONTEXT(
+                                        &local_ctx,
+                                        core::Status::INVALID_ARGUMENT,
+                                        "Invalid ROLE filter for SLO control surface");
+                                    return false;
+                                }
+                                role_filter = parsed_role;
+                                return true;
+                            };
+
+                            auto tryParseWindowMinutes =
+                                [&](std::optional<uint64_t>& window_minutes,
+                                    core::ErrorContext& local_ctx) -> bool {
+                                auto window_it = assignments.find("WINDOW_MINUTES");
+                                if (window_it == assignments.end())
+                                {
+                                    return true;
+                                }
+                                try
+                                {
+                                    const uint64_t parsed =
+                                        static_cast<uint64_t>(std::stoull(trimAsciiCopy(window_it->second)));
+                                    if (parsed == 0)
+                                    {
+                                        throw std::invalid_argument("zero");
+                                    }
+                                    window_minutes = parsed;
+                                    return true;
+                                }
+                                catch (const std::exception&)
+                                {
+                                    SET_ERROR_CONTEXT(
+                                        &local_ctx,
+                                        core::Status::INVALID_ARGUMENT,
+                                        "Invalid WINDOW MINUTES filter for SLO control surface");
+                                    return false;
+                                }
+                            };
+
+                            auto withinWindow = [&](uint64_t event_time,
+                                                    uint64_t anchor_time,
+                                                    const std::optional<uint64_t>& window_minutes) {
+                                if (!window_minutes.has_value())
+                                {
+                                    return true;
+                                }
+                                const uint64_t window_span_ms = window_minutes.value() * 60ull * 1000ull;
+                                if (anchor_time <= window_span_ms)
+                                {
+                                    return event_time <= anchor_time;
+                                }
+                                return event_time >= anchor_time - window_span_ms;
+                            };
+
                             if (control_opcode == scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN)
                             {
                                 std::vector<core::WorkloadGovernance::RoutingPlanRow> rows;
@@ -71406,6 +71557,303 @@ namespace scratchbird
                                 core::VNextMetricsEventModel::recordExecutorEvent(
                                     "vnext_opcode_dispatch", "ok", symbol);
                                 return ExecutionResult(std::move(result_set));
+                            }
+
+                            if (control_opcode == scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_STATE)
+                            {
+                                core::ErrorContext local_ctx;
+                                std::optional<core::CatalogManager::ClusterNodeRole> role_filter;
+                                if (!tryParseRoleFilter(role_filter, local_ctx))
+                                {
+                                    return ExecutionResult(local_ctx.message);
+                                }
+
+                                if (object_name == "slo_status")
+                                {
+                                    std::vector<core::WorkloadGovernance::SloStatusRow> rows;
+                                    core::Status status =
+                                        workload_governance->snapshotSloStatus(rows, 0, &local_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "SHOW SLO STATUS failed"
+                                                                   : local_ctx.message);
+                                    }
+
+                                    auto result_set = std::make_unique<ResultSet>();
+                                    result_set->addColumn("role", core::DataType::VARCHAR);
+                                    result_set->addColumn("node_name", core::DataType::VARCHAR);
+                                    result_set->addColumn("profile_name", core::DataType::VARCHAR);
+                                    result_set->addColumn("binding_present", core::DataType::BOOLEAN);
+                                    result_set->addColumn("metrics_present", core::DataType::BOOLEAN);
+                                    result_set->addColumn("availability_sli_pct", core::DataType::DOUBLE);
+                                    result_set->addColumn("error_rate_sli_pct", core::DataType::DOUBLE);
+                                    result_set->addColumn("request_count", core::DataType::INT64);
+                                    result_set->addColumn("success_count", core::DataType::INT64);
+                                    result_set->addColumn("error_count", core::DataType::INT64);
+                                    result_set->addColumn("latency_p95_ms", core::DataType::INT32);
+                                    result_set->addColumn("latency_p99_ms", core::DataType::INT32);
+                                    result_set->addColumn("short_burn_rate", core::DataType::DOUBLE);
+                                    result_set->addColumn("long_burn_rate", core::DataType::DOUBLE);
+                                    result_set->addColumn("burn_severity", core::DataType::VARCHAR);
+                                    result_set->addColumn("action_plan", core::DataType::VARCHAR);
+                                    result_set->addColumn("binding_present", core::DataType::BOOLEAN);
+                                    result_set->addColumn("metrics_present", core::DataType::BOOLEAN);
+                                    result_set->addColumn("evaluation_time", core::DataType::INT64);
+                                    for (const auto& row : rows)
+                                    {
+                                        if (role_filter.has_value() &&
+                                            normalizeUpper(row.role) !=
+                                                normalizeUpper(formatNodeRole(role_filter.value())))
+                                        {
+                                            continue;
+                                        }
+
+                                        result_set->addRow({
+                                            Value::makeVarchar(row.role),
+                                            Value::makeVarchar(row.node_name),
+                                            Value::makeVarchar(row.profile_name),
+                                            Value::makeFloat64(row.availability_sli_pct),
+                                            Value::makeFloat64(row.error_rate_sli_pct),
+                                            Value::makeInt64(static_cast<int64_t>(row.request_count)),
+                                            Value::makeInt64(static_cast<int64_t>(row.success_count)),
+                                            Value::makeInt64(static_cast<int64_t>(row.error_count)),
+                                            Value::makeInt32(static_cast<int32_t>(row.latency_p95_ms)),
+                                            Value::makeInt32(static_cast<int32_t>(row.latency_p99_ms)),
+                                            Value::makeFloat64(row.short_burn_rate),
+                                            Value::makeFloat64(row.long_burn_rate),
+                                            Value::makeVarchar(row.burn_severity),
+                                            Value::makeVarchar(row.action_plan),
+                                            Value::makeBool(row.binding_present),
+                                            Value::makeBool(row.metrics_present),
+                                            Value::makeInt64(static_cast<int64_t>(row.evaluation_time)),
+                                        });
+                                    }
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "ok", symbol);
+                                    return ExecutionResult(std::move(result_set));
+                                }
+
+                                if (object_name == "error_budget_status")
+                                {
+                                    std::vector<core::WorkloadGovernance::ErrorBudgetStatusRow> rows;
+                                    core::Status status =
+                                        workload_governance->snapshotErrorBudgetStatus(rows, 0, &local_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult(local_ctx.message.empty()
+                                                                   ? "SHOW ERROR BUDGET STATUS failed"
+                                                                   : local_ctx.message);
+                                    }
+
+                                    auto result_set = std::make_unique<ResultSet>();
+                                    result_set->addColumn("role", core::DataType::VARCHAR);
+                                    result_set->addColumn("node_name", core::DataType::VARCHAR);
+                                    result_set->addColumn("profile_name", core::DataType::VARCHAR);
+                                    result_set->addColumn("allowed_bad_requests", core::DataType::DOUBLE);
+                                    result_set->addColumn("observed_bad_requests", core::DataType::DOUBLE);
+                                    result_set->addColumn("remaining_bad_requests", core::DataType::DOUBLE);
+                                    result_set->addColumn("remaining_budget_pct", core::DataType::DOUBLE);
+                                    result_set->addColumn("short_burn_rate", core::DataType::DOUBLE);
+                                    result_set->addColumn("long_burn_rate", core::DataType::DOUBLE);
+                                    result_set->addColumn("burn_severity", core::DataType::VARCHAR);
+                                    result_set->addColumn("evaluation_time", core::DataType::INT64);
+                                    for (const auto& row : rows)
+                                    {
+                                        if (role_filter.has_value() &&
+                                            normalizeUpper(row.role) !=
+                                                normalizeUpper(formatNodeRole(role_filter.value())))
+                                        {
+                                            continue;
+                                        }
+
+                                        result_set->addRow({
+                                            Value::makeVarchar(row.role),
+                                            Value::makeVarchar(row.node_name),
+                                            Value::makeVarchar(row.profile_name),
+                                            Value::makeFloat64(row.allowed_bad_requests),
+                                            Value::makeFloat64(row.observed_bad_requests),
+                                            Value::makeFloat64(row.remaining_bad_requests),
+                                            Value::makeFloat64(row.remaining_budget_pct),
+                                            Value::makeFloat64(row.short_burn_rate),
+                                            Value::makeFloat64(row.long_burn_rate),
+                                            Value::makeVarchar(row.burn_severity),
+                                            Value::makeInt64(static_cast<int64_t>(row.evaluation_time)),
+                                        });
+                                    }
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "ok", symbol);
+                                    return ExecutionResult(std::move(result_set));
+                                }
+
+                                if (object_name == "autoscale_actions")
+                                {
+                                    std::optional<uint64_t> window_minutes;
+                                    if (!tryParseWindowMinutes(window_minutes, local_ctx))
+                                    {
+                                        return ExecutionResult(local_ctx.message);
+                                    }
+
+                                    std::vector<core::CatalogManager::AutoscaleActionCatalogInfo> rows;
+                                    if (role_filter.has_value())
+                                    {
+                                        core::Status status = catalog->listAutoscaleActionCatalogEntries(
+                                            role_filter.value(), rows, &local_ctx);
+                                        if (status != core::Status::OK && status != core::Status::NOT_FOUND)
+                                        {
+                                            return ExecutionResult(local_ctx.message.empty()
+                                                                       ? "SHOW AUTOSCALE ACTIONS failed"
+                                                                       : local_ctx.message);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        for (const auto role : all_node_roles)
+                                        {
+                                            std::vector<core::CatalogManager::AutoscaleActionCatalogInfo> role_rows;
+                                            core::Status status = catalog->listAutoscaleActionCatalogEntries(
+                                                role, role_rows, &local_ctx);
+                                            if (status != core::Status::OK && status != core::Status::NOT_FOUND)
+                                            {
+                                                return ExecutionResult(local_ctx.message.empty()
+                                                                           ? "SHOW AUTOSCALE ACTIONS failed"
+                                                                           : local_ctx.message);
+                                            }
+                                            rows.insert(rows.end(), role_rows.begin(), role_rows.end());
+                                        }
+                                    }
+
+                                    uint64_t anchor_time = 0;
+                                    for (const auto& row : rows)
+                                    {
+                                        anchor_time = std::max(anchor_time, row.action_time);
+                                        if (row.has_completed_time)
+                                        {
+                                            anchor_time = std::max(anchor_time, row.completed_time);
+                                        }
+                                    }
+
+                                    auto result_set = std::make_unique<ResultSet>();
+                                    result_set->addColumn("role", core::DataType::VARCHAR);
+                                    result_set->addColumn("action_kind", core::DataType::VARCHAR);
+                                    result_set->addColumn("requested_count_delta", core::DataType::INT32);
+                                    result_set->addColumn("applied_count_delta", core::DataType::INT32);
+                                    result_set->addColumn("trigger_reason", core::DataType::VARCHAR);
+                                    result_set->addColumn("trigger_burn_rate", core::DataType::DOUBLE);
+                                    result_set->addColumn("policy_version_u64", core::DataType::INT64);
+                                    result_set->addColumn("action_time", core::DataType::INT64);
+                                    result_set->addColumn("completed_time", core::DataType::INT64);
+                                    result_set->addColumn("action_state", core::DataType::VARCHAR);
+                                    result_set->addColumn("failure_code", core::DataType::VARCHAR);
+                                    for (const auto& row : rows)
+                                    {
+                                        if (!withinWindow(row.action_time, anchor_time, window_minutes))
+                                        {
+                                            continue;
+                                        }
+
+                                        result_set->addRow({
+                                            Value::makeVarchar(formatNodeRole(row.role)),
+                                            Value::makeVarchar(formatAutoscaleActionKind(row.action_kind)),
+                                            Value::makeInt32(static_cast<int32_t>(row.requested_count_delta)),
+                                            Value::makeInt32(static_cast<int32_t>(row.applied_count_delta)),
+                                            Value::makeVarchar(row.trigger_reason),
+                                            Value::makeFloat64(row.trigger_burn_rate),
+                                            Value::makeInt64(static_cast<int64_t>(row.policy_version_u64)),
+                                            Value::makeInt64(static_cast<int64_t>(row.action_time)),
+                                            Value::makeInt64(static_cast<int64_t>(
+                                                row.has_completed_time ? row.completed_time : 0)),
+                                            Value::makeVarchar(formatAutoscaleActionState(row.action_state)),
+                                            Value::makeVarchar(row.failure_code),
+                                        });
+                                    }
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "ok", symbol);
+                                    return ExecutionResult(std::move(result_set));
+                                }
+
+                                if (object_name == "admission_tuning_history")
+                                {
+                                    std::optional<uint64_t> window_minutes;
+                                    if (!tryParseWindowMinutes(window_minutes, local_ctx))
+                                    {
+                                        return ExecutionResult(local_ctx.message);
+                                    }
+
+                                    std::vector<core::CatalogManager::AdmissionTuningEventCatalogInfo> rows;
+                                    if (role_filter.has_value())
+                                    {
+                                        core::Status status = catalog->listAdmissionTuningEventCatalogEntries(
+                                            role_filter.value(), rows, &local_ctx);
+                                        if (status != core::Status::OK && status != core::Status::NOT_FOUND)
+                                        {
+                                            return ExecutionResult(local_ctx.message.empty()
+                                                                       ? "SHOW ADMISSION TUNING HISTORY failed"
+                                                                       : local_ctx.message);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        for (const auto role : all_node_roles)
+                                        {
+                                            std::vector<core::CatalogManager::AdmissionTuningEventCatalogInfo> role_rows;
+                                            core::Status status =
+                                                catalog->listAdmissionTuningEventCatalogEntries(
+                                                    role, role_rows, &local_ctx);
+                                            if (status != core::Status::OK && status != core::Status::NOT_FOUND)
+                                            {
+                                                return ExecutionResult(
+                                                    local_ctx.message.empty()
+                                                        ? "SHOW ADMISSION TUNING HISTORY failed"
+                                                        : local_ctx.message);
+                                            }
+                                            rows.insert(rows.end(), role_rows.begin(), role_rows.end());
+                                        }
+                                    }
+
+                                    uint64_t anchor_time = 0;
+                                    for (const auto& row : rows)
+                                    {
+                                        anchor_time = std::max(anchor_time, row.event_time);
+                                    }
+
+                                    auto result_set = std::make_unique<ResultSet>();
+                                    result_set->addColumn("role", core::DataType::VARCHAR);
+                                    result_set->addColumn("old_max_concurrent_queries", core::DataType::INT32);
+                                    result_set->addColumn("new_max_concurrent_queries", core::DataType::INT32);
+                                    result_set->addColumn("old_max_queue_depth", core::DataType::INT32);
+                                    result_set->addColumn("new_max_queue_depth", core::DataType::INT32);
+                                    result_set->addColumn("old_queue_timeout_ms", core::DataType::INT32);
+                                    result_set->addColumn("new_queue_timeout_ms", core::DataType::INT32);
+                                    result_set->addColumn("reason", core::DataType::VARCHAR);
+                                    result_set->addColumn("policy_version_u64", core::DataType::INT64);
+                                    result_set->addColumn("event_time", core::DataType::INT64);
+                                    for (const auto& row : rows)
+                                    {
+                                        if (!withinWindow(row.event_time, anchor_time, window_minutes))
+                                        {
+                                            continue;
+                                        }
+
+                                        result_set->addRow({
+                                            Value::makeVarchar(formatNodeRole(row.role)),
+                                            Value::makeInt32(static_cast<int32_t>(row.old_max_concurrent_queries)),
+                                            Value::makeInt32(static_cast<int32_t>(row.new_max_concurrent_queries)),
+                                            Value::makeInt32(static_cast<int32_t>(row.old_max_queue_depth)),
+                                            Value::makeInt32(static_cast<int32_t>(row.new_max_queue_depth)),
+                                            Value::makeInt32(static_cast<int32_t>(row.old_queue_timeout_ms)),
+                                            Value::makeInt32(static_cast<int32_t>(row.new_queue_timeout_ms)),
+                                            Value::makeVarchar(row.reason),
+                                            Value::makeInt64(static_cast<int64_t>(row.policy_version_u64)),
+                                            Value::makeInt64(static_cast<int64_t>(row.event_time)),
+                                        });
+                                    }
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "ok", symbol);
+                                    return ExecutionResult(std::move(result_set));
+                                }
+
+                                return semanticBridgeReject(symbol);
                             }
 
                             if (!requireSuperuser())
@@ -75565,6 +76013,7 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_POLICY:
                             case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_BINDING:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_STATE:
                             case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN:
                             case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS:
                                 return executeClusterGovernanceOpcode(opcode, payload);
@@ -75625,7 +76074,6 @@ namespace scratchbird
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_SEARCH:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_QUERY:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SET_STATE:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_STATE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_RULE_DDL:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_TARGET_DDL:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_ROUTE_DDL:
