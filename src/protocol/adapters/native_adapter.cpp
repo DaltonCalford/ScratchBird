@@ -1516,8 +1516,6 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
 
 core::Status NativeAdapter::handleQuery(network::Connection* conn) {
     native_state_ = NativeProtocolState::QUERY_PROCESSING;
-    cancel_requested_ = false;
-    cancel_target_sequence_ = 0;
     const auto& payload = current_message_.body;
     if (payload.size() < 12) {
         sendQueryError(conn,
@@ -1614,10 +1612,6 @@ core::Status NativeAdapter::handleQueryCancel(network::Connection* conn) {
         cancel_target_sequence_ = target_seq;
     }
     cancel_requested_ = true;
-    if (cancel_target_sequence_ != 0 && cancel_target_sequence_ != current_sequence_) {
-        return core::Status::OK;
-    }
-
     bool has_active_portal = false;
     for (auto& entry : portals_) {
         if (!entry.second.completed) {
@@ -1633,6 +1627,9 @@ core::Status NativeAdapter::handleQueryCancel(network::Connection* conn) {
                        "57014", "Query canceled");
         sendReady(conn);
         return sendBuffer(conn);
+    }
+    if (cancel_target_sequence_ != 0 && cancel_target_sequence_ != current_sequence_) {
+        return core::Status::OK;
     }
     cancel_requested_ = false;
     cancel_target_sequence_ = 0;
@@ -1953,8 +1950,6 @@ core::Status NativeAdapter::handleBind(network::Connection* conn) {
 
 core::Status NativeAdapter::handleExecute(network::Connection* conn) {
     native_state_ = NativeProtocolState::QUERY_PROCESSING;
-    cancel_requested_ = false;
-    cancel_target_sequence_ = 0;
     const auto& payload = current_message_.body;
     if (payload.size() < 8) {
         sendQueryError(conn, static_cast<uint32_t>(core::Status::PROTOCOL_VIOLATION),
