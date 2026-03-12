@@ -125,6 +125,11 @@ std::string formatTimestampFromMicros(int64_t micros) {
 
 std::string columnValueToSqlLiteral(const protocol::ProtocolCodec::ColumnValue& val,
                                     protocol::WireType type) {
+    auto quoted_text_literal = [&]() -> std::string {
+        const std::string str(val.data.begin(), val.data.end());
+        return "'" + escapeString(str) + "'";
+    };
+
     if (val.is_null) {
         return "NULL";
     }
@@ -200,7 +205,7 @@ std::string columnValueToSqlLiteral(const protocol::ProtocolCodec::ColumnValue& 
         case protocol::WireType::COMPOSITE:
         case protocol::WireType::DECIMAL:
         case protocol::WireType::MONEY:
-            break;
+            return quoted_text_literal();
         default:
             break;
     }
