@@ -498,11 +498,25 @@ core::Status PostgresqlAdapter::connectRemoteClient(core::ErrorContext* ctx) {
         return core::Status::OK;
     }
 
+    std::string attach_request = database_name_;
+    if (attach_request.empty() && !config_.default_database.empty()) {
+        attach_request = config_.default_database;
+    }
+
     std::string selected_database;
-    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+    if (!resolveDatabaseSelection(attach_request, selected_database)) {
+        if (pgWireDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[pg_wire] connectRemoteClient denied requested=%s attach_request=%s default=%s enforce=%d\n",
+                         database_name_.c_str(),
+                         attach_request.c_str(),
+                         config_.default_database.c_str(),
+                         config_.enforce_bound_database ? 1 : 0);
+            std::fflush(stderr);
+        }
         if (config_.enforce_bound_database &&
             !config_.default_database.empty() &&
-            isPostgresqlSystemDatabaseName(database_name_)) {
+            isPostgresqlSystemDatabaseName(attach_request)) {
             selected_database = config_.default_database;
         } else {
             if (ctx) {
@@ -515,6 +529,7 @@ core::Status PostgresqlAdapter::connectRemoteClient(core::ErrorContext* ctx) {
     }
     database_name_ = selected_database;
     client_config_.database_name = selected_database;
+    client_config_.client_name = "sb_parser_pg";
     if (!config_.engine_endpoint.empty()) {
         // Listener supplies a concrete IPC socket path; avoid AUTO fallback.
         client_config_.ipc_method = server::IPCMethod::UNIX_SOCKET;
@@ -542,6 +557,57 @@ core::Status PostgresqlAdapter::connectRemoteClient(core::ErrorContext* ctx) {
     }
 
     return core::Status::OK;
+}
+
+void PostgresqlAdapter::applyPostgresqlSessionSchemaContext(const std::string& logical_db,
+                                                            core::ErrorContext* ctx) {
+    if (!connection_ctx_) {
+        return;
+    }
+
+    std::string db_name = resolveEmulatedDatabaseForSession(client_parameters_, logical_db);
+    if (db_name.empty()) {
+        db_name = resolveEmulatedDatabaseForSession(client_parameters_, database_name_);
+    }
+    if (db_name.empty()) {
+        db_name = extractEmulatedDatabaseName(config_.default_database);
+    }
+    if (db_name.empty()) {
+        return;
+    }
+
+    core::Database* db = engineDatabase();
+    core::ErrorContext engine_ctx;
+    if (!db) {
+        auto status = ensureEngine(&engine_ctx);
+        if (status != core::Status::OK) {
+            if (ctx && ctx->message.empty() && !engine_ctx.message.empty()) {
+                ctx->set(status, engine_ctx.message.c_str(), __FILE__, __LINE__, __func__);
+            }
+            return;
+        }
+        db = engineDatabase();
+    }
+
+    auto* catalog = db ? db->catalog_manager() : nullptr;
+    std::string schema_root = ensurePostgresqlSchemaPath(catalog, db_name, ctx);
+    if (schema_root.empty()) {
+        return;
+    }
+
+    connection_ctx_->set_dialect_tag("postgresql");
+    connection_ctx_->set_current_schema(schema_root);
+    connection_ctx_->set_search_path({schema_root});
+
+    if (!catalog) {
+        return;
+    }
+
+    core::CatalogManager::SchemaInfo schema_info;
+    core::ErrorContext lookup_ctx;
+    if (catalog->getSchema(schema_root, schema_info, &lookup_ctx) == core::Status::OK) {
+        connection_ctx_->setCurrentSchemaId(schema_info.schema_id);
+    }
 }
 
 core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
@@ -576,6 +642,7 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
                          database_name_.c_str());
             std::fflush(stderr);
         }
+        applyPostgresqlSessionSchemaContext(db_name, ctx);
         auto execute_sql = [&](const std::string& sql_text) -> core::Status {
             client::ResultSet rs;
             parser::v3::Compiler compiler;
@@ -664,17 +731,6 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             std::fflush(stderr);
         }
         if (set_status != core::Status::OK) {
-            const std::string fallback_schema = "users.public";
-            core::Status fallback_status = execute_set_with_pg_catalog(fallback_schema);
-            if (fallback_status != core::Status::OK) {
-                fallback_status = execute_set(fallback_schema);
-            }
-            if (fallback_status == core::Status::OK) {
-                server_parameters_["search_path"] = "pg_catalog, " + fallback_schema;
-                search_path_set_ = true;
-                return core::Status::OK;
-            }
-
             std::string client_err = client_ ? client_->getLastError() : std::string();
             if (ctx && ctx->message.empty() && !client_err.empty()) {
                 ctx->set(set_status,
@@ -1058,7 +1114,34 @@ core::Status PostgresqlAdapter::processMessage(network::Connection* conn) {
 }
 
 core::Status PostgresqlAdapter::sendGreeting(network::Connection* /*conn*/) {
-    // PostgreSQL server doesn't send a greeting - it waits for client startup
+    // PostgreSQL does not emit a greeting packet, but parser workers are
+    // reused across front-door sessions. Reset startup/auth/query state here
+    // so a prior connection cannot leak READY/CLOSING state into the next
+    // client's startup packet parsing.
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+    search_path_set_ = false;
+    txn_failed_ = false;
+    cancel_requested_.store(false, std::memory_order_release);
+    sync_pending_ = false;
+    pending_operations_.clear();
+    copy_context_ = CopyContext{};
+    statements_.clear();
+    portals_.clear();
+    client_parameters_.clear();
+    database_name_.clear();
+    username_.clear();
+    current_msg_type_ = 0;
+    current_msg_length_ = 0;
+    current_msg_data_.clear();
+    pg_schema_id_ = core::ID{};
+    scram_step_ = 0;
+    auth_method_ = AuthMethod::SCRAM_SHA_256;
+    pg_state_ = PgProtocolState::STARTUP;
+    tls_negotiated_ = false;
+    initializeServerParameters();
     return core::Status::OK;
 }
 
@@ -1246,11 +1329,27 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
         }
     }
 
+    std::string requested_database = database_name_;
+    std::string attach_request = requested_database;
+    if (config_.enforce_bound_database && !config_.default_database.empty()) {
+        attach_request = config_.default_database;
+    }
+
     std::string selected_database;
-    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+    if (!resolveDatabaseSelection(attach_request, selected_database)) {
+        if (pgWireDebugEnabled()) {
+            std::fprintf(stderr,
+                         "[pg_wire] startup denied requested=%s attach_request=%s default=%s enforce=%d supplied=%d\n",
+                         requested_database.c_str(),
+                         attach_request.c_str(),
+                         config_.default_database.c_str(),
+                         config_.enforce_bound_database ? 1 : 0,
+                         database_parameter_supplied ? 1 : 0);
+            std::fflush(stderr);
+        }
         if (config_.enforce_bound_database &&
             !config_.default_database.empty() &&
-            isPostgresqlSystemDatabaseName(database_name_)) {
+            isPostgresqlSystemDatabaseName(requested_database)) {
             selected_database = config_.default_database;
         } else {
             sendErrorResponse(conn, "FATAL", "28000",
@@ -1259,8 +1358,18 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
         }
     }
     database_name_ = std::move(selected_database);
-    client_parameters_["database"] = database_name_;
+    if (!requested_database.empty()) {
+        client_parameters_["database"] = requested_database;
+    }
     client_parameters_["scratchbird.bound_database"] = database_name_;
+    {
+        const std::string emulated_db =
+            resolveEmulatedDatabaseForSession(client_parameters_, database_name_);
+        const std::string schema_root = resolvePostgresqlSchemaPath(nullptr, emulated_db);
+        if (!schema_root.empty()) {
+            server_parameters_["search_path"] = "pg_catalog, " + schema_root;
+        }
+    }
 
     // Request authentication
     //
@@ -2567,6 +2676,10 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
     std::string schema_root = resolvePostgresqlSchemaPath(
         engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
         db_name);
+    if (connection_ctx_ != nullptr) {
+        core::ErrorContext schema_ctx;
+        applyPostgresqlSessionSchemaContext(db_name, &schema_ctx);
+    }
     compiler.setDefaultSchema(schema_root.empty() ? db_name : schema_root);
     if (pgWireDebugEnabled()) {
         std::fprintf(stderr,
@@ -2697,8 +2810,58 @@ std::vector<uint8_t> PostgresqlAdapter::encodeTextValue(const ProtocolCodec::Col
             break;
         }
         default: {
-            out.assign(reinterpret_cast<const char*>(val.data.data()),
-                       val.data.size());
+            const bool printable =
+                !val.data.empty() &&
+                std::all_of(val.data.begin(),
+                            val.data.end(),
+                            [](uint8_t byte) { return byte >= 0x20 && byte <= 0x7e; });
+            if (printable) {
+                out.assign(reinterpret_cast<const char*>(val.data.data()),
+                           val.data.size());
+                break;
+            }
+
+            switch (val.data.size()) {
+                case 1:
+                    out = std::to_string(static_cast<unsigned int>(val.data[0]));
+                    break;
+                case 2: {
+                    int16_t v = 0;
+                    std::memcpy(&v, val.data.data(), sizeof(v));
+                    out = toStringInt(v);
+                    break;
+                }
+                case 4: {
+                    int32_t v = 0;
+                    std::memcpy(&v, val.data.data(), sizeof(v));
+                    out = toStringInt(v);
+                    break;
+                }
+                case 8: {
+                    const bool high_bytes_zero =
+                        std::all_of(val.data.begin() + 4,
+                                    val.data.end(),
+                                    [](uint8_t byte) { return byte == 0x00; });
+                    const bool high_bytes_ff =
+                        std::all_of(val.data.begin() + 4,
+                                    val.data.end(),
+                                    [](uint8_t byte) { return byte == 0xff; });
+                    if (high_bytes_zero || high_bytes_ff) {
+                        int64_t v = 0;
+                        std::memcpy(&v, val.data.data(), sizeof(v));
+                        out = toStringInt(v);
+                    } else {
+                        double v = 0.0;
+                        std::memcpy(&v, val.data.data(), sizeof(v));
+                        out = toStringInt(v);
+                    }
+                    break;
+                }
+                default:
+                    out.assign(reinterpret_cast<const char*>(val.data.data()),
+                               val.data.size());
+                    break;
+            }
             break;
         }
     }

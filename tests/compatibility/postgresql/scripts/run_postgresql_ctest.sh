@@ -4,33 +4,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-DRIVER_DIR="${ROOT_DIR}-driver"
 CLIWORK_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
 
-DEFAULT_ISQL="${ROOT_DIR}/build/src/sb_pg_isql"
-ISQL_FLAVOR="postgresql"
-if [[ ! -x "$DEFAULT_ISQL" ]]; then
-  ALT_ISQL="${ROOT_DIR}/build/src/cli/sb_pg_isql"
-  if [[ -x "$ALT_ISQL" ]]; then
-    DEFAULT_ISQL="$ALT_ISQL"
-  else
-    DRIVER_PG_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_pg_isql"
-    DRIVER_GENERIC_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
-    if [[ -x "$DRIVER_PG_ISQL" ]]; then
-      DEFAULT_ISQL="$DRIVER_PG_ISQL"
-    elif [[ -x "$DRIVER_GENERIC_ISQL" ]]; then
-      DEFAULT_ISQL="$DRIVER_GENERIC_ISQL"
-      ISQL_FLAVOR="generic"
-    fi
+DEFAULT_PSQL_BIN=""
+for candidate in \
+  "${CLIWORK_ROOT}/postgresql/build_codex/src/bin/psql/psql" \
+  "${CLIWORK_ROOT}/postgresql/build_codex2/src/bin/psql/psql" \
+  "${CLIWORK_ROOT}/postgresql/build/src/bin/psql/psql" \
+  "${CLIWORK_ROOT}/postgresql/build_relwithdebinfo/src/bin/psql/psql" \
+  "${CLIWORK_ROOT}/postgresql/build_release/src/bin/psql/psql"; do
+  if [[ -x "$candidate" ]]; then
+    DEFAULT_PSQL_BIN="$candidate"
+    break
   fi
-fi
-ISQL_BIN="${SCRATCHBIRD_PG_ISQL:-$DEFAULT_ISQL}"
-if [[ -n "${SCRATCHBIRD_PG_ISQL:-}" ]]; then
-  case "$(basename "$ISQL_BIN")" in
-    sb_isql) ISQL_FLAVOR="generic" ;;
-    *) ISQL_FLAVOR="postgresql" ;;
-  esac
-fi
+done
+ISQL_BIN="${SCRATCHBIRD_PG_PSQL_BIN:-${SCRATCHBIRD_PG_ISQL:-$DEFAULT_PSQL_BIN}}"
 LIST_MODE="${SCRATCHBIRD_PG_CTEST_LIST_MODE:-${SCRATCHBIRD_COMPAT_CTEST_LIST_MODE:-curated}}"
 case "$LIST_MODE" in
   curated)
@@ -51,15 +39,15 @@ LIST_FILE="${SCRATCHBIRD_PG_CTEST_LIST:-$DEFAULT_LIST_FILE}"
 CONVERTED_DIR="${PG_DIR}/converted"
 
 if [[ ! -x "$ISQL_BIN" ]]; then
-  echo "SKIP: sb_pg_isql not found or not executable: $ISQL_BIN" >&2
+  echo "SKIP: cloned PostgreSQL psql not found or not executable: $ISQL_BIN" >&2
   exit 77
 fi
 
-if [[ "$ISQL_FLAVOR" == "generic" ]]; then
-  cat >&2 <<'EOF'
-SKIP: generic sb_isql fallback is not valid for PostgreSQL emulation compare runs.
-The generic client speaks native protocol only and cannot execute PostgreSQL wire-protocol parity.
-Provide sb_pg_isql via SCRATCHBIRD_PG_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
+if [[ "$(basename "$ISQL_BIN")" != "psql" ]]; then
+  cat >&2 <<EOF
+SKIP: ScratchBird PostgreSQL wrapper clients are deprecated for compatibility compare runs.
+Provide the cloned donor psql via SCRATCHBIRD_PG_PSQL_BIN.
+Resolved path: ${ISQL_BIN}
 EOF
   exit 77
 fi
@@ -75,6 +63,15 @@ if [[ ! -d "$CONVERTED_DIR" ]]; then
   exit 1
 fi
 
+DEFAULT_ENV_FILE="/tmp/scratchbird-example-dynamic/profiles/runtime.env"
+ENV_FILE="${SCRATCHBIRD_EXAMPLE_ENV_FILE:-${DEFAULT_ENV_FILE}}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
 HOST="${SCRATCHBIRD_PG_HOST:-localhost}"
 PORT="${SCRATCHBIRD_PG_PORT:-5432}"
 PG_USER="${SCRATCHBIRD_PG_USER:-${PGUSER:-postgres}}"
@@ -84,6 +81,7 @@ COMPAT_RUN="${SCRATCHBIRD_PG_COMPAT_RUN:-0}"
 REQUIRE_SB_EMULATION="${SCRATCHBIRD_PG_REQUIRE_SB_EMULATION:-1}"
 PROVISION_USER="${SCRATCHBIRD_PG_PROVISION_USER:-0}"
 OWNER_DB_HINT="${SCRATCHBIRD_PG_OWNER_DB:-main}"
+STRICT_DB_ROOT="${SCRATCHBIRD_PG_STRICT_DB_ROOT:-}"
 ADMIN_USER="${SCRATCHBIRD_PG_ADMIN_USER:-SYSTEM}"
 ADMIN_DB="${SCRATCHBIRD_PG_ADMIN_DB:-default}"
 ADMIN_PASSWORD="${SCRATCHBIRD_PG_ADMIN_PASSWORD:-}"
@@ -101,6 +99,14 @@ UPSTREAM_HEALTHCHECK_TIMEOUT_SEC="${SCRATCHBIRD_PG_REGRESS_HEALTHCHECK_TIMEOUT_S
 UPSTREAM_WATCH_PID_FILE="${SCRATCHBIRD_PG_COMPAT_WATCH_PID_FILE:-}"
 RESOLVED_ADMIN_SECRET=""
 RESOLVED_ADMIN_SECRET_SOURCE="none"
+
+if [[ -z "$STRICT_DB_ROOT" ]]; then
+  if [[ "$COMPAT_RUN" == "1" ]]; then
+    STRICT_DB_ROOT="1"
+  else
+    STRICT_DB_ROOT="0"
+  fi
+fi
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 RESULTS_DIR="${PG_DIR}/results/ctest/${RUN_ID}"
@@ -1002,7 +1008,7 @@ if run_precheck "$HOST" "$PORT" "$PG_USER" "$DBNAME" "$PASSWORD" "$PRECHECK_OUT"
   precheck_ok=1
 else
   if is_db_switch_denied_file "$PRECHECK_OUT"; then
-    if [[ "$DBNAME" != "$OWNER_DB_HINT" ]]; then
+    if [[ "$STRICT_DB_ROOT" != "1" && "$DBNAME" != "$OWNER_DB_HINT" ]]; then
       DBNAME="$OWNER_DB_HINT"
       if run_precheck "$HOST" "$PORT" "$PG_USER" "$DBNAME" "$PASSWORD" "$PRECHECK_OUT"; then
         precheck_ok=1

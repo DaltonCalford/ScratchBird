@@ -707,31 +707,10 @@ namespace scratchbird::core
         // Step 3: Find a page with free space in the target tablespace
         // NOTE: For Phase 1, findFreePage only supports tablespace 0
         // This will need to be updated when multi-tablespace support is added
-        uint32_t page_id;
-        status = findFreePage(table_id, tuple_size, &page_id, target_tablespace, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-
-        // Pin the page
-        GPID gpid = makeGPID(target_tablespace, static_cast<uint64_t>(page_id));
-        void *page_buffer;
-        status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
-        auto *page_data = static_cast<uint8_t *>(page_buffer);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-
-        // Get or create ToastManager for this table
-        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
-        // Note: toast_mgr can be nullptr if TOAST table doesn't exist
-        // HeapPage will handle this gracefully by not TOASTing
-
-        // Insert tuple with TOAST support
-        HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
-        uint16_t item_id;
+        uint32_t page_id = 0;
+        GPID gpid = INVALID_GPID;
+        void *page_buffer = nullptr;
+        uint16_t item_id = 0;
 
         // Get current XID from connection context
         uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
@@ -741,7 +720,41 @@ namespace scratchbird::core
             current_xid = config::DEFAULT_INITIAL_XID;
         }
 
-        status = heap_page.insertTuple(tuple_data_ptr, tuple_size, current_xid, &item_id, ctx);
+        // Get or create ToastManager for this table
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        // Note: toast_mgr can be nullptr if TOAST table doesn't exist
+        // HeapPage will handle this gracefully by not TOASTing
+
+        // A stale free-space estimate can surface as PAGE_FULL after pinning.
+        // Retry with a newly selected page a few times before surfacing failure.
+        constexpr int kInsertRetryLimit = 4;
+        for (int attempt = 0; attempt < kInsertRetryLimit; ++attempt)
+        {
+            status = findFreePage(table_id, tuple_size, &page_id, target_tablespace, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            gpid = makeGPID(target_tablespace, static_cast<uint64_t>(page_id));
+            page_buffer = nullptr;
+            status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
+            auto *page_data = static_cast<uint8_t *>(page_buffer);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
+            status = heap_page.insertTuple(tuple_data_ptr, tuple_size, current_xid, &item_id, ctx);
+            if (status != Status::PAGE_FULL)
+            {
+                break;
+            }
+
+            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+            gpid = INVALID_GPID;
+        }
 
         if (status == Status::OK)
         {
@@ -926,8 +939,10 @@ namespace scratchbird::core
             }
         }
 
-        // Unpin the page
-        buffer_pool_->unpinPageGlobal(gpid, status == Status::OK, ctx);
+        if (gpid != INVALID_GPID)
+        {
+            buffer_pool_->unpinPageGlobal(gpid, status == Status::OK, ctx);
+        }
 
         return status;
     }

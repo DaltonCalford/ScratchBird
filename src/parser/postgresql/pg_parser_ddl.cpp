@@ -910,7 +910,8 @@ parser::v3::TypeName Parser::parseTypeNameV3() {
 parser::v3::ColumnDef* Parser::parseColumnDefV3() {
     auto* col = arena()->create<parser::v3::ColumnDef>();
     col->name = parseIdentifierId();
-    col->type = parseTypeNameV3();
+    PgDataType parsed_type = parseDataType();
+    col->type = pgTypeToTypeName(parsed_type, string_pool_);
 
     parser::v3::StringPool::StringId pending_name = parser::v3::StringPool::INVALID_ID;
 
@@ -945,6 +946,21 @@ parser::v3::ColumnDef* Parser::parseColumnDefV3() {
             }
         }
     };
+
+    switch (parsed_type.kind) {
+        case PgDataType::Kind::SMALLSERIAL:
+        case PgDataType::Kind::SERIAL:
+        case PgDataType::Kind::BIGSERIAL: {
+            parser::v3::ColumnConstraint constraint;
+            constraint.type = parser::v3::ConstraintType::GENERATED;
+            constraint.generated_always = false;
+            constraint.generated_as_identity = true;
+            col->constraints.push_back(std::move(constraint));
+            break;
+        }
+        default:
+            break;
+    }
 
     while (true) {
         if (matchKeyword(TokenType::KW_CONSTRAINT)) {
@@ -4126,6 +4142,20 @@ ColumnDef Parser::parseColumnDef() {
     ColumnDef col;
     col.name = parseIdentifier();
     col.type = parseDataType();
+
+    switch (col.type.kind) {
+        case PgDataType::Kind::SMALLSERIAL:
+        case PgDataType::Kind::SERIAL:
+        case PgDataType::Kind::BIGSERIAL:
+            // PostgreSQL SERIAL shorthand behaves like an identity-backed
+            // integer column that allows explicit values.
+            col.is_identity = true;
+            col.identity_always = false;
+            col.not_null = true;
+            break;
+        default:
+            break;
+    }
 
     auto skip_parenthesized = [&]() {
         int depth = 1;

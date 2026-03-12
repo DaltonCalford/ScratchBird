@@ -445,7 +445,6 @@ public:
 
 private:
     Database* db_;
-    BufferPool* buffer_pool_;
 
     // Change tracking
     std::unordered_set<GPID> modified_pages_;

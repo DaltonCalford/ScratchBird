@@ -12,8 +12,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <fcntl.h>
 #include <memory>
 #include <string>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
@@ -31,6 +33,7 @@ using namespace scratchbird::core;
 class CatalogFamilyMigrationBackfillTest : public ::testing::Test
 {
 protected:
+    static constexpr uint32_t kPageSize = 16384;
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> db_file_;
     std::unique_ptr<Database> db_;
     std::unique_ptr<ConnectionContext> conn_;
@@ -41,7 +44,7 @@ protected:
             "catalog_family_migration_backfill");
 
         ErrorContext ctx;
-        ASSERT_EQ(Database::create(db_file_->path(), 16384, &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(Database::create(db_file_->path(), kPageSize, &ctx), Status::OK) << ctx.message;
         openExisting();
     }
 
@@ -94,17 +97,19 @@ protected:
             << ctx.message;
     }
 
-    void forceRootPageFieldsToZero(const std::vector<uint32_t>& page_ids_to_zero)
+    void forceRootPageFieldsToZeroOnDisk(const std::vector<uint32_t>& page_ids_to_zero)
     {
-        ErrorContext ctx;
-        void* root_page = nullptr;
-        BufferPool* bp = db_->buffer_pool();
-        ASSERT_NE(bp, nullptr);
-        ASSERT_EQ(bp->pinPage(BOOTSTRAP_PAGE_CATALOG_ROOT, &root_page, &ctx), Status::OK) << ctx.message;
-        ASSERT_NE(root_page, nullptr);
+        const int fd = ::open(db_file_->path().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0);
 
-        uint8_t* bytes = reinterpret_cast<uint8_t*>(root_page);
-        const size_t scan_limit = std::min<size_t>(db_->page_size(), 3072);
+        std::vector<uint8_t> page(kPageSize, 0);
+        const off_t offset =
+            static_cast<off_t>(BOOTSTRAP_PAGE_CATALOG_ROOT) * static_cast<off_t>(kPageSize);
+        ASSERT_EQ(::pread(fd, page.data(), page.size(), offset),
+                  static_cast<ssize_t>(page.size()));
+
+        uint8_t* bytes = page.data();
+        const size_t scan_limit = page.size();
 
         for (uint32_t page_id : page_ids_to_zero)
         {
@@ -130,8 +135,10 @@ protected:
             std::memcpy(bytes + match_offset, &zero, sizeof(zero));
         }
 
-        ASSERT_EQ(bp->unpinPage(BOOTSTRAP_PAGE_CATALOG_ROOT, true, &ctx), Status::OK) << ctx.message;
-        ASSERT_EQ(db_->sync(&ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(::pwrite(fd, page.data(), page.size(), offset),
+                  static_cast<ssize_t>(page.size()));
+        ASSERT_EQ(::fsync(fd), 0);
+        ASSERT_EQ(::close(fd), 0);
     }
 };
 
@@ -153,7 +160,8 @@ TEST_F(CatalogFamilyMigrationBackfillTest, ReopenBackfillsMissingCatalogFamilyPa
     ASSERT_NE(old_sblr_module, 0u);
     ASSERT_NE(old_replication_channel, 0u);
 
-    forceRootPageFieldsToZero({
+    closeCurrent();
+    forceRootPageFieldsToZeroOnDisk({
         old_remote_connector,
         old_workload_class,
         old_cluster_fabric_link,
@@ -161,8 +169,6 @@ TEST_F(CatalogFamilyMigrationBackfillTest, ReopenBackfillsMissingCatalogFamilyPa
         old_sblr_module,
         old_replication_channel,
     });
-
-    closeCurrent();
     openExisting();
 
     const uint32_t new_remote_connector = catalog()->remoteConnectorTablePage();

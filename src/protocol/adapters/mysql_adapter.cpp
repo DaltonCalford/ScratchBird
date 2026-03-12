@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <functional>
@@ -111,6 +112,46 @@ std::string buildMySqlSchemaPath(const std::string& db_name) {
 
 std::string buildLegacyMySqlSchemaPath(const std::string& db_name) {
     return "remote.emulation.mysql.localhost.databases." + db_name;
+}
+
+std::string buildMySqlServerRoot(const std::string& schema_path) {
+    std::vector<std::string> parts;
+    std::string current;
+    for (char ch : schema_path) {
+        if (ch == '/' || ch == '.') {
+            if (!current.empty()) {
+                parts.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        parts.push_back(current);
+    }
+
+    size_t start = 0;
+    if (!parts.empty() &&
+        core::IdentifierUtils::namesMatch(parts[0], false, "root", false)) {
+        start = 1;
+    }
+
+    if (parts.size() > start + 3 &&
+        core::IdentifierUtils::namesMatch(parts[start + 3], false, "databases", false)) {
+        parts.resize(start + 3);
+    } else if (parts.size() > start + 3) {
+        parts.resize(start + 3);
+    }
+
+    std::string root;
+    for (size_t i = start; i < parts.size(); ++i) {
+        if (!root.empty()) {
+            root.push_back('.');
+        }
+        root += parts[i];
+    }
+    return root;
 }
 
 std::string resolveMySqlSchemaPath(core::CatalogManager* catalog,
@@ -199,6 +240,32 @@ bool myWireDebugEnabled() {
     return enabled;
 }
 
+bool myExecDebugEnabled() {
+    static const bool enabled = []() {
+        const char* value = std::getenv("SCRATCHBIRD_MY_DEBUG_EXEC");
+        if (!value || value[0] == '\0') {
+            return false;
+        }
+        std::string normalized(value);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return normalized != "0" &&
+               normalized != "FALSE" &&
+               normalized != "NO" &&
+               normalized != "OFF";
+    }();
+    return enabled;
+}
+
+bool shouldUseBoundMySqlAttach(const ProtocolAdapterConfig& config) {
+    return !config.default_database.empty() &&
+           (config.enforce_bound_database || !config.engine_endpoint.empty());
+}
+
+bool usesRemoteEngineEndpoint(const ProtocolAdapterConfig& config) {
+    return !config.engine_endpoint.empty();
+}
+
 int hexToNibble(char ch) {
     if (ch >= '0' && ch <= '9') {
         return ch - '0';
@@ -256,6 +323,353 @@ bool isMySqlSystemDatabaseName(const std::string& database_name) {
            normalized == "INFORMATION_SCHEMA" ||
            normalized == "PERFORMANCE_SCHEMA" ||
            normalized == "SYS";
+}
+
+protocol::ProtocolCodec::ColumnValue formatMySqlTextColumnValue(
+    const protocol::ProtocolCodec::ColumnValue& value,
+    protocol::WireType type) {
+    using protocol::ProtocolCodec;
+    using protocol::WireType;
+
+    if (value.is_null) {
+        return ProtocolCodec::ColumnValue(nullptr);
+    }
+
+    auto fallback_raw = [&value]() {
+        return ProtocolCodec::ColumnValue::fromString(
+            std::string(value.data.begin(), value.data.end()));
+    };
+
+    auto format_unknown_scalar = [&value, &fallback_raw]() -> ProtocolCodec::ColumnValue {
+        const bool printable =
+            !value.data.empty() &&
+            std::all_of(value.data.begin(),
+                        value.data.end(),
+                        [](uint8_t byte) { return byte >= 0x20 && byte <= 0x7e; });
+        if (printable) {
+            return fallback_raw();
+        }
+
+        switch (value.data.size()) {
+            case 1:
+                return ProtocolCodec::ColumnValue::fromString(
+                    std::to_string(static_cast<unsigned int>(value.data[0])));
+            case 4: {
+                int32_t decoded = 0;
+                std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+                return ProtocolCodec::ColumnValue::fromString(std::to_string(decoded));
+            }
+            case 8: {
+                const bool high_bytes_zero =
+                    std::all_of(value.data.begin() + 4,
+                                value.data.end(),
+                                [](uint8_t byte) { return byte == 0x00; });
+                const bool high_bytes_ff =
+                    std::all_of(value.data.begin() + 4,
+                                value.data.end(),
+                                [](uint8_t byte) { return byte == 0xff; });
+                if (high_bytes_zero || high_bytes_ff) {
+                    int64_t decoded = 0;
+                    std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+                    return ProtocolCodec::ColumnValue::fromString(std::to_string(decoded));
+                }
+
+                double decoded = 0.0;
+                std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+                std::ostringstream out;
+                out << std::setprecision(std::numeric_limits<double>::digits10 + 1)
+                    << decoded;
+                return ProtocolCodec::ColumnValue::fromString(out.str());
+            }
+            default:
+                return fallback_raw();
+        }
+    };
+
+    switch (type) {
+        case WireType::INT16:
+        case WireType::INT32: {
+            if (value.data.size() < sizeof(int32_t)) {
+                return fallback_raw();
+            }
+            int32_t decoded = 0;
+            std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+            if (type == WireType::INT16) {
+                decoded = static_cast<int16_t>(decoded);
+            }
+            return ProtocolCodec::ColumnValue::fromString(std::to_string(decoded));
+        }
+        case WireType::INT64: {
+            if (value.data.size() < sizeof(int64_t)) {
+                return fallback_raw();
+            }
+            int64_t decoded = 0;
+            std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+            return ProtocolCodec::ColumnValue::fromString(std::to_string(decoded));
+        }
+        case WireType::FLOAT32:
+        case WireType::FLOAT64: {
+            if (value.data.size() < sizeof(double)) {
+                return fallback_raw();
+            }
+            double decoded = 0.0;
+            std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+            std::ostringstream out;
+            out << std::setprecision(std::numeric_limits<double>::digits10 + 1)
+                << decoded;
+            return ProtocolCodec::ColumnValue::fromString(out.str());
+        }
+        case WireType::BOOLEAN:
+            return ProtocolCodec::ColumnValue::fromString(
+                (!value.data.empty() && value.data[0] != 0) ? "1" : "0");
+        case WireType::UNKNOWN:
+            return format_unknown_scalar();
+        default:
+            return fallback_raw();
+    }
+}
+
+std::vector<protocol::ProtocolCodec::ColumnValue> formatMySqlTextRow(
+    const std::vector<protocol::ProtocolCodec::ColumnValue>& row,
+    const std::vector<protocol::ProtocolCodec::ColumnInfo>& columns) {
+    std::vector<protocol::ProtocolCodec::ColumnValue> formatted;
+    formatted.reserve(row.size());
+    for (size_t i = 0; i < row.size(); ++i) {
+        const protocol::WireType type =
+            i < columns.size() ? columns[i].type : protocol::WireType::UNKNOWN;
+        formatted.push_back(formatMySqlTextColumnValue(row[i], type));
+    }
+    return formatted;
+}
+
+std::string rewriteMySqlSystemSchemaReferences(const std::string& sql,
+                                               const std::string& database_root) {
+    if (sql.empty() || database_root.empty()) {
+        return sql;
+    }
+
+    auto system_schema_rewrite = [&](const std::string& identifier) -> std::string {
+        if (core::IdentifierUtils::namesMatch(identifier, false, "information_schema", false)) {
+            return database_root + ".information_schema";
+        }
+        if (core::IdentifierUtils::namesMatch(identifier, false, "mysql", false)) {
+            return database_root + ".mysql";
+        }
+        if (core::IdentifierUtils::namesMatch(identifier, false, "performance_schema", false)) {
+            return database_root + ".performance_schema";
+        }
+        if (core::IdentifierUtils::namesMatch(identifier, false, "sys", false)) {
+            return database_root + ".sys";
+        }
+        return {};
+    };
+
+    std::string rewritten;
+    rewritten.reserve(sql.size() + 64);
+    bool in_single_quote = false;
+    bool in_double_quote = false;
+    bool in_backtick = false;
+
+    for (size_t i = 0; i < sql.size();) {
+        const char ch = sql[i];
+        if (!in_double_quote && !in_backtick && ch == '\'') {
+            in_single_quote = !in_single_quote;
+            rewritten.push_back(ch);
+            ++i;
+            continue;
+        }
+        if (!in_single_quote && !in_backtick && ch == '"') {
+            in_double_quote = !in_double_quote;
+            rewritten.push_back(ch);
+            ++i;
+            continue;
+        }
+        if (!in_single_quote && !in_double_quote && ch == '`') {
+            in_backtick = !in_backtick;
+            rewritten.push_back(ch);
+            ++i;
+            continue;
+        }
+
+        if (!in_single_quote &&
+            !in_double_quote &&
+            !in_backtick &&
+            (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_')) {
+            const size_t start = i;
+            ++i;
+            while (i < sql.size() &&
+                   (std::isalnum(static_cast<unsigned char>(sql[i])) || sql[i] == '_')) {
+                ++i;
+            }
+            const std::string identifier = sql.substr(start, i - start);
+            const bool preceded_by_dot = start > 0 && sql[start - 1] == '.';
+            const bool followed_by_dot = i < sql.size() && sql[i] == '.';
+            if (!preceded_by_dot && followed_by_dot) {
+                const std::string replacement = system_schema_rewrite(identifier);
+                if (!replacement.empty()) {
+                    rewritten += replacement;
+                    continue;
+                }
+            }
+            rewritten += identifier;
+            continue;
+        }
+
+        rewritten.push_back(ch);
+        ++i;
+    }
+
+    return rewritten;
+}
+
+std::string mysqlSystemSchemaQualifierName(const std::string& identifier) {
+    if (core::IdentifierUtils::namesMatch(identifier, false, "information_schema", false)) {
+        return "information_schema";
+    }
+    if (core::IdentifierUtils::namesMatch(identifier, false, "mysql", false)) {
+        return "mysql";
+    }
+    if (core::IdentifierUtils::namesMatch(identifier, false, "performance_schema", false)) {
+        return "performance_schema";
+    }
+    if (core::IdentifierUtils::namesMatch(identifier, false, "sys", false)) {
+        return "sys";
+    }
+    return {};
+}
+
+std::string detectSingleMySqlSystemSchemaQualifier(const std::string& sql) {
+    bool in_single_quote = false;
+    bool in_double_quote = false;
+    bool in_backtick = false;
+    std::string detected;
+
+    for (size_t i = 0; i < sql.size();) {
+        const char ch = sql[i];
+        if (!in_double_quote && !in_backtick && ch == '\'') {
+            in_single_quote = !in_single_quote;
+            ++i;
+            continue;
+        }
+        if (!in_single_quote && !in_backtick && ch == '"') {
+            in_double_quote = !in_double_quote;
+            ++i;
+            continue;
+        }
+        if (!in_single_quote && !in_double_quote && ch == '`') {
+            in_backtick = !in_backtick;
+            ++i;
+            continue;
+        }
+
+        if (!in_single_quote &&
+            !in_double_quote &&
+            !in_backtick &&
+            (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_')) {
+            const size_t start = i;
+            ++i;
+            while (i < sql.size() &&
+                   (std::isalnum(static_cast<unsigned char>(sql[i])) || sql[i] == '_')) {
+                ++i;
+            }
+            const std::string identifier = sql.substr(start, i - start);
+            const bool preceded_by_dot = start > 0 && sql[start - 1] == '.';
+            const bool followed_by_dot = i < sql.size() && sql[i] == '.';
+            if (!preceded_by_dot && followed_by_dot) {
+                const std::string schema_name = mysqlSystemSchemaQualifierName(identifier);
+                if (!schema_name.empty()) {
+                    if (detected.empty()) {
+                        detected = schema_name;
+                    } else if (detected != schema_name) {
+                        return {};
+                    }
+                }
+            }
+            continue;
+        }
+
+        ++i;
+    }
+
+    return detected;
+}
+
+std::string stripMySqlSystemSchemaQualifier(const std::string& sql,
+                                            const std::string& schema_name) {
+    if (sql.empty() || schema_name.empty()) {
+        return sql;
+    }
+
+    std::string stripped;
+    stripped.reserve(sql.size());
+    bool in_single_quote = false;
+    bool in_double_quote = false;
+    bool in_backtick = false;
+
+    for (size_t i = 0; i < sql.size();) {
+        const char ch = sql[i];
+        if (!in_double_quote && !in_backtick && ch == '\'') {
+            in_single_quote = !in_single_quote;
+            stripped.push_back(ch);
+            ++i;
+            continue;
+        }
+        if (!in_single_quote && !in_backtick && ch == '"') {
+            in_double_quote = !in_double_quote;
+            stripped.push_back(ch);
+            ++i;
+            continue;
+        }
+        if (!in_single_quote && !in_double_quote && ch == '`') {
+            in_backtick = !in_backtick;
+            stripped.push_back(ch);
+            ++i;
+            continue;
+        }
+
+        if (!in_single_quote &&
+            !in_double_quote &&
+            !in_backtick &&
+            (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_')) {
+            const size_t start = i;
+            ++i;
+            while (i < sql.size() &&
+                   (std::isalnum(static_cast<unsigned char>(sql[i])) || sql[i] == '_')) {
+                ++i;
+            }
+            const std::string identifier = sql.substr(start, i - start);
+            const bool preceded_by_dot = start > 0 && sql[start - 1] == '.';
+            const bool followed_by_dot = i < sql.size() && sql[i] == '.';
+            if (!preceded_by_dot &&
+                followed_by_dot &&
+                core::IdentifierUtils::namesMatch(identifier, false, schema_name, false)) {
+                ++i;  // Drop the qualifier dot too.
+                continue;
+            }
+            stripped += identifier;
+            continue;
+        }
+
+        stripped.push_back(ch);
+        ++i;
+    }
+
+    return stripped;
+}
+
+bool mysqlBoundDatabaseSwitchDenied(const ProtocolAdapterConfig& config,
+                                    const std::string& requested_database) {
+    if (!shouldUseBoundMySqlAttach(config) || config.default_database.empty()) {
+        return false;
+    }
+    if (requested_database.empty()) {
+        return false;
+    }
+    if (core::IdentifierUtils::namesMatch(requested_database, false,
+                                          config.default_database, false)) {
+        return false;
+    }
+    return !isMySqlSystemDatabaseName(requested_database);
 }
 
 void promoteAuthMethodToFront(std::vector<AuthMethod>& methods,
@@ -374,6 +788,184 @@ static void ltrimInPlace(std::string& text) {
     }
 }
 
+static bool isMySqlSystemSchemaName(std::string_view token) {
+    const std::string token_string(token);
+    return core::IdentifierUtils::namesMatch(token_string, false, "information_schema", false) ||
+           core::IdentifierUtils::namesMatch(token_string, false, "mysql", false) ||
+           core::IdentifierUtils::namesMatch(token_string, false, "performance_schema", false) ||
+           core::IdentifierUtils::namesMatch(token_string, false, "sys", false);
+}
+
+static bool isMySqlSystemSchemaContextKeyword(const std::string& token_upper) {
+    return token_upper == "USE" ||
+           token_upper == "FROM" ||
+           token_upper == "IN" ||
+           token_upper == "INTO" ||
+           token_upper == "UPDATE" ||
+           token_upper == "JOIN" ||
+           token_upper == "DATABASE" ||
+           token_upper == "SCHEMA" ||
+           token_upper == "TABLE" ||
+           token_upper == "TABLES" ||
+           token_upper == "DESC" ||
+           token_upper == "DESCRIBE";
+}
+
+static size_t skipSqlWhitespace(const std::string& sql, size_t pos) {
+    while (pos < sql.size() &&
+           std::isspace(static_cast<unsigned char>(sql[pos]))) {
+        ++pos;
+    }
+    return pos;
+}
+
+static bool queryTouchesMySqlSystemSchema(const std::string& sql) {
+    std::string previous_identifier_upper;
+
+    auto token_touches_system_schema =
+        [&](std::string_view token, size_t token_end) -> bool {
+            if (!isMySqlSystemSchemaName(token)) {
+                previous_identifier_upper = toUpperAscii(std::string(token));
+                return false;
+            }
+
+            const size_t next = skipSqlWhitespace(sql, token_end);
+            if (next < sql.size() && sql[next] == '.') {
+                previous_identifier_upper = toUpperAscii(std::string(token));
+                return true;
+            }
+
+            const bool context_match =
+                isMySqlSystemSchemaContextKeyword(previous_identifier_upper);
+            previous_identifier_upper = toUpperAscii(std::string(token));
+            return context_match;
+        };
+
+    for (size_t i = 0; i < sql.size();) {
+        const char ch = sql[i];
+
+        if (ch == '\'') {
+            ++i;
+            while (i < sql.size()) {
+                if (sql[i] == '\\' && (i + 1) < sql.size()) {
+                    i += 2;
+                    continue;
+                }
+                if (sql[i] == '\'') {
+                    ++i;
+                    if (i < sql.size() && sql[i] == '\'') {
+                        ++i;
+                        continue;
+                    }
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+
+        if (ch == '"') {
+            ++i;
+            while (i < sql.size()) {
+                if (sql[i] == '\\' && (i + 1) < sql.size()) {
+                    i += 2;
+                    continue;
+                }
+                if (sql[i] == '"') {
+                    ++i;
+                    if (i < sql.size() && sql[i] == '"') {
+                        ++i;
+                        continue;
+                    }
+                    break;
+                }
+                ++i;
+            }
+            continue;
+        }
+
+        if (ch == '`') {
+            const size_t token_start = ++i;
+            while (i < sql.size() && sql[i] != '`') {
+                ++i;
+            }
+            const std::string_view token(sql.data() + token_start, i - token_start);
+            if (token_touches_system_schema(token, i + (i < sql.size() ? 1 : 0))) {
+                return true;
+            }
+            if (i < sql.size()) {
+                ++i;
+            }
+            continue;
+        }
+
+        if (ch == '#') {
+            while (i < sql.size() && sql[i] != '\n') {
+                ++i;
+            }
+            continue;
+        }
+
+        if (ch == '-' && (i + 1) < sql.size() && sql[i + 1] == '-') {
+            size_t comment_end = i + 2;
+            if (comment_end >= sql.size() ||
+                std::isspace(static_cast<unsigned char>(sql[comment_end]))) {
+                i = comment_end;
+                while (i < sql.size() && sql[i] != '\n') {
+                    ++i;
+                }
+                continue;
+            }
+        }
+
+        if (ch == '/' && (i + 1) < sql.size() && sql[i + 1] == '*') {
+            i += 2;
+            while ((i + 1) < sql.size() &&
+                   !(sql[i] == '*' && sql[i + 1] == '/')) {
+                ++i;
+            }
+            i = std::min(sql.size(), i + 2);
+            continue;
+        }
+
+        if (std::isalpha(static_cast<unsigned char>(ch)) || ch == '_') {
+            const size_t token_start = i++;
+            while (i < sql.size() &&
+                   (std::isalnum(static_cast<unsigned char>(sql[i])) ||
+                    sql[i] == '_')) {
+                ++i;
+            }
+            const std::string_view token(sql.data() + token_start, i - token_start);
+            if (token_touches_system_schema(token, i)) {
+                return true;
+            }
+            continue;
+        }
+
+        ++i;
+    }
+
+    return false;
+}
+
+static bool queryLikelyMutatesMySqlCompatCatalog(const std::string& sql) {
+    std::string trimmed = sql;
+    ltrimInPlace(trimmed);
+    std::string upper = toUpperAscii(trimmed);
+    auto starts_with = [&](const char* prefix) {
+        return upper.rfind(prefix, 0) == 0;
+    };
+    return starts_with("CREATE") ||
+           starts_with("ALTER") ||
+           starts_with("DROP") ||
+           starts_with("RENAME") ||
+           starts_with("TRUNCATE") ||
+           starts_with("GRANT") ||
+           starts_with("REVOKE") ||
+           starts_with("SET") ||
+           starts_with("USE");
+}
+
 static bool isWordBoundary(char c) {
     return !std::isalnum(static_cast<unsigned char>(c)) && c != '_';
 }
@@ -426,6 +1018,68 @@ static bool parseStringLiteralAt(const std::string& sql, size_t& pos, std::strin
         value.push_back(ch);
     }
     return false;
+}
+
+static bool parseUseDatabaseStatement(const std::string& sql,
+                                      std::string& database_out) {
+    std::string trimmed = sql;
+    ltrimInPlace(trimmed);
+    while (!trimmed.empty() &&
+           std::isspace(static_cast<unsigned char>(trimmed.back()))) {
+        trimmed.pop_back();
+    }
+    if (!trimmed.empty() && trimmed.back() == ';') {
+        trimmed.pop_back();
+        while (!trimmed.empty() &&
+               std::isspace(static_cast<unsigned char>(trimmed.back()))) {
+            trimmed.pop_back();
+        }
+    }
+
+    const std::string upper = toUpperAscii(trimmed);
+    if (upper.rfind("USE", 0) != 0) {
+        return false;
+    }
+    if (upper.size() > 3 && !std::isspace(static_cast<unsigned char>(upper[3]))) {
+        return false;
+    }
+
+    size_t pos = 3;
+    while (pos < trimmed.size() && std::isspace(static_cast<unsigned char>(trimmed[pos]))) {
+        ++pos;
+    }
+    if (pos >= trimmed.size()) {
+        return false;
+    }
+
+    std::string db_name;
+    if (trimmed[pos] == '`') {
+        ++pos;
+        size_t end = trimmed.find('`', pos);
+        if (end == std::string::npos) {
+            return false;
+        }
+        db_name = trimmed.substr(pos, end - pos);
+        pos = end + 1;
+    } else {
+        size_t start = pos;
+        while (pos < trimmed.size() &&
+               !std::isspace(static_cast<unsigned char>(trimmed[pos])) &&
+               trimmed[pos] != ';') {
+            ++pos;
+        }
+        db_name = trimmed.substr(start, pos - start);
+    }
+
+    while (pos < trimmed.size() && std::isspace(static_cast<unsigned char>(trimmed[pos]))) {
+        ++pos;
+    }
+    if (pos != trimmed.size()) {
+        return false;
+    }
+
+    database_out = extractMySqlDatabaseName(db_name);
+    return !database_out.empty();
 }
 
 static bool matchSqlLike(const std::string& str,
@@ -671,6 +1325,77 @@ void MySqlAdapter::updateServerCapabilities() {
 
 MySqlAdapter::~MySqlAdapter() = default;
 
+core::Status MySqlAdapter::executeQuery(const QueryContext& query, ResultContext& result) {
+    if (!queryTouchesMySqlSystemSchema(query.query) || !connection_ctx_) {
+        return ProtocolAdapter::executeQuery(query, result);
+    }
+
+    core::Database* db = engineDatabase();
+    core::ErrorContext ctx;
+    if (!db) {
+        auto status = ensureEngine(&ctx);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.sqlstate = "58000";
+            result.error_message = ctx.message;
+            return status;
+        }
+        db = engineDatabase();
+    }
+
+    std::string db_name = extractMySqlDatabaseName(database_name_);
+    if (db_name.empty()) {
+        db_name = extractMySqlDatabaseName(config_.default_database);
+    }
+    if (db_name.empty()) {
+        db_name = "main";
+    }
+    auto* catalog = db ? db->catalog_manager() : nullptr;
+    std::string session_schema = ensureMySqlSchemaPath(catalog, db_name, &ctx);
+    std::string target_schema = session_schema;
+
+    const std::string system_schema = detectSingleMySqlSystemSchemaQualifier(query.query);
+    if (!system_schema.empty()) {
+        std::string server_root = buildMySqlServerRoot(session_schema);
+        if (server_root.empty()) {
+            server_root = "emulated.mysql.localhost";
+        }
+        target_schema = server_root + ".databases." + system_schema;
+    }
+
+    const std::string previous_schema = connection_ctx_->current_schema();
+    const std::vector<std::string> previous_search_path = connection_ctx_->search_path();
+    const core::ID previous_schema_id = connection_ctx_->getCurrentSchemaId();
+
+    struct SchemaGuard {
+        core::ConnectionContext* connection = nullptr;
+        std::string schema;
+        std::vector<std::string> search_path;
+        core::ID schema_id;
+        ~SchemaGuard() {
+            if (!connection) {
+                return;
+            }
+            connection->set_current_schema(schema);
+            connection->set_search_path(search_path);
+            connection->setCurrentSchemaId(schema_id);
+        }
+    } guard{connection_ctx_.get(), previous_schema, previous_search_path, previous_schema_id};
+
+    connection_ctx_->set_current_schema(target_schema);
+    connection_ctx_->set_search_path({target_schema});
+    if (catalog) {
+        core::CatalogManager::SchemaInfo schema_info;
+        core::ErrorContext schema_ctx;
+        if (catalog->getSchema(target_schema, schema_info, &schema_ctx) == core::Status::OK) {
+            connection_ctx_->setCurrentSchemaId(schema_info.schema_id);
+        }
+    }
+
+    return ProtocolAdapter::executeQuery(query, result);
+}
+
 core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     if (client_) {
         return core::Status::OK;
@@ -683,7 +1408,7 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
     std::string attach_request = engine_database_name_;
     if (attach_request.empty()) {
-        if (!config_.default_database.empty()) {
+        if (shouldUseBoundMySqlAttach(config_)) {
             attach_request = config_.default_database;
         } else if (!logical_database.empty()) {
             attach_request = logical_database;
@@ -694,7 +1419,7 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
     std::string selected_database;
     if (!resolveDatabaseSelection(attach_request, selected_database)) {
-        if (config_.enforce_bound_database &&
+        if (shouldUseBoundMySqlAttach(config_) &&
             !config_.default_database.empty() &&
             isMySqlSystemDatabaseName(attach_request)) {
             selected_database = config_.default_database;
@@ -709,6 +1434,7 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     }
     engine_database_name_ = selected_database;
     client_config_.database_name = selected_database;
+    client_config_.client_name = "sb_parser_mysql";
     if (!config_.engine_endpoint.empty()) {
         client_config_.ipc_method = server::IPCMethod::AUTO;
         client_config_.socket_path = config_.engine_endpoint;
@@ -796,6 +1522,7 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
             db_name = selected_database;
         }
         database_name_ = db_name;
+        applyMySqlSessionSchemaContext(db_name, ctx);
         auto* catalog = engineDatabase() ? engineDatabase()->catalog_manager() : nullptr;
         std::string schema_root = ensureMySqlSchemaPath(catalog, db_name, ctx);
         auto execute_set = [&](const std::string& schema_name) -> core::Status {
@@ -879,6 +1606,57 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     return core::Status::OK;
 }
 
+void MySqlAdapter::applyMySqlSessionSchemaContext(const std::string& logical_db,
+                                                  core::ErrorContext* ctx) {
+    if (!connection_ctx_) {
+        return;
+    }
+
+    std::string db_name = extractMySqlDatabaseName(logical_db);
+    if (db_name.empty()) {
+        db_name = extractMySqlDatabaseName(database_name_);
+    }
+    if (db_name.empty()) {
+        db_name = extractMySqlDatabaseName(config_.default_database);
+    }
+    if (db_name.empty()) {
+        return;
+    }
+
+    core::Database* db = usesRemoteEngineEndpoint(config_) ? nullptr : engineDatabase();
+    core::ErrorContext engine_ctx;
+    if (!db && !usesRemoteEngineEndpoint(config_)) {
+        auto status = ensureEngine(&engine_ctx);
+        if (status != core::Status::OK) {
+            if (ctx && ctx->message.empty() && !engine_ctx.message.empty()) {
+                ctx->set(status, engine_ctx.message.c_str(), __FILE__, __LINE__, __func__);
+            }
+            return;
+        }
+        db = engineDatabase();
+    }
+
+    auto* catalog = db ? db->catalog_manager() : nullptr;
+    std::string schema_root = ensureMySqlSchemaPath(catalog, db_name, ctx);
+    if (schema_root.empty()) {
+        return;
+    }
+
+    connection_ctx_->set_dialect_tag("mysql");
+    connection_ctx_->set_current_schema(schema_root);
+    connection_ctx_->set_search_path({schema_root});
+
+    if (!catalog) {
+        return;
+    }
+
+    core::CatalogManager::SchemaInfo schema_info;
+    core::ErrorContext lookup_ctx;
+    if (catalog->getSchema(schema_root, schema_info, &lookup_ctx) == core::Status::OK) {
+        connection_ctx_->setCurrentSchemaId(schema_info.schema_id);
+    }
+}
+
 core::Status MySqlAdapter::executeRemoteNativeSQL(const std::string& sql,
                                                   client::ResultSet* results,
                                                   core::ErrorContext* ctx) {
@@ -930,6 +1708,10 @@ core::Status MySqlAdapter::executeRemoteDialectSQL(const std::string& sql,
 core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
                                               ResultContext& result,
                                               core::ErrorContext* ctx) {
+    if (shouldBootstrapSystemSchemaForRemoteQuery(query.query)) {
+        bootstrapInformationSchema(ctx);
+    }
+
     auto status = ensureRemoteClient(ctx);
     if (status != core::Status::OK) {
         result.has_error = true;
@@ -949,7 +1731,29 @@ core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
         return compile_status;
     }
 
+    if (myExecDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_exec] before executeBytecode db=%s engine_db=%s current_schema=%s default_db_set=%d sql=%s\n",
+                     database_name_.c_str(),
+                     engine_database_name_.c_str(),
+                     connection_ctx_ ? connection_ctx_->current_schema().c_str() : "<null>",
+                     default_db_set_ ? 1 : 0,
+                     query.query.c_str());
+        std::fflush(stderr);
+    }
+
     status = client_->executeBytecode(bytecode, query.query, &rs, ctx);
+    if (myExecDebugEnabled()) {
+        std::fprintf(stderr,
+                     "[my_exec] after executeBytecode status=%u err=%s rows=%lld cols=%zu has_error=%d sql=%s\n",
+                     static_cast<unsigned>(status),
+                     ctx ? ctx->message.c_str() : "",
+                     static_cast<long long>(rs.getRowsAffected()),
+                     rs.getColumnCount(),
+                     status == core::Status::OK ? 0 : 1,
+                     query.query.c_str());
+        std::fflush(stderr);
+    }
     if (status != core::Status::OK) {
         result.has_error = true;
         result.error_code = static_cast<uint32_t>(status);
@@ -970,11 +1774,11 @@ core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
         result.columns.push_back(info);
     }
 
-    result.rows.clear();
-    const auto row_count = static_cast<size_t>(rs.getRowCount());
-    for (size_t i = 0; i < row_count; ++i) {
-        result.rows.push_back(rs.getRowValues(i));
-    }
+        result.rows.clear();
+        const auto row_count = static_cast<size_t>(rs.getRowCount());
+        for (size_t i = 0; i < row_count; ++i) {
+            result.rows.push_back(formatMySqlTextRow(rs.getRowValues(i), result.columns));
+        }
 
     result.rows_affected = rs.getRowsAffected();
     result.command_tag = rs.getCommandTag();
@@ -1083,6 +1887,50 @@ core::Status MySqlAdapter::processMessage(network::Connection* conn) {
 }
 
 core::Status MySqlAdapter::sendGreeting(network::Connection* conn) {
+    // Parser workers can be reused across front-door sessions. Reset all
+    // per-client bridge and wire state before advertising a new handshake.
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+    resetSequence();
+    current_packet_.clear();
+    auth_response_.clear();
+    remote_password_.clear();
+    remote_md5_hash_.clear();
+    remote_mysql_auth_payload_.clear();
+    engine_database_name_.clear();
+    pending_auth_switch_plugin_.clear();
+    database_name_.clear();
+    username_.clear();
+    client_capabilities_ = 0;
+    max_packet_size_ = 16777215;
+    client_charset_ = mysql::Charset::UTF8MB4_GENERAL_CI;
+    server_status_ = mysql::ServerStatus::AUTOCOMMIT;
+    next_stmt_id_ = 1;
+    prepared_statements_.clear();
+    last_warnings_.clear();
+    last_errors_.clear();
+    last_error_code_ = 0;
+    last_error_sqlstate_.clear();
+    in_transaction_ = false;
+    default_db_set_ = false;
+    information_schema_bootstrapped_ = false;
+    tls_negotiated_ = false;
+    mysql_state_ = MySqlProtocolState::INITIAL;
+
+    // Rebuild the advertised server handshake profile for every front-door
+    // session so a prior client's negotiated auth plugin/capability choices do
+    // not leak into the next reused parser worker.
+    updateServerCapabilities();
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<uint32_t> dist;
+    connection_id_ = dist(gen);
+    for (int i = 0; i < 20; ++i) {
+        auth_scramble_[i] = static_cast<uint8_t>((dist(gen) % 94) + 33);
+    }
+
     sendHandshakePacket(conn);
     mysql_state_ = MySqlProtocolState::HANDSHAKE_SENT;
     return sendBuffer(conn);
@@ -1132,7 +1980,14 @@ core::Status MySqlAdapter::sendQueryResult(network::Connection* conn,
 
         // Rows
         for (const auto& row : result.rows) {
-            sendResultRow(conn, row);
+            std::vector<ProtocolCodec::ColumnValue> text_row;
+            text_row.reserve(row.size());
+            for (size_t i = 0; i < row.size(); ++i) {
+                const WireType type =
+                    i < result.columns.size() ? result.columns[i].type : WireType::UNKNOWN;
+                text_row.push_back(formatMySqlTextColumnValue(row[i], type));
+            }
+            sendResultRow(conn, text_row);
         }
 
         // Final row-set terminator.
@@ -1147,12 +2002,12 @@ core::Status MySqlAdapter::sendQueryResult(network::Connection* conn,
 core::Status MySqlAdapter::compileQuery(const std::string& sql,
                                         std::vector<uint8_t>& bytecode_out,
                                         std::string& error_out) {
-    core::Database* compile_db = engineDatabase();
+    const bool remote_listener_mode = usesRemoteEngineEndpoint(config_);
+    core::Database* compile_db = remote_listener_mode ? nullptr : engineDatabase();
     core::ErrorContext ctx;
     if (!compile_db) {
         // In listener/parser remote mode, the server owns the live engine handle and
         // parser workers must not try to open the same .sbdb file directly.
-        const bool remote_listener_mode = !config_.engine_endpoint.empty();
         if (!remote_listener_mode) {
             auto status = ensureEngine(&ctx);
             if (status != core::Status::OK) {
@@ -1179,7 +2034,37 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
         &ctx);
     compiler.setDefaultSchema(default_schema);
     compiler.setCompatibilityMode(resolveMysqlCompat(compile_db, db_name, &ctx));
-    auto result = compiler.compile(sql);
+    std::string compile_sql = sql;
+    if (shouldBootstrapSystemSchemaForRemoteQuery(sql)) {
+        core::ErrorContext bootstrap_ctx;
+        bootstrapInformationSchema(&bootstrap_ctx);
+        if (!bootstrap_ctx.message.empty()) {
+            error_out = bootstrap_ctx.message;
+            return bootstrap_ctx.code != core::Status::OK
+                ? bootstrap_ctx.code
+                : core::Status::INVALID_ARGUMENT;
+        }
+        std::string server_root = buildMySqlServerRoot(default_schema);
+        if (server_root.empty()) {
+            server_root = "emulated.mysql.localhost";
+        }
+        const std::string database_root = server_root + ".databases";
+        const std::string system_schema = detectSingleMySqlSystemSchemaQualifier(sql);
+        if (!system_schema.empty()) {
+            compiler.setDefaultSchema(database_root + "." + system_schema);
+            compile_sql = stripMySqlSystemSchemaQualifier(sql, system_schema);
+        } else {
+            compile_sql = rewriteMySqlSystemSchemaReferences(sql, database_root);
+            parser::v3::Compiler native_compiler;
+            auto native_result = native_compiler.compile(compile_sql);
+            if (native_result.ok) {
+                last_warnings_.clear();
+                bytecode_out = native_result.bytecode;
+                return core::Status::OK;
+            }
+        }
+    }
+    auto result = compiler.compile(compile_sql);
     last_warnings_ = result.warnings();
     if (!result.success()) {
         error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
@@ -1187,6 +2072,13 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
     }
     bytecode_out = result.bytecode();
     return core::Status::OK;
+}
+
+bool MySqlAdapter::shouldBootstrapSystemSchemaForRemoteQuery(const std::string& sql) const {
+    // Only bootstrap when the SQL text explicitly targets MySQL system schemas.
+    // Using the selected database name here causes false positives in normal
+    // compat sessions and duplicates remote bootstrap work before regular DML.
+    return queryTouchesMySqlSystemSchema(sql);
 }
 
 core::Status MySqlAdapter::sendProtocolError(network::Connection* conn,
@@ -1533,13 +2425,24 @@ core::Status MySqlAdapter::handleHandshakeResponse(network::Connection* conn) {
     }
     database_name_ = std::move(logical_database);
 
+    if (mysqlBoundDatabaseSwitchDenied(config_, database_name_)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Database switch denied by manager binding context");
+        return core::Status::INVALID_AUTHORIZATION;
+    }
+
     std::string attach_request = database_name_;
+    if (shouldUseBoundMySqlAttach(config_)) {
+        attach_request = config_.default_database;
+    }
     if (attach_request.empty()) {
         attach_request = config_.default_database;
     }
     std::string selected_database;
     if (!resolveDatabaseSelection(attach_request, selected_database)) {
-        if (config_.enforce_bound_database &&
+        if (shouldUseBoundMySqlAttach(config_) &&
             !config_.default_database.empty() &&
             isMySqlSystemDatabaseName(attach_request)) {
             selected_database = config_.default_database;
@@ -1552,6 +2455,8 @@ core::Status MySqlAdapter::handleHandshakeResponse(network::Connection* conn) {
         }
     }
     engine_database_name_ = std::move(selected_database);
+    core::ErrorContext schema_ctx;
+    applyMySqlSessionSchemaContext(database_name_, &schema_ctx);
 
     const std::string server_auth_plugin = auth_plugin_name_;
 
@@ -2380,8 +3285,38 @@ core::Status MySqlAdapter::handleComQuery(network::Connection* conn) {
 
     updateTransactionStatus(query, result.has_error);
 
+    if (!result.has_error) {
+        applySuccessfulSessionQuery(query);
+    }
+
     sendQueryResult(conn, result);
     return sendBuffer(conn);
+}
+
+void MySqlAdapter::applySuccessfulSessionQuery(const std::string& sql) {
+    if (queryLikelyMutatesMySqlCompatCatalog(sql)) {
+        information_schema_bootstrapped_ = false;
+    }
+
+    std::string selected_database;
+    if (!parseUseDatabaseStatement(sql, selected_database) || selected_database.empty()) {
+        return;
+    }
+
+    database_name_ = std::move(selected_database);
+    core::ErrorContext schema_ctx;
+    applyMySqlSessionSchemaContext(database_name_, &schema_ctx);
+    default_db_set_ = false;
+    information_schema_bootstrapped_ = false;
+
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+}
+
+void MySqlAdapter::applySuccessfulSessionQueryForTest(const std::string& sql) {
+    applySuccessfulSessionQuery(sql);
 }
 
 bool MySqlAdapter::handleShowQuery(const std::string& query, ResultContext& result) {
@@ -2571,11 +3506,11 @@ bool MySqlAdapter::handleShowQuery(const std::string& query, ResultContext& resu
             result.columns.push_back(info);
         }
 
-        result.rows.clear();
-        const auto row_count = static_cast<size_t>(rs.getRowCount());
-        for (size_t i = 0; i < row_count; ++i) {
-            result.rows.push_back(rs.getRowValues(i));
-        }
+    result.rows.clear();
+    const auto row_count = static_cast<size_t>(rs.getRowCount());
+    for (size_t i = 0; i < row_count; ++i) {
+        result.rows.push_back(formatMySqlTextRow(rs.getRowValues(i), result.columns));
+    }
 
         return true;
     }
@@ -2705,12 +3640,7 @@ core::Status MySqlAdapter::handleComInitDb(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
-    database_name_ = std::move(selected_database);
-    default_db_set_ = false;
-    if (client_) {
-        client_->disconnect();
-        client_.reset();
-    }
+    applySuccessfulSessionQuery("USE " + selected_database);
 
     sendOkPacket(conn);
     return sendBuffer(conn);
@@ -2804,13 +3734,24 @@ core::Status MySqlAdapter::handleComChangeUser(network::Connection* conn) {
         return sendBuffer(conn);
     }
 
+    if (mysqlBoundDatabaseSwitchDenied(config_, selected_database)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Database switch denied by manager binding context");
+        return sendBuffer(conn);
+    }
+
     std::string attach_request = selected_database;
+    if (shouldUseBoundMySqlAttach(config_)) {
+        attach_request = config_.default_database;
+    }
     if (attach_request.empty()) {
         attach_request = config_.default_database;
     }
     std::string selected_engine_database;
     if (!resolveDatabaseSelection(attach_request, selected_engine_database)) {
-        if (config_.enforce_bound_database &&
+        if (shouldUseBoundMySqlAttach(config_) &&
             !config_.default_database.empty() &&
             isMySqlSystemDatabaseName(attach_request)) {
             selected_engine_database = config_.default_database;
@@ -2834,6 +3775,8 @@ core::Status MySqlAdapter::handleComChangeUser(network::Connection* conn) {
     username_ = requested_user;
     database_name_ = std::move(selected_database);
     engine_database_name_ = std::move(selected_engine_database);
+    core::ErrorContext schema_ctx;
+    applyMySqlSessionSchemaContext(database_name_, &schema_ctx);
     if (!plugin_name.empty()) {
         auth_plugin_name_ = std::move(plugin_name);
     }
@@ -3889,7 +4832,16 @@ bool MySqlAdapter::validateAuthResponse(const std::string& expected_plugin,
 }
 
 void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
-    if (information_schema_bootstrapped_ || !client_) {
+    if (information_schema_bootstrapped_) {
+        return;
+    }
+
+    const bool use_local_engine = config_.engine_endpoint.empty();
+    auto status = use_local_engine ? ensureEngine(ctx) : ensureRemoteClient(ctx);
+    if (status != core::Status::OK) {
+        return;
+    }
+    if (!use_local_engine && !client_) {
         return;
     }
 
@@ -3900,74 +4852,177 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
     if (db_name.empty()) {
         db_name = "main";
     }
+    auto* runtime_db = use_local_engine ? engineDatabase() : nullptr;
     std::string base_schema =
-        resolveMySqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
+        resolveMySqlSchemaPath(runtime_db ? runtime_db->catalog_manager() : nullptr,
                                db_name);
-    std::string info_schema = base_schema + ".information_schema";
+    std::string server_root = buildMySqlServerRoot(base_schema);
+    if (server_root.empty()) {
+        server_root = "emulated.mysql.localhost";
+    }
+    std::string database_root = server_root + ".databases";
+    std::string info_schema = database_root + ".information_schema";
+    std::string mysql_schema = database_root + ".mysql";
+    std::string performance_schema = database_root + ".performance_schema";
+    std::string sys_schema = database_root + ".sys";
+    auto* db = runtime_db;
+    auto* catalog = db ? db->catalog_manager() : nullptr;
+    if (catalog) {
+        auto ensure_schema_path = [&](const std::string& schema_name) {
+            core::ID schema_id;
+            core::ErrorContext create_ctx;
+            auto status = catalog->createSchemaPath(schema_name,
+                                                    core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                                                    schema_id,
+                                                    &create_ctx);
+            if (status != core::Status::OK &&
+                status != core::Status::FILE_EXISTS &&
+                ctx != nullptr &&
+                ctx->message.empty() &&
+                !create_ctx.message.empty()) {
+                ctx->set(status, create_ctx.message.c_str(), __FILE__, __LINE__, __func__);
+            }
+        };
 
-    auto safeExec = [&](const std::string& sql) {
+        ensure_schema_path(info_schema);
+        ensure_schema_path(mysql_schema);
+        ensure_schema_path(performance_schema);
+        ensure_schema_path(sys_schema);
+    }
+
+    auto safeExec = [&](const std::string& sql) -> core::Status {
+        if (use_local_engine) {
+            parser::v3::Compiler compiler;
+            auto compile_result = compiler.compile(sql);
+            if (!compile_result.ok) {
+                if (ctx && ctx->message.empty()) {
+                    const std::string message = compile_result.error.empty()
+                        ? "Native SQL compilation failed during MySQL compatibility bootstrap"
+                        : compile_result.error;
+                    ctx->set(core::Status::INVALID_ARGUMENT,
+                             message.c_str(),
+                             __FILE__, __LINE__, __func__);
+                }
+                return core::Status::INVALID_ARGUMENT;
+            }
+            ResultContext result;
+            core::ErrorContext exec_ctx;
+            auto exec_status = executeBytecode(sql, compile_result.bytecode, result, &exec_ctx);
+            if ((exec_status != core::Status::OK || result.has_error) &&
+                ctx &&
+                ctx->message.empty()) {
+                const std::string message = !result.error_message.empty()
+                    ? result.error_message
+                    : exec_ctx.message;
+                if (!message.empty()) {
+                    ctx->set(exec_status != core::Status::OK ? exec_status
+                                                             : core::Status::INVALID_ARGUMENT,
+                             message.c_str(),
+                             __FILE__, __LINE__, __func__);
+                }
+            }
+            return exec_status;
+        }
+
         client::ResultSet rs;
-        executeRemoteNativeSQL(sql, &rs, ctx);
+        return executeRemoteNativeSQL(sql, &rs, ctx);
     };
 
-    auto info_table = [&](const std::string& name) {
-        return info_schema + "." + name;
+    auto setSearchPath = [&](const std::string& schema_name) -> core::Status {
+        std::string sql = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
+        return safeExec(sql);
+    };
+    auto safeExecInSchema = [&](const std::string& schema_name, const std::string& sql) {
+        if (setSearchPath(schema_name) != core::Status::OK) {
+            return;
+        }
+        safeExec(sql);
+        if (!base_schema.empty() &&
+            !core::IdentifierUtils::namesMatch(schema_name, false, base_schema, false)) {
+            setSearchPath(base_schema);
+        }
+    };
+    auto safeExecInfo = [&](const std::string& sql) {
+        safeExecInSchema(info_schema, sql);
+    };
+    auto safeExecMysql = [&](const std::string& sql) {
+        safeExecInSchema(mysql_schema, sql);
+    };
+    auto safeExecPerf = [&](const std::string& sql) {
+        safeExecInSchema(performance_schema, sql);
+    };
+    auto info_object = [&](const std::string& name) {
+        return use_local_engine ? info_schema + "." + name : name;
+    };
+    auto mysql_object = [&](const std::string& name) {
+        return use_local_engine ? mysql_schema + "." + name : name;
+    };
+    auto perf_object = [&](const std::string& name) {
+        return use_local_engine ? performance_schema + "." + name : name;
     };
 
     safeExec("CREATE SCHEMA IF NOT EXISTS " + info_schema);
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("schemata") + " ("
+    safeExec("CREATE SCHEMA IF NOT EXISTS " + mysql_schema);
+    safeExec("CREATE SCHEMA IF NOT EXISTS " + performance_schema);
+    safeExec("CREATE SCHEMA IF NOT EXISTS " + sys_schema);
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("schemata") + " ("
              "catalog_name TEXT, schema_name TEXT, default_character_set_name TEXT, default_collation_name TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("tables") + " ("
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("tables") + " ("
              "table_schema TEXT, table_name TEXT, table_type TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("columns") + " ("
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("columns") + " ("
              "table_schema TEXT, table_name TEXT, column_name TEXT, ordinal_position INT,"
              "data_type TEXT, is_nullable TEXT, character_maximum_length INT, numeric_precision INT, numeric_scale INT)");
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("table_constraints") + " ("
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("table_constraints") + " ("
              "constraint_schema TEXT, constraint_name TEXT, table_schema TEXT, table_name TEXT, constraint_type TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("key_column_usage") + " ("
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("key_column_usage") + " ("
              "constraint_schema TEXT, constraint_name TEXT, table_schema TEXT, table_name TEXT,"
              "column_name TEXT, ordinal_position INT)");
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("referential_constraints") + " ("
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("referential_constraints") + " ("
              "constraint_schema TEXT, constraint_name TEXT, unique_constraint_schema TEXT, unique_constraint_name TEXT,"
              "match_option TEXT, update_rule TEXT, delete_rule TEXT, table_name TEXT, referenced_table_name TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("statistics") + " ("
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("statistics") + " ("
              "table_schema TEXT, table_name TEXT, non_unique INT, index_schema TEXT, index_name TEXT, "
              "seq_in_index INT, column_name TEXT, collation TEXT, cardinality BIGINT, index_type TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("routines") + " ("
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("routines") + " ("
              "routine_schema TEXT, routine_name TEXT, routine_type TEXT, data_type TEXT)");
-    safeExec("CREATE TABLE IF NOT EXISTS " + info_table("triggers") + " ("
+    safeExecInfo("CREATE TABLE IF NOT EXISTS " + info_object("triggers") + " ("
              "trigger_schema TEXT, trigger_name TEXT, event_manipulation TEXT, "
              "event_object_schema TEXT, event_object_table TEXT, "
              "action_statement TEXT, action_timing TEXT)");
+    safeExecMysql("CREATE TABLE IF NOT EXISTS " + mysql_object("user") + " ("
+             "Host TEXT, User TEXT, plugin TEXT)");
+    safeExecPerf("CREATE TABLE IF NOT EXISTS " + perf_object("persisted_variables") + " ("
+             "variable_name TEXT, variable_value TEXT, set_time TEXT, set_user TEXT, set_host TEXT)");
 
-    std::string delete_existing = "DELETE FROM " + info_table("schemata") + " "
-                                  "WHERE schema_name = '" + escapeLiteral(db_name) + "'";
-    safeExec(delete_existing);
-    std::string insert_schema = "INSERT INTO " + info_table("schemata") + " "
+    safeExecInfo("DELETE FROM " + info_object("schemata"));
+    std::string insert_schema = "INSERT INTO " + info_object("schemata") + " "
         "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES "
         "('def','" + escapeLiteral(db_name) + "','utf8mb4','utf8mb4_general_ci')";
-    safeExec(insert_schema);
+    safeExecInfo(insert_schema);
+    safeExecMysql("DELETE FROM " + mysql_object("user"));
+    safeExecPerf("DELETE FROM " + perf_object("persisted_variables"));
 
     // Describe the bootstrap tables themselves
-    safeExec("DELETE FROM " + info_table("tables") + " WHERE table_schema IN ('information_schema')");
-    safeExec("DELETE FROM " + info_table("columns") + " WHERE table_schema IN ('information_schema')");
-    safeExec("DELETE FROM " + info_table("table_constraints") + " WHERE constraint_schema IN ('information_schema')");
-    safeExec("DELETE FROM " + info_table("key_column_usage") + " WHERE constraint_schema IN ('information_schema')");
-    safeExec("DELETE FROM " + info_table("referential_constraints") + " WHERE constraint_schema IN ('information_schema')");
-    safeExec("DELETE FROM " + info_table("statistics") + " WHERE table_schema IN ('information_schema')");
-    safeExec("DELETE FROM " + info_table("triggers") + " WHERE trigger_schema IN ('information_schema')");
+    safeExecInfo("DELETE FROM " + info_object("tables"));
+    safeExecInfo("DELETE FROM " + info_object("columns"));
+    safeExecInfo("DELETE FROM " + info_object("table_constraints"));
+    safeExecInfo("DELETE FROM " + info_object("key_column_usage"));
+    safeExecInfo("DELETE FROM " + info_object("referential_constraints"));
+    safeExecInfo("DELETE FROM " + info_object("statistics"));
+    safeExecInfo("DELETE FROM " + info_object("routines"));
+    safeExecInfo("DELETE FROM " + info_object("triggers"));
 
     auto insertTable = [&](const std::string& name) {
-        std::string sql = "INSERT INTO " + info_table("tables") + " "
+        std::string sql = "INSERT INTO " + info_object("tables") + " "
                           "(table_schema, table_name, table_type) VALUES "
                           "('information_schema','" + escapeLiteral(name) + "','BASE TABLE')";
-        safeExec(sql);
+        safeExecInfo(sql);
     };
 
     auto insertColumn = [&](const std::string& tbl, int pos, const std::string& col,
                             const std::string& type, const std::string& nullable,
                             int char_len = -1, int num_prec = -1, int num_scale = -1) {
-        std::string sql = "INSERT INTO " + info_table("columns") + " "
+        std::string sql = "INSERT INTO " + info_object("columns") + " "
                           "(table_schema, table_name, column_name, ordinal_position, data_type, is_nullable, "
                           "character_maximum_length, numeric_precision, numeric_scale) VALUES "
                           "('information_schema','" + escapeLiteral(tbl) + "','" + escapeLiteral(col) + "'," +
@@ -3978,7 +5033,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         sql += ",";
         sql += (num_scale >= 0 ? std::to_string(num_scale) : "NULL");
         sql += ")";
-        safeExec(sql);
+        safeExecInfo(sql);
     };
 
     insertTable("schemata");
@@ -4065,169 +5120,215 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         return s;
     };
 
-    auto copyQuery = [&](const std::string& sql,
-                         const std::function<void(const client::ResultSet&, size_t)>& rowHandler) {
-        client::ResultSet rs;
-        if (executeRemoteNativeSQL(sql, &rs, ctx) != core::Status::OK) {
-            return;
-        }
-        int64_t rows = rs.getRowCount();
-        for (int64_t i = 0; i < rows; ++i) {
-            rowHandler(rs, static_cast<size_t>(i));
-        }
-    };
+    if (!use_local_engine) {
+        auto copyQuery = [&](const std::string& sql,
+                             const std::function<void(const client::ResultSet&, size_t)>& rowHandler) {
+            client::ResultSet rs;
+            if (executeRemoteNativeSQL(sql, &rs, ctx) != core::Status::OK) {
+                return;
+            }
+            int64_t rows = rs.getRowCount();
+            for (int64_t i = 0; i < rows; ++i) {
+                rowHandler(rs, static_cast<size_t>(i));
+            }
+        };
 
-    std::string insert_prefix_schemata = "INSERT INTO " + info_table("schemata") + " "
-        "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES ";
-    copyQuery("SELECT catalog_name, schema_name, default_character_set_name, default_collation_name "
-              "FROM information_schema.schemata "
-              "WHERE schema_name NOT IN ('information_schema','pg_catalog')",
-              [&](const client::ResultSet& rs, size_t idx) {
-        const auto& row = rs.getRowValues(idx);
-        if (row.size() < 4) return;
-        std::string sql = insert_prefix_schemata + "('def','" + escapeLiteral(toString(row[1])) +
-            "','" + escapeLiteral(toString(row[2])) + "','" + escapeLiteral(toString(row[3])) + "')";
-        safeExec(sql);
-    });
+        std::string insert_prefix_schemata = "INSERT INTO " + info_object("schemata") + " "
+            "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES ";
+        copyQuery("SELECT catalog_name, schema_name, default_character_set_name, default_collation_name "
+                  "FROM information_schema.schemata "
+                  "WHERE schema_name NOT IN ('information_schema','pg_catalog')",
+                  [&](const client::ResultSet& rs, size_t idx) {
+            const auto& row = rs.getRowValues(idx);
+            if (row.size() < 4) return;
+            std::string sql = insert_prefix_schemata + "('def','" + escapeLiteral(toString(row[1])) +
+                "','" + escapeLiteral(toString(row[2])) + "','" + escapeLiteral(toString(row[3])) + "')";
+            safeExecInfo(sql);
+        });
 
-    std::string insert_prefix_constraints = "INSERT INTO " + info_table("table_constraints") + " "
-        "(constraint_schema, constraint_name, table_schema, table_name, constraint_type) VALUES ";
-    copyQuery("SELECT constraint_schema, constraint_name, table_schema, table_name, constraint_type "
-              "FROM information_schema.table_constraints "
-              "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
-              [&](const client::ResultSet& rs, size_t idx) {
-        const auto& row = rs.getRowValues(idx);
-        if (row.size() < 5) return;
-        std::string sql = insert_prefix_constraints + "('" +
-            escapeLiteral(toString(row[0])) + "','" +
-            escapeLiteral(toString(row[1])) + "','" +
-            escapeLiteral(toString(row[2])) + "','" +
-            escapeLiteral(toString(row[3])) + "','" +
-            escapeLiteral(toString(row[4])) + "')";
-        safeExec(sql);
-    });
+        std::string insert_prefix_constraints = "INSERT INTO " + info_object("table_constraints") + " "
+            "(constraint_schema, constraint_name, table_schema, table_name, constraint_type) VALUES ";
+        copyQuery("SELECT constraint_schema, constraint_name, table_schema, table_name, constraint_type "
+                  "FROM information_schema.table_constraints "
+                  "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
+                  [&](const client::ResultSet& rs, size_t idx) {
+            const auto& row = rs.getRowValues(idx);
+            if (row.size() < 5) return;
+            std::string sql = insert_prefix_constraints + "('" +
+                escapeLiteral(toString(row[0])) + "','" +
+                escapeLiteral(toString(row[1])) + "','" +
+                escapeLiteral(toString(row[2])) + "','" +
+                escapeLiteral(toString(row[3])) + "','" +
+                escapeLiteral(toString(row[4])) + "')";
+            safeExecInfo(sql);
+        });
 
-    std::string insert_prefix_kcu = "INSERT INTO " + info_table("key_column_usage") + " "
-        "(constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position) VALUES ";
-    copyQuery("SELECT constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position "
-              "FROM information_schema.key_column_usage "
-              "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
-              [&](const client::ResultSet& rs, size_t idx) {
-        const auto& row = rs.getRowValues(idx);
-        if (row.size() < 6) return;
-        std::string sql = insert_prefix_kcu + "('" +
-            escapeLiteral(toString(row[0])) + "','" +
-            escapeLiteral(toString(row[1])) + "','" +
-            escapeLiteral(toString(row[2])) + "','" +
-            escapeLiteral(toString(row[3])) + "','" +
-            escapeLiteral(toString(row[4])) + "'," +
-            numberOrNull(toString(row[5])) + ")";
-        safeExec(sql);
-    });
+        std::string insert_prefix_kcu = "INSERT INTO " + info_object("key_column_usage") + " "
+            "(constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position) VALUES ";
+        copyQuery("SELECT constraint_schema, constraint_name, table_schema, table_name, column_name, ordinal_position "
+                  "FROM information_schema.key_column_usage "
+                  "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
+                  [&](const client::ResultSet& rs, size_t idx) {
+            const auto& row = rs.getRowValues(idx);
+            if (row.size() < 6) return;
+            std::string sql = insert_prefix_kcu + "('" +
+                escapeLiteral(toString(row[0])) + "','" +
+                escapeLiteral(toString(row[1])) + "','" +
+                escapeLiteral(toString(row[2])) + "','" +
+                escapeLiteral(toString(row[3])) + "','" +
+                escapeLiteral(toString(row[4])) + "'," +
+                numberOrNull(toString(row[5])) + ")";
+            safeExecInfo(sql);
+        });
 
-    std::string insert_prefix_ref = "INSERT INTO " + info_table("referential_constraints") + " "
-        "(constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, "
-        "match_option, update_rule, delete_rule, table_name, referenced_table_name) VALUES ";
-    copyQuery("SELECT constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, "
-              "match_option, update_rule, delete_rule, table_name, referenced_table_name "
-              "FROM information_schema.referential_constraints "
-              "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
-              [&](const client::ResultSet& rs, size_t idx) {
-        const auto& row = rs.getRowValues(idx);
-        if (row.size() < 9) return;
-        std::string sql = insert_prefix_ref + "('" +
-            escapeLiteral(toString(row[0])) + "','" +
-            escapeLiteral(toString(row[1])) + "','" +
-            escapeLiteral(toString(row[2])) + "','" +
-            escapeLiteral(toString(row[3])) + "','" +
-            escapeLiteral(toString(row[4])) + "','" +
-            escapeLiteral(toString(row[5])) + "','" +
-            escapeLiteral(toString(row[6])) + "','" +
-            escapeLiteral(toString(row[7])) + "','" +
-            escapeLiteral(toString(row[8])) + "')";
-        safeExec(sql);
-    });
+        std::string insert_prefix_ref = "INSERT INTO " + info_object("referential_constraints") + " "
+            "(constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, "
+            "match_option, update_rule, delete_rule, table_name, referenced_table_name) VALUES ";
+        copyQuery("SELECT constraint_schema, constraint_name, unique_constraint_schema, unique_constraint_name, "
+                  "match_option, update_rule, delete_rule, table_name, referenced_table_name "
+                  "FROM information_schema.referential_constraints "
+                  "WHERE constraint_schema NOT IN ('information_schema','pg_catalog')",
+                  [&](const client::ResultSet& rs, size_t idx) {
+            const auto& row = rs.getRowValues(idx);
+            if (row.size() < 9) return;
+            std::string sql = insert_prefix_ref + "('" +
+                escapeLiteral(toString(row[0])) + "','" +
+                escapeLiteral(toString(row[1])) + "','" +
+                escapeLiteral(toString(row[2])) + "','" +
+                escapeLiteral(toString(row[3])) + "','" +
+                escapeLiteral(toString(row[4])) + "','" +
+                escapeLiteral(toString(row[5])) + "','" +
+                escapeLiteral(toString(row[6])) + "','" +
+                escapeLiteral(toString(row[7])) + "','" +
+                escapeLiteral(toString(row[8])) + "')";
+            safeExecInfo(sql);
+        });
 
-    std::string insert_prefix_stats = "INSERT INTO " + info_table("statistics") + " "
-        "(table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, index_type) VALUES ";
-    copyQuery("SELECT table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, "
-              "column_name, collation, cardinality, index_type "
-              "FROM information_schema.statistics "
-              "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
-              [&](const client::ResultSet& rs, size_t idx) {
-        const auto& row = rs.getRowValues(idx);
-        if (row.size() < 10) return;
-        std::string sql = insert_prefix_stats + "('" +
-            escapeLiteral(toString(row[0])) + "','" +
-            escapeLiteral(toString(row[1])) + "'," +
-            numberOrNull(toString(row[2])) + ",'" +
-            escapeLiteral(toString(row[3])) + "','" +
-            escapeLiteral(toString(row[4])) + "'," +
-            numberOrNull(toString(row[5])) + ",'" +
-            escapeLiteral(toString(row[6])) + "','" +
-            escapeLiteral(toString(row[7])) + "'," +
-            numberOrNull(toString(row[8])) + ",'" +
-            escapeLiteral(toString(row[9])) + "')";
-        safeExec(sql);
-    });
+        std::string insert_prefix_stats = "INSERT INTO " + info_object("statistics") + " "
+            "(table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, column_name, collation, cardinality, index_type) VALUES ";
+        copyQuery("SELECT table_schema, table_name, non_unique, index_schema, index_name, seq_in_index, "
+                  "column_name, collation, cardinality, index_type "
+                  "FROM information_schema.statistics "
+                  "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
+                  [&](const client::ResultSet& rs, size_t idx) {
+            const auto& row = rs.getRowValues(idx);
+            if (row.size() < 10) return;
+            std::string sql = insert_prefix_stats + "('" +
+                escapeLiteral(toString(row[0])) + "','" +
+                escapeLiteral(toString(row[1])) + "'," +
+                numberOrNull(toString(row[2])) + ",'" +
+                escapeLiteral(toString(row[3])) + "','" +
+                escapeLiteral(toString(row[4])) + "'," +
+                numberOrNull(toString(row[5])) + ",'" +
+                escapeLiteral(toString(row[6])) + "','" +
+                escapeLiteral(toString(row[7])) + "'," +
+                numberOrNull(toString(row[8])) + ",'" +
+                escapeLiteral(toString(row[9])) + "')";
+            safeExecInfo(sql);
+        });
 
-    std::string insert_prefix_routines = "INSERT INTO " + info_table("routines") + " "
-        "(routine_schema, routine_name, routine_type, data_type) VALUES ";
-    copyQuery("SELECT routine_schema, routine_name, routine_type, data_type "
-              "FROM information_schema.routines "
-              "WHERE routine_schema NOT IN ('information_schema','pg_catalog')",
-              [&](const client::ResultSet& rs, size_t idx) {
-        const auto& row = rs.getRowValues(idx);
-        if (row.size() < 4) return;
-        std::string sql = insert_prefix_routines + "('" +
-            escapeLiteral(toString(row[0])) + "','" +
-            escapeLiteral(toString(row[1])) + "','" +
-            escapeLiteral(toString(row[2])) + "','" +
-            escapeLiteral(toString(row[3])) + "')";
-        safeExec(sql);
-    });
+        std::string insert_prefix_routines = "INSERT INTO " + info_object("routines") + " "
+            "(routine_schema, routine_name, routine_type, data_type) VALUES ";
+        copyQuery("SELECT routine_schema, routine_name, routine_type, data_type "
+                  "FROM information_schema.routines "
+                  "WHERE routine_schema NOT IN ('information_schema','pg_catalog')",
+                  [&](const client::ResultSet& rs, size_t idx) {
+            const auto& row = rs.getRowValues(idx);
+            if (row.size() < 4) return;
+            std::string sql = insert_prefix_routines + "('" +
+                escapeLiteral(toString(row[0])) + "','" +
+                escapeLiteral(toString(row[1])) + "','" +
+                escapeLiteral(toString(row[2])) + "','" +
+                escapeLiteral(toString(row[3])) + "')";
+            safeExecInfo(sql);
+        });
 
-    std::string insert_prefix_tables = "INSERT INTO " + info_table("tables") + " "
-        "(table_schema, table_name, table_type) VALUES ";
-    copyQuery("SELECT table_schema, table_name, table_type "
-              "FROM information_schema.tables "
-              "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
-              [&](const client::ResultSet& rs, size_t idx) {
-        const auto& row = rs.getRowValues(idx);
-        if (row.size() < 3) return;
-        std::string sql = insert_prefix_tables + "('" + escapeLiteral(toString(row[0])) + "','" +
-            escapeLiteral(toString(row[1])) + "','" + escapeLiteral(toString(row[2])) + "')";
-        safeExec(sql);
-    });
+        std::string insert_prefix_tables = "INSERT INTO " + info_object("tables") + " "
+            "(table_schema, table_name, table_type) VALUES ";
+        copyQuery("SELECT table_schema, table_name, table_type "
+                  "FROM information_schema.tables "
+                  "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
+                  [&](const client::ResultSet& rs, size_t idx) {
+            const auto& row = rs.getRowValues(idx);
+            if (row.size() < 3) return;
+            std::string sql = insert_prefix_tables + "('" + escapeLiteral(toString(row[0])) + "','" +
+                escapeLiteral(toString(row[1])) + "','" + escapeLiteral(toString(row[2])) + "')";
+            safeExecInfo(sql);
+        });
 
-    std::string insert_prefix_columns = "INSERT INTO " + info_table("columns") + " "
-        "(table_schema, table_name, column_name, ordinal_position, data_type, is_nullable, "
-        "character_maximum_length, numeric_precision, numeric_scale) VALUES ";
-    copyQuery("SELECT table_schema, table_name, column_name, ordinal_position, data_type, "
-              "is_nullable, character_maximum_length, numeric_precision, numeric_scale "
-              "FROM information_schema.columns "
-              "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
-              [&](const client::ResultSet& rs, size_t idx) {
-        const auto& row = rs.getRowValues(idx);
-        if (row.size() < 9) return;
-        std::string sql = insert_prefix_columns + "('" +
-            escapeLiteral(toString(row[0])) + "','" +
-            escapeLiteral(toString(row[1])) + "','" +
-            escapeLiteral(toString(row[2])) + "'," +
-            numberOrNull(toString(row[3])) + ",'" +
-            escapeLiteral(toString(row[4])) + "','" +
-            escapeLiteral(toString(row[5])) + "'," +
-            numberOrNull(toString(row[6])) + "," +
-            numberOrNull(toString(row[7])) + "," +
-            numberOrNull(toString(row[8])) + ")";
-        safeExec(sql);
-    });
+        std::string insert_prefix_columns = "INSERT INTO " + info_object("columns") + " "
+            "(table_schema, table_name, column_name, ordinal_position, data_type, is_nullable, "
+            "character_maximum_length, numeric_precision, numeric_scale) VALUES ";
+        copyQuery("SELECT table_schema, table_name, column_name, ordinal_position, data_type, "
+                  "is_nullable, character_maximum_length, numeric_precision, numeric_scale "
+                  "FROM information_schema.columns "
+                  "WHERE table_schema NOT IN ('information_schema','pg_catalog')",
+                  [&](const client::ResultSet& rs, size_t idx) {
+            const auto& row = rs.getRowValues(idx);
+            if (row.size() < 9) return;
+            std::string sql = insert_prefix_columns + "('" +
+                escapeLiteral(toString(row[0])) + "','" +
+                escapeLiteral(toString(row[1])) + "','" +
+                escapeLiteral(toString(row[2])) + "'," +
+                numberOrNull(toString(row[3])) + ",'" +
+                escapeLiteral(toString(row[4])) + "','" +
+                escapeLiteral(toString(row[5])) + "'," +
+                numberOrNull(toString(row[6])) + "," +
+                numberOrNull(toString(row[7])) + "," +
+                numberOrNull(toString(row[8])) + ")";
+            safeExecInfo(sql);
+        });
+    }
 
-    auto* db = engineDatabase();
-    auto* catalog = db ? db->catalog_manager() : nullptr;
     if (catalog) {
+        core::ErrorContext compat_ctx;
+        const MySQLCompatMode compat_mode = resolveMysqlCompat(db, db_name, &compat_ctx);
+        const std::string default_auth_plugin =
+            compat_mode == MySQLCompatMode::MYSQL80
+                ? "caching_sha2_password"
+                : "mysql_native_password";
+
+        safeExecInfo("INSERT INTO " + info_object("schemata") + " "
+                 "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES "
+                 "('def','mysql','utf8mb4','utf8mb4_general_ci')");
+        safeExecInfo("INSERT INTO " + info_object("schemata") + " "
+                 "(catalog_name, schema_name, default_character_set_name, default_collation_name) VALUES "
+                 "('def','performance_schema','utf8mb4','utf8mb4_general_ci')");
+
+        std::vector<core::CatalogManager::UserInfo> users;
+        if (catalog->listUsers(users, ctx) == core::Status::OK) {
+            for (const auto& user : users) {
+                if (!user.is_active) {
+                    continue;
+                }
+
+                std::string username_upper =
+                    scratchbird::core::IdentifierUtils::toUpper(user.username);
+                if (username_upper == "SYSTEM" || username_upper == "SYSARCH") {
+                    continue;
+                }
+
+                std::string plugin = default_auth_plugin;
+                if (!user.user_metadata.empty()) {
+                    try {
+                        json metadata = json::parse(user.user_metadata);
+                        auto it = metadata.find("mysql_auth_plugin");
+                        if (it != metadata.end() && it->is_string() && !it->get<std::string>().empty()) {
+                            plugin = it->get<std::string>();
+                        }
+                    } catch (const json::exception&) {
+                    }
+                }
+
+                safeExecMysql(std::string("INSERT INTO ") + mysql_object("user") +
+                         " (Host, User, plugin) VALUES ('localhost','" +
+                         escapeLiteral(user.username) + "','" +
+                         escapeLiteral(plugin) + "')");
+            }
+        }
+
         auto normalize_schema_name = [&](const std::string& raw) {
-            std::string prefix = base_schema;
+            std::string prefix = database_root;
             if (raw.rfind(prefix, 0) == 0) {
                 std::string rest = raw.substr(prefix.size());
                 if (!rest.empty() && rest.front() == '.') {
@@ -4243,7 +5344,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
 
         std::vector<core::CatalogManager::SchemaInfo> schemas;
         if (catalog->listSchemas(schemas, ctx) == core::Status::OK) {
-            std::string insert_prefix_triggers = "INSERT INTO " + info_table("triggers") + " "
+            std::string insert_prefix_triggers = "INSERT INTO " + info_object("triggers") + " "
                 "(trigger_schema, trigger_name, event_manipulation, event_object_schema, "
                 "event_object_table, action_statement, action_timing) VALUES ";
 
@@ -4278,7 +5379,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
                                 escapeLiteral(table.table_name) + "','" +
                                 escapeLiteral(trigger.procedure_name) + "','" +
                                 escapeLiteral(timing) + "')";
-                            safeExec(sql);
+                            safeExecInfo(sql);
                         };
                         if (trigger.event_mask & (1u << static_cast<uint8_t>(
                                 core::CatalogManager::TriggerEvent::INSERT))) {

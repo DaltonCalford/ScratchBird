@@ -261,6 +261,7 @@ class MySqlAdapter : public ProtocolAdapter {
 public:
     explicit MySqlAdapter(const ProtocolAdapterConfig& config = ProtocolAdapterConfig());
     ~MySqlAdapter() override;
+    core::Status executeQuery(const QueryContext& query, ResultContext& result);
 
     // ========================================================================
     // ProtocolHandler Interface
@@ -462,11 +463,22 @@ protected:
                               const std::string& auth_response,
                               const uint8_t* scramble,
                               const std::string& password);
+    bool shouldBootstrapSystemSchemaForRemoteQuery(const std::string& sql) const;
+    void applySuccessfulSessionQueryForTest(const std::string& sql);
+    void setAuthPluginNameForTest(const std::string& plugin) {
+        auth_plugin_name_ = plugin;
+    }
+    const std::string& authPluginNameForTest() const {
+        return auth_plugin_name_;
+    }
     void setClientCapabilitiesForTest(uint32_t capabilities) {
         client_capabilities_ = capabilities;
     }
 
 private:
+    void applySuccessfulSessionQuery(const std::string& sql);
+    void applyMySqlSessionSchemaContext(const std::string& logical_db,
+                                        core::ErrorContext* ctx);
     void updateTransactionStatus(const std::string& sql, bool has_error);
     void bootstrapInformationSchema(core::ErrorContext* ctx);
     core::Status executeRemoteNativeSQL(const std::string& sql,

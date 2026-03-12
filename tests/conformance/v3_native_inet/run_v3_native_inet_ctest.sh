@@ -104,6 +104,7 @@ run_pass_case() {
   "${ISQL_BIN}" "${DBNAME}" \
     --mode=local-ipc \
     --ipc-method=tcp \
+    --sslmode=disable \
     -H "${HOST}" \
     -p "${PORT}" \
     -U "${DBUSER}" \
@@ -155,6 +156,7 @@ run_pass_case() {
       "${ISQL_BIN}" "${DBNAME}" \
         --mode=local-ipc \
         --ipc-method=tcp \
+        --sslmode=disable \
         -H "${HOST}" \
         -p "${PORT}" \
         -U "${DBUSER}" \
@@ -198,6 +200,7 @@ run_fail_case() {
   "${ISQL_BIN}" "${DBNAME}" \
     --mode=local-ipc \
     --ipc-method=tcp \
+    --sslmode=disable \
     -H "${HOST}" \
     -p "${PORT}" \
     -U "${DBUSER}" \
@@ -252,6 +255,7 @@ set +e
 "${ISQL_BIN}" "${DBNAME}" \
     --mode=local-ipc \
     --ipc-method=tcp \
+    --sslmode=disable \
     -H "${HOST}" \
     -p "${PORT}" \
     -U "${DBUSER}" \

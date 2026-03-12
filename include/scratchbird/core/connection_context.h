@@ -206,9 +206,9 @@ namespace scratchbird::core
 
         // Schema navigation support (hierarchical schemas)
         const std::string& current_schema() const { return current_schema_name_; }
-        void set_current_schema(const std::string& schema) { current_schema_name_ = schema; }
+        void set_current_schema(const std::string& schema);
         const std::vector<std::string>& search_path() const { return search_path_; }
-        void set_search_path(const std::vector<std::string>& paths) { search_path_ = paths; }
+        void set_search_path(const std::vector<std::string>& paths);
         const std::string& dialect_tag() const { return dialect_tag_; }
         void set_dialect_tag(const std::string& tag) { dialect_tag_ = tag; }
 

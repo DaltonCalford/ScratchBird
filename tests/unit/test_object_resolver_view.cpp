@@ -273,3 +273,19 @@ TEST_F(ObjectResolverViewTest, ViewMatchesResolverCache) {
         EXPECT_TRUE(actual_rows.find(row) != actual_rows.end());
     }
 }
+
+TEST_F(ObjectResolverViewTest, ResolverSurvivesDroppedPrimaryKeyTable)
+{
+    auto create_result = compileAndExecute(
+        "CREATE TABLE resolver_pk (id INTEGER PRIMARY KEY, payload VARCHAR(8))");
+    ASSERT_TRUE(create_result.success()) << create_result.error();
+
+    auto drop_result = compileAndExecute("DROP TABLE resolver_pk");
+    ASSERT_TRUE(drop_result.success()) << drop_result.error();
+
+    core::CatalogManager::ResolveFilter filter;
+    std::vector<core::CatalogManager::ResolvedObject> objects;
+    core::ErrorContext ctx;
+    EXPECT_EQ(catalog_->listResolvedObjects(filter, objects, &ctx), core::Status::OK)
+        << ctx.message;
+}

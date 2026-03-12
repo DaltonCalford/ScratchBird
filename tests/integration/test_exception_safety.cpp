@@ -117,6 +117,9 @@ TEST_F(ExceptionSafetyTest, PageManagerBitmapResizeExceptionSafety) {
 
     // Get initial buffer pool stats
     auto initial_stats = pool_->getStats();
+    const uint32_t initial_total_pages = page_mgr_->totalPages();
+    const uint32_t initial_free_pages = page_mgr_->freePages();
+    const uint32_t initial_allocated_pages = initial_total_pages - initial_free_pages;
 
     // Try to allocate many pages (may stress bitmap resize)
     const int NUM_PAGES = 1000;
@@ -136,10 +139,22 @@ TEST_F(ExceptionSafetyTest, PageManagerBitmapResizeExceptionSafety) {
         }
     }
 
-    // Verify buffer pool stats are consistent (no leaked frames)
+    // Verify the allocation path preserved the FSM accounting and didn't regress
+    // the unrelated buffer-pool counters.
     auto final_stats = pool_->getStats();
-    EXPECT_GE(final_stats.hits, initial_stats.hits + page_ids.size())
-        << "Buffer pool stats should be consistent";
+    EXPECT_GE(final_stats.hits, initial_stats.hits)
+        << "Buffer pool hit count should not regress";
+
+    const uint32_t final_total_pages = page_mgr_->totalPages();
+    const uint32_t final_free_pages = page_mgr_->freePages();
+    const uint32_t final_allocated_pages = final_total_pages - final_free_pages;
+    EXPECT_EQ(final_allocated_pages, initial_allocated_pages + page_ids.size())
+        << "Page allocation should keep FSM accounting consistent";
+
+    for (uint32_t page_id : page_ids) {
+        EXPECT_TRUE(page_mgr_->isAllocated(page_id))
+            << "Allocated page " << page_id << " should remain marked allocated";
+    }
 
     std::cout << "Successfully allocated " << page_ids.size() << " pages\n";
 }

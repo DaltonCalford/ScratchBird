@@ -1,4 +1,4 @@
-Last updated: 2026-03-07
+Last updated: 2026-03-11
 
 # FB-EMU-041 Firebird-QA Smoke Report
 
@@ -26,7 +26,7 @@ Last updated: 2026-03-07
 
 ```text
 Requirement already satisfied: pip in /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/runtime/firebird-qa-venv/lib/python3.12/site-packages (26.0.1)
-Requirement already satisfied: setuptools in /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/runtime/firebird-qa-venv/lib/python3.12/site-packages (82.0.0)
+Requirement already satisfied: setuptools in /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/runtime/firebird-qa-venv/lib/python3.12/site-packages (82.0.1)
 Requirement already satisfied: wheel in /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/runtime/firebird-qa-venv/lib/python3.12/site-packages (0.46.3)
 Requirement already satisfied: packaging>=24.0 in /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/runtime/firebird-qa-venv/lib/python3.12/site-packages (from wheel) (26.0)
 ```

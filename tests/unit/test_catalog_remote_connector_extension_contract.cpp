@@ -336,6 +336,7 @@ TEST_F(CatalogRemoteConnectorExtensionContractTest, RemoteConnectorExtensionCata
 
     CatalogManager::RuntimeTransactionCatalogInfo tx{};
     tx.txid = 9001;
+    tx.tx_uuid = generateUuidV7();
     tx.database_id = generateUuidV7();
     tx.session_id = session.session_id;
     tx.user_id = system_user_id_;

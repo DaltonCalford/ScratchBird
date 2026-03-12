@@ -77,6 +77,29 @@ protected:
         EXPECT_EQ(status, Status::OK) << "createTable failed: " << ctx.message;
         return table_id;
     }
+
+    ID createForeignKey(const ID& child_table_id,
+                        const ID& parent_table_id,
+                        const std::string& fk_name)
+    {
+        ErrorContext ctx;
+        ID fk_id;
+        Status status = catalog->createForeignKey(
+            fk_name,
+            child_table_id,
+            parent_table_id,
+            {"id"},
+            {"id"},
+            CatalogManager::FKAction::NO_ACTION,
+            CatalogManager::FKAction::NO_ACTION,
+            CatalogManager::FKMatchType::SIMPLE,
+            fk_id,
+            false,
+            false,
+            &ctx);
+        EXPECT_EQ(status, Status::OK) << "createForeignKey failed: " << ctx.message;
+        return fk_id;
+    }
 };
 
 TEST_F(SchemaDependencyTest, DropSchemaSucceedsWhenEmpty)
@@ -128,4 +151,15 @@ TEST_F(SchemaDependencyTest, DropSchemaFailsWhenContainsSequence)
     EXPECT_EQ(status, Status::CONSTRAINT_VIOLATION);
     std::string msg = ctx.message;
     EXPECT_NE(msg.find("Sequences: 1"), std::string::npos) << msg;
+}
+
+TEST_F(SchemaDependencyTest, DropSchemaCascadeDropsInternalForeignKeys) {
+    ErrorContext ctx;
+    ID schema_id = createSchema("schema_with_internal_fk");
+    ID parent_table_id = createTableInSchema(schema_id, "parent_t");
+    ID child_table_id = createTableInSchema(schema_id, "child_t");
+    createForeignKey(child_table_id, parent_table_id, "fk_schema_drop");
+
+    Status status = catalog->dropSchema(schema_id, true, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
 }

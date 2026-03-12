@@ -77,6 +77,27 @@ namespace client {
 namespace {
 constexpr const char* kServerNoticeChannel = "sb.notice";
 
+bool myExecDebugEnabled() {
+    static const bool enabled = []() {
+        const char* value = std::getenv("SCRATCHBIRD_MY_DEBUG_EXEC");
+        if (!value || value[0] == '\0') {
+            return false;
+        }
+        std::string normalized(value);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+        return normalized != "0" &&
+               normalized != "FALSE" &&
+               normalized != "NO" &&
+               normalized != "OFF";
+    }();
+    return enabled;
+}
+
+const char* messageTypeName(protocol::MessageType type) {
+    return protocol::messageTypeToString(type);
+}
+
 std::string bytesToHex(const std::vector<uint8_t>& data);
 std::string formatUuidBytes(const std::vector<uint8_t>& data);
 std::string describeUnexpectedResponse(const protocol::Message& response);
@@ -1459,7 +1480,7 @@ public:
         }
         auto connect_msg = protocol::ProtocolCodec::buildConnectRequest(
             config_.database_name,
-            "scratchbird_client",
+            config_.client_name.empty() ? "scratchbird_client" : config_.client_name,
             getpid(),
             config_.connect_client_flags,
             bound_db_uuid_ptr
@@ -2348,6 +2369,14 @@ public:
                              static_cast<int>(status),
                              ctx && !ctx->message.empty() ? ctx->message.c_str() : "none");
                 return status;
+            }
+
+            if (myExecDebugEnabled()) {
+                std::fprintf(stderr,
+                             "[my_exec] client received type=%s (%u)\n",
+                             messageTypeName(response.getType()),
+                             static_cast<unsigned>(response.getType()));
+                std::fflush(stderr);
             }
 
             switch (response.getType()) {

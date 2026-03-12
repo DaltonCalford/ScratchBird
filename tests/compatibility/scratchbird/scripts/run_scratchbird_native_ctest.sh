@@ -108,6 +108,7 @@ SQL
 if ! "${ISQL_BIN}" "${DBNAME}" \
     --mode=local-ipc \
     --ipc-method=tcp \
+    --sslmode=disable \
     -H "${HOST}" \
     -p "${PORT}" \
     -U "${DBUSER}" \
@@ -137,6 +138,7 @@ while IFS= read -r rel_path; do
   if ! "${ISQL_BIN}" "${DBNAME}" \
       --mode=local-ipc \
       --ipc-method=tcp \
+      --sslmode=disable \
       -H "${HOST}" \
       -p "${PORT}" \
       -U "${DBUSER}" \

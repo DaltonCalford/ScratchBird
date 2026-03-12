@@ -30,6 +30,7 @@
 #include "unit/test_user_helpers.h"
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 #include <thread>
 #include <chrono>
@@ -148,6 +149,123 @@ bool containsOpcodeDeep(const std::vector<uint8_t>& bytecode, sblr_v3::Opcode op
         }
     }
     return false;
+}
+
+std::optional<uint64_t> findOpcodePayloadU64(const std::vector<uint8_t>& bytecode,
+                                             sblr_v3::Opcode opcode,
+                                             const std::string& field_name)
+{
+    sblr_v3::Container container;
+    std::string err;
+    if (!sblr_v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
+    {
+        return std::nullopt;
+    }
+
+    size_t offset = 0;
+    sblr_v3::DecodeError decode_err;
+    while (offset < container.bytecode_stream.size())
+    {
+        sblr_v3::Instruction inst;
+        if (!sblr_v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                  container.bytecode_stream.size(),
+                                                  offset,
+                                                  inst,
+                                                  decode_err) &&
+            !sblr_v3::decodeInstruction(container.bytecode_stream.data(),
+                                        container.bytecode_stream.size(),
+                                        offset,
+                                        inst,
+                                        decode_err))
+        {
+            break;
+        }
+        if (inst.opcode != static_cast<uint16_t>(opcode))
+        {
+            continue;
+        }
+
+        const auto* obj = std::get_if<sblr_v3::Value::Object>(&inst.payload.data);
+        if (!obj)
+        {
+            return std::nullopt;
+        }
+        auto it = obj->find(field_name);
+        if (it == obj->end())
+        {
+            return std::nullopt;
+        }
+        if (const auto* value = std::get_if<uint64_t>(&it->second.data))
+        {
+            return *value;
+        }
+        return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
+bool patchOpcodePayloadU64(std::vector<uint8_t>& bytecode,
+                           sblr_v3::Opcode opcode,
+                           const std::string& field_name,
+                           uint64_t value)
+{
+    sblr_v3::Container container;
+    std::string err;
+    if (!sblr_v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
+    {
+        return false;
+    }
+
+    std::vector<sblr_v3::Instruction> instructions;
+    size_t offset = 0;
+    sblr_v3::DecodeError decode_err;
+    bool patched = false;
+    while (offset < container.bytecode_stream.size())
+    {
+        sblr_v3::Instruction inst;
+        if (!sblr_v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                  container.bytecode_stream.size(),
+                                                  offset,
+                                                  inst,
+                                                  decode_err) &&
+            !sblr_v3::decodeInstruction(container.bytecode_stream.data(),
+                                        container.bytecode_stream.size(),
+                                        offset,
+                                        inst,
+                                        decode_err))
+        {
+            return false;
+        }
+
+        if (inst.opcode == static_cast<uint16_t>(opcode))
+        {
+            auto* obj = std::get_if<sblr_v3::Value::Object>(&inst.payload.data);
+            if (obj == nullptr)
+            {
+                return false;
+            }
+            (*obj)[field_name] = sblr_v3::Value(value);
+            patched = true;
+        }
+        instructions.push_back(std::move(inst));
+    }
+
+    if (!patched)
+    {
+        return false;
+    }
+
+    sblr_v3::Buffer stream;
+    for (const auto& inst : instructions)
+    {
+        if (!sblr_v3::encodeInstructionWithSchema(inst, stream, decode_err))
+        {
+            sblr_v3::encodeInstruction(inst, stream);
+        }
+    }
+    container.bytecode_stream = std::move(stream);
+    return sblr_v3::encodeContainer(container, bytecode, err);
 }
 
 } // namespace
@@ -679,6 +797,169 @@ TEST_F(QueryCompilerV3Test, ExecuteCreateViewStoresDefinition) {
     auto status = catalog_->getView(test_schema_id_, "view_v", view_info, &ctx);
     ASSERT_EQ(status, Status::OK) << ctx.message;
     EXPECT_EQ(view_info.definition, "SELECT id FROM view_base");
+}
+
+TEST_F(QueryCompilerV3Test, CompileCreateViewDoesNotMarkSimpleViewTemporary) {
+    compiler_->setCurrentSchema(test_schema_id_);
+
+    auto compile_result =
+        compiler_->compile("CREATE VIEW view_flag_v AS SELECT id, public_col FROM view_flag_base");
+    ASSERT_TRUE(compile_result.success());
+
+    auto flags = findOpcodePayloadU64(
+        compile_result.bytecode(),
+        sblr_v3::Opcode::SBLR3_CREATE_VIEW,
+        "flags");
+    ASSERT_TRUE(flags.has_value());
+    EXPECT_EQ((*flags & 0x0004u), 0u);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCreateViewIsVisibleAcrossSessions) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_table = compileAndExecute("CREATE TABLE view_scope_base (id INT)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    auto create_view = compileAndExecute("CREATE VIEW view_scope_v AS SELECT id FROM view_scope_base");
+    ASSERT_TRUE(create_view.success()) << create_view.error();
+
+    ErrorContext ctx;
+    CatalogManager::ViewInfo view_info;
+    auto status = catalog_->getView(test_schema_id_, "view_scope_v", view_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(view_info.temp_metadata_scope, CatalogManager::TempMetadataScope::NONE);
+
+    std::unique_ptr<ConnectionContext> second_connection_ctx;
+    status = db_.connect(second_connection_ctx, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create second connection: " << ctx.message;
+    second_connection_ctx->setCurrentSchemaId(test_schema_id_);
+    auto system_user_id = catalog_->getSystemUserId(&ctx);
+    second_connection_ctx->setCurrentUser(system_user_id, true);
+
+    ConnectionContext::setCurrent(second_connection_ctx.get());
+    CatalogManager::ViewInfo second_view_info;
+    status = catalog_->getView(test_schema_id_, "view_scope_v", second_view_info, &ctx);
+    ConnectionContext::setCurrent(connection_ctx_.get());
+
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(second_view_info.temp_metadata_scope, CatalogManager::TempMetadataScope::NONE);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteCreateViewIgnoresStrayTemporaryFlagWithoutTemporarySql) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_table = compileAndExecute("CREATE TABLE view_flag_guard_base (id INT)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    const std::string create_view_sql =
+        "CREATE VIEW view_flag_guard_v AS SELECT id FROM view_flag_guard_base";
+    auto compile_result = compiler_->compile(create_view_sql);
+    ASSERT_TRUE(compile_result.success());
+
+    auto flags = findOpcodePayloadU64(
+        compile_result.bytecode(),
+        sblr_v3::Opcode::SBLR3_CREATE_VIEW,
+        "flags");
+    ASSERT_TRUE(flags.has_value());
+
+    std::vector<uint8_t> mutated = compile_result.bytecode();
+    ASSERT_TRUE(patchOpcodePayloadU64(
+        mutated,
+        sblr_v3::Opcode::SBLR3_CREATE_VIEW,
+        "flags",
+        *flags | 0x0004u));
+
+    connection_ctx_->set_dialect_tag("firebird");
+    connection_ctx_->beginStatementTracking(create_view_sql);
+    auto create_view = executor_->execute(mutated);
+    connection_ctx_->endStatementTrackingSuccess(0);
+    connection_ctx_->set_dialect_tag("scratchbird");
+    ASSERT_TRUE(create_view.success()) << create_view.error();
+
+    ErrorContext ctx;
+    CatalogManager::ViewInfo view_info;
+    auto status = catalog_->getView(test_schema_id_, "view_flag_guard_v", view_info, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(view_info.temp_metadata_scope, CatalogManager::TempMetadataScope::NONE);
+
+    auto commit = compileAndExecute("COMMIT");
+    ASSERT_TRUE(commit.success()) << commit.error();
+
+    std::unique_ptr<ConnectionContext> second_connection_ctx;
+    status = db_.connect(second_connection_ctx, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create second connection: " << ctx.message;
+    second_connection_ctx->setCurrentSchemaId(test_schema_id_);
+    auto system_user_id = catalog_->getSystemUserId(&ctx);
+    second_connection_ctx->setCurrentUser(system_user_id, true);
+
+    ConnectionContext::setCurrent(second_connection_ctx.get());
+    CatalogManager::ViewInfo second_view_info;
+    status = catalog_->getView(test_schema_id_, "view_flag_guard_v", second_view_info, &ctx);
+    ConnectionContext::setCurrent(connection_ctx_.get());
+
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(second_view_info.temp_metadata_scope, CatalogManager::TempMetadataScope::NONE);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteSelectFromViewReturnsRowsAcrossSessions) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_table = compileAndExecute(
+        "CREATE TABLE view_select_base (id INT, public_col VARCHAR(32))");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    auto insert_row = compileAndExecute(
+        "INSERT INTO view_select_base (id, public_col) VALUES (1, 'p1')");
+    ASSERT_TRUE(insert_row.success()) << insert_row.error();
+
+    auto create_view = compileAndExecute(
+        "CREATE VIEW view_select_v AS SELECT id, public_col FROM view_select_base");
+    ASSERT_TRUE(create_view.success()) << create_view.error();
+
+    auto commit = compileAndExecute("COMMIT");
+    ASSERT_TRUE(commit.success()) << commit.error();
+
+    ErrorContext ctx;
+    std::unique_ptr<ConnectionContext> second_connection_ctx;
+    auto status = db_.connect(second_connection_ctx, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to create second connection: " << ctx.message;
+    second_connection_ctx->setCurrentSchemaId(test_schema_id_);
+    auto system_user_id = catalog_->getSystemUserId(&ctx);
+    second_connection_ctx->setCurrentUser(system_user_id, true);
+
+    QueryCompilerV3 second_compiler(&db_);
+    second_compiler.setCurrentSchema(test_schema_id_);
+    Executor second_executor(&db_);
+    second_executor.setCurrentSchema(test_schema_id_);
+    second_executor.setConnectionContext(second_connection_ctx.get());
+
+    ConnectionContext::setCurrent(second_connection_ctx.get());
+    auto base_compile = second_compiler.compile("SELECT id, public_col FROM view_select_base");
+    ASSERT_TRUE(base_compile.success()) << "Compilation failed for base table";
+    auto base_select_result = second_executor.execute(base_compile.bytecode());
+    ASSERT_TRUE(base_select_result.success()) << base_select_result.error();
+    ASSERT_TRUE(base_select_result.hasResultSet());
+    ASSERT_NE(base_select_result.resultSet(), nullptr);
+    EXPECT_EQ(base_select_result.resultSet()->rowCount(), 1u);
+
+    auto view_compile = second_compiler.compile("SELECT id, public_col FROM view_select_v");
+    ASSERT_TRUE(view_compile.success()) << "Compilation failed";
+    auto select_result = second_executor.execute(view_compile.bytecode());
+    ConnectionContext::setCurrent(connection_ctx_.get());
+
+    ASSERT_TRUE(select_result.success()) << select_result.error();
+    ASSERT_TRUE(select_result.hasResultSet());
+    ASSERT_NE(select_result.resultSet(), nullptr);
+    EXPECT_EQ(select_result.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(select_result.resultSet()->columnCount(), 2u);
+    EXPECT_EQ(select_result.resultSet()->getValue(0, 0).toString(), "1");
+    EXPECT_EQ(select_result.resultSet()->getValue(0, 1).toString(), "p1");
 }
 
 // =============================================================================

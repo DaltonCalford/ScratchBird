@@ -21,6 +21,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"check_count", FieldType::VARUINT, ""},
     }}},
     {"IDENTITY_SPEC", SchemaDef{"IDENTITY_SPEC", {
+        FieldDef{"always", FieldType::OPT, "bool"},
         FieldDef{"start", FieldType::OPT, "i64"},
         FieldDef{"increment", FieldType::OPT, "i64"},
         FieldDef{"min_value", FieldType::OPT, "i64"},
@@ -231,6 +232,8 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
     }}},
     {"SCHEMA_SELECT", SchemaDef{"SCHEMA_SELECT", {
         FieldDef{"flags", FieldType::U16, ""},
+        FieldDef{"lock_strength", FieldType::U8, ""},
+        FieldDef{"distinct_on", FieldType::LIST, "expr"},
         FieldDef{"select_items", FieldType::LIST, "expr"},
         FieldDef{"select_aliases", FieldType::OPT, "list<string>"},
         FieldDef{"from", FieldType::OPT, "TABLE_REF"},
@@ -244,6 +247,8 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"order_by", FieldType::LIST, "ORDER_BY_ITEM"},
         FieldDef{"limit", FieldType::OPT, "expr"},
         FieldDef{"offset", FieldType::OPT, "expr"},
+        FieldDef{"optimize_for_rows", FieldType::OPT, "expr"},
+        FieldDef{"firebird_plan", FieldType::OPT, "expr"},
         FieldDef{"fetch", FieldType::OPT, "FETCH_SPEC"},
         FieldDef{"set_op", FieldType::OPT, "SET_OP"},
         FieldDef{"with", FieldType::OPT, "list<CTE>"},
@@ -256,6 +261,7 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"values", FieldType::OPT, "list<expr_list>"},
         FieldDef{"select", FieldType::OPT, "stmt"},
         FieldDef{"on_conflict", FieldType::OPT, "ON_CONFLICT_SPEC"},
+        FieldDef{"ignore_errors", FieldType::OPT, "bool"},
         FieldDef{"returning", FieldType::LIST, "expr"},
     }}},
     {"SCHEMA_UPDATE", SchemaDef{"SCHEMA_UPDATE", {

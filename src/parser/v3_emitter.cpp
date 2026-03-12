@@ -1005,7 +1005,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSelect(parser::v3::SelectStmt*
         payload["optimize_for_rows"] = Value(makeInstr(emitExpression(stmt->optimize_for_rows)));
     }
     if (stmt->firebird_plan) {
-        payload["plan"] = Value(makeInstr(emitExpression(stmt->firebird_plan)));
+        payload["firebird_plan"] = Value(makeInstr(emitExpression(stmt->firebird_plan)));
     }
     if (stmt->fetch_mode != parser::v3::FetchMode::NONE && stmt->fetch_row_count) {
         Value::Object fetch;
@@ -1121,7 +1121,13 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitInsert(parser::v3::InsertStmt*
         Value::List target_cols;
         for (auto id : stmt->on_conflict->columns) target_cols.push_back(toIdent(id));
         oc["target_cols"] = Value(std::move(target_cols));
-        oc["action"] = Value(static_cast<uint64_t>(stmt->on_conflict->action == parser::v3::ConflictAction::UPDATE ? 2 : 1));
+        uint64_t conflict_action = 1;
+        if (stmt->on_conflict->action == parser::v3::ConflictAction::UPDATE) {
+            conflict_action = 2;
+        } else if (stmt->on_conflict->action == parser::v3::ConflictAction::REPLACE) {
+            conflict_action = 3;
+        }
+        oc["action"] = Value(conflict_action);
         Value::List assignments;
         for (const auto& item : stmt->on_conflict->set_items) {
             Value::Object a;
@@ -1134,6 +1140,9 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitInsert(parser::v3::InsertStmt*
             oc["where"] = Value(makeInstr(emitExpression(stmt->on_conflict->where_action)));
         }
         payload["on_conflict"] = Value(std::move(oc));
+    }
+    if (stmt->ignore_errors) {
+        payload["ignore_errors"] = Value(true);
     }
     if (stmt->consistency_level != parser::v3::StringPool::INVALID_ID) {
         payload["consistency"] = toIdent(stmt->consistency_level);
@@ -1450,6 +1459,48 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             payload["columns"] = Value(std::move(cols));
             Value::List constraints;
             for (auto* c : s->constraints) constraints.push_back(emitTableConstraint(c));
+            for (auto* col : s->columns) {
+                if (!col) {
+                    continue;
+                }
+                for (const auto& c : col->constraints) {
+                    parser::v3::TableConstraint synthetic{};
+                    bool emit_constraint = true;
+                    switch (c.type) {
+                        case parser::v3::ConstraintType::PRIMARY_KEY:
+                            synthetic.type = parser::v3::TableConstraintType::PRIMARY_KEY;
+                            synthetic.columns.push_back(col->name);
+                            break;
+                        case parser::v3::ConstraintType::UNIQUE:
+                            synthetic.type = parser::v3::TableConstraintType::UNIQUE;
+                            synthetic.columns.push_back(col->name);
+                            break;
+                        case parser::v3::ConstraintType::REFERENCES:
+                            synthetic.type = parser::v3::TableConstraintType::FOREIGN_KEY;
+                            synthetic.columns.push_back(col->name);
+                            synthetic.ref_table = c.ref_table;
+                            synthetic.ref_columns = c.ref_columns;
+                            if (synthetic.ref_columns.empty()) {
+                                synthetic.ref_columns.push_back(col->name);
+                            }
+                            synthetic.on_delete = c.on_delete;
+                            synthetic.on_update = c.on_update;
+                            break;
+                        default:
+                            emit_constraint = false;
+                            break;
+                    }
+                    if (!emit_constraint) {
+                        continue;
+                    }
+                    synthetic.name = c.name;
+                    synthetic.deferrable = c.deferrable;
+                    synthetic.not_deferrable = c.not_deferrable;
+                    synthetic.initially_deferred = c.initially_deferred;
+                    synthetic.initially_immediate = c.initially_immediate;
+                    constraints.push_back(emitTableConstraint(&synthetic));
+                }
+            }
             payload["constraints"] = Value(std::move(constraints));
             Value::List inherits;
             for (const auto& p : s->inherits) inherits.push_back(toSchemaPath(p));
@@ -1573,7 +1624,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             if (s->temporary) flags |= 0x0004;
             if (s->materialized) flags |= 0x0008;
             if (s->with_check_option) flags |= 0x0010;
-            if (s->with_data) flags |= 0x0020;
+            if (s->materialized && s->with_data) flags |= 0x0020;
             payload["flags"] = Value(flags);
             payload["path"] = toSchemaPath(s->view_path);
             Value::List cols;
@@ -3561,7 +3612,20 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlTruncate(parser::v3::Trunca
     inst.opcode = op(Opcode::SBLR3_TRUNCATE_TABLE);
     inst.flags = 0;
     Value::Object payload;
-    payload["flags"] = Value(uint64_t(0));
+    uint64_t flags = 0;
+    if (stmt->restart_identity) {
+        flags |= 0x01u;
+    }
+    if (stmt->continue_identity) {
+        flags |= 0x02u;
+    }
+    if (stmt->cascade) {
+        flags |= 0x04u;
+    }
+    if (stmt->sync_mode) {
+        flags |= 0x08u;
+    }
+    payload["flags"] = Value(flags);
     Value::List tables;
     for (const auto& path : stmt->tables) tables.push_back(toSchemaPath(path));
     payload["tables"] = Value(std::move(tables));
@@ -6072,6 +6136,13 @@ Value V3Emitter::emitColumnDef(parser::v3::ColumnDef* col) {
                 default_expr = c.default_expr;
                 break;
             case parser::v3::ConstraintType::GENERATED:
+                if (c.generated_as_identity) {
+                    Value::Object identity_obj;
+                    identity_obj["always"] = Value(c.generated_always);
+                    identity_obj["cycle"] = Value(false);
+                    identity = Value(std::move(identity_obj));
+                    break;
+                }
                 generated_expr = c.generated_expr;
                 if (c.generated_expr) {
                     if (c.generated_stored || c.generated_always) {

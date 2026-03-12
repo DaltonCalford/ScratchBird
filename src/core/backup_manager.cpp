@@ -2038,10 +2038,7 @@ static auto runBackupJobExecution(BackupManager* manager,
 // BackupManager Implementation
 // =================================================================================================
 
-BackupManager::BackupManager(Database* db)
-    : db_(db), buffer_pool_(db ? db->buffer_pool() : nullptr)
-{
-}
+BackupManager::BackupManager(Database* db) : db_(db) {}
 
 BackupManager::~BackupManager() = default;
 
@@ -2207,9 +2204,9 @@ Status BackupManager::executeBackupJob(const std::string& backup_path,
     }
 }
 
-    if (buffer_pool_)
+    if (auto* buffer_pool = db_ ? db_->buffer_pool() : nullptr; buffer_pool != nullptr)
     {
-        status = buffer_pool_->flushAll(ctx);
+        status = buffer_pool->flushAll(ctx);
         if (status != Status::OK)
         {
             return status;

@@ -4,56 +4,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FB_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-DRIVER_DIR="${ROOT_DIR}-driver"
 CLIWORK_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
 
-DEFAULT_ISQL="${ROOT_DIR}/build/src/sb_fb_isql"
-ISQL_FLAVOR="firebird"
-ISQL_MODE="scratchbird"
-if [[ ! -x "$DEFAULT_ISQL" ]]; then
-  ALT_ISQL="${ROOT_DIR}/build/src/cli/sb_fb_isql"
-  if [[ -x "$ALT_ISQL" ]]; then
-    DEFAULT_ISQL="$ALT_ISQL"
-  else
-    DRIVER_FB_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_fb_isql"
-    DRIVER_GENERIC_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
-    CLONE_FB_ISQL_CANDIDATES=(
-      "${CLIWORK_ROOT}/firebird/gen/Release/firebird/bin/isql"
-      "${CLIWORK_ROOT}/firebird/gen/Debug/firebird/bin/isql"
-      "${CLIWORK_ROOT}/firebird/build/bin/isql"
-      "${CLIWORK_ROOT}/firebird/build/isql"
-      "${FB_DIR}/repos/firebird/gen/Release/firebird/bin/isql"
-    )
-    SYSTEM_FB_ISQL="$(command -v isql-fb 2>/dev/null || true)"
-    CLONE_FB_ISQL=""
-    for candidate in "${CLONE_FB_ISQL_CANDIDATES[@]}"; do
-      if [[ -x "$candidate" ]]; then
-        CLONE_FB_ISQL="$candidate"
-        break
-      fi
-    done
-    if [[ -x "$DRIVER_FB_ISQL" ]]; then
-      DEFAULT_ISQL="$DRIVER_FB_ISQL"
-    elif [[ -n "$CLONE_FB_ISQL" ]]; then
-      DEFAULT_ISQL="$CLONE_FB_ISQL"
-      ISQL_MODE="native_firebird"
-    elif [[ -n "$SYSTEM_FB_ISQL" ]]; then
-      DEFAULT_ISQL="$SYSTEM_FB_ISQL"
-      ISQL_MODE="native_firebird"
-    elif [[ -x "$DRIVER_GENERIC_ISQL" ]]; then
-      DEFAULT_ISQL="$DRIVER_GENERIC_ISQL"
-      ISQL_FLAVOR="generic"
-    fi
+DEFAULT_ISQL=""
+for candidate in \
+  "${CLIWORK_ROOT}/firebird/gen/Release/firebird/bin/isql" \
+  "${CLIWORK_ROOT}/firebird/gen/Debug/firebird/bin/isql" \
+  "${CLIWORK_ROOT}/firebird/build/bin/isql" \
+  "${CLIWORK_ROOT}/firebird/build/isql" \
+  "${FB_DIR}/repos/firebird/gen/Release/firebird/bin/isql"; do
+  if [[ -x "$candidate" ]]; then
+    DEFAULT_ISQL="$candidate"
+    break
   fi
-fi
-ISQL_BIN="${SCRATCHBIRD_FB_ISQL:-$DEFAULT_ISQL}"
-if [[ -n "${SCRATCHBIRD_FB_ISQL:-}" ]]; then
-  case "$(basename "$ISQL_BIN")" in
-    sb_isql) ISQL_FLAVOR="generic" ;;
-    isql-fb|isql) ISQL_FLAVOR="firebird"; ISQL_MODE="native_firebird" ;;
-    *) ISQL_FLAVOR="firebird"; ISQL_MODE="scratchbird" ;;
-  esac
-fi
+done
+ISQL_MODE="native_firebird"
+ISQL_BIN="${SCRATCHBIRD_FB_NATIVE_ISQL:-${SCRATCHBIRD_FB_ISQL:-$DEFAULT_ISQL}}"
 LIST_MODE="${SCRATCHBIRD_FB_CTEST_LIST_MODE:-${SCRATCHBIRD_COMPAT_CTEST_LIST_MODE:-curated}}"
 case "$LIST_MODE" in
   curated)
@@ -74,18 +40,22 @@ LIST_FILE="${SCRATCHBIRD_FB_CTEST_LIST:-$DEFAULT_LIST_FILE}"
 CONVERTED_DIR="${FB_DIR}/converted"
 
 if [[ ! -x "$ISQL_BIN" ]]; then
-  echo "SKIP: sb_fb_isql not found or not executable: $ISQL_BIN" >&2
+  echo "SKIP: cloned Firebird isql not found or not executable: $ISQL_BIN" >&2
   exit 77
 fi
 
-if [[ "$ISQL_FLAVOR" == "generic" ]]; then
-  cat >&2 <<'EOF'
-SKIP: generic sb_isql fallback is not valid for Firebird emulation compare runs.
-The generic client speaks native protocol only and cannot execute Firebird wire-protocol parity.
-Provide sb_fb_isql via SCRATCHBIRD_FB_ISQL, build FDW CLI wrappers in ScratchBird-driver, or use native isql-fb.
+case "$(basename "$ISQL_BIN")" in
+  isql|isql-fb)
+    ;;
+  *)
+    cat >&2 <<EOF
+SKIP: ScratchBird Firebird wrapper clients are deprecated for compatibility compare runs.
+Provide the cloned donor isql via SCRATCHBIRD_FB_NATIVE_ISQL.
+Resolved path: ${ISQL_BIN}
 EOF
-  exit 77
-fi
+    exit 77
+    ;;
+esac
 
 if [[ ! -f "$LIST_FILE" ]]; then
   echo "Error: Firebird CTest list not found: $LIST_FILE (mode=$LIST_MODE)" >&2

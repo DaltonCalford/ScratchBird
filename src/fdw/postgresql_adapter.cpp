@@ -42,6 +42,98 @@
 namespace scratchbird {
 namespace fdw {
 
+namespace {
+
+uint16_t readUint16BigEndian(const void* data) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    return static_cast<uint16_t>((static_cast<uint16_t>(bytes[0]) << 8) |
+                                 static_cast<uint16_t>(bytes[1]));
+}
+
+uint32_t readUint32BigEndian(const void* data) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    return (static_cast<uint32_t>(bytes[0]) << 24) |
+           (static_cast<uint32_t>(bytes[1]) << 16) |
+           (static_cast<uint32_t>(bytes[2]) << 8) |
+           static_cast<uint32_t>(bytes[3]);
+}
+
+uint64_t readUint64BigEndian(const void* data) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    uint64_t value = 0;
+    for (size_t i = 0; i < 8; ++i) {
+        value = (value << 8) | static_cast<uint64_t>(bytes[i]);
+    }
+    return value;
+}
+
+RemoteValue convertBinaryPgValue(const void* data, size_t len, uint32_t remote_oid) {
+    if (data == nullptr || len == 0) {
+        return std::monostate{};
+    }
+
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    switch (remote_oid) {
+        case pg_types::BOOL:
+            return bytes[0] != 0;
+
+        case pg_types::INT2:
+            if (len >= 2) {
+                return static_cast<int16_t>(readUint16BigEndian(bytes));
+            }
+            break;
+
+        case pg_types::INT4:
+            if (len >= 4) {
+                return static_cast<int32_t>(readUint32BigEndian(bytes));
+            }
+            break;
+
+        case pg_types::INT8:
+            if (len >= 8) {
+                return static_cast<int64_t>(readUint64BigEndian(bytes));
+            }
+            break;
+
+        case pg_types::FLOAT4:
+            if (len >= 4) {
+                const uint32_t word = readUint32BigEndian(bytes);
+                float value = 0.0f;
+                std::memcpy(&value, &word, sizeof(value));
+                return value;
+            }
+            break;
+
+        case pg_types::FLOAT8:
+        case pg_types::NUMERIC:
+            if (len >= 8) {
+                const uint64_t word = readUint64BigEndian(bytes);
+                double value = 0.0;
+                std::memcpy(&value, &word, sizeof(value));
+                return value;
+            }
+            break;
+
+        case pg_types::BYTEA:
+            return std::vector<uint8_t>(bytes, bytes + len);
+
+        case pg_types::TEXT:
+        case pg_types::VARCHAR:
+        case pg_types::CHAR:
+        case pg_types::JSON:
+        case pg_types::JSONB:
+        case pg_types::UUID:
+            return std::string(reinterpret_cast<const char*>(bytes), len);
+
+        default:
+            break;
+    }
+
+    return std::string(reinterpret_cast<const char*>(bytes), len);
+}
+
+}  // namespace
+
 // =============================================================================
 // PostgreSQL Protocol Constants
 // =============================================================================
@@ -1219,8 +1311,12 @@ Result<RemoteQueryResult> PostgreSQLAdapter::readQueryResult() {
                         offset += 4;
                     }
 
-                    // Skip format code (2 bytes)
-                    offset += 2;
+                    if (offset + 2 <= data.size()) {
+                        col.result_format = static_cast<int16_t>(
+                            (static_cast<uint16_t>(data[offset]) << 8) |
+                            static_cast<uint16_t>(data[offset + 1]));
+                        offset += 2;
+                    }
 
                     col.mapped_type_id = mapRemoteType(col.type_oid, col.type_modifier);
                     result.columns.push_back(col);
@@ -1253,13 +1349,21 @@ Result<RemoteQueryResult> PostgreSQLAdapter::readQueryResult() {
                         row.push_back(std::monostate{});
                     } else if (offset + col_len <= data.size()) {
                         uint32_t type_oid = 0;
+                        int16_t format = 0;
                         if (i < result.columns.size()) {
                             type_oid = result.columns[i].type_oid;
+                            format = result.columns[i].result_format;
                         }
-                        auto value = convertToLocal(
-                            data.data() + offset,
-                            static_cast<size_t>(col_len),
-                            type_oid);
+                        RemoteValue value;
+                        if (format == 1) {
+                            value = convertBinaryPgValue(data.data() + offset,
+                                                         static_cast<size_t>(col_len),
+                                                         type_oid);
+                        } else {
+                            value = convertToLocal(data.data() + offset,
+                                                   static_cast<size_t>(col_len),
+                                                   type_oid);
+                        }
                         row.push_back(value);
                         offset += col_len;
                     }

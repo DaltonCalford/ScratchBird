@@ -13,6 +13,7 @@
 #include "scratchbird/protocol/adapters/mysql_adapter.h"
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/protocol/adapters/native_adapter.h"
+#include "scratchbird/protocol/translation_cache.h"
 #include "scratchbird/protocol/sbwp_protocol.h"
 #include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/network/socket.h"
@@ -21,6 +22,7 @@
 #include <filesystem>
 #include <map>
 #include <cctype>
+#include <type_traits>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -131,6 +133,75 @@ public:
         return T::engineDatabase();
     }
 
+    void applySuccessfulMySqlQueryForTest(const std::string& sql) {
+        if constexpr (std::is_base_of_v<MySqlAdapter, T>) {
+            T::applySuccessfulSessionQueryForTest(sql);
+        }
+    }
+
+    bool shouldBootstrapMySqlSystemSchemaForRemoteQueryForTest(const std::string& sql) const {
+        if constexpr (std::is_base_of_v<MySqlAdapter, T>) {
+            return T::shouldBootstrapSystemSchemaForRemoteQuery(sql);
+        }
+        return false;
+    }
+
+    const std::string& selectedDatabaseNameForTest() const {
+        return T::database_name_;
+    }
+
+    void setSelectedDatabaseNameForTest(const std::string& database) {
+        T::database_name_ = database;
+    }
+
+    void setUsernameForTest(const std::string& username) {
+        T::username_ = username;
+    }
+
+    void setMySqlAuthPluginForTest(const std::string& plugin) {
+        if constexpr (std::is_base_of_v<MySqlAdapter, T>) {
+            T::setAuthPluginNameForTest(plugin);
+        }
+    }
+
+    const std::string& mySqlAuthPluginForTest() const {
+        if constexpr (std::is_base_of_v<MySqlAdapter, T>) {
+            return T::authPluginNameForTest();
+        }
+        static const std::string empty;
+        return empty;
+    }
+
+    void setPostgresqlStateForTest(PgProtocolState state) {
+        if constexpr (std::is_base_of_v<PostgresqlAdapter, T>) {
+            T::setProtocolStateForTest(state);
+        }
+    }
+
+    PgProtocolState postgresqlStateForTest() const {
+        if constexpr (std::is_base_of_v<PostgresqlAdapter, T>) {
+            return T::protocolStateForTest();
+        }
+        return PgProtocolState::ERROR;
+    }
+
+    void applyPostgresqlSessionSchemaContextForTest(const std::string& logical_db,
+                                                    core::ErrorContext* ctx) {
+        if constexpr (std::is_base_of_v<PostgresqlAdapter, T>) {
+            T::applyPostgresqlSessionSchemaContextForTest(logical_db, ctx);
+        }
+    }
+
+    void applyFirebirdSessionSchemaContextForTest(core::ErrorContext* ctx) {
+        if constexpr (std::is_base_of_v<FirebirdAdapter, T>) {
+            T::applyFirebirdSessionSchemaContextForTest(ctx);
+        }
+    }
+
+    core::ConnectionContext* connectionContextForTest() {
+        return T::connection_ctx_.get();
+    }
+
     core::Status assumePublicSuperuserForTest(core::ErrorContext* ctx) {
         if (!T::connection_ctx_) {
             SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Connection context is not available");
@@ -191,6 +262,11 @@ public:
         }
         return T::executePrepared(name, params, result);
     }
+
+    core::Status sendQueryResultForTest(network::Connection* conn,
+                                        const ResultContext& result) {
+        return T::sendQueryResult(conn, result);
+    }
 };
 
 void cleanupDb(const std::string& name) {
@@ -222,6 +298,47 @@ std::vector<uint8_t> extractMySqlPayload(const std::vector<uint8_t>& wire_packet
         return {};
     }
     return std::vector<uint8_t>(wire_packet.begin() + 4, wire_packet.begin() + 4 + payload_size);
+}
+
+std::vector<std::vector<uint8_t>> splitMySqlPackets(const std::vector<uint8_t>& stream) {
+    std::vector<std::vector<uint8_t>> payloads;
+    size_t offset = 0;
+    while (offset + 4 <= stream.size()) {
+        const size_t payload_size =
+            static_cast<size_t>(stream[offset]) |
+            (static_cast<size_t>(stream[offset + 1]) << 8) |
+            (static_cast<size_t>(stream[offset + 2]) << 16);
+        if (offset + 4 + payload_size > stream.size()) {
+            break;
+        }
+        payloads.emplace_back(stream.begin() + offset + 4,
+                              stream.begin() + offset + 4 + payload_size);
+        offset += 4 + payload_size;
+    }
+    return payloads;
+}
+
+std::vector<std::string> parseMySqlLenEncRow(const std::vector<uint8_t>& payload) {
+    std::vector<std::string> values;
+    size_t offset = 0;
+    while (offset < payload.size()) {
+        const uint8_t marker = payload[offset++];
+        if (marker == 0xfb) {
+            values.emplace_back("NULL");
+            continue;
+        }
+        if (marker >= 0xfc) {
+            values.emplace_back("<unsupported>");
+            break;
+        }
+        if (offset + marker > payload.size()) {
+            values.emplace_back("<truncated>");
+            break;
+        }
+        values.emplace_back(reinterpret_cast<const char*>(payload.data() + offset), marker);
+        offset += marker;
+    }
+    return values;
 }
 
 uint16_t readMySqlErrorCode(const std::vector<uint8_t>& payload) {
@@ -681,6 +798,174 @@ TEST(ProtocolAdapterDialects, MySQLSelectUsesMysqlParser) {
     EXPECT_FALSE(bytecode.empty());
 }
 
+TEST(ProtocolAdapterDialects, MySQLRemoteCompileIgnoresSystemSchemaSubstringsInsideStringLiterals) {
+    cleanupDb("test_mysql_remote_compile_boundary.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_remote_compile_boundary.sbdb").string();
+    cfg.engine_endpoint = "/tmp/test_mysql_remote_compile_boundary.sock";
+    cfg.default_database = "tenant_mysql";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    std::vector<uint8_t> bytecode;
+    std::string err;
+    const auto status = adapter.runCompile(
+        "INSERT INTO t1 VALUES ('sasha@mysql.com'),('monty@mysql.com'),"
+        "('foo@hotmail.com'),('foo@aol.com'),('bar@aol.com')",
+        bytecode,
+        err);
+
+    ASSERT_EQ(status, core::Status::OK) << err;
+    EXPECT_FALSE(bytecode.empty());
+}
+
+TEST(ProtocolAdapterDialects, MySQLRemoteExecutionBootstrapIgnoresSystemSchemaSubstringsInsideStringLiterals) {
+    cleanupDb("test_mysql_remote_exec_boundary.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_remote_exec_boundary.sbdb").string();
+    cfg.default_database = "compat_mysql";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    adapter.setSelectedDatabaseNameForTest("compat_mysql");
+
+    EXPECT_FALSE(adapter.shouldBootstrapMySqlSystemSchemaForRemoteQueryForTest(
+        "INSERT INTO t1 VALUES ('sasha@mysql.com'),('monty@mysql.com'),"
+        "('foo@hotmail.com'),('foo@aol.com'),('bar@aol.com')"));
+}
+
+TEST(ProtocolAdapterDialects, MySQLGreetingResetsPriorSessionDatabaseSelection) {
+    cleanupDb("test_mysql_greeting_session_reset.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_greeting_session_reset.sbdb").string();
+    cfg.default_database = "compat_mysql";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    adapter.setSelectedDatabaseNameForTest("compat_mysql");
+    adapter.applySuccessfulMySqlQueryForTest("USE `compat_mysql`");
+
+    network::Connection conn(nullptr, 321);
+    ASSERT_EQ(adapter.sendGreetingForTest(&conn), core::Status::OK);
+    EXPECT_TRUE(adapter.selectedDatabaseNameForTest().empty());
+}
+
+TEST(ProtocolAdapterDialects, MySQLGreetingResetsPriorSessionAuthPluginSelection) {
+    cleanupDb("test_mysql_greeting_auth_reset.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_greeting_auth_reset.sbdb").string();
+    cfg.default_database = "compat_mysql";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    adapter.setMySqlAuthPluginForTest("mysql_native_password");
+
+    network::Connection conn(nullptr, 654);
+    ASSERT_EQ(adapter.sendGreetingForTest(&conn), core::Status::OK);
+    EXPECT_EQ(adapter.mySqlAuthPluginForTest(), "caching_sha2_password");
+}
+
+TEST(ProtocolAdapterDialects, PostgresqlGreetingResetsProtocolStateToStartup) {
+    cleanupDb("test_postgresql_greeting_state_reset.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_postgresql_greeting_state_reset.sbdb").string();
+    cfg.default_database = "compat_pg";
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    adapter.setPostgresqlStateForTest(PgProtocolState::READY);
+
+    network::Connection conn(nullptr, 655);
+    ASSERT_EQ(adapter.sendGreetingForTest(&conn), core::Status::OK);
+    EXPECT_EQ(adapter.postgresqlStateForTest(), PgProtocolState::STARTUP);
+}
+
+TEST(ProtocolAdapterDialects, MySQLTranslationCacheDoesNotLeakAcrossDatabases) {
+    cleanupDb("test_mysql_cache_isolation_a.sbdb");
+    cleanupDb("test_mysql_cache_isolation_b.sbdb");
+
+    auto& translation_cache = TranslationCacheManager::getInstance();
+    translation_cache.invalidateAll();
+
+    ProtocolAdapterConfig cfg_a;
+    cfg_a.database_path = dbPath("test_mysql_cache_isolation_a.sbdb").string();
+    AdapterHarness<MySqlAdapter> adapter_a(cfg_a);
+
+    ProtocolAdapterConfig cfg_b;
+    cfg_b.database_path = dbPath("test_mysql_cache_isolation_b.sbdb").string();
+    AdapterHarness<MySqlAdapter> adapter_b(cfg_b);
+
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter_a.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+    ASSERT_EQ(adapter_b.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    auto run_query = [](auto& adapter, const std::string& sql) {
+        QueryContext query;
+        query.query = sql;
+        ResultContext result;
+        auto status = adapter.executeQueryForTest(query, result);
+        return std::make_pair(status, result);
+    };
+
+    {
+        auto [status, result] = run_query(
+            adapter_a,
+            "CREATE TABLE t1 (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, data INT NOT NULL)");
+        ASSERT_EQ(status, core::Status::OK);
+        ASSERT_FALSE(result.has_error) << result.error_message;
+    }
+
+    {
+        auto [status, result] = run_query(adapter_a, "INSERT INTO t1 VALUES (0, 'mysql')");
+        ASSERT_EQ(status, core::Status::OK);
+        ASSERT_TRUE(result.has_error);
+        EXPECT_NE(result.error_message.find("data"), std::string::npos);
+    }
+
+    {
+        auto [status, result] = run_query(
+            adapter_b,
+            "CREATE TABLE t1 (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, username VARCHAR(32) NOT NULL)");
+        ASSERT_EQ(status, core::Status::OK);
+        ASSERT_FALSE(result.has_error) << result.error_message;
+    }
+
+    {
+        auto [status, result] = run_query(adapter_b, "INSERT INTO t1 VALUES (0, 'mysql')");
+        ASSERT_EQ(status, core::Status::OK);
+        ASSERT_FALSE(result.has_error) << result.error_message;
+    }
+
+    {
+        auto [status, result] = run_query(adapter_b, "SELECT username FROM t1 ORDER BY id");
+        ASSERT_EQ(status, core::Status::OK);
+        ASSERT_FALSE(result.has_error) << result.error_message;
+        ASSERT_EQ(result.rows.size(), 1u);
+        ASSERT_EQ(result.rows[0].size(), 1u);
+        EXPECT_EQ(std::string(result.rows[0][0].data.begin(), result.rows[0][0].data.end()), "mysql");
+    }
+
+    translation_cache.invalidateAll();
+}
+
+TEST(ProtocolAdapterDialects, MySQLSetAutocommitOneDoesNotRequireActiveTransaction) {
+    cleanupDb("test_mysql_autocommit_set.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_autocommit_set.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+    QueryContext query;
+    query.query = "SET autocommit=1";
+
+    ResultContext result;
+    ASSERT_EQ(adapter.executeQueryForTest(query, result), core::Status::OK)
+        << result.error_message;
+    ASSERT_FALSE(result.has_error) << result.error_message;
+}
+
 TEST(ProtocolAdapterDialects, FirebirdSelectUsesFirebirdParser) {
     cleanupDb("test_fb_adapter.sbdb");
 
@@ -1059,6 +1344,196 @@ TEST(ProtocolAdapterDialectsC1, PostgreSQLParameterStatusKeys) {
     EXPECT_NE(params.find("TimeZone"), params.end());
     EXPECT_NE(params.find("integer_datetimes"), params.end());
     EXPECT_NE(params.find("standard_conforming_strings"), params.end());
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLStartupPublishesEmulatedDatabaseSearchPath) {
+    cleanupDb("test_pg_emulated_search_path.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_emulated_search_path.sbdb").string();
+    cfg.require_authentication = false;
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 123);
+
+    const auto startup_packet = buildPgStartupMessage("tenant_user", "tenant_pg");
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), startup_packet.begin(), startup_packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto& params = adapter.getServerParameters();
+    auto it = params.find("search_path");
+    ASSERT_NE(it, params.end());
+    EXPECT_EQ(it->second, "pg_catalog, emulated.postgresql.localhost.databases.tenant_pg");
+    EXPECT_EQ(adapter.selectedDatabaseNameForTest(), "tenant_pg");
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLSessionSchemaContextUsesEmulatedDatabaseRoot) {
+    cleanupDb("test_pg_schema_context_root.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_schema_context_root.sbdb").string();
+    cfg.default_database = "tenant_pg";
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    adapter.setUsernameForTest("tenant_user");
+    adapter.setSelectedDatabaseNameForTest("tenant_pg");
+    adapter.applyPostgresqlSessionSchemaContextForTest("tenant_pg", &ctx);
+
+    auto* conn_ctx = adapter.connectionContextForTest();
+    ASSERT_NE(conn_ctx, nullptr);
+    ASSERT_EQ(conn_ctx->current_schema(),
+              "emulated.postgresql.localhost.databases.tenant_pg");
+    ASSERT_FALSE(conn_ctx->search_path().empty());
+    EXPECT_EQ(conn_ctx->search_path().front(),
+              "emulated.postgresql.localhost.databases.tenant_pg");
+    EXPECT_NE(conn_ctx->current_schema(), "users.public");
+    EXPECT_NE(conn_ctx->getCurrentSchemaId(), core::ID{});
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLSessionSchemaContextUsesEmulatedDatabaseRoot) {
+    cleanupDb("test_mysql_schema_context_root.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_schema_context_root.sbdb").string();
+    cfg.default_database = "tenant_mysql";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    adapter.setUsernameForTest("tenant_user");
+    adapter.applySuccessfulMySqlQueryForTest("USE `tenant_mysql`");
+
+    auto* conn_ctx = adapter.connectionContextForTest();
+    ASSERT_NE(conn_ctx, nullptr);
+    ASSERT_EQ(conn_ctx->current_schema(),
+              "emulated.mysql.localhost.databases.tenant_mysql");
+    ASSERT_FALSE(conn_ctx->search_path().empty());
+    EXPECT_EQ(conn_ctx->search_path().front(),
+              "emulated.mysql.localhost.databases.tenant_mysql");
+    EXPECT_NE(conn_ctx->getCurrentSchemaId(), core::ID{});
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLRegularSelectDoesNotBootstrapInformationSchema) {
+    cleanupDb("test_mysql_regular_select_no_bootstrap.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_regular_select_no_bootstrap.sbdb").string();
+    cfg.default_database = "tenant_mysql";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    adapter.applySuccessfulMySqlQueryForTest("USE `tenant_mysql`");
+
+    QueryContext query;
+    query.query = "SELECT 1";
+    ResultContext result;
+    ASSERT_EQ(adapter.executeQueryForTest(query, result), core::Status::OK);
+    ASSERT_FALSE(result.has_error) << result.error_message;
+    ASSERT_EQ(result.rows.size(), 1u);
+    ASSERT_EQ(result.rows.front().size(), 1u);
+    EXPECT_EQ(std::string(result.rows.front().front().data.begin(),
+                          result.rows.front().front().data.end()),
+              "1");
+
+    auto* db = adapter.engineDatabaseForTest();
+    ASSERT_NE(db, nullptr);
+    auto* catalog = db->catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    core::CatalogManager::SchemaInfo schema_info;
+    core::ErrorContext lookup_ctx;
+    const auto status = catalog->getSchema(
+        "emulated.mysql.localhost.databases.information_schema",
+        schema_info,
+        &lookup_ctx);
+    EXPECT_NE(status, core::Status::OK);
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLInformationSchemaBootstrapUsesSiblingDatabaseRoots) {
+    cleanupDb("test_mysql_information_schema_bootstrap_roots.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_information_schema_bootstrap_roots.sbdb").string();
+    cfg.default_database = "tenant_mysql";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    adapter.applySuccessfulMySqlQueryForTest("USE `tenant_mysql`");
+
+    QueryContext create_query;
+    create_query.query = "CREATE TABLE t_info_bootstrap (id INT PRIMARY KEY)";
+    ResultContext create_result;
+    ASSERT_EQ(adapter.executeQueryForTest(create_query, create_result), core::Status::OK);
+    ASSERT_FALSE(create_result.has_error) << create_result.error_message;
+
+    QueryContext info_query;
+    info_query.query =
+        "SELECT schema_name FROM information_schema.schemata "
+        "WHERE schema_name = 'tenant_mysql'";
+    ResultContext info_result;
+    ASSERT_EQ(adapter.executeQueryForTest(info_query, info_result), core::Status::OK);
+    ASSERT_FALSE(info_result.has_error) << info_result.error_message;
+    ASSERT_EQ(info_result.rows.size(), 1u);
+    ASSERT_EQ(info_result.rows.front().size(), 1u);
+    EXPECT_EQ(std::string(info_result.rows.front().front().data.begin(),
+                          info_result.rows.front().front().data.end()),
+              "tenant_mysql");
+
+    auto* db = adapter.engineDatabaseForTest();
+    ASSERT_NE(db, nullptr);
+    auto* catalog = db->catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    core::CatalogManager::SchemaInfo schema_info;
+    ASSERT_EQ(catalog->getSchema("emulated.mysql.localhost.databases.information_schema",
+                                 schema_info,
+                                 &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    core::CatalogManager::SchemaInfo nested_info;
+    core::ErrorContext nested_ctx;
+    const auto nested_status = catalog->getSchema(
+        "emulated.mysql.localhost.databases.tenant_mysql.information_schema",
+        nested_info,
+        &nested_ctx);
+    EXPECT_NE(nested_status, core::Status::OK);
+}
+
+TEST(ProtocolAdapterDialectsFirebird, FirebirdSessionSchemaContextUsesEmulatedDatabaseRoot) {
+    cleanupDb("test_fb_schema_context_root.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_fb_schema_context_root.sbdb").string();
+    cfg.default_database = "tenant_fb.fdb";
+
+    AdapterHarness<FirebirdAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    adapter.setUsernameForTest("SYSDBA");
+    adapter.applyFirebirdSessionSchemaContextForTest(&ctx);
+    ASSERT_TRUE(ctx.message.empty()) << ctx.message;
+
+    auto* conn_ctx = adapter.connectionContextForTest();
+    ASSERT_NE(conn_ctx, nullptr);
+    ASSERT_EQ(conn_ctx->current_schema(),
+              "emulated.firebird.localhost.tenant_fb");
+    ASSERT_FALSE(conn_ctx->search_path().empty());
+    EXPECT_EQ(conn_ctx->search_path().front(),
+              "emulated.firebird.localhost.tenant_fb");
+    EXPECT_NE(conn_ctx->getCurrentSchemaId(), core::ID{});
 }
 
 TEST(ProtocolAdapterDialectsC1, PostgreSQLMD5HashComputation) {
@@ -1653,6 +2128,85 @@ TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserRequestsClearPasswordAuthSwitc
     EXPECT_EQ(plugin_name, "mysql_clear_password");
 }
 
+TEST(ProtocolAdapterDialectsC3, MySqlTextResultRowsSerializeTypedValuesAsText) {
+    cleanupDb("test_mysql_text_row_format.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_text_row_format.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 145);
+
+    ResultContext result;
+    result.columns = {
+        {"a", WireType::INT32},
+        {"b", WireType::BOOLEAN},
+        {"c", WireType::FLOAT64},
+    };
+    result.rows = {{
+        ProtocolCodec::ColumnValue::fromInt32(1),
+        ProtocolCodec::ColumnValue::fromBool(true),
+        ProtocolCodec::ColumnValue::fromDouble(3.5),
+    }};
+
+    ASSERT_EQ(adapter.sendQueryResultForTest(&conn, result), core::Status::OK);
+
+    const auto packets = splitMySqlPackets(conn.getWriteBuffer());
+    ASSERT_GE(packets.size(), 5u);
+
+    size_t row_packet_index = 1 + result.columns.size();
+    ASSERT_LT(row_packet_index, packets.size());
+    if (!packets[row_packet_index].empty() &&
+        packets[row_packet_index][0] == mysql::EOF_PACKET) {
+        ++row_packet_index;
+    }
+    ASSERT_LT(row_packet_index, packets.size());
+
+    const auto row_values = parseMySqlLenEncRow(packets[row_packet_index]);
+    ASSERT_EQ(row_values.size(), 3u);
+    EXPECT_EQ(row_values[0], "1");
+    EXPECT_EQ(row_values[1], "1");
+    EXPECT_EQ(row_values[2], "3.5");
+}
+
+TEST(ProtocolAdapterDialectsC3, MySqlTextResultRowsHeuristicallyFormatUnknownBinaryScalars) {
+    cleanupDb("test_mysql_text_row_unknown_scalar_format.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_text_row_unknown_scalar_format.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 146);
+
+    ResultContext result;
+    result.columns = {
+        {"bool_expr", WireType::UNKNOWN},
+        {"count_expr", WireType::UNKNOWN},
+    };
+    result.rows = {{
+        ProtocolCodec::ColumnValue::fromBool(true),
+        ProtocolCodec::ColumnValue::fromInt64(0),
+    }};
+
+    ASSERT_EQ(adapter.sendQueryResultForTest(&conn, result), core::Status::OK);
+
+    const auto packets = splitMySqlPackets(conn.getWriteBuffer());
+    ASSERT_GE(packets.size(), 5u);
+
+    size_t row_packet_index = 1 + result.columns.size();
+    ASSERT_LT(row_packet_index, packets.size());
+    if (!packets[row_packet_index].empty() &&
+        packets[row_packet_index][0] == mysql::EOF_PACKET) {
+        ++row_packet_index;
+    }
+    ASSERT_LT(row_packet_index, packets.size());
+
+    const auto row_values = parseMySqlLenEncRow(packets[row_packet_index]);
+    ASSERT_EQ(row_values.size(), 2u);
+    EXPECT_EQ(row_values[0], "1");
+    EXPECT_EQ(row_values[1], "0");
+}
+
 TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserRejectsBoundDatabaseSwitch) {
     cleanupDb("test_mysql_change_user_bound_db.sbdb");
 
@@ -1728,6 +2282,66 @@ TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserAllowsSystemDatabaseAliasWhenB
 
     const std::string plugin_name(reinterpret_cast<const char*>(response_payload.data() + 1));
     EXPECT_EQ(plugin_name, "mysql_clear_password");
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLComQueryUseUpdatesSubsequentCompileDatabaseContext) {
+    cleanupDb("test_mysql_com_query_use_schema_context.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_com_query_use_schema_context.sbdb").string();
+    cfg.default_database = "compat_mysql_root";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+
+    auto run_setup_query = [&](const std::string& sql) {
+        QueryContext setup_query;
+        setup_query.query = sql;
+        ResultContext setup_result;
+        ASSERT_EQ(adapter.executeQueryForTest(setup_query, setup_result), core::Status::OK);
+        ASSERT_FALSE(setup_result.has_error) << setup_result.error_message;
+    };
+
+    run_setup_query("CREATE DATABASE IF NOT EXISTS compat_mysql_root");
+    run_setup_query("CREATE DATABASE IF NOT EXISTS main");
+
+    adapter.applySuccessfulMySqlQueryForTest("USE `main`");
+    EXPECT_EQ(adapter.selectedDatabaseNameForTest(), "main");
+
+    QueryContext create_query;
+    create_query.query =
+        "CREATE TABLE t_wave2_use_ctx (id INT PRIMARY KEY, payload VARCHAR(32))";
+    ResultContext create_result;
+    ASSERT_EQ(adapter.executeQueryForTest(create_query, create_result), core::Status::OK);
+    ASSERT_FALSE(create_result.has_error) << create_result.error_message;
+
+    QueryContext insert_query;
+    insert_query.query = "INSERT INTO t_wave2_use_ctx VALUES (1, 'alpha')";
+    ResultContext insert_result;
+    ASSERT_EQ(adapter.executeQueryForTest(insert_query, insert_result), core::Status::OK);
+    ASSERT_FALSE(insert_result.has_error) << insert_result.error_message;
+
+    auto* db = adapter.engineDatabaseForTest();
+    ASSERT_NE(db, nullptr);
+    auto* catalog = db->catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    core::CatalogManager::SchemaInfo schema_info;
+    ASSERT_EQ(catalog->getSchema("emulated.mysql.localhost.databases.main",
+                                 schema_info,
+                                 &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    core::CatalogManager::TableInfo table_info;
+    ASSERT_EQ(catalog->getTable(schema_info.schema_id,
+                                "t_wave2_use_ctx",
+                                table_info,
+                                &ctx),
+              core::Status::OK)
+        << ctx.message;
 }
 
 TEST(ProtocolAdapterDialectsC3, MySQLComStmtPrepareReturnsPrepareOkPacket) {

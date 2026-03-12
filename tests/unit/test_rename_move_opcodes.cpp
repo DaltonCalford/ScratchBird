@@ -160,6 +160,94 @@ bool containsOpcodeDeep(const std::vector<uint8_t>& bytecode, sblr_v3::Opcode op
     return false;
 }
 
+bool containsLegacyOpcodeByte(const std::vector<uint8_t>& bytecode,
+                              scratchbird::sblr::Opcode opcode)
+{
+    return std::find(bytecode.begin(),
+                     bytecode.end(),
+                     static_cast<uint8_t>(opcode)) != bytecode.end();
+}
+
+bool firstCreateTableColumnHasIdentity(const std::vector<uint8_t>& bytecode, bool* always_out = nullptr)
+{
+    sblr_v3::Container container;
+    std::string err;
+    if (!sblr_v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
+    {
+        return false;
+    }
+
+    size_t offset = 0;
+    sblr_v3::DecodeError decode_err;
+    while (offset < container.bytecode_stream.size())
+    {
+        sblr_v3::Instruction inst;
+        if (!sblr_v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                  container.bytecode_stream.size(),
+                                                  offset,
+                                                  inst,
+                                                  decode_err) &&
+            !sblr_v3::decodeInstruction(container.bytecode_stream.data(),
+                                        container.bytecode_stream.size(),
+                                        offset,
+                                        inst,
+                                        decode_err))
+        {
+            return false;
+        }
+
+        if (inst.opcode != static_cast<uint16_t>(sblr_v3::Opcode::SBLR3_CREATE_TABLE))
+        {
+            continue;
+        }
+
+        const auto* payload = std::get_if<sblr_v3::Value::Object>(&inst.payload.data);
+        if (!payload)
+        {
+            return false;
+        }
+        auto cols_it = payload->find("columns");
+        if (cols_it == payload->end())
+        {
+            return false;
+        }
+        const auto* cols = std::get_if<sblr_v3::Value::List>(&cols_it->second.data);
+        if (!cols || cols->empty())
+        {
+            return false;
+        }
+        const auto* first_col = std::get_if<sblr_v3::Value::Object>(&cols->front().data);
+        if (!first_col)
+        {
+            return false;
+        }
+        auto identity_it = first_col->find("identity");
+        if (identity_it == first_col->end() || identity_it->second.isNull())
+        {
+            return false;
+        }
+        const auto* identity = std::get_if<sblr_v3::Value::Object>(&identity_it->second.data);
+        if (!identity)
+        {
+            return false;
+        }
+        if (always_out != nullptr)
+        {
+            auto always_it = identity->find("always");
+            if (always_it != identity->end())
+            {
+                if (const auto* always = std::get_if<bool>(&always_it->second.data))
+                {
+                    *always_out = *always;
+                }
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
 } // namespace
 
 class RenameMoveOpcodeV3Test : public ::testing::Test
@@ -260,4 +348,15 @@ TEST_F(RenameMoveOpcodeV3Test, PostgresExistsCompilesToSubqueryExistsOpcode)
     auto result = compiler.compile("SELECT EXISTS(SELECT 1)");
     ASSERT_TRUE(result.success()) << (result.errors().empty() ? "" : result.errors()[0]);
     EXPECT_TRUE(containsOpcodeDeep(result.bytecode(), sblr_v3::Opcode::SBLR3_SUBQUERY_EXISTS));
+}
+
+TEST_F(RenameMoveOpcodeV3Test, PostgresSerialColumnsEmitIdentityOpcode)
+{
+    PostgreSQLQueryCompiler compiler(db_.get());
+    auto result = compiler.compile(
+        "CREATE TABLE serial_test (id SERIAL PRIMARY KEY, payload TEXT)");
+    ASSERT_TRUE(result.success()) << (result.errors().empty() ? "" : result.errors()[0]);
+    bool always = true;
+    EXPECT_TRUE(firstCreateTableColumnHasIdentity(result.bytecode(), &always));
+    EXPECT_FALSE(always);
 }

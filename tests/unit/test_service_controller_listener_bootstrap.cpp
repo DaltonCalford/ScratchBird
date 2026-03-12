@@ -356,7 +356,15 @@ TEST(ServiceControllerListenerBootstrapTest, StartListenersPassesConfigFileToLis
 
     ErrorContext ctx;
     ASSERT_EQ(controller.startListeners(&ctx), Status::OK) << ctx.message;
-    ASSERT_TRUE(waitForFile(args_path, std::chrono::milliseconds(1000)));
+    ASSERT_TRUE(waitForFileContains(
+        args_path,
+        {"__invocation__",
+         "--config",
+         config_path.string(),
+         "--database-owner",
+         "main",
+         "--engine-endpoint"},
+        std::chrono::milliseconds(2000)));
 
     const std::string args = readTextFile(args_path);
     EXPECT_NE(args.find("--config"), std::string::npos) << args;
@@ -751,7 +759,16 @@ TEST(ServiceControllerListenerBootstrapTest,
     EXPECT_EQ(controller.listeners_[0].config.bind_address, "127.0.0.1");
     EXPECT_EQ(controller.listeners_[0].config.port, manager_ports[1]);
 
-    ASSERT_TRUE(waitForFile(args_path, std::chrono::milliseconds(1000)));
+    ASSERT_TRUE(waitForFileContains(
+        args_path,
+        {
+            "--bind",
+            "127.0.0.1",
+            "--port",
+            std::to_string(manager_ports[1]),
+            "--require-proxy-binding",
+        },
+        std::chrono::milliseconds(2000)));
     const std::string args = readTextFile(args_path);
     EXPECT_NE(args.find("--bind"), std::string::npos) << args;
     EXPECT_NE(args.find("127.0.0.1"), std::string::npos) << args;
@@ -800,7 +817,21 @@ TEST(ServiceControllerListenerBootstrapTest,
 
     ErrorContext ctx;
     ASSERT_EQ(controller.startManager(&ctx), Status::OK) << ctx.message;
-    ASSERT_TRUE(waitForFile(args_path, std::chrono::milliseconds(1000)));
+    ASSERT_TRUE(waitForFileContains(
+        args_path,
+        {
+            "--bind",
+            "127.0.0.1",
+            "--port",
+            std::to_string(manager_ports[0]),
+            "--native-port",
+            std::to_string(manager_ports[1]),
+            "--database-owner",
+            "main",
+            "--mcp-auth-secret",
+            "test-manager-secret",
+        },
+        std::chrono::milliseconds(2000)));
 
     const std::string args = readTextFile(args_path);
     EXPECT_NE(args.find("--bind"), std::string::npos) << args;

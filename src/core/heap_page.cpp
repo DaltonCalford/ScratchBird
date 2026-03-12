@@ -634,8 +634,8 @@ namespace scratchbird::core
 
         uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
 
-        // Need space for tuple and potentially a new item pointer
-        uint32_t needed = tuple_size;
+        // Need space for tuple and potentially a new item pointer.
+        uint32_t lower_bound = pageLower(*hdr);
 
         // Check if we need a new item slot
         bool found_deleted_slot = false;
@@ -651,10 +651,18 @@ namespace scratchbird::core
 
         if (!found_deleted_slot)
         {
-            needed += sizeof(ItemPointer);
+            lower_bound += sizeof(ItemPointer);
         }
 
-        return free_space >= needed;
+        if (tuple_size > pageUpper(*hdr))
+        {
+            return false;
+        }
+
+        uint32_t raw_tuple_offset = pageUpper(*hdr) - tuple_size;
+        uint32_t aligned_tuple_offset = (raw_tuple_offset / 8) * 8;
+
+        return aligned_tuple_offset >= lower_bound && free_space >= (lower_bound - pageLower(*hdr)) + tuple_size;
     }
 
     auto HeapPage::getItemCount() const -> uint16_t

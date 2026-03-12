@@ -915,6 +915,7 @@ namespace scratchbird
             EXT_ON_CONFLICT_DO_NOTHING = 0x85, // ON CONFLICT DO NOTHING
             EXT_ON_CONFLICT_DO_UPDATE = 0x86,  // ON CONFLICT DO UPDATE SET
             EXT_ON_CONFLICT_WHERE = 0x87,      // ON CONFLICT ... WHERE condition
+            EXT_ON_CONFLICT_IGNORE_ERRORS = 0x012A, // INSERT IGNORE row-level suppression
 
             // Permission management (GRANT/REVOKE) (0x88-0x8F)
             EXT_GRANT = 0x88,                  // GRANT privileges ON object TO grantee
@@ -1339,6 +1340,7 @@ namespace scratchbird
             EXT_ON_CONFLICT_DO_NOTHING = 0x85,  // ON CONFLICT DO NOTHING
             EXT_ON_CONFLICT_DO_UPDATE = 0x86,  // ON CONFLICT DO UPDATE SET
             EXT_ON_CONFLICT_WHERE = 0x87,  // ON CONFLICT ... WHERE condition
+            EXT_ON_CONFLICT_IGNORE_ERRORS = 0x012A,  // INSERT IGNORE row-level suppression
             EXT_GRANT = 0x88,  // GRANT privileges ON object TO grantee
             EXT_REVOKE = 0x89,  // REVOKE privileges ON object FROM grantee
             EXT_GRANT_OPTION = 0x8A,  // WITH GRANT OPTION

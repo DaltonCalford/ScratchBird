@@ -297,6 +297,7 @@ private:
 
     std::string username_;                          // Authenticated username
     std::string client_info_;                       // Client connection info
+    std::string client_name_;                       // CONNECT_REQUEST client identifier
     uint16_t client_connect_flags_ = 0;            // CONNECT_REQUEST capability flags
     std::string auth_database_context_;             // CONNECT database for auth tuple scoping
     PeerCredentials peer_credentials_{};            // Peer identity for local IPC

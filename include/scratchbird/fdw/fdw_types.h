@@ -373,6 +373,7 @@ struct RemoteColumnDesc {
     std::string name;
     uint32_t type_oid = 0;
     int32_t type_modifier = -1;
+    int16_t result_format = 0;
     bool nullable = true;
     uint32_t mapped_type_id = 0;  // ScratchBird type
 };

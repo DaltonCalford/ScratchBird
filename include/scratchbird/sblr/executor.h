@@ -1373,6 +1373,12 @@ namespace scratchbird
                                               const Value& value,
                                               const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
                                               const core::TID& exclude_tid);
+            bool indexTidsContainVisibleDuplicate(const core::ID& table_id,
+                                                  const core::CatalogManager::ColumnInfo& column,
+                                                  const Value& value,
+                                                  const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+                                                  const std::vector<core::TID>& matching_tids,
+                                                  const core::TID* exclude_tid);
 
             void enforceUniqueIndexes(const core::ID& table_id,
                                      const std::vector<Value>& row_values,

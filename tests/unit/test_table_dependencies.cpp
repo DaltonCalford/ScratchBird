@@ -62,6 +62,11 @@ protected:
     // Helper: Create a simple table with one column
     ID createTestTable(const std::string& table_name)
     {
+        return createTestTableInSchema(schema_id, table_name);
+    }
+
+    ID createTestTableInSchema(const ID& target_schema_id, const std::string& table_name)
+    {
         ErrorContext ctx;
         std::vector<CatalogManager::ColumnInfo> columns;
 
@@ -74,11 +79,29 @@ protected:
         columns.push_back(col);
 
         ID table_id;
-        Status status = catalog->createTable(schema_id, table_name, columns, table_id, 0, &ctx);
+        Status status = catalog->createTable(target_schema_id, table_name, columns, table_id, 0, &ctx);
         if (status != Status::OK) {
             ADD_FAILURE() << "Failed to create table: " << ctx.message;
         }
         return table_id;
+    }
+
+    ID createTestSequence(const ID& target_schema_id, const std::string& sequence_name)
+    {
+        ErrorContext ctx;
+        Status status = catalog->createSequence(
+            target_schema_id, sequence_name, 1, 1, 1000, 1, 1, false, &ctx);
+        if (status != Status::OK) {
+            ADD_FAILURE() << "Failed to create sequence: " << ctx.message;
+            return ID{};
+        }
+
+        ID sequence_id;
+        status = catalog->getSequenceIdByName(target_schema_id, sequence_name, sequence_id, &ctx);
+        if (status != Status::OK) {
+            ADD_FAILURE() << "Failed to resolve sequence id: " << ctx.message;
+        }
+        return sequence_id;
     }
 
     // Helper: Create index on table
@@ -236,6 +259,45 @@ TEST_F(TableDependencyTest, DropTableAutoDropsIndexes)
     // Verify indexes are gone
     EXPECT_NE(catalog->getIndex(idx1_id, idx_info, &ctx), Status::OK);
     EXPECT_NE(catalog->getIndex(idx2_id, idx_info, &ctx), Status::OK);
+}
+
+TEST_F(TableDependencyTest, DropSchemaCascadeIgnoresOwnedAutoDependencyCycles)
+{
+    ErrorContext ctx;
+    ID cycle_schema_id;
+    ASSERT_EQ(catalog->createSchema("cycle_schema", "system", cycle_schema_id, &ctx), Status::OK)
+        << ctx.message;
+
+    ID table_id = createTestTableInSchema(cycle_schema_id, "cycle_table");
+    ID sequence_id = createTestSequence(cycle_schema_id, "cycle_seq");
+    ASSERT_NE(table_id, ID{});
+    ASSERT_NE(sequence_id, ID{});
+
+    ID normal_dep;
+    ASSERT_EQ(catalog->createDependency(
+                  table_id,
+                  CatalogManager::ObjectType::TABLE,
+                  sequence_id,
+                  CatalogManager::ObjectType::SEQUENCE,
+                  CatalogManager::DependencyType::NORMAL,
+                  normal_dep,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ID auto_dep;
+    ASSERT_EQ(catalog->createDependency(
+                  sequence_id,
+                  CatalogManager::ObjectType::SEQUENCE,
+                  table_id,
+                  CatalogManager::ObjectType::TABLE,
+                  CatalogManager::DependencyType::AUTO,
+                  auto_dep,
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
+    EXPECT_EQ(catalog->dropSchema(cycle_schema_id, true, &ctx), Status::OK) << ctx.message;
 }
 
 // ========================================================================

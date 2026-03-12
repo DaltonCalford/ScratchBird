@@ -1337,7 +1337,15 @@ namespace scratchbird::core
             return true;
         }
 
-        // Own changes always visible
+        // A delete performed by the current transaction must hide the entry even
+        // when the same transaction also created it.
+        if (xmax == current_xid)
+        {
+            return false;
+        }
+
+        // Own changes always visible once we know we have not already deleted
+        // the entry in the current transaction.
         if (xmin == current_xid)
         {
             return true;

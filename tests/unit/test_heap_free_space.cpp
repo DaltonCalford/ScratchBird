@@ -251,6 +251,37 @@ TEST_F(HeapFreeSpaceTest, ItemPointerIncludedInFreeSpaceCheck)
         << "  Expected max: " << (tuple_size + sizeof(ItemPointer) + 8);
 }
 
+TEST_F(HeapFreeSpaceTest, HasFreeSpaceRejectsAlignmentGapThatWouldOverlapItemArray)
+{
+    auto *page_hdr = reinterpret_cast<PageHeader *>(page_buffer_);
+    constexpr uint32_t tuple_size = sizeof(TupleHeader);
+    bool found_alignment_gap = false;
+
+    // Construct a layout where raw free space exists, but absolute 8-byte
+    // alignment pushes the tuple start below the post-insert lower bound.
+    for (uint16_t lower = sizeof(PageHeader) + (3 * sizeof(ItemPointer));
+         lower < sizeof(PageHeader) + (3 * sizeof(ItemPointer)) + 16 && !found_alignment_gap;
+         ++lower)
+    {
+        uint32_t lower_bound = lower + sizeof(ItemPointer);
+        for (uint32_t gap = 0; gap < 8 && !found_alignment_gap; ++gap)
+        {
+            uint32_t raw_tuple_offset = lower_bound + gap;
+            uint32_t aligned_tuple_offset = (raw_tuple_offset / 8) * 8;
+            if (aligned_tuple_offset < lower_bound)
+            {
+                pageSetLower(*page_hdr, lower);
+                pageSetUpper(*page_hdr, raw_tuple_offset + tuple_size);
+                found_alignment_gap = true;
+            }
+        }
+    }
+
+    ASSERT_TRUE(found_alignment_gap) << "Failed to construct alignment-gap scenario";
+    EXPECT_FALSE(heap_page_->hasFreeSpace(tuple_size))
+        << "Alignment loss should be accounted for in free-space checks";
+}
+
 /**
  * Test: Multiple tuple insertions with varying sizes
  */

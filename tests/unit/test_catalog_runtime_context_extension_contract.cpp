@@ -400,3 +400,35 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, LiveTransactionPersistsRetain
     EXPECT_NE(rows[0].payload_json.find(db_->uuid().toString()), std::string::npos);
     EXPECT_NE(rows[2].payload_json.find("committed"), std::string::npos);
 }
+
+TEST_F(CatalogRuntimeContextExtensionContractTest, LiveTransactionCommitSurvivesClosedSessionBinding)
+{
+    ErrorContext ctx;
+
+    const ID system_user_id = catalog_->getSystemUserId(&ctx);
+    ASSERT_NE(system_user_id, ID{}) << ctx.message;
+
+    CatalogManager::SessionInfo session{};
+    ASSERT_EQ(catalog_->createSession(system_user_id, ID{}, "native", session, &ctx), Status::OK)
+        << ctx.message;
+
+    conn_->setSessionContext(session.session_id, ID{}, "native", 0, 0);
+    conn_->setCurrentUser(system_user_id, false);
+
+    const uint64_t txid = conn_->getCurrentXid();
+    const ID tx_uuid = conn_->getCurrentTransactionUuid();
+    ASSERT_NE(txid, 0u);
+    ASSERT_NE(tx_uuid, ID{});
+
+    ASSERT_EQ(catalog_->closeSession(session.session_id, &ctx), Status::OK) << ctx.message;
+
+    ErrorContext commit_ctx;
+    ASSERT_EQ(conn_->commit(&commit_ctx), Status::OK) << commit_ctx.message;
+
+    CatalogManager::RuntimeTransactionCatalogInfo tx_row{};
+    ASSERT_EQ(catalog_->getRuntimeTransactionCatalogEntry(txid, tx_row, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(tx_row.tx_uuid, tx_uuid);
+    EXPECT_EQ(tx_row.state, CatalogManager::RuntimeTransactionState::COMMITTED);
+    EXPECT_EQ(tx_row.session_id, ID{});
+}

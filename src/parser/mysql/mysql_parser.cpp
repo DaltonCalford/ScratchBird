@@ -917,6 +917,13 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
         return parseTransactionStmtV3();
     }
     if (check(TokenType::KW_SET)) {
+        Token next = lexer_.peek();
+        if (next.type == TokenType::KW_PASSWORD ||
+            (next.type == TokenType::IDENTIFIER &&
+             core::IdentifierUtils::toUpper(
+                 std::string(lexer_.stringPool().get(next.value.string_id))) == "PASSWORD")) {
+            return nullptr;
+        }
         return parseSetStmtV3();
     }
     if (check(TokenType::KW_SHOW)) {
@@ -1026,10 +1033,26 @@ parser::v3::Statement* Parser::parseStatementInternalV3() {
         return parseDeleteStmtV3();
     }
     if (check(TokenType::KW_RENAME)) {
+        Token next = lexer_.peek();
+        if (next.type == TokenType::KW_USER ||
+            (next.type == TokenType::IDENTIFIER &&
+             core::IdentifierUtils::toUpper(
+                 std::string(lexer_.stringPool().get(next.value.string_id))) == "USER")) {
+            return nullptr;
+        }
         return parseRenameStmtV3();
     }
-    if (check(TokenType::IDENTIFIER) && matchIdentifierKeyword("RENAME")) {
-        return parseRenameStmtV3(true);
+    if (check(TokenType::IDENTIFIER) &&
+        core::IdentifierUtils::toUpper(
+            std::string(lexer_.stringPool().get(current_token_.value.string_id))) == "RENAME") {
+        Token next = lexer_.peek();
+        if (next.type == TokenType::KW_USER ||
+            (next.type == TokenType::IDENTIFIER &&
+             core::IdentifierUtils::toUpper(
+                 std::string(lexer_.stringPool().get(next.value.string_id))) == "USER")) {
+            return nullptr;
+        }
+        return parseRenameStmtV3();
     }
     if (check(TokenType::KW_ALTER)) {
         return parseAlterStmtV3();
@@ -1997,6 +2020,10 @@ parser::v3::Statement* Parser::parseTruncateStmtV3() {
     }
     matchKeyword(TokenType::KW_TABLE);
     auto* stmt = arena()->create<parser::v3::TruncateTableStmt>();
+    // MySQL TRUNCATE behaves like a synchronous metadata reset and restarts
+    // AUTO_INCREMENT state for the truncated table.
+    stmt->restart_identity = true;
+    stmt->sync_mode = true;
     do {
         std::string schema;
         std::string table = parseIdentifier();
@@ -2734,13 +2761,17 @@ parser::v3::InsertStmt* Parser::parseInsertStmtV3() {
     }
 
     if (ignore_duplicates) {
-        if (stmt->on_conflict) {
-            warning("INSERT IGNORE is ignored when ON DUPLICATE KEY UPDATE is present");
-        } else {
+        stmt->ignore_errors = true;
+        if (!stmt->on_conflict) {
             auto* conflict = arena()->create<parser::v3::OnConflictClause>();
             conflict->action = parser::v3::ConflictAction::NOTHING;
             stmt->on_conflict = conflict;
         }
+    }
+    if (is_replace) {
+        auto* conflict = arena()->create<parser::v3::OnConflictClause>();
+        conflict->action = parser::v3::ConflictAction::REPLACE;
+        stmt->on_conflict = conflict;
     }
     if (ignored_priority_modifiers) {
         warning("INSERT modifiers LOW_PRIORITY/HIGH_PRIORITY/DELAYED are ignored in ScratchBird");
@@ -2751,7 +2782,6 @@ parser::v3::InsertStmt* Parser::parseInsertStmtV3() {
         return nullptr;
     }
 
-    (void)is_replace;
     return stmt;
 }
 
@@ -3465,6 +3495,52 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
 
     auto* stmt = arena()->create<parser::v3::SetStmt>();
     bool global_scope = false;
+    auto make_string_literal = [&](std::string_view value) -> parser::v3::LiteralExpr* {
+        auto* literal = arena()->create<parser::v3::LiteralExpr>();
+        literal->literal_type = parser::v3::LiteralType::STRING;
+        literal->string_value = v3_string_pool_.intern(value);
+        return literal;
+    };
+    auto make_int_literal = [&](int64_t value) -> parser::v3::LiteralExpr* {
+        auto* literal = arena()->create<parser::v3::LiteralExpr>();
+        literal->literal_type = parser::v3::LiteralType::INTEGER;
+        literal->int_value = value;
+        return literal;
+    };
+    auto parse_set_variable_value = [&]() -> parser::v3::Expression* {
+        if (check(TokenType::HEX_LITERAL) ||
+            check(TokenType::INTEGER_LITERAL) ||
+            check(TokenType::BIT_LITERAL) ||
+            check(TokenType::FLOAT_LITERAL) ||
+            check(TokenType::STRING_LITERAL) ||
+            check(TokenType::KW_NULL) ||
+            check(TokenType::KW_TRUE) ||
+            check(TokenType::KW_FALSE) ||
+            check(TokenType::KW_DEFAULT)) {
+            return parseLiteralExprV3();
+        }
+
+        if (matchKeyword(TokenType::KW_ON)) {
+            return make_int_literal(1);
+        }
+        if (matchKeyword(TokenType::KW_OFF)) {
+            return make_int_literal(0);
+        }
+        if (matchKeyword(TokenType::KW_ROW)) {
+            return make_string_literal("ROW");
+        }
+        if (matchKeyword(TokenType::KW_FULL)) {
+            return make_string_literal("FULL");
+        }
+        if (matchKeyword(TokenType::KW_UNLIMITED)) {
+            return make_string_literal("UNLIMITED");
+        }
+        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+            return make_string_literal(parseIdentifier());
+        }
+
+        return parseExpressionV3();
+    };
 
     if (matchKeyword(TokenType::KW_LOCAL)) {
         stmt->scope = parser::v3::SetStmt::Scope::LOCAL;
@@ -3595,7 +3671,7 @@ parser::v3::Statement* Parser::parseSetStmtV3() {
     if (matchKeyword(TokenType::KW_DEFAULT)) {
         stmt->is_default = true;
     } else {
-        stmt->value = parseExpressionV3();
+        stmt->value = parse_set_variable_value();
     }
     return stmt;
 }
@@ -5594,16 +5670,42 @@ parser::v3::Statement* Parser::parseCreateStmtV3() {
 
         std::string username = parse_user_name();
         stmt->user_name = v3_string_pool_.intern(username);
+        if (check(TokenType::USER_VARIABLE)) {
+            // MySQL account literal suffix: user@host
+            advance();
+        }
 
         if (matchKeyword(TokenType::KW_IDENTIFIED)) {
-            consumeKeyword(TokenType::KW_BY, "Expected BY after IDENTIFIED");
-            if (!check(TokenType::STRING_LITERAL)) {
-                error("Expected string literal after IDENTIFIED BY");
+            if (matchKeyword(TokenType::KW_BY)) {
+                if (!check(TokenType::STRING_LITERAL)) {
+                    error("Expected string literal after IDENTIFIED BY");
+                } else {
+                    stmt->password = v3_string_pool_.intern(
+                        std::string(lexer_.stringPool().get(current_token_.value.string_id)));
+                    advance();
+                    stmt->has_password = true;
+                }
+            } else if (matchKeyword(TokenType::KW_WITH) ||
+                       matchIdentifierKeyword("WITH")) {
+                if (check(TokenType::STRING_LITERAL) ||
+                    check(TokenType::IDENTIFIER) ||
+                    check(TokenType::BACKTICK_IDENTIFIER)) {
+                    advance();
+                } else {
+                    error("Expected auth plugin after IDENTIFIED WITH");
+                }
+                if (matchKeyword(TokenType::KW_BY)) {
+                    if (!check(TokenType::STRING_LITERAL)) {
+                        error("Expected string literal after IDENTIFIED WITH ... BY");
+                    } else {
+                        stmt->password = v3_string_pool_.intern(
+                            std::string(lexer_.stringPool().get(current_token_.value.string_id)));
+                        advance();
+                        stmt->has_password = true;
+                    }
+                }
             } else {
-                stmt->password = v3_string_pool_.intern(
-                    std::string(lexer_.stringPool().get(current_token_.value.string_id)));
-                advance();
-                stmt->has_password = true;
+                error("Expected BY or WITH after IDENTIFIED");
             }
         } else if (matchKeyword(TokenType::KW_WITH) ||
                    matchIdentifierKeyword("WITH")) {
@@ -8357,15 +8459,13 @@ void Parser::parseInsertStmt() {
         in_on_duplicate_update_ = saved_on_duplicate;
     }
 
-    if (ignore_duplicates && !on_duplicate_assignments.empty()) {
-        warning("INSERT IGNORE is ignored when ON DUPLICATE KEY UPDATE is present");
-    }
-
     if (ignore_duplicates && on_duplicate_assignments.empty()) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT));
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_NOTHING));
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_IGNORE_ERRORS));
     }
 
     if (!on_duplicate_assignments.empty()) {
@@ -8376,6 +8476,10 @@ void Parser::parseInsertStmt() {
         emitByte(0);  // no explicit constraint target (any conflict)
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE));
+        if (ignore_duplicates) {
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ON_CONFLICT_IGNORE_ERRORS));
+        }
         emit(sblr::Opcode::BEGIN_LIST);
         emitUVarint(on_duplicate_assignments.size());
         for (const auto& assign : on_duplicate_assignments) {
@@ -9178,6 +9282,36 @@ void Parser::parseCreateStmt() {
 
 void Parser::parseRenameStmt() {
     advance();  // Consume RENAME
+
+    if (matchKeyword(TokenType::KW_USER) || matchIdentifierKeyword("USER")) {
+        auto parse_user_name = [&]() -> std::string {
+            if (check(TokenType::STRING_LITERAL)) {
+                std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+                return value;
+            }
+            return parseIdentifier();
+        };
+
+        std::string username = parse_user_name();
+        if (check(TokenType::USER_VARIABLE)) {
+            advance();
+        }
+
+        consumeKeyword(TokenType::KW_TO, "Expected TO after RENAME USER");
+
+        std::string new_username = parse_user_name();
+        if (check(TokenType::USER_VARIABLE)) {
+            advance();
+        }
+
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_USER));
+        emitString(username);
+        emitByte(0x08);  // rename_user
+        emitString(new_username);
+        return;
+    }
 
     consumeKeyword(TokenType::KW_TABLE, "Expected TABLE after RENAME");
 
@@ -10198,7 +10332,7 @@ void Parser::parseTruncateStmt() {
     emit(sblr::Opcode::TRUNCATE_TABLE);
     const std::string table_path = schema.empty() ? table : (schema + "/" + table);
     emitString(table_path);
-    emitByte(0);
+    emitByte(1);
 }
 
 void Parser::parseCreateTable() {
@@ -12509,6 +12643,40 @@ void Parser::parseSetStmt() {
     consume(TokenType::KW_SET, "Expected SET");
 
     // Handle various SET forms
+    if (matchKeyword(TokenType::KW_PASSWORD) || matchIdentifierKeyword("PASSWORD")) {
+        matchKeyword(TokenType::KW_FOR) || matchIdentifierKeyword("FOR");
+
+        auto parse_user_name = [&]() -> std::string {
+            if (check(TokenType::STRING_LITERAL)) {
+                std::string value(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+                return value;
+            }
+            return parseIdentifier();
+        };
+
+        std::string username = parse_user_name();
+        if (check(TokenType::USER_VARIABLE)) {
+            advance();
+        }
+
+        consume(TokenType::EQUAL, "Expected = after SET PASSWORD target");
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected string literal after SET PASSWORD =");
+            return;
+        }
+
+        std::string password(lexer_.stringPool().get(current_token_.value.string_id));
+        advance();
+
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_USER));
+        emitString(username);
+        emitByte(0x01);
+        emitString(password);
+        return;
+    }
+
     if (matchKeyword(TokenType::KW_ROLE) || matchIdentifierKeyword("ROLE")) {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SET_ROLE));
@@ -12890,13 +13058,34 @@ void Parser::parseCreateUser() {
     std::string password;
 
     if (matchKeyword(TokenType::KW_IDENTIFIED)) {
-        consumeKeyword(TokenType::KW_BY, "Expected BY after IDENTIFIED");
-        if (!check(TokenType::STRING_LITERAL)) {
-            error("Expected string literal after IDENTIFIED BY");
+        if (matchKeyword(TokenType::KW_BY)) {
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after IDENTIFIED BY");
+            } else {
+                password = std::string(lexer_.stringPool().get(current_token_.value.string_id));
+                advance();
+                has_password = true;
+            }
+        } else if (matchKeyword(TokenType::KW_WITH) ||
+                   matchIdentifierKeyword("WITH")) {
+            if (check(TokenType::STRING_LITERAL) ||
+                check(TokenType::IDENTIFIER) ||
+                check(TokenType::BACKTICK_IDENTIFIER)) {
+                advance();
+            } else {
+                error("Expected auth plugin after IDENTIFIED WITH");
+            }
+            if (matchKeyword(TokenType::KW_BY)) {
+                if (!check(TokenType::STRING_LITERAL)) {
+                    error("Expected string literal after IDENTIFIED WITH ... BY");
+                } else {
+                    password = std::string(lexer_.stringPool().get(current_token_.value.string_id));
+                    advance();
+                    has_password = true;
+                }
+            }
         } else {
-            password = std::string(lexer_.stringPool().get(current_token_.value.string_id));
-            advance();
-            has_password = true;
+            error("Expected BY or WITH after IDENTIFIED");
         }
     } else if (matchKeyword(TokenType::KW_WITH) ||
                matchIdentifierKeyword("WITH")) {

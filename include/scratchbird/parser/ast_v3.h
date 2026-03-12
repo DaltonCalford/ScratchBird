@@ -3628,6 +3628,7 @@ struct WithClause {
 enum class ConflictAction : uint8_t {
     NOTHING,    // DO NOTHING
     UPDATE,     // DO UPDATE SET ...
+    REPLACE,    // MySQL REPLACE delete+insert semantics
 };
 
 /**
@@ -3678,6 +3679,7 @@ public:
 
     // ON CONFLICT (UPSERT)
     OnConflictClause* on_conflict = nullptr;
+    bool ignore_errors = false;
 
     // Firebird OVERRIDING SYSTEM/USER VALUE
     enum class OverridingMode : uint8_t {

@@ -31,6 +31,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <iomanip>
+#include <limits>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -85,6 +87,98 @@ uint64_t currentProcessIdForPath() {
 #else
     return static_cast<uint64_t>(::getpid());
 #endif
+}
+
+ProtocolCodec::ColumnValue formatMySqlTextValue(const ProtocolCodec::ColumnValue& value,
+                                                WireType type) {
+    if (value.is_null) {
+        return ProtocolCodec::ColumnValue(nullptr);
+    }
+
+    auto raw_string = [&value]() {
+        return ProtocolCodec::ColumnValue::fromString(
+            std::string(value.data.begin(), value.data.end()));
+    };
+
+    auto format_unknown = [&]() -> ProtocolCodec::ColumnValue {
+        const bool printable =
+            !value.data.empty() &&
+            std::all_of(value.data.begin(), value.data.end(), [](uint8_t byte) {
+                return byte >= 0x20 && byte <= 0x7e;
+            });
+        if (printable) {
+            return raw_string();
+        }
+        if (value.data.size() == sizeof(int64_t)) {
+            int64_t decoded = 0;
+            std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+            return ProtocolCodec::ColumnValue::fromString(std::to_string(decoded));
+        }
+        if (value.data.size() == sizeof(int32_t)) {
+            int32_t decoded = 0;
+            std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+            return ProtocolCodec::ColumnValue::fromString(std::to_string(decoded));
+        }
+        if (value.data.size() == 1) {
+            return ProtocolCodec::ColumnValue::fromString(
+                std::to_string(static_cast<unsigned int>(value.data[0])));
+        }
+        return raw_string();
+    };
+
+    switch (type) {
+        case WireType::INT16:
+        case WireType::INT32: {
+            if (value.data.size() < sizeof(int32_t)) {
+                return raw_string();
+            }
+            int32_t decoded = 0;
+            std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+            if (type == WireType::INT16) {
+                decoded = static_cast<int16_t>(decoded);
+            }
+            return ProtocolCodec::ColumnValue::fromString(std::to_string(decoded));
+        }
+        case WireType::INT64: {
+            if (value.data.size() < sizeof(int64_t)) {
+                return raw_string();
+            }
+            int64_t decoded = 0;
+            std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+            return ProtocolCodec::ColumnValue::fromString(std::to_string(decoded));
+        }
+        case WireType::FLOAT32:
+        case WireType::FLOAT64: {
+            if (value.data.size() < sizeof(double)) {
+                return raw_string();
+            }
+            double decoded = 0.0;
+            std::memcpy(&decoded, value.data.data(), sizeof(decoded));
+            std::ostringstream out;
+            out << std::setprecision(std::numeric_limits<double>::digits10 + 1)
+                << decoded;
+            return ProtocolCodec::ColumnValue::fromString(out.str());
+        }
+        case WireType::BOOLEAN:
+            return ProtocolCodec::ColumnValue::fromString(
+                (!value.data.empty() && value.data[0] != 0) ? "1" : "0");
+        case WireType::UNKNOWN:
+            return format_unknown();
+        default:
+            return raw_string();
+    }
+}
+
+std::vector<ProtocolCodec::ColumnValue> formatMySqlTextRow(
+    const std::vector<ProtocolCodec::ColumnValue>& row,
+    const std::vector<ProtocolCodec::ColumnInfo>& columns) {
+    std::vector<ProtocolCodec::ColumnValue> formatted;
+    formatted.reserve(row.size());
+    for (size_t index = 0; index < row.size(); ++index) {
+        const WireType type = index < columns.size() ? columns[index].type : WireType::UNKNOWN;
+        formatted.push_back(formatMySqlTextValue(row[index], type));
+    }
+    return formatted;
 }
 
 size_t countParameterPlaceholders(const std::string& sql) {
@@ -1157,6 +1251,20 @@ core::Status ProtocolAdapter::compileQuery(const std::string& sql,
         privilege_signature.append(connection_ctx_->getActiveRoleId().toString());
         privilege_signature.push_back('|');
         privilege_signature.append(std::to_string(policy_epoch));
+        privilege_signature.append("|db=");
+        privilege_signature.append(db->uuid().toString());
+        privilege_signature.append("|schema_id=");
+        privilege_signature.append(connection_ctx_->getCurrentSchemaId().toString());
+        privilege_signature.append("|schema_name=");
+        privilege_signature.append(connection_ctx_->current_schema());
+        privilege_signature.append("|search_path=");
+        const auto& search_path = connection_ctx_->search_path();
+        for (size_t i = 0; i < search_path.size(); ++i) {
+            if (i != 0) {
+                privilege_signature.push_back(',');
+            }
+            privilege_signature.append(search_path[i]);
+        }
     }
     if (translation_cache_ && translation_cache_->isEnabled()) {
         if (translation_cache_->get(dialect_tag, sql, schema_version,
@@ -1318,6 +1426,9 @@ core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
             std::vector<ProtocolCodec::ColumnValue> row;
             for (size_t c = 0; c < rs->columnCount(); ++c) {
                 row.push_back(toColumnValue(rs->getValue(r, c)));
+            }
+            if (getProtocolType() == network::ProtocolType::MYSQL) {
+                row = formatMySqlTextRow(row, result.columns);
             }
             result.rows.push_back(std::move(row));
         }

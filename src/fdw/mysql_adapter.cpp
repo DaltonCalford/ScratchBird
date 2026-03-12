@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <optional>
 #include <sstream>
 
 // For SHA1
@@ -45,6 +46,106 @@
 
 namespace scratchbird {
 namespace fdw {
+
+namespace {
+
+bool applySocketTimeouts(int socket_fd, uint32_t timeout_ms) {
+    if (socket_fd < 0) {
+        return false;
+    }
+
+    struct timeval timeout;
+    timeout.tv_sec = timeout_ms / 1000;
+    timeout.tv_usec = static_cast<suseconds_t>((timeout_ms % 1000) * 1000);
+    return sb_socket_setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) == 0 &&
+           sb_socket_setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0;
+}
+
+bool readLengthEncodedInteger(const std::vector<uint8_t>& data,
+                              size_t& offset,
+                              uint64_t& value_out) {
+    if (offset >= data.size()) {
+        return false;
+    }
+
+    const uint8_t first = data[offset++];
+    if (first < 0xFB) {
+        value_out = first;
+        return true;
+    }
+    if (first == 0xFC) {
+        if (offset + 2 > data.size()) {
+            return false;
+        }
+        value_out = static_cast<uint64_t>(data[offset]) |
+                    (static_cast<uint64_t>(data[offset + 1]) << 8);
+        offset += 2;
+        return true;
+    }
+    if (first == 0xFD) {
+        if (offset + 3 > data.size()) {
+            return false;
+        }
+        value_out = static_cast<uint64_t>(data[offset]) |
+                    (static_cast<uint64_t>(data[offset + 1]) << 8) |
+                    (static_cast<uint64_t>(data[offset + 2]) << 16);
+        offset += 3;
+        return true;
+    }
+    if (first == 0xFE) {
+        if (offset + 8 > data.size()) {
+            return false;
+        }
+        value_out = static_cast<uint64_t>(data[offset]) |
+                    (static_cast<uint64_t>(data[offset + 1]) << 8) |
+                    (static_cast<uint64_t>(data[offset + 2]) << 16) |
+                    (static_cast<uint64_t>(data[offset + 3]) << 24) |
+                    (static_cast<uint64_t>(data[offset + 4]) << 32) |
+                    (static_cast<uint64_t>(data[offset + 5]) << 40) |
+                    (static_cast<uint64_t>(data[offset + 6]) << 48) |
+                    (static_cast<uint64_t>(data[offset + 7]) << 56);
+        offset += 8;
+        return true;
+    }
+
+    return false;
+}
+
+bool skipLengthEncodedString(const std::vector<uint8_t>& data, size_t& offset) {
+    uint64_t length = 0;
+    if (!readLengthEncodedInteger(data, offset, length)) {
+        return false;
+    }
+    if (offset + length > data.size()) {
+        return false;
+    }
+    offset += static_cast<size_t>(length);
+    return true;
+}
+
+bool readLengthEncodedString(const std::vector<uint8_t>& data,
+                             size_t& offset,
+                             std::string& value_out) {
+    uint64_t length = 0;
+    if (!readLengthEncodedInteger(data, offset, length)) {
+        return false;
+    }
+    if (offset + length > data.size()) {
+        return false;
+    }
+    value_out.assign(reinterpret_cast<const char*>(data.data() + offset),
+                     static_cast<size_t>(length));
+    offset += static_cast<size_t>(length);
+    return true;
+}
+
+bool isMySqlEofPacket(const std::vector<uint8_t>& data) {
+    return !data.empty() &&
+           data[0] == 0xFE &&
+           data.size() < 9;
+}
+
+}  // namespace
 
 // =============================================================================
 // MySQL Protocol Constants
@@ -114,6 +215,8 @@ struct MySQLAdapter::Impl {
     uint8_t sequence_id = 0;
     uint32_t server_capabilities = 0;
     uint32_t client_capabilities = 0;
+    uint32_t connect_timeout_ms = 5000;
+    uint32_t query_timeout_ms = 30000;
     std::string server_version;
     std::string current_database;
 
@@ -177,12 +280,8 @@ Result<void> MySQLAdapter::connect(const ServerDefinition& server,
         int flag = 1;
         sb_socket_setsockopt(candidate_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
-        // Set timeout
-        struct timeval timeout;
-        timeout.tv_sec = server.connection_timeout_ms / 1000;
-        timeout.tv_usec = (server.connection_timeout_ms % 1000) * 1000;
-        sb_socket_setsockopt(candidate_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-        sb_socket_setsockopt(candidate_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        // Use the shorter connection timeout during connect/auth only.
+        (void)applySocketTimeouts(candidate_fd, server.connection_timeout_ms);
 
         if (::connect(candidate_fd, ai->ai_addr, ai->ai_addrlen) == 0) {
             impl_->socket_fd = candidate_fd;
@@ -201,6 +300,8 @@ Result<void> MySQLAdapter::connect(const ServerDefinition& server,
     }
 
     setState(ConnectionState::AUTHENTICATING);
+    impl_->connect_timeout_ms = server.connection_timeout_ms;
+    impl_->query_timeout_ms = server.query_timeout_ms;
 
     // Read initial handshake packet
     auto handshake = readPacket();
@@ -340,6 +441,7 @@ Result<void> MySQLAdapter::connect(const ServerDefinition& server,
         if (packet_type == mysql_protocol::OK_PACKET) {
             impl_->connected = true;
             impl_->current_database = server.database;
+            (void)applySocketTimeouts(impl_->socket_fd, impl_->query_timeout_ms);
             setState(ConnectionState::CONNECTED);
             return Result<void>();
         }
@@ -1093,10 +1195,10 @@ Result<RemoteQueryResult> MySQLAdapter::readQueryResult() {
         result.success = true;
         // Parse affected rows from OK packet
         if (first_packet->size() > 1) {
-            // Length-encoded integer for affected rows
             size_t offset = 1;
-            if ((*first_packet)[offset] < 251) {
-                result.rows_affected = (*first_packet)[offset];
+            uint64_t affected_rows = 0;
+            if (readLengthEncodedInteger(*first_packet, offset, affected_rows)) {
+                result.rows_affected = affected_rows;
             }
         }
         return Result<RemoteQueryResult>(std::move(result));
@@ -1127,12 +1229,12 @@ Result<RemoteQueryResult> MySQLAdapter::readQueryResult() {
 
     // Result set - first packet is column count
     uint64_t column_count = 0;
-    if (first_byte < 251) {
-        column_count = first_byte;
-    } else if (first_byte == 0xFC && first_packet->size() >= 3) {
-        column_count =
-            static_cast<uint64_t>((*first_packet)[1]) |
-            (static_cast<uint64_t>((*first_packet)[2]) << 8);
+    {
+        size_t offset = 0;
+        if (!readLengthEncodedInteger(*first_packet, offset, column_count)) {
+            result.error_message = "Invalid MySQL column count packet";
+            return Result<RemoteQueryResult>(std::move(result));
+        }
     }
 
     // Read column definitions
@@ -1140,71 +1242,84 @@ Result<RemoteQueryResult> MySQLAdapter::readQueryResult() {
         auto col_packet = readPacket();
         if (!col_packet) break;
 
+        if (isMySqlEofPacket(*col_packet)) {
+            break;
+        }
+
         RemoteColumnDesc col;
         // Parse column definition packet
         const auto& data = *col_packet;
         size_t offset = 0;
 
-        // Skip catalog (length-encoded string)
-        auto skipLenEncString = [&data, &offset]() {
-            if (offset >= data.size()) return;
-            uint8_t len = data[offset++];
-            if (len < 251) {
-                offset += len;
-            }
-        };
-
-        skipLenEncString();  // catalog
-        skipLenEncString();  // schema
-        skipLenEncString();  // table alias
-        skipLenEncString();  // table name
-
-        // Column name
-        if (offset < data.size()) {
-            uint8_t name_len = data[offset++];
-            if (offset + name_len <= data.size()) {
-                col.name = std::string(data.begin() + offset, data.begin() + offset + name_len);
-                offset += name_len;
-            }
+        if (!skipLengthEncodedString(data, offset) ||  // catalog
+            !skipLengthEncodedString(data, offset) ||  // schema
+            !skipLengthEncodedString(data, offset) ||  // table alias
+            !skipLengthEncodedString(data, offset) ||  // table name
+            !readLengthEncodedString(data, offset, col.name) ||
+            !skipLengthEncodedString(data, offset)) {  // original column name
+            continue;
         }
 
-        skipLenEncString();  // original column name
+        uint64_t fixed_length = 0;
+        if (!readLengthEncodedInteger(data, offset, fixed_length)) {
+            continue;
+        }
 
-        // Fixed-length fields
-        if (offset + 12 <= data.size()) {
-            offset++;  // length of fixed fields
+        if (offset + fixed_length <= data.size() && fixed_length >= 11) {
             offset += 2;  // character set
-            offset += 4;  // max length
-            col.type_oid = data[offset];
-            offset++;
-            // flags (2 bytes)
-            // decimals (1 byte)
-            col.nullable = true;  // Simplified
+            offset += 4;  // column length
+            col.type_oid = data[offset++];
+            uint16_t flags = static_cast<uint16_t>(data[offset]) |
+                             (static_cast<uint16_t>(data[offset + 1]) << 8);
+            offset += 2;  // flags
+            offset += 1;  // decimals
+            offset += 2;  // filler
+            col.nullable = (flags & 0x0001) == 0;
         }
 
         col.mapped_type_id = mapRemoteType(col.type_oid, -1);
         result.columns.push_back(col);
     }
 
-    // Read EOF packet after columns
-    auto eof_packet = readPacket();
+    std::optional<std::vector<uint8_t>> pending_row_packet;
+    auto post_columns_packet = readPacket();
+    if (!post_columns_packet) {
+        result.error_message = post_columns_packet.errorMessage();
+        return Result<RemoteQueryResult>(std::move(result));
+    }
+    if (!post_columns_packet->empty()) {
+        if ((*post_columns_packet)[0] == mysql_protocol::ERR_PACKET) {
+            result.error_message = "Server returned error packet during result initialization";
+            return Result<RemoteQueryResult>(std::move(result));
+        }
+        if (!isMySqlEofPacket(*post_columns_packet)) {
+            pending_row_packet = std::move(*post_columns_packet);
+        }
+    }
 
     // Read rows
     while (true) {
-        auto row_packet = readPacket();
-        if (!row_packet) break;
+        std::vector<uint8_t> row_packet_payload;
+        if (pending_row_packet.has_value()) {
+            row_packet_payload = std::move(*pending_row_packet);
+            pending_row_packet.reset();
+        } else {
+            auto row_packet = readPacket();
+            if (!row_packet) break;
+            row_packet_payload = std::move(*row_packet);
+        }
 
-        if (row_packet->empty()) continue;
+        if (row_packet_payload.empty()) continue;
 
         // Check for EOF or error
-        if ((*row_packet)[0] == mysql_protocol::EOF_PACKET ||
-            (*row_packet)[0] == mysql_protocol::ERR_PACKET) {
+        if (isMySqlEofPacket(row_packet_payload) ||
+            row_packet_payload[0] == mysql_protocol::ERR_PACKET) {
             break;
         }
 
         // Parse row data
         RemoteRow row;
-        const auto& data = *row_packet;
+        const auto& data = row_packet_payload;
         size_t offset = 0;
 
         for (size_t i = 0; i < result.columns.size() && offset < data.size(); i++) {
@@ -1213,14 +1328,9 @@ Result<RemoteQueryResult> MySQLAdapter::readQueryResult() {
                 row.push_back(std::monostate{});
                 offset++;
             } else {
-                // Length-encoded string
                 uint64_t len = 0;
-                if (data[offset] < 251) {
-                    len = data[offset++];
-                } else if (data[offset] == 0xFC && offset + 2 < data.size()) {
-                    len = static_cast<uint64_t>(data[offset + 1]) |
-                          (static_cast<uint64_t>(data[offset + 2]) << 8);
-                    offset += 3;
+                if (!readLengthEncodedInteger(data, offset, len)) {
+                    break;
                 }
 
                 if (offset + len <= data.size()) {

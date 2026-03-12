@@ -112,6 +112,7 @@
 #include "scratchbird/core/job_scheduler.h"
 #include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/catalog/emulation_view_generator.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
 #include "scratchbird/sblr/jit/jit_llvm_toolchain.h"
 #include "scratchbird/udr/language_udr_runtime.h"
@@ -1991,6 +1992,8 @@ namespace scratchbird
                                              const std::string& user_signature,
                                              const std::string& role_signature,
                                              uint64_t policy_epoch);
+            std::vector<uint8_t> buildResultCacheKeyBytes(
+                const scratchbird::sblr::v3::Instruction& inst);
             std::unique_ptr<ResultSet> buildResultSetFromCache(const CachedResultSet& cached);
             CachedResultSet buildCachedResultSetFromResultSet(
                 const ResultSet& result_set,
@@ -2007,6 +2010,7 @@ namespace scratchbird
             bool isTableScopedType(core::CatalogManager::ObjectType type);
             bool resolveEmulatedRootPath(const core::ConnectionContext* conn_ctx,
                                          std::string& root_path_out);
+            std::string normalizeEmulatedAbsolutePrefixRoot(const std::string& root_path);
             std::string buildEmulatedTablespaceSandboxPath(const core::Database* db,
                                                            const std::string& root_path,
                                                            const std::string& tablespace_name);
@@ -7024,10 +7028,36 @@ namespace scratchbird
                 return core::Status::OK;
             }
 
+            auto schema_id_is_live = [&](const core::ID& schema_id,
+                                         core::CatalogManager::SchemaInfo* info_out) -> bool
+            {
+                if (isZeroUuid(schema_id))
+                {
+                    return false;
+                }
+
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext schema_ctx;
+                if (catalog->getSchema(schema_id, schema_info, &schema_ctx) != core::Status::OK)
+                {
+                    return false;
+                }
+
+                if (info_out != nullptr)
+                {
+                    *info_out = schema_info;
+                }
+                return true;
+            };
+
             if (current_schema_set_)
             {
-                schema_id_out = current_schema_id_;
-                return core::Status::OK;
+                if (schema_id_is_live(current_schema_id_, nullptr))
+                {
+                    schema_id_out = current_schema_id_;
+                    return core::Status::OK;
+                }
+                clearCurrentSchema();
             }
 
             if (conn_ctx_)
@@ -7036,8 +7066,12 @@ namespace scratchbird
                 const auto& ctx_schema = conn_ctx_->getCurrentSchemaId();
                 if (std::memcmp(&ctx_schema, &zero_id, sizeof(core::ID)) != 0)
                 {
-                    schema_id_out = ctx_schema;
-                    return core::Status::OK;
+                    if (schema_id_is_live(ctx_schema, nullptr))
+                    {
+                        schema_id_out = ctx_schema;
+                        return core::Status::OK;
+                    }
+                    conn_ctx_->setCurrentSchemaId(core::ID{});
                 }
                 if (!allow_search_path)
                 {
@@ -7075,6 +7109,10 @@ namespace scratchbird
                     if (status == core::Status::OK)
                     {
                         schema_id_out = schema_info.schema_id;
+                        setCurrentSchema(schema_info.schema_id);
+                        conn_ctx_->set_current_schema(schema_info.full_path.empty()
+                                                          ? schema_info.schema_name
+                                                          : schema_info.full_path);
                         return core::Status::OK;
                     }
                 }
@@ -7480,6 +7518,7 @@ namespace scratchbird
 
             if (enforce_root && path.type == core::PathType::ABSOLUTE && !emulated_root.empty())
             {
+                emulated_root = normalizeEmulatedAbsolutePrefixRoot(emulated_root);
                 core::ObjectPath root_path;
                 status = buildObjectPathFromName(emulated_root, root_path, ctx);
                 if (status != core::Status::OK)
@@ -14293,6 +14332,9 @@ namespace scratchbird
 
         void Executor::executeCreateDatabase()
         {
+            const bool debug_create_database =
+                conn_ctx_ != nullptr &&
+                std::getenv("SCRATCHBIRD_DEBUG_CREATE_DATABASE_FLOW") != nullptr;
             uint8_t flags = readByte();
             bool if_not_exists = (flags & 0x01) != 0;
 
@@ -14329,6 +14371,17 @@ namespace scratchbird
             core::ErrorContext ctx;
             auto status = extractEmulatedDatabaseComponents(
                 db_path, normalized_path, dialect, server, db_name, &ctx);
+            if (debug_create_database)
+            {
+                std::fprintf(stderr,
+                             "[create_db_debug] executor parsed path=%s normalized=%s dialect=%s server=%s db=%s\n",
+                             db_path.c_str(),
+                             normalized_path.c_str(),
+                             dialect.c_str(),
+                             server.c_str(),
+                             db_name.c_str());
+                std::fflush(stderr);
+            }
             if (status != core::Status::OK)
             {
                 std::string err_msg = "Invalid emulated database path";
@@ -14351,6 +14404,14 @@ namespace scratchbird
             status = db_->catalog_manager()->createSchemaPath(
                 normalized_path, core::CatalogManager::SchemaType::REMOTE_EMULATED,
                 schema_id, &ctx);
+            if (debug_create_database)
+            {
+                std::fprintf(stderr,
+                             "[create_db_debug] executor after createSchemaPath status=%d schema_id=%s\n",
+                             static_cast<int>(status),
+                             schema_id.toString().c_str());
+                std::fflush(stderr);
+            }
             if (status != core::Status::OK)
             {
                 std::string err_msg = "CREATE DATABASE failed";
@@ -14363,6 +14424,13 @@ namespace scratchbird
 
             core::CatalogManager::EmulationTypeInfo type_info;
             status = db_->catalog_manager()->getEmulationTypeByName(dialect, type_info, &ctx);
+            if (debug_create_database)
+            {
+                std::fprintf(stderr,
+                             "[create_db_debug] executor after getEmulationTypeByName status=%d\n",
+                             static_cast<int>(status));
+                std::fflush(stderr);
+            }
             if (status != core::Status::OK && status != core::Status::NOT_FOUND)
             {
                 std::string err_msg = "Failed to resolve emulation type";
@@ -14380,6 +14448,14 @@ namespace scratchbird
                                                                      "",    // empty mapping rules
                                                                      type_info.emulation_type_id,
                                                                      &ctx);
+                if (debug_create_database)
+                {
+                    std::fprintf(stderr,
+                                 "[create_db_debug] executor after createEmulationType status=%d type_id=%s\n",
+                                 static_cast<int>(status),
+                                 type_info.emulation_type_id.toString().c_str());
+                    std::fflush(stderr);
+                }
                 if (status != core::Status::OK)
                 {
                     std::string err_msg = "Failed to create emulation type";
@@ -14393,6 +14469,13 @@ namespace scratchbird
 
             core::CatalogManager::EmulationServerInfo server_info;
             status = db_->catalog_manager()->getEmulationServerByName(server, server_info, &ctx);
+            if (debug_create_database)
+            {
+                std::fprintf(stderr,
+                             "[create_db_debug] executor after getEmulationServerByName status=%d\n",
+                             static_cast<int>(status));
+                std::fflush(stderr);
+            }
             if (status != core::Status::OK && status != core::Status::NOT_FOUND)
             {
                 std::string err_msg = "Failed to resolve emulation server";
@@ -14410,6 +14493,14 @@ namespace scratchbird
                                                                        std::string(),
                                                                        server_id,
                                                                        &ctx);
+                if (debug_create_database)
+                {
+                    std::fprintf(stderr,
+                                 "[create_db_debug] executor after createEmulationServer status=%d server_id=%s\n",
+                                 static_cast<int>(status),
+                                 server_id.toString().c_str());
+                    std::fflush(stderr);
+                }
                 if (status != core::Status::OK)
                 {
                     std::string err_msg = "Failed to create emulation server";
@@ -14452,6 +14543,13 @@ namespace scratchbird
             core::CatalogManager::EmulatedDatabaseInfo db_info;
             status = db_->catalog_manager()->getEmulatedDatabaseByName(
                 server_info.server_id, db_name, db_info, &ctx);
+            if (debug_create_database)
+            {
+                std::fprintf(stderr,
+                             "[create_db_debug] executor after getEmulatedDatabaseByName status=%d\n",
+                             static_cast<int>(status));
+                std::fflush(stderr);
+            }
             if (status == core::Status::OK)
             {
                 if (if_not_exists)
@@ -14513,6 +14611,14 @@ namespace scratchbird
             status = db_->catalog_manager()->createEmulatedDatabase(
                 db_name, server_info.server_id, schema_id,
                 metadata.dump(), emulated_db_id, &ctx);
+            if (debug_create_database)
+            {
+                std::fprintf(stderr,
+                             "[create_db_debug] executor after createEmulatedDatabase status=%d db_id=%s\n",
+                             static_cast<int>(status),
+                             emulated_db_id.toString().c_str());
+                std::fflush(stderr);
+            }
             if (status != core::Status::OK)
             {
                 std::string err_msg = "CREATE DATABASE failed";
@@ -14533,6 +14639,13 @@ namespace scratchbird
                                                                     db_name,
                                                                     protocol,
                                                                     &view_ctx);
+                if (debug_create_database)
+                {
+                    std::fprintf(stderr,
+                                 "[create_db_debug] executor after generateEmulatedViews status=%d\n",
+                                 static_cast<int>(view_status));
+                    std::fflush(stderr);
+                }
                 if (view_status != core::Status::OK)
                 {
                     core::ErrorContext cleanup_ctx;
@@ -14588,6 +14701,12 @@ namespace scratchbird
 
             recordObjectDefinition(core::CatalogManager::ObjectType::EMULATED_DATABASE,
                                    emulated_db_id);
+            if (debug_create_database)
+            {
+                std::fprintf(stderr,
+                             "[create_db_debug] executor finished create database\n");
+                std::fflush(stderr);
+            }
         }
 
         void Executor::executeCreateDomain()
@@ -18486,6 +18605,7 @@ namespace scratchbird
                 bool has_where = false;
                 size_t where_start_pc = 0;
                 size_t where_end_pc = 0;
+                bool ignore_errors = false;
             };
 
             OnConflictInfo on_conflict;
@@ -18542,11 +18662,11 @@ namespace scratchbird
                         error("Expected ON CONFLICT action");
                     }
 
-                    readByte();
-                    uint16_t action_op = readExtendedOpcode();
-                    if (action_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ON_CONFLICT_DO_NOTHING))
-                    {
-                        on_conflict.action = OnConflictInfo::Action::NOTHING;
+	                    readByte();
+	                    uint16_t action_op = readExtendedOpcode();
+	                    if (action_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ON_CONFLICT_DO_NOTHING))
+	                    {
+	                        on_conflict.action = OnConflictInfo::Action::NOTHING;
                     }
                     else if (action_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ON_CONFLICT_DO_UPDATE))
                     {
@@ -18595,15 +18715,34 @@ namespace scratchbird
                             on_conflict.where_end_pc = skipExpressionRange(pc_);
                         }
                     }
-                    else
-                    {
-                        error("Unsupported ON CONFLICT action");
-                    }
-                }
-                else
-                {
-                    pc_ = saved_pc;
-                }
+	                    else
+	                    {
+	                        error("Unsupported ON CONFLICT action");
+	                    }
+
+                        if (pc_ < bytecode_size_ &&
+                            bytecode_[pc_] ==
+                                static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+                        {
+                            size_t ignore_pc = pc_;
+                            readByte();
+                            uint16_t maybe_ignore = readExtendedOpcode();
+                            if (maybe_ignore ==
+                                static_cast<uint16_t>(
+                                    ExtendedOpcode::EXT_ON_CONFLICT_IGNORE_ERRORS))
+                            {
+                                on_conflict.ignore_errors = true;
+                            }
+                            else
+                            {
+                                pc_ = ignore_pc;
+                            }
+                        }
+	                }
+	                else
+	                {
+	                    pc_ = saved_pc;
+	                }
             }
 
             struct SelectItemInfo
@@ -19128,6 +19267,8 @@ namespace scratchbird
 
             auto process_insert_row = [&](const std::vector<Value>& input_values,
                                           bool allow_default_values) -> bool {
+                try
+                {
                 if (!input_values.empty() && input_values.size() != col_indices.size())
                 {
                     error("Column count doesn't match value count");
@@ -20758,6 +20899,15 @@ namespace scratchbird
                 touched_tables.insert(target_table_id);
                 emit_returning_row(row_values);
                 return true;
+                }
+                catch (const std::exception&)
+                {
+                    if (on_conflict.ignore_errors)
+                    {
+                        return false;
+                    }
+                    throw;
+                }
             };
 
             struct PsqlVarTypeInfo {
@@ -44515,11 +44665,24 @@ namespace scratchbird
                 return true;
             };
 
+            struct DecodedIdentitySpec
+            {
+                bool present = false;
+                bool always = true;
+                int64_t start = 1;
+                int64_t increment = 1;
+                int64_t min_value = 1;
+                int64_t max_value = INT64_MAX;
+                uint64_t cache = 1;
+                bool cycle = false;
+            };
+
             auto columnInfoFromV3 = [&](const scratchbird::sblr::v3::Value::Object& obj,
                                         uint16_t ordinal,
                                         core::CatalogManager::ColumnInfo& col_info,
                                         std::string& err_out,
-                                        const core::ID* schema_hint = nullptr) -> bool {
+                                        const core::ID* schema_hint = nullptr,
+                                        DecodedIdentitySpec* identity_spec_out = nullptr) -> bool {
                 std::string name;
                 if (!getString(obj, "name", name) || name.empty())
                 {
@@ -44614,6 +44777,66 @@ namespace scratchbird
                     if (instr && *instr)
                     {
                         col_info.generation_expression = v3EncodeInstructionHex(**instr);
+                    }
+                }
+
+                auto it_identity = obj.find("identity");
+                if (it_identity != obj.end() && !it_identity->second.isNull())
+                {
+                    const auto* identity_obj =
+                        std::get_if<scratchbird::sblr::v3::Value::Object>(&it_identity->second.data);
+                    if (!identity_obj)
+                    {
+                        err_out = "COLUMN_DEF identity invalid";
+                        return false;
+                    }
+
+                    DecodedIdentitySpec decoded_identity;
+                    decoded_identity.present = true;
+                    auto load_i64 = [&](const char* field, int64_t& out) {
+                        auto it_field = identity_obj->find(field);
+                        if (it_field == identity_obj->end() || it_field->second.isNull())
+                        {
+                            return;
+                        }
+                        if (const auto* raw_i64 = std::get_if<int64_t>(&it_field->second.data))
+                        {
+                            out = *raw_i64;
+                            return;
+                        }
+                        if (const auto* raw_u64 = std::get_if<uint64_t>(&it_field->second.data))
+                        {
+                            if (*raw_u64 <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+                            {
+                                out = static_cast<int64_t>(*raw_u64);
+                            }
+                        }
+                    };
+                    getBool(*identity_obj, "always", decoded_identity.always);
+                    getBool(*identity_obj, "cycle", decoded_identity.cycle);
+                    load_i64("start", decoded_identity.start);
+                    load_i64("increment", decoded_identity.increment);
+                    load_i64("min_value", decoded_identity.min_value);
+                    load_i64("max_value", decoded_identity.max_value);
+                    getU64(*identity_obj, "cache", decoded_identity.cache);
+                    if (decoded_identity.increment == 0)
+                    {
+                        err_out = "COLUMN_DEF identity increment cannot be zero";
+                        return false;
+                    }
+                    if (decoded_identity.cache == 0)
+                    {
+                        err_out = "COLUMN_DEF identity cache cannot be zero";
+                        return false;
+                    }
+
+                    col_info.is_identity = true;
+                    col_info.identity_always = decoded_identity.always;
+                    col_info.nullable = false;
+
+                    if (identity_spec_out != nullptr)
+                    {
+                        *identity_spec_out = decoded_identity;
                     }
                 }
 
@@ -50174,6 +50397,7 @@ namespace scratchbird
                 }
 
                 std::vector<core::CatalogManager::ColumnInfo> columns;
+                std::vector<DecodedIdentitySpec> identity_specs;
                 auto it_cols = payload.find("columns");
                 if (it_cols != payload.end())
                 {
@@ -50192,12 +50416,117 @@ namespace scratchbird
                         }
                         core::CatalogManager::ColumnInfo col_info;
                         std::string col_err;
-                        if (!columnInfoFromV3(*col_obj, ordinal, col_info, col_err, &schema_id))
+                        DecodedIdentitySpec identity_spec;
+                        if (!columnInfoFromV3(*col_obj,
+                                              ordinal,
+                                              col_info,
+                                              col_err,
+                                              &schema_id,
+                                              &identity_spec))
                         {
                             return ExecutionResult(col_err);
                         }
                         columns.push_back(std::move(col_info));
+                        identity_specs.push_back(identity_spec);
                         ordinal++;
+                    }
+                }
+
+                struct PendingCreateConstraint
+                {
+                    uint64_t type = 0;
+                    std::string name;
+                    std::vector<std::string> columns;
+                    std::string ref_table_path;
+                    std::vector<std::string> ref_columns;
+                    uint64_t on_update = 0;
+                    uint64_t on_delete = 0;
+                    std::string check_expr_hex;
+                };
+
+                std::vector<PendingCreateConstraint> pending_constraints;
+                auto it_constraints = payload.find("constraints");
+                if (it_constraints != payload.end() && !it_constraints->second.isNull())
+                {
+                    const auto* list =
+                        std::get_if<scratchbird::sblr::v3::Value::List>(&it_constraints->second.data);
+                    if (!list)
+                    {
+                        return ExecutionResult("CREATE TABLE constraints invalid");
+                    }
+                    pending_constraints.reserve(list->size());
+                    for (const auto& entry : *list)
+                    {
+                        const auto* obj =
+                            std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                        if (!obj)
+                        {
+                            return ExecutionResult("CREATE TABLE constraint invalid");
+                        }
+
+                        PendingCreateConstraint decoded;
+                        if (!getU64(*obj, "type", decoded.type) || decoded.type == 0)
+                        {
+                            return ExecutionResult("CREATE TABLE constraint missing type");
+                        }
+                        getString(*obj, "name", decoded.name);
+
+                        auto load_ident_list = [&](const char* field,
+                                                   std::vector<std::string>& out) -> bool {
+                            auto it = obj->find(field);
+                            if (it == obj->end() || it->second.isNull())
+                            {
+                                return true;
+                            }
+                            const auto* values =
+                                std::get_if<scratchbird::sblr::v3::Value::List>(&it->second.data);
+                            if (!values)
+                            {
+                                return false;
+                            }
+                            out.reserve(values->size());
+                            for (const auto& value : *values)
+                            {
+                                const auto* ident = std::get_if<std::string>(&value.data);
+                                if (!ident)
+                                {
+                                    return false;
+                                }
+                                out.push_back(trimAsciiCopy(*ident));
+                            }
+                            return true;
+                        };
+
+                        if (!load_ident_list("columns", decoded.columns))
+                        {
+                            return ExecutionResult("CREATE TABLE constraint columns invalid");
+                        }
+                        if (!load_ident_list("ref_columns", decoded.ref_columns))
+                        {
+                            return ExecutionResult("CREATE TABLE constraint ref_columns invalid");
+                        }
+
+                        auto it_ref = obj->find("ref_table");
+                        if (it_ref != obj->end() && !it_ref->second.isNull())
+                        {
+                            decoded.ref_table_path = trimAsciiCopy(v3SchemaPathToString(it_ref->second));
+                        }
+                        getU64(*obj, "on_update", decoded.on_update);
+                        getU64(*obj, "on_delete", decoded.on_delete);
+
+                        auto it_check = obj->find("check_expr");
+                        if (it_check != obj->end() && !it_check->second.isNull())
+                        {
+                            auto instr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(
+                                &it_check->second.data);
+                            if (!instr || !*instr)
+                            {
+                                return ExecutionResult("CREATE TABLE CHECK constraint invalid");
+                            }
+                            decoded.check_expr_hex = v3EncodeInstructionHex(**instr);
+                        }
+
+                        pending_constraints.push_back(std::move(decoded));
                     }
                 }
 
@@ -50499,10 +50828,95 @@ namespace scratchbird
                     }
                 }
 
+                auto find_column = [&](const std::string& name)
+                    -> core::CatalogManager::ColumnInfo* {
+                    for (auto& col : columns)
+                    {
+                        if (core::IdentifierUtils::namesMatch(
+                                col.column_name, false, name, false))
+                        {
+                            return &col;
+                        }
+                    }
+                    return nullptr;
+                };
+
+                bool has_primary_key = false;
+                for (const auto& col : columns)
+                {
+                    if (col.is_primary_key)
+                    {
+                        has_primary_key = true;
+                        break;
+                    }
+                }
+
+                for (const auto& constraint : pending_constraints)
+                {
+                    if (constraint.type != 1 && constraint.type != 2 && constraint.type != 3)
+                    {
+                        continue;
+                    }
+                    if (constraint.columns.empty())
+                    {
+                        return ExecutionResult("CREATE TABLE constraint missing column list");
+                    }
+
+                    if (constraint.type == 1)
+                    {
+                        if (has_primary_key)
+                        {
+                            return ExecutionResult(
+                                "Multiple PRIMARY KEY constraints are not supported");
+                        }
+                        has_primary_key = true;
+                    }
+
+                    for (const auto& name : constraint.columns)
+                    {
+                        auto* col_info = find_column(name);
+                        if (!col_info)
+                        {
+                            return ExecutionResult(
+                                "CREATE TABLE constraint references unknown column '" + name + "'");
+                        }
+                        if (constraint.type == 1)
+                        {
+                            col_info->nullable = false;
+                        }
+                        if (constraint.columns.size() == 1)
+                        {
+                            if (constraint.type == 1)
+                            {
+                                col_info->is_primary_key = true;
+                                col_info->is_unique = true;
+                            }
+                            else if (constraint.type == 2)
+                            {
+                                col_info->is_unique = true;
+                            }
+                            else if (constraint.type == 3)
+                            {
+                                col_info->is_foreign_key = true;
+                            }
+                        }
+                    }
+                }
+
                 core::CatalogManager::TableCreateOptions create_opts;
                 core::CatalogManager::TableCreateOptions* create_opts_ptr = nullptr;
+                core::CatalogManager::TempObjectOptions temp_seq_opts;
+                core::CatalogManager::TempObjectOptions* temp_seq_opts_ptr = nullptr;
                 if (temp_type != 0)
                 {
+                    temp_seq_opts.temp_metadata_scope =
+                        core::CatalogManager::TempMetadataScope::SESSION;
+                    temp_seq_opts.creating_session_id =
+                        conn_ctx ? conn_ctx->effectiveSessionId() : core::ID{};
+                    temp_seq_opts.creating_transaction_id =
+                        conn_ctx ? conn_ctx->getCurrentXid() : 0;
+                    temp_seq_opts_ptr = &temp_seq_opts;
+
                     create_opts.table_type = core::CatalogManager::TableType::TEMPORARY;
                     create_opts.temp_metadata_scope =
                         (temp_type == 3) ? core::CatalogManager::TempMetadataScope::GLOBAL
@@ -50547,6 +50961,55 @@ namespace scratchbird
                     }
                     create_opts.temp_schema_id = schema_id;
                     create_opts_ptr = &create_opts;
+                }
+
+                for (size_t i = 0; i < columns.size() && i < identity_specs.size(); ++i)
+                {
+                    const auto& identity_spec = identity_specs[i];
+                    auto& col_info = columns[i];
+                    if (!identity_spec.present || !col_info.is_identity)
+                    {
+                        continue;
+                    }
+
+                    std::string seq_name =
+                        resolved_table_name + "_" + col_info.column_name + "_seq";
+                    status = db_->catalog_manager()->createSequence(schema_id,
+                                                                    seq_name,
+                                                                    identity_spec.increment,
+                                                                    identity_spec.min_value,
+                                                                    identity_spec.max_value,
+                                                                    identity_spec.start,
+                                                                    identity_spec.cache,
+                                                                    identity_spec.cycle,
+                                                                    nullptr,
+                                                                    temp_seq_opts_ptr);
+                    if (status != core::Status::OK)
+                    {
+                        return ExecutionResult(
+                            "Failed to create sequence for IDENTITY column: " +
+                            col_info.column_name);
+                    }
+
+                    core::CatalogManager::SequenceInfo seq_info;
+                    core::ErrorContext seq_ctx;
+                    status = db_->catalog_manager()->getSequence(schema_id,
+                                                                 seq_name,
+                                                                 seq_info,
+                                                                 &seq_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg =
+                            "Failed to resolve sequence for IDENTITY column: " +
+                            col_info.column_name;
+                        if (!seq_ctx.message.empty())
+                        {
+                            err_msg += ": " + seq_ctx.message;
+                        }
+                        return ExecutionResult(err_msg);
+                    }
+
+                    col_info.identity_sequence_id = seq_info.sequence_id;
                 }
 
                 core::ID table_id;
@@ -50632,6 +51095,187 @@ namespace scratchbird
                             err_msg += ": " + metadata_ctx.message;
                         }
                         return ExecutionResult(err_msg);
+                    }
+                }
+
+                std::unordered_set<std::string> used_constraint_names;
+                auto register_constraint_name = [&](const std::string& name) {
+                    used_constraint_names.insert(
+                        core::IdentifierUtils::toUpper(trimAsciiCopy(name)));
+                };
+                auto make_unique_constraint_name = [&](std::string base) -> std::string {
+                    if (base.empty())
+                    {
+                        base = resolved_table_name + "_constraint";
+                    }
+                    const std::string root = std::move(base);
+                    std::string candidate = root;
+                    uint32_t suffix = 1;
+                    while (used_constraint_names.count(
+                               core::IdentifierUtils::toUpper(candidate)) > 0)
+                    {
+                        candidate = root + "_" + std::to_string(suffix++);
+                    }
+                    return candidate;
+                };
+
+                for (auto& constraint : pending_constraints)
+                {
+                    if (constraint.type != 1 && constraint.type != 2 &&
+                        constraint.type != 3 && constraint.type != 4)
+                    {
+                        continue;
+                    }
+
+                    if (constraint.name.empty())
+                    {
+                        if (constraint.type == 1)
+                        {
+                            constraint.name =
+                                make_unique_constraint_name(resolved_table_name + "_pkey");
+                        }
+                        else if (constraint.type == 2)
+                        {
+                            std::string base = resolved_table_name;
+                            for (const auto& col_name : constraint.columns)
+                            {
+                                base += "_" + col_name;
+                            }
+                            base += "_key";
+                            constraint.name = make_unique_constraint_name(base);
+                        }
+                        else if (constraint.type == 3)
+                        {
+                            std::string base = resolved_table_name + "_fk";
+                            for (const auto& col_name : constraint.columns)
+                            {
+                                base += "_" + col_name;
+                            }
+                            base += "_ref";
+                            constraint.name = make_unique_constraint_name(base);
+                        }
+                        else
+                        {
+                            constraint.name =
+                                make_unique_constraint_name(resolved_table_name + "_check");
+                        }
+                    }
+                    register_constraint_name(constraint.name);
+
+                    if (constraint.type == 1 || constraint.type == 2 || constraint.type == 4)
+                    {
+                        core::CatalogManager::ConstraintInfo cinfo;
+                        cinfo.constraint_name = constraint.name;
+                        cinfo.table_id = table_id;
+                        cinfo.column_names = constraint.columns;
+                        cinfo.is_enabled = true;
+                        cinfo.is_validated = true;
+                        cinfo.is_system_generated = false;
+                        cinfo.owner_id = getCurrentUserID();
+                        if (cinfo.owner_id == core::ID{})
+                        {
+                            cinfo.owner_id = db_->catalog_manager()->getSystemUserId(nullptr);
+                        }
+                        if (constraint.type == 1)
+                        {
+                            cinfo.constraint_type =
+                                core::CatalogManager::ConstraintType::PRIMARY_KEY;
+                        }
+                        else if (constraint.type == 2)
+                        {
+                            cinfo.constraint_type =
+                                core::CatalogManager::ConstraintType::UNIQUE;
+                        }
+                        else
+                        {
+                            cinfo.constraint_type =
+                                core::CatalogManager::ConstraintType::CHECK;
+                            cinfo.check_expression = constraint.check_expr_hex;
+                        }
+
+                        core::ID constraint_id;
+                        core::ErrorContext constraint_ctx;
+                        status = db_->catalog_manager()->createConstraint(
+                            cinfo, constraint_id, &constraint_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to create constraint '" +
+                                                  constraint.name + "'";
+                            if (!constraint_ctx.message.empty())
+                            {
+                                err_msg += ": " + constraint_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+
+                        if (constraint.type == 1 || constraint.type == 2)
+                        {
+                            core::ID index_id;
+                            core::ErrorContext index_ctx;
+                            status = db_->catalog_manager()->createIndex(
+                                table_id,
+                                constraint.name,
+                                constraint.columns,
+                                index_id,
+                                true,
+                                core::CatalogManager::IndexType::BTREE,
+                                tablespace_id,
+                                &index_ctx);
+                            if (status != core::Status::OK)
+                            {
+                                std::string err_msg =
+                                    "Failed to create index for constraint '" +
+                                    constraint.name + "'";
+                                if (!index_ctx.message.empty())
+                                {
+                                    err_msg += ": " + index_ctx.message;
+                                }
+                                return ExecutionResult(err_msg);
+                            }
+                        }
+                        continue;
+                    }
+
+                    if (constraint.type == 3)
+                    {
+                        core::CatalogManager::TableInfo parent_info;
+                        std::string parent_err;
+                        if (!resolveTableId(constraint.ref_table_path,
+                                            parent_info,
+                                            parent_err,
+                                            false))
+                        {
+                            return ExecutionResult(parent_err.empty()
+                                                       ? ("FK parent table not found: " +
+                                                          constraint.ref_table_path)
+                                                       : parent_err);
+                        }
+
+                        auto on_delete = static_cast<core::CatalogManager::FKAction>(
+                            constraint.on_delete);
+                        auto on_update = static_cast<core::CatalogManager::FKAction>(
+                            constraint.on_update);
+                        core::ID fk_id;
+                        core::ErrorContext fk_ctx;
+                        status = db_->catalog_manager()->createForeignKey(
+                            constraint.name,
+                            table_id,
+                            parent_info.table_id,
+                            constraint.columns,
+                            constraint.ref_columns,
+                            on_delete,
+                            on_update,
+                            core::CatalogManager::FKMatchType::SIMPLE,
+                            fk_id,
+                            false,
+                            false,
+                            &fk_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(fk_ctx.message.empty()
+                                                       ? "Failed to create foreign key constraint"
+                                                       : fk_ctx.message);
+                        }
                     }
                 }
 
@@ -53051,10 +53695,40 @@ namespace scratchbird
                 getU64(payload, "flags", flags);
                 const bool if_not_exists = (flags & 0x0001) != 0;
                 const bool or_replace = (flags & 0x0002) != 0;
-                const bool temporary = (flags & 0x0004) != 0;
+                bool temporary = (flags & 0x0004) != 0;
                 const bool materialized = (flags & 0x0008) != 0;
                 const bool check_option = (flags & 0x0010) != 0;
-                const bool with_data = (flags & 0x0020) != 0;
+                const bool with_data = materialized && (flags & 0x0020) != 0;
+
+                if (temporary && conn_ctx_ != nullptr)
+                {
+                    const std::string statement_upper =
+                        core::IdentifierUtils::toUpper(conn_ctx_->lastStatementText());
+                    const bool explicit_temp_view_sql =
+                        statement_upper.find("TEMPORARY VIEW") != std::string::npos ||
+                        statement_upper.find("TEMP VIEW") != std::string::npos;
+                    const std::string dialect_upper =
+                        core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag());
+                    // Native V3 does not expose TEMP/TEMPORARY VIEW. If this bit
+                    // arrives on the native path, or the SQL text itself did not
+                    // request a temporary view, treat it as bridge noise rather
+                    // than silently creating a session-scoped view.
+                    if (dialect_upper == "SCRATCHBIRD" || !explicit_temp_view_sql)
+                    {
+                        temporary = false;
+                    }
+                }
+
+                if (view_path.rfind("v3_sec_", 0) == 0 || view_path.rfind("ncw14_", 0) == 0)
+                {
+                    LOG_WARNING(EXECUTOR,
+                                "V3 CREATE VIEW diagnostic path=%s temporary=%d materialized=%d flags=0x%llx dialect=%s",
+                                view_path.c_str(),
+                                temporary ? 1 : 0,
+                                materialized ? 1 : 0,
+                                static_cast<unsigned long long>(flags),
+                                conn_ctx_ ? conn_ctx_->dialect_tag().c_str() : "<null>");
+                }
 
                 core::ID schema_id;
                 std::string resolved_view_name;
@@ -54129,6 +54803,64 @@ namespace scratchbird
             };
 
             auto handleTruncate = [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                uint64_t flags_value = 0;
+                getU64(payload, "flags", flags_value);
+                const bool restart_identity = (flags_value & 0x01u) != 0;
+
+                auto resetOwnedIdentitySequences =
+                    [&](const core::CatalogManager::TableInfo& table_info) -> ExecutionResult {
+                        std::vector<core::CatalogManager::ColumnInfo> columns;
+                        core::ErrorContext column_ctx;
+                        auto column_status = db_->catalog_manager()->getColumns(
+                            table_info.table_id, columns, &column_ctx);
+                        if (column_status != core::Status::OK)
+                        {
+                            return ExecutionResult(
+                                column_ctx.message.empty()
+                                    ? ("Failed to inspect IDENTITY columns for " +
+                                       table_info.table_name)
+                                    : column_ctx.message);
+                        }
+
+                        for (const auto& column : columns)
+                        {
+                            if (!column.is_identity ||
+                                column.identity_sequence_id == core::ID())
+                            {
+                                continue;
+                            }
+
+                            core::CatalogManager::SequenceInfo seq_info;
+                            core::ErrorContext seq_ctx;
+                            auto seq_status = db_->catalog_manager()->getSequenceById(
+                                column.identity_sequence_id, seq_info, &seq_ctx);
+                            if (seq_status != core::Status::OK)
+                            {
+                                return ExecutionResult(
+                                    seq_ctx.message.empty()
+                                        ? ("Failed to resolve IDENTITY sequence for column '" +
+                                           column.column_name + "'")
+                                        : seq_ctx.message);
+                            }
+
+                            seq_status = db_->catalog_manager()->sequenceSetVal(
+                                column.identity_sequence_id,
+                                seq_info.start_value,
+                                false,
+                                &seq_ctx);
+                            if (seq_status != core::Status::OK)
+                            {
+                                return ExecutionResult(
+                                    seq_ctx.message.empty()
+                                        ? ("Failed to restart IDENTITY sequence for column '" +
+                                           column.column_name + "'")
+                                        : seq_ctx.message);
+                            }
+                        }
+
+                        return ExecutionResult();
+                    };
+
                 auto it_tables = payload.find("tables");
                 if (it_tables == payload.end())
                 {
@@ -54152,14 +54884,53 @@ namespace scratchbird
                     {
                         return ExecutionResult(err_out);
                     }
-                    core::ErrorContext ctx;
-                    auto status = db_->catalog_manager()->truncateTableSync(table_info.table_id,
-                                                                           table_info.table_name,
-                                                                           conn_ctx_ ? conn_ctx_->getCurrentXid() : 0,
-                                                                           &ctx);
-                    if (status != core::Status::OK)
+
+                    core::HeapScanIterator scan(db_,
+                                                db_->storage_engine(),
+                                                table_info.table_id,
+                                                0,
+                                                true);
+                    std::vector<core::TID> tids_to_delete;
+                    core::Tuple tuple{};
+                    core::ErrorContext scan_ctx;
+                    while (!scan.isDone())
                     {
-                        return ExecutionResult(ctx.message.empty() ? "TRUNCATE failed" : ctx.message);
+                        auto scan_status = scan.next(&tuple, &scan_ctx);
+                        if (scan_status != core::Status::OK)
+                        {
+                            break;
+                        }
+                        const auto* hdr =
+                            reinterpret_cast<const core::TupleHeader*>(tuple.data);
+                        if (hdr == nullptr || hdr->xmax != 0)
+                        {
+                            continue;
+                        }
+                        tids_to_delete.push_back(tuple.tid);
+                    }
+
+                    for (const auto& tid : tids_to_delete)
+                    {
+                        core::ErrorContext delete_ctx;
+                        auto delete_status = db_->storage_engine()->deleteTuple(
+                            table_info.table_id, tid, &delete_ctx);
+                        if (delete_status != core::Status::OK &&
+                            delete_status != core::Status::NOT_FOUND)
+                        {
+                            return ExecutionResult(delete_ctx.message.empty()
+                                                       ? ("TRUNCATE failed for " +
+                                                          table_info.table_name)
+                                                       : delete_ctx.message);
+                        }
+                    }
+
+                    if (restart_identity)
+                    {
+                        auto reset_result = resetOwnedIdentitySequences(table_info);
+                        if (!reset_result.success())
+                        {
+                            return reset_result;
+                        }
                     }
                 }
                 return ExecutionResult();
@@ -59757,6 +60528,7 @@ namespace scratchbird
                             std::vector<core::CatalogManager::ColumnInfo> columns;
                             std::vector<std::vector<Value>> rows;
                             std::string alias;
+                            bool materialized_from_view = false;
                         };
 
                         struct TableRuntimeFilter {
@@ -60566,75 +61338,46 @@ namespace scratchbird
                                 }
                                 else
                                 {
-                                    parser::v3::Parser view_parser(view_info.definition);
-                                    auto parse_result = view_parser.parseStatement();
-                                    if (!parse_result.success() || parse_result.statement() == nullptr)
+                                    QueryCompilerV3 view_compiler(db_);
+                                    view_compiler.setCurrentSchema(view_info.schema_id);
+                                    auto compile_result = view_compiler.compile(view_info.definition);
+                                    if (!compile_result.success())
                                     {
-                                        if (!parse_result.errors().empty())
+                                        std::string err_msg =
+                                            "Failed to compile view definition for '" + access_path + "'";
+                                        if (!compile_result.errors().empty())
                                         {
-                                            return ExecutionResult(
-                                                "Failed to parse view definition for '" + access_path + "': " +
-                                                parse_result.errors().front().message);
+                                            err_msg += ": " + compile_result.errors().front();
                                         }
-                                        return ExecutionResult(
-                                            "Failed to parse view definition for '" + access_path + "'");
+                                        return ExecutionResult(err_msg);
                                     }
 
-                                    parser::v3::V3Emitter view_emitter(view_parser.stringPool());
-                                    scratchbird::sblr::v3::Container view_container;
-                                    std::string emit_err;
-                                    if (!view_emitter.emitStatementToContainer(
-                                            parse_result.statement(),
-                                            view_container,
-                                            emit_err))
+                                    Executor view_executor(db_);
+                                    view_executor.setCurrentSchema(view_info.schema_id);
+                                    if (conn_ctx_)
                                     {
-                                        return ExecutionResult(
-                                            emit_err.empty()
-                                                ? ("Failed to emit view definition for '" + access_path + "'")
-                                                : emit_err);
+                                        view_executor.setConnectionContext(conn_ctx_);
                                     }
-
-                                    std::vector<scratchbird::sblr::v3::Instruction> view_instructions;
-                                    size_t offset = 0;
-                                    scratchbird::sblr::v3::DecodeError derr;
-                                    while (offset < view_container.bytecode_stream.size())
+                                    if (view_info.security_definer)
                                     {
-                                        scratchbird::sblr::v3::Instruction inst;
-                                        if (!scratchbird::sblr::v3::decodeInstructionWithSchema(
-                                                view_container.bytecode_stream.data(),
-                                                view_container.bytecode_stream.size(),
-                                                offset,
-                                                inst,
-                                                derr))
+                                        view_executor.effective_user_override_ = view_info.owner_id;
+                                        view_executor.effective_superuser_override_.reset();
+                                        if (db_ && db_->catalog_manager())
                                         {
-                                            return ExecutionResult(
-                                                derr.message.empty()
-                                                    ? ("Failed to decode view definition for '" + access_path + "'")
-                                                    : derr.message);
+                                            core::CatalogManager::BasicUserInfo user_info;
+                                            core::ErrorContext user_ctx;
+                                            if (db_->catalog_manager()->getUserBasic(
+                                                    view_info.owner_id,
+                                                    user_info,
+                                                    &user_ctx) == core::Status::OK)
+                                            {
+                                                view_executor.effective_superuser_override_ =
+                                                    user_info.is_superuser;
+                                            }
                                         }
-                                        view_instructions.push_back(std::move(inst));
                                     }
 
-                                    std::optional<scratchbird::sblr::v3::Instruction> view_stmt_inst;
-                                    for (const auto& inst : view_instructions)
-                                    {
-                                        auto op =
-                                            static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode);
-                                        if (op == scratchbird::sblr::v3::Opcode::SBLR3_VERSION ||
-                                            op == scratchbird::sblr::v3::Opcode::SBLR3_END)
-                                        {
-                                            continue;
-                                        }
-                                        view_stmt_inst = inst;
-                                        break;
-                                    }
-                                    if (!view_stmt_inst.has_value())
-                                    {
-                                        return ExecutionResult(
-                                            "View '" + access_path + "' has no executable statement");
-                                    }
-
-                                    auto view_res = execStmt(*view_stmt_inst);
+                                    auto view_res = view_executor.execute(compile_result.bytecode());
                                     if (!view_res.success())
                                     {
                                         return view_res;
@@ -60649,7 +61392,9 @@ namespace scratchbird
                                     TableData view_table;
                                     view_table.info.table_id = view_id;
                                     view_table.info.table_name = access_path;
+                                    view_table.info.schema_id = view_info.schema_id;
                                     view_table.alias = alias.empty() ? access_path : alias;
+                                    view_table.materialized_from_view = true;
                                     view_table.columns.reserve(view_rs->columnCount());
                                     for (size_t i = 0; i < view_rs->columnCount(); ++i)
                                     {
@@ -62560,6 +63305,7 @@ namespace scratchbird
                         {
                             const auto& row_values = combined_rows[i];
                             if (!has_joins &&
+                                !base_table.materialized_from_view &&
                                 !isZeroUuid(base_table.info.table_id) &&
                                 !checkRLSPolicies(base_table.info.table_id,
                                                   row_values,
@@ -65027,7 +65773,7 @@ namespace scratchbird
                         }
 
                         struct OnConflictSpec {
-                            enum class Action { NONE, NOTHING, UPDATE };
+                            enum class Action { NONE, NOTHING, UPDATE, REPLACE };
                             Action action = Action::NONE;
                             std::vector<std::string> target_cols;
                             std::vector<std::pair<std::string, scratchbird::sblr::v3::Instruction>> assignments;
@@ -65047,6 +65793,7 @@ namespace scratchbird
                             getU64(*obj, "action", action);
                             if (action == 1) on_conflict.action = OnConflictSpec::Action::NOTHING;
                             if (action == 2) on_conflict.action = OnConflictSpec::Action::UPDATE;
+                            if (action == 3) on_conflict.action = OnConflictSpec::Action::REPLACE;
 
                             auto it_target = obj->find("target_cols");
                             if (it_target != obj->end())
@@ -65114,6 +65861,8 @@ namespace scratchbird
                                 }
                             }
                         }
+                        bool ignore_errors = false;
+                        getBool(payload, "ignore_errors", ignore_errors);
                         if (insert_target_rewritten_from_view && !view_to_base_column.empty())
                         {
                             auto remap_conflict_column = [&](std::string& column_name) {
@@ -65492,11 +66241,107 @@ namespace scratchbird
                             candidate = Value::makeVarchar(formatted);
                         };
 
+                        auto syncMySqlIdentitySequence =
+                            [&](const core::CatalogManager::ColumnInfo& col,
+                                const Value& candidate) -> ExecutionResult {
+                            if (!mysql_dialect || !col.is_identity ||
+                                col.identity_sequence_id == core::ID() ||
+                                candidate.isNull())
+                            {
+                                return ExecutionResult();
+                            }
+
+                            core::CatalogManager::SequenceInfo seq_info;
+                            core::ErrorContext seq_ctx;
+                            auto get_status = db_->catalog_manager()->getSequenceById(
+                                col.identity_sequence_id, seq_info, &seq_ctx);
+                            if (get_status != core::Status::OK)
+                            {
+                                return ExecutionResult("Failed to inspect IDENTITY sequence for column '" +
+                                                       col.column_name + "': " + seq_ctx.message);
+                            }
+
+                            int64_t explicit_value = candidate.toInt64();
+                            if (explicit_value <= seq_info.current_value)
+                            {
+                                return ExecutionResult();
+                            }
+
+                            auto set_status = db_->catalog_manager()->sequenceSetVal(
+                                col.identity_sequence_id, explicit_value, true, &seq_ctx);
+                            if (set_status != core::Status::OK)
+                            {
+                                return ExecutionResult("Failed to advance IDENTITY sequence for column '" +
+                                                       col.column_name + "': " + seq_ctx.message);
+                            }
+
+                            return ExecutionResult();
+                        };
+
+                        auto mysqlSessionSqlModeContains = [&](const std::string& token) {
+                            if (!mysql_dialect || !conn_ctx_)
+                            {
+                                return false;
+                            }
+
+                            std::string sql_mode;
+                            if (!conn_ctx_->getSessionVariable("sql_mode", sql_mode))
+                            {
+                                return false;
+                            }
+
+                            const std::string normalized_mode =
+                                scratchbird::core::IdentifierUtils::toUpper(sql_mode);
+                            return normalized_mode.find(token) != std::string::npos;
+                        };
+
+                        auto mysqlTreatsExplicitZeroAsGeneratedIdentity =
+                            [&](const core::CatalogManager::ColumnInfo& col,
+                                const Value& candidate) {
+                            if (!mysql_dialect || col.identity_always || candidate.isNull())
+                            {
+                                return false;
+                            }
+                            if (mysqlSessionSqlModeContains("NO_AUTO_VALUE_ON_ZERO"))
+                            {
+                                return false;
+                            }
+
+                            switch (candidate.type())
+                            {
+                                case core::DataType::INT8:
+                                case core::DataType::INT16:
+                                case core::DataType::INT32:
+                                case core::DataType::INT64:
+                                    return candidate.toInt64() == 0;
+                                case core::DataType::UINT8:
+                                    return candidate.getUInt8() == 0;
+                                case core::DataType::UINT16:
+                                    return candidate.getUInt16() == 0;
+                                case core::DataType::UINT32:
+                                    return candidate.getUInt32() == 0;
+                                case core::DataType::UINT64:
+                                    return candidate.getUInt64() == 0;
+                                case core::DataType::FLOAT32:
+                                case core::DataType::FLOAT64:
+                                case core::DataType::DECIMAL:
+                                case core::DataType::DECFLOAT16:
+                                case core::DataType::DECFLOAT34:
+                                case core::DataType::DECIMAL256:
+                                case core::DataType::MONEY:
+                                    return candidate.toDouble() == 0.0;
+                                default:
+                                    return false;
+                            }
+                        };
+
                         int inserted = 0;
                         int updated = 0;
                         auto process_row = [&](std::vector<Value>&& row_values,
                                               const std::vector<bool>* explicit_default_cols,
                                               const std::vector<bool>* explicit_value_cols) -> ExecutionResult {
+                            const bool handle_duplicate_conflict =
+                                on_conflict.action != OnConflictSpec::Action::NONE;
                             std::vector<bool> provided(all_columns.size(), false);
                             if (explicit_value_cols)
                             {
@@ -65575,12 +66420,23 @@ namespace scratchbird
                                 {
                                     continue;
                                 }
+                                if (provided[i] &&
+                                    mysqlTreatsExplicitZeroAsGeneratedIdentity(col, row_values[i]))
+                                {
+                                    provided[i] = false;
+                                    row_values[i] = Value::makeNull();
+                                }
                                 if (provided[i])
                                 {
                                     if (col.identity_always)
                                     {
                                         return ExecutionResult("Cannot INSERT into GENERATED ALWAYS AS IDENTITY column '" +
                                                                col.column_name + "'");
+                                    }
+                                    auto sync_res = syncMySqlIdentitySequence(col, row_values[i]);
+                                    if (!sync_res.success())
+                                    {
+                                        return sync_res;
                                     }
                                 }
                                 else
@@ -65916,20 +66772,23 @@ namespace scratchbird
                                 }
                             }
 
-                            for (size_t i = 0; i < all_columns.size(); ++i)
+                            if (!handle_duplicate_conflict)
                             {
-                                const auto& col = all_columns[i];
-                                if (col.is_primary_key)
+                                for (size_t i = 0; i < all_columns.size(); ++i)
                                 {
-                                    if (row_values[i].isNull())
+                                    const auto& col = all_columns[i];
+                                    if (col.is_primary_key)
                                     {
-                                        return ExecutionResult("PRIMARY KEY constraint violation: NULL value in column '" +
-                                                               col.column_name + "'");
-                                    }
-                                    if (checkUniqueViolation(table_info.table_id, col, row_values[i], all_columns))
-                                    {
-                                        return ExecutionResult("PRIMARY KEY constraint violation: duplicate value in column '" +
-                                                               col.column_name + "'");
+                                        if (row_values[i].isNull())
+                                        {
+                                            return ExecutionResult("PRIMARY KEY constraint violation: NULL value in column '" +
+                                                                   col.column_name + "'");
+                                        }
+                                        if (checkUniqueViolation(table_info.table_id, col, row_values[i], all_columns))
+                                        {
+                                            return ExecutionResult("PRIMARY KEY constraint violation: duplicate value in column '" +
+                                                                   col.column_name + "'");
+                                        }
                                     }
                                 }
                             }
@@ -65962,15 +66821,18 @@ namespace scratchbird
                                 }
                             }
 
-                            for (size_t i = 0; i < all_columns.size(); ++i)
+                            if (!handle_duplicate_conflict)
                             {
-                                const auto& col = all_columns[i];
-                                if (col.is_primary_key) continue;
-                                if (col.is_unique && !row_values[i].isNull())
+                                for (size_t i = 0; i < all_columns.size(); ++i)
                                 {
-                                    if (checkUniqueViolation(table_info.table_id, col, row_values[i], all_columns))
+                                    const auto& col = all_columns[i];
+                                    if (col.is_primary_key) continue;
+                                    if (col.is_unique && !row_values[i].isNull())
                                     {
-                                        return ExecutionResult("UNIQUE constraint violation on column '" + col.column_name + "'");
+                                        if (checkUniqueViolation(table_info.table_id, col, row_values[i], all_columns))
+                                        {
+                                            return ExecutionResult("UNIQUE constraint violation on column '" + col.column_name + "'");
+                                        }
                                     }
                                 }
                             }
@@ -66025,75 +66887,119 @@ namespace scratchbird
                                     }
                                 }
 
-                                for (const auto& constraint : table_constraints)
+                                if (!handle_duplicate_conflict)
                                 {
-                                    if (constraint.constraint_type != core::CatalogManager::ConstraintType::PRIMARY_KEY &&
-                                        constraint.constraint_type != core::CatalogManager::ConstraintType::UNIQUE)
+                                    for (const auto& constraint : table_constraints)
                                     {
-                                        continue;
-                                    }
-                                    if (constraint.column_names.empty())
-                                    {
-                                        continue;
-                                    }
-
-                                    if (constraint.column_names.size() == 1)
-                                    {
-                                        size_t idx = resolve_column_index(constraint.column_names[0]);
-                                        const auto& col = all_columns[idx];
-                                        if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY &&
-                                            col.is_primary_key)
+                                        if (constraint.constraint_type != core::CatalogManager::ConstraintType::PRIMARY_KEY &&
+                                            constraint.constraint_type != core::CatalogManager::ConstraintType::UNIQUE)
                                         {
                                             continue;
                                         }
-                                        if (constraint.constraint_type == core::CatalogManager::ConstraintType::UNIQUE &&
-                                            col.is_unique)
+                                        if (constraint.column_names.empty())
                                         {
                                             continue;
                                         }
-                                    }
 
-                                    std::vector<size_t> indices;
-                                    indices.reserve(constraint.column_names.size());
-                                    bool has_null = false;
-                                    for (const auto& name : constraint.column_names)
-                                    {
-                                        size_t idx = resolve_column_index(name);
-                                        indices.push_back(idx);
-                                        if (row_values[idx].isNull())
+                                        if (constraint.column_names.size() == 1)
                                         {
-                                            has_null = true;
+                                            size_t idx = resolve_column_index(constraint.column_names[0]);
+                                            const auto& col = all_columns[idx];
+                                            if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY &&
+                                                col.is_primary_key)
+                                            {
+                                                continue;
+                                            }
+                                            if (constraint.constraint_type == core::CatalogManager::ConstraintType::UNIQUE &&
+                                                col.is_unique)
+                                            {
+                                                continue;
+                                            }
                                         }
-                                    }
 
-                                    if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY)
-                                    {
-                                        if (has_null)
+                                        std::vector<size_t> indices;
+                                        indices.reserve(constraint.column_names.size());
+                                        bool has_null = false;
+                                        for (const auto& name : constraint.column_names)
                                         {
-                                            return ExecutionResult("PRIMARY KEY constraint violation: NULL value in composite key '" +
-                                                                   constraint.constraint_name + "'");
+                                            size_t idx = resolve_column_index(name);
+                                            indices.push_back(idx);
+                                            if (row_values[idx].isNull())
+                                            {
+                                                has_null = true;
+                                            }
                                         }
-                                    }
-                                    else if (has_null)
-                                    {
-                                        continue;
-                                    }
 
-                                    core::TID conflict_tid;
-                                    std::vector<Value> conflict_row;
-                                    if (find_conflict_row(indices, row_values, conflict_tid, conflict_row))
-                                    {
-                                        std::string label = constraint.constraint_name.empty()
-                                            ? "composite key"
-                                            : constraint.constraint_name;
                                         if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY)
                                         {
-                                            return ExecutionResult("PRIMARY KEY constraint violation: duplicate key '" + label + "'");
+                                            if (has_null)
+                                            {
+                                                return ExecutionResult("PRIMARY KEY constraint violation: NULL value in composite key '" +
+                                                                       constraint.constraint_name + "'");
+                                            }
                                         }
-                                        return ExecutionResult("UNIQUE constraint violation: duplicate key '" + label + "'");
+                                        else if (has_null)
+                                        {
+                                            continue;
+                                        }
+
+                                        core::TID conflict_tid;
+                                        std::vector<Value> conflict_row;
+                                        if (find_conflict_row(indices, row_values, conflict_tid, conflict_row))
+                                        {
+                                            std::string label = constraint.constraint_name.empty()
+                                                ? "composite key"
+                                                : constraint.constraint_name;
+                                            if (constraint.constraint_type == core::CatalogManager::ConstraintType::PRIMARY_KEY)
+                                            {
+                                                return ExecutionResult("PRIMARY KEY constraint violation: duplicate key '" + label + "'");
+                                            }
+                                            return ExecutionResult("UNIQUE constraint violation: duplicate key '" + label + "'");
+                                        }
+                                    }
+                                    enforceUniqueIndexes(table_info.table_id, row_values, all_columns, table_constraints, nullptr);
+                                }
+                                else if (on_conflict.target_cols.empty())
+                                {
+                                    for (const auto& constraint : table_constraints)
+                                    {
+                                        if (constraint.constraint_type != core::CatalogManager::ConstraintType::PRIMARY_KEY &&
+                                            constraint.constraint_type != core::CatalogManager::ConstraintType::UNIQUE)
+                                        {
+                                            continue;
+                                        }
+                                        if (constraint.column_names.empty())
+                                        {
+                                            continue;
+                                        }
+
+                                        std::vector<size_t> indices;
+                                        indices.reserve(constraint.column_names.size());
+                                        bool valid = true;
+                                        for (const auto& name : constraint.column_names)
+                                        {
+                                            try
+                                            {
+                                                indices.push_back(resolve_column_index(name));
+                                            }
+                                            catch (const std::exception&)
+                                            {
+                                                valid = false;
+                                                break;
+                                            }
+                                        }
+                                        if (!valid)
+                                        {
+                                            continue;
+                                        }
+                                        if (std::find(conflict_keys.begin(),
+                                                      conflict_keys.end(),
+                                                      indices) == conflict_keys.end())
+                                        {
+                                            conflict_keys.push_back(std::move(indices));
+                                        }
                                     }
                                 }
-                                enforceUniqueIndexes(table_info.table_id, row_values, all_columns, table_constraints, nullptr);
                             }
 
                             std::vector<core::CatalogManager::ForeignKeyInfo> fks;
@@ -66121,6 +67027,10 @@ namespace scratchbird
                                     {
                                         if (!checkForeignKeyExists(fk.parent_table_id, fk.parent_columns, fk_values, parent_cols))
                                         {
+                                            if (ignore_errors)
+                                            {
+                                                return ExecutionResult();
+                                            }
                                             return ExecutionResult("Foreign key constraint violation: no matching row in parent table for FK '" +
                                                                    fk.fk_name + "'");
                                         }
@@ -66160,6 +67070,51 @@ namespace scratchbird
                                     if (on_conflict.action == OnConflictSpec::Action::NOTHING)
                                     {
                                         return ExecutionResult();
+                                    }
+                                    if (on_conflict.action == OnConflictSpec::Action::REPLACE)
+                                    {
+                                        std::vector<core::TID> replace_conflicts;
+                                        auto append_conflict_tid = [&](const core::TID& tid) {
+                                            if (std::find(replace_conflicts.begin(),
+                                                          replace_conflicts.end(),
+                                                          tid) == replace_conflicts.end())
+                                            {
+                                                replace_conflicts.push_back(tid);
+                                            }
+                                        };
+
+                                        append_conflict_tid(conflict_tid);
+                                        for (const auto& key : conflict_keys)
+                                        {
+                                            if (key.empty())
+                                            {
+                                                continue;
+                                            }
+                                            core::TID key_tid;
+                                            std::vector<Value> key_row;
+                                            if (find_conflict_row(key, row_values, key_tid, key_row))
+                                            {
+                                                append_conflict_tid(key_tid);
+                                            }
+                                        }
+
+                                        for (const auto& tid : replace_conflicts)
+                                        {
+                                            core::ErrorContext delete_ctx;
+                                            auto delete_status = db_->storage_engine()->deleteTuple(
+                                                table_info.table_id, tid, &delete_ctx);
+                                            if (delete_status != core::Status::OK)
+                                            {
+                                                std::string err_msg =
+                                                    "Failed to delete conflicting row during REPLACE";
+                                                if (!delete_ctx.message.empty())
+                                                {
+                                                    err_msg += ": " + delete_ctx.message;
+                                                }
+                                                return ExecutionResult(err_msg);
+                                            }
+                                        }
+                                        updated += static_cast<int>(replace_conflicts.size());
                                     }
                                     if (on_conflict.action == OnConflictSpec::Action::UPDATE)
                                     {
@@ -66466,6 +67421,88 @@ namespace scratchbird
                                             }
                                         }
 
+                                        std::vector<core::CatalogManager::ForeignKeyInfo> fks;
+                                        auto fk_status =
+                                            db_->catalog_manager()->getForeignKeysForTable(
+                                                table_info.table_id, fks, nullptr);
+                                        if (fk_status == core::Status::OK)
+                                        {
+                                            for (const auto& fk : fks)
+                                            {
+                                                if (!fk.is_enabled)
+                                                {
+                                                    continue;
+                                                }
+
+                                                bool fk_updated = false;
+                                                for (const auto& assign :
+                                                     on_conflict.assignments)
+                                                {
+                                                    if (std::find(
+                                                            fk.child_columns.begin(),
+                                                            fk.child_columns.end(),
+                                                            assign.first) !=
+                                                        fk.child_columns.end())
+                                                    {
+                                                        fk_updated = true;
+                                                        break;
+                                                    }
+                                                }
+                                                if (!fk_updated)
+                                                {
+                                                    continue;
+                                                }
+
+                                                std::vector<Value> fk_values;
+                                                for (const auto& col_name :
+                                                     fk.child_columns)
+                                                {
+                                                    for (size_t i = 0;
+                                                         i < all_columns.size();
+                                                         ++i)
+                                                    {
+                                                        if (all_columns[i]
+                                                                .column_name ==
+                                                            col_name)
+                                                        {
+                                                            fk_values.push_back(
+                                                                new_values[i]);
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+
+                                                std::vector<
+                                                    core::CatalogManager::ColumnInfo>
+                                                    parent_cols;
+                                                auto col_status =
+                                                    db_->catalog_manager()
+                                                        ->getColumns(
+                                                            fk.parent_table_id,
+                                                            parent_cols,
+                                                            nullptr);
+                                                if (col_status ==
+                                                        core::Status::OK &&
+                                                    !checkForeignKeyExists(
+                                                        fk.parent_table_id,
+                                                        fk.parent_columns,
+                                                        fk_values,
+                                                        parent_cols))
+                                                {
+                                                    if (ignore_errors)
+                                                    {
+                                                        return ExecutionResult();
+                                                    }
+                                                    return ExecutionResult(
+                                                        "Foreign key "
+                                                        "constraint violation: "
+                                                        "no matching row in "
+                                                        "parent table for FK '" +
+                                                        fk.fk_name + "'");
+                                                }
+                                            }
+                                        }
+
                                         std::vector<uint8_t> new_tuple;
                                         core::ErrorContext ser_ctx;
                                         if (!serializeTupleFromValues(new_values, all_columns, new_tuple, &ser_ctx))
@@ -66476,6 +67513,22 @@ namespace scratchbird
                                                 err_msg += ": " + ser_ctx.message;
                                             }
                                             return ExecutionResult(err_msg);
+                                        }
+                                        try
+                                        {
+                                            applyFKActionOnUpdate(
+                                                table_info.table_id,
+                                                conflict_row,
+                                                new_values,
+                                                all_columns);
+                                        }
+                                        catch (const std::exception& e)
+                                        {
+                                            if (ignore_errors)
+                                            {
+                                                return ExecutionResult();
+                                            }
+                                            return ExecutionResult(e.what());
                                         }
                                         uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(conflict_tid));
                                         uint16_t item_id = core::getSlot(conflict_tid);
@@ -66681,6 +67734,10 @@ namespace scratchbird
                                 auto row_res = process_row(std::move(row_values), nullptr, nullptr);
                                 if (!row_res.success())
                                 {
+                                    if (ignore_errors)
+                                    {
+                                        continue;
+                                    }
                                     return row_res;
                                 }
                             }
@@ -66785,6 +67842,10 @@ namespace scratchbird
                                                 &explicit_value_cols);
                                 if (!row_res.success())
                                 {
+                                    if (ignore_errors)
+                                    {
+                                        continue;
+                                    }
                                     return row_res;
                                 }
                             }
@@ -66819,6 +67880,8 @@ namespace scratchbird
                         {
                             return ExecutionResult("Failed to get table columns");
                         }
+                        bool ignore_errors = false;
+                        getBool(payload, "ignore_errors", ignore_errors);
 
                         std::vector<core::CatalogManager::TriggerInfo> before_update_triggers;
                         std::vector<core::CatalogManager::TriggerInfo> after_update_triggers;
@@ -67350,6 +68413,95 @@ namespace scratchbird
                         std::vector<core::CatalogManager::ColumnInfo> combined_columns = all_columns;
                         combined_columns.insert(combined_columns.end(), from_columns.begin(), from_columns.end());
 
+                        auto assignmentTouchesColumns = [&](const std::vector<std::string>& column_names) -> bool {
+                            for (const auto& column_name : column_names)
+                            {
+                                for (const auto& assignment : assignments)
+                                {
+                                    if (all_columns[assignment.col_index].column_name == column_name)
+                                    {
+                                        return true;
+                                    }
+                                }
+                            }
+                            return false;
+                        };
+
+                        auto validateUpdatedForeignKeys =
+                            [&](const std::vector<Value>& candidate_values,
+                                const core::TID& exclude_tid) -> ExecutionResult {
+                            std::vector<core::CatalogManager::ForeignKeyInfo> fks;
+                            auto fk_status =
+                                db_->catalog_manager()->getForeignKeysForTable(
+                                    table_info.table_id, fks, nullptr);
+                            if (fk_status != core::Status::OK)
+                            {
+                                return ExecutionResult();
+                            }
+
+                            for (const auto& fk : fks)
+                            {
+                                if (!fk.is_enabled ||
+                                    !assignmentTouchesColumns(fk.child_columns))
+                                {
+                                    continue;
+                                }
+
+                                std::vector<Value> fk_values;
+                                for (const auto& col_name : fk.child_columns)
+                                {
+                                    for (size_t i = 0; i < all_columns.size(); ++i)
+                                    {
+                                        if (all_columns[i].column_name == col_name)
+                                        {
+                                            fk_values.push_back(candidate_values[i]);
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                std::vector<core::CatalogManager::ColumnInfo> parent_cols;
+                                auto col_status =
+                                    db_->catalog_manager()->getColumns(
+                                        fk.parent_table_id, parent_cols, nullptr);
+                                if (col_status != core::Status::OK)
+                                {
+                                    continue;
+                                }
+
+                                if (!checkForeignKeyExists(
+                                        fk.parent_table_id,
+                                        fk.parent_columns,
+                                        fk_values,
+                                        parent_cols))
+                                {
+                                    return ExecutionResult(
+                                        "Foreign key constraint violation: no matching row in "
+                                        "parent table for FK '" +
+                                        fk.fk_name + "'");
+                                }
+                            }
+                            return ExecutionResult();
+                        };
+
+                        auto applyParentUpdateActions =
+                            [&](const std::vector<Value>& old_values,
+                                const std::vector<Value>& new_values) -> ExecutionResult {
+                            try
+                            {
+                                applyFKActionOnUpdate(
+                                    table_info.table_id,
+                                    old_values,
+                                    new_values,
+                                    all_columns);
+                            }
+                            catch (const std::exception& e)
+                            {
+                                return ExecutionResult(e.what());
+                            }
+                            return ExecutionResult();
+                        };
+
                         uint64_t xid = db_->storage_engine()->getCurrentXid();
                         int updated = 0;
                         core::Tuple tuple;
@@ -67620,7 +68772,11 @@ namespace scratchbird
                                             return ExecutionResult("PRIMARY KEY constraint violation: NULL value in column '" +
                                                                    col.column_name + "'");
                                         }
-                                        if (checkUniqueViolation(table_info.table_id, col, new_values[i], all_columns))
+                                        if (checkUniqueViolationForUpdate(table_info.table_id,
+                                                                          col,
+                                                                          new_values[i],
+                                                                          all_columns,
+                                                                          tuple.tid))
                                         {
                                             return ExecutionResult("PRIMARY KEY constraint violation: duplicate value in column '" +
                                                                    col.column_name + "'");
@@ -67662,7 +68818,11 @@ namespace scratchbird
                                     if (col.is_primary_key) continue;
                                     if (col.is_unique && !new_values[i].isNull())
                                     {
-                                        if (checkUniqueViolation(table_info.table_id, col, new_values[i], all_columns))
+                                        if (checkUniqueViolationForUpdate(table_info.table_id,
+                                                                          col,
+                                                                          new_values[i],
+                                                                          all_columns,
+                                                                          tuple.tid))
                                         {
                                             return ExecutionResult("UNIQUE constraint violation on column '" + col.column_name + "'");
                                         }
@@ -67771,6 +68931,18 @@ namespace scratchbird
                                     enforceUniqueIndexes(table_info.table_id, new_values, all_columns, table_constraints, &tuple.tid);
                                 }
 
+                                auto fk_validation =
+                                    validateUpdatedForeignKeys(new_values, tuple.tid);
+                                if (!fk_validation.success())
+                                {
+                                    if (ignore_errors)
+                                    {
+                                        matched = true;
+                                        break;
+                                    }
+                                    return fk_validation;
+                                }
+
                                 if (!checkRLSPolicies(table_info.table_id,
                                                      new_values,
                                                      all_columns,
@@ -67790,6 +68962,18 @@ namespace scratchbird
                                         err_msg += ": " + ser_ctx.message;
                                     }
                                     return ExecutionResult(err_msg);
+                                }
+
+                                auto parent_fk_actions =
+                                    applyParentUpdateActions(row_values, new_values);
+                                if (!parent_fk_actions.success())
+                                {
+                                    if (ignore_errors)
+                                    {
+                                        matched = true;
+                                        break;
+                                    }
+                                    return parent_fk_actions;
                                 }
 
                                 uint32_t page_id = static_cast<uint32_t>(core::getPageNumber(tuple.tid));
@@ -75852,6 +77036,185 @@ namespace scratchbird
                                 conn_ctx_->setSessionVariable("OPERATOR.STRICT_MODE", stored);
                                 conn_ctx_->setSessionVariable("OPERATOR_STRICT_MODE", stored);
                                 return ExecutionResult();
+                            }
+
+                            if (normalized_key == "DATABASE" ||
+                                normalized_key == "DB")
+                            {
+                                if (scope != 0)
+                                {
+                                    return ExecutionResult(
+                                        "SET LOCAL DATABASE is not supported");
+                                }
+                                if (!conn_ctx_)
+                                {
+                                    return ExecutionResult(
+                                        "SET DATABASE requires connection context");
+                                }
+
+                                const std::string session_dialect =
+                                    scratchbird::core::IdentifierUtils::toUpper(
+                                        conn_ctx_->dialect_tag());
+                                if (session_dialect == "MYSQL")
+                                {
+                                    auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                                    if (!catalog)
+                                    {
+                                        return ExecutionResult("Catalog manager not available");
+                                    }
+
+                                    auto it_value = payload.find("value");
+                                    if (action == 3 || it_value == payload.end() ||
+                                        it_value->second.isNull())
+                                    {
+                                        return ExecutionResult(
+                                            "SET DATABASE requires a database name");
+                                    }
+
+                                    std::string database_name;
+                                    if (!getPayloadStringValue(payload, "value", database_name))
+                                    {
+                                        return ExecutionResult(
+                                            "V3 SET DATABASE value is invalid");
+                                    }
+
+                                    database_name = trimAsciiCopy(database_name);
+                                    if (database_name.empty())
+                                    {
+                                        return ExecutionResult(
+                                            "SET DATABASE requires a database name");
+                                    }
+
+                                    std::string schema_name =
+                                        normalizeSchemaPath(database_name);
+                                    if (schema_name.find('.') == std::string::npos)
+                                    {
+                                        std::string anchor_path;
+                                        auto is_emulated_path =
+                                            [&](const std::string& candidate) -> bool {
+                                            auto parts = splitSchemaComponents(
+                                                normalizeSchemaPath(candidate));
+                                            if (parts.size() < 4)
+                                            {
+                                                return false;
+                                            }
+
+                                            size_t start = 0;
+                                            if (scratchbird::core::IdentifierUtils::namesMatch(
+                                                    parts[0], false, "root", false))
+                                            {
+                                                start = 1;
+                                            }
+                                            if (parts.size() <= start)
+                                            {
+                                                return false;
+                                            }
+
+                                            if (scratchbird::core::IdentifierUtils::namesMatch(
+                                                    parts[start], false, "remote", false))
+                                            {
+                                                return parts.size() > start + 1 &&
+                                                       (scratchbird::core::IdentifierUtils::namesMatch(
+                                                            parts[start + 1], false,
+                                                            "emulated", false) ||
+                                                        scratchbird::core::IdentifierUtils::namesMatch(
+                                                            parts[start + 1], false,
+                                                            "emulation", false));
+                                            }
+
+                                            return scratchbird::core::IdentifierUtils::namesMatch(
+                                                       parts[start], false, "emulated", false) ||
+                                                   scratchbird::core::IdentifierUtils::namesMatch(
+                                                       parts[start], false, "emulation", false);
+                                        };
+
+                                        if (conn_ctx_)
+                                        {
+                                            if (is_emulated_path(conn_ctx_->current_schema()))
+                                            {
+                                                anchor_path = normalizeSchemaPath(
+                                                    conn_ctx_->current_schema());
+                                            }
+                                            if (anchor_path.empty())
+                                            {
+                                                for (const auto& candidate :
+                                                     conn_ctx_->search_path())
+                                                {
+                                                    if (is_emulated_path(candidate))
+                                                    {
+                                                        anchor_path =
+                                                            normalizeSchemaPath(candidate);
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if (!anchor_path.empty())
+                                        {
+                                            auto anchor_parts =
+                                                splitSchemaComponents(anchor_path);
+                                            if (!anchor_parts.empty())
+                                            {
+                                                anchor_parts.back() = schema_name;
+                                                schema_name = joinSchemaComponents(
+                                                    anchor_parts, 0);
+                                            }
+                                        }
+                                    }
+
+                                    if (schema_name.find('.') == std::string::npos)
+                                    {
+                                        schema_name =
+                                            "emulated.mysql.localhost.databases." +
+                                            schema_name;
+                                    }
+
+                                    std::string expanded_schema;
+                                    core::ErrorContext alias_ctx;
+                                    auto alias_status = expandEmulatedAliasPath(
+                                        catalog,
+                                        schema_name,
+                                        expanded_schema,
+                                        &alias_ctx);
+                                    if (alias_status != core::Status::OK)
+                                    {
+                                        std::string msg =
+                                            "Failed to resolve database path: " + schema_name;
+                                        if (!alias_ctx.message.empty())
+                                        {
+                                            msg += ": " + alias_ctx.message;
+                                        }
+                                        return ExecutionResult(msg);
+                                    }
+                                    schema_name = expanded_schema;
+
+                                    core::CatalogManager::SchemaInfo schema_info;
+                                    core::ErrorContext schema_ctx;
+                                    auto schema_status = catalog->getSchema(
+                                        schema_name,
+                                        schema_info,
+                                        &schema_ctx);
+                                    if (schema_status != core::Status::OK)
+                                    {
+                                        std::string msg =
+                                            "Database not found: " + schema_name;
+                                        if (!schema_ctx.message.empty())
+                                        {
+                                            msg += ": " + schema_ctx.message;
+                                        }
+                                        return ExecutionResult(msg);
+                                    }
+
+                                    setCurrentSchema(schema_info.schema_id);
+                                    conn_ctx_->setCurrentSchemaId(schema_info.schema_id);
+                                    conn_ctx_->set_current_schema(
+                                        schema_info.full_path.empty()
+                                            ? schema_info.schema_name
+                                            : schema_info.full_path);
+                                    conn_ctx_->set_search_path({schema_name});
+                                    return ExecutionResult();
+                                }
                             }
 
                             if (normalized_key == "SCHEMA" ||
@@ -84721,13 +86084,15 @@ namespace scratchbird
                     QueryResultCache& cache = QueryResultCacheManager::getInstance();
                     if (cache.isEnabled())
                     {
-	                        std::vector<uint8_t> cache_key_bytes = container.bytecode_stream;
-	                        cache_key_bytes.push_back(0x1d);
-	                        for (int i = 7; i >= 0; --i)
-	                        {
-	                            cache_key_bytes.push_back(
-	                                static_cast<uint8_t>((static_cast<uint64_t>(inst_index) >> (i * 8)) & 0xFF));
-	                        }
+                            std::vector<uint8_t> cache_key_bytes =
+                                buildResultCacheKeyBytes(inst);
+                            cache_key_bytes.push_back(0x1d);
+                            for (int i = 7; i >= 0; --i)
+                            {
+                                cache_key_bytes.push_back(
+                                    static_cast<uint8_t>(
+                                        (static_cast<uint64_t>(inst_index) >> (i * 8)) & 0xFF));
+                            }
                             cache_key_bytes.push_back(0x1e);
                             cache_key_bytes.push_back(
                                 static_cast<uint8_t>(
@@ -84780,7 +86145,8 @@ namespace scratchbird
                 if (conn_ctx_ &&
                     conn_ctx_->autocommitMode() &&
                     !conn_ctx_->autocommitSuspended() &&
-                    !is_txn_control(inst_opcode))
+                    !is_txn_control(inst_opcode) &&
+                    conn_ctx_->getCurrentXid() != 0)
                 {
                     LOG_INFO(EXECUTOR, "Autocommit after V3 statement");
                     core::ErrorContext auto_err;
@@ -88882,10 +90248,16 @@ namespace scratchbird
             bool change_password = flags & 0x01;
             bool change_superuser = flags & 0x02;
             bool is_superuser = flags & 0x04;
+            bool rename_user = flags & 0x08;
             std::string password;
+            std::string new_username;
             if (change_password)
             {
                 password = readString();
+            }
+            if (rename_user)
+            {
+                new_username = readString();
             }
 
             // Permission check: Only superusers can alter users
@@ -88957,6 +90329,22 @@ namespace scratchbird
             if (status != core::Status::OK)
             {
                 error("ALTER USER failed: " + std::string("Operation failed"));
+            }
+
+            if (rename_user)
+            {
+                if (new_username.empty())
+                {
+                    error("ALTER USER RENAME requires a target username");
+                }
+                status = db_->catalog_manager()->renameUser(
+                    user_info.user_id,
+                    new_username,
+                    &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    error("ALTER USER failed: " + std::string("Operation failed"));
+                }
             }
 
             recordObjectDefinition(core::CatalogManager::ObjectType::USER, user_info.user_id);
@@ -92457,6 +93845,26 @@ namespace scratchbird
             std::string root_path;
             bool enforce_root = resolveEmulatedRootPath(conn_ctx_, root_path);
             std::string dialect = scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag());
+            std::string search_path_prefix_root = root_path;
+            if (enforce_root &&
+                scratchbird::core::IdentifierUtils::namesMatch(
+                    dialect, false, "MYSQL", false) &&
+                !root_path.empty())
+            {
+                auto root_components = splitSchemaComponents(root_path);
+                for (size_t i = 0; i < root_components.size(); ++i)
+                {
+                    if (!scratchbird::core::IdentifierUtils::namesMatch(
+                            root_components[i], false, "databases", false))
+                    {
+                        continue;
+                    }
+
+                    root_components.resize(i + 1);
+                    search_path_prefix_root = joinSchemaComponents(root_components, 0);
+                    break;
+                }
+            }
             auto matches_emulated_prefix = [&](const std::string& entry_upper) {
                 std::array<std::string, 4> prefixes = {
                     "EMULATED." + dialect,
@@ -92521,14 +93929,28 @@ namespace scratchbird
                     else
                     {
                         std::string root_upper = scratchbird::core::IdentifierUtils::toUpper(root_path);
-                        if (entry_upper != root_upper &&
-                            entry_upper.rfind(root_upper + ".", 0) != 0)
+                        std::string prefix_root = search_path_prefix_root.empty()
+                            ? root_path
+                            : search_path_prefix_root;
+                        std::string prefix_upper =
+                            scratchbird::core::IdentifierUtils::toUpper(prefix_root);
+                        bool within_root = entry_upper == root_upper ||
+                                           entry_upper.rfind(root_upper + ".", 0) == 0;
+                        bool within_prefix = entry_upper == prefix_upper ||
+                                             entry_upper.rfind(prefix_upper + ".", 0) == 0;
+                        if (!within_root)
                         {
                             if (entry.find('.') != std::string::npos)
                             {
-                                error("search_path entry outside emulated root: " + raw);
+                                if (!within_prefix)
+                                {
+                                    error("search_path entry outside emulated root: " + raw);
+                                }
                             }
-                            entry = root_path + "." + entry;
+                            else
+                            {
+                                entry = prefix_root + "." + entry;
+                            }
                         }
                     }
                 }
@@ -92718,14 +94140,35 @@ namespace scratchbird
                 core::ErrorContext schema_ctx;
                 if (catalog->getSchema(schema_name, schema_info, &schema_ctx) == core::Status::OK)
                 {
+                    setCurrentSchema(schema_info.schema_id);
                     conn_ctx_->setCurrentSchemaId(schema_info.schema_id);
+                    conn_ctx_->set_current_schema(
+                        schema_info.full_path.empty() ? schema_info.schema_name
+                                                      : schema_info.full_path);
                 }
-                conn_ctx_->set_current_schema(schema_name);
+                else
+                {
+                    conn_ctx_->set_current_schema(schema_name);
+                }
                 conn_ctx_->set_search_path({schema_name});
                 return;
             }
 
             conn_ctx_->set_search_path(new_paths);
+            for (const auto& schema_name : new_paths)
+            {
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext schema_ctx;
+                if (catalog->getSchema(schema_name, schema_info, &schema_ctx) == core::Status::OK)
+                {
+                    setCurrentSchema(schema_info.schema_id);
+                    conn_ctx_->setCurrentSchemaId(schema_info.schema_id);
+                    conn_ctx_->set_current_schema(
+                        schema_info.full_path.empty() ? schema_info.schema_name
+                                                      : schema_info.full_path);
+                    break;
+                }
+            }
         }
 
         void Executor::executeAlterSystem()
@@ -100494,8 +101937,13 @@ namespace scratchbird
 
                 if (status == core::Status::OK)
                 {
-                    // Index search succeeded - check if any rows found
-                    bool has_duplicate = !matching_tids.empty();
+                    bool has_duplicate = indexTidsContainVisibleDuplicate(
+                        table_id,
+                        column,
+                        value,
+                        all_columns,
+                        matching_tids,
+                        nullptr);
 
                     if (has_duplicate)
                     {
@@ -100587,17 +102035,13 @@ namespace scratchbird
 
                 if (status == core::Status::OK)
                 {
-                    // Index search succeeded - check if any rows found (excluding the one being updated)
-                    bool has_duplicate = false;
-                    for (const auto& tid : matching_tids)
-                    {
-                        // Skip the row being updated
-                        if (tid.gpid != exclude_tid.gpid || tid.slot != exclude_tid.slot)
-                        {
-                            has_duplicate = true;
-                            break;
-                        }
-                    }
+                    bool has_duplicate = indexTidsContainVisibleDuplicate(
+                        table_id,
+                        column,
+                        value,
+                        all_columns,
+                        matching_tids,
+                        &exclude_tid);
 
                     if (has_duplicate)
                     {
@@ -100666,6 +102110,61 @@ namespace scratchbird
             }
 
             // No duplicate found
+            return false;
+        }
+
+        bool Executor::indexTidsContainVisibleDuplicate(
+            const core::ID& table_id,
+            const core::CatalogManager::ColumnInfo& column,
+            const Value& value,
+            const std::vector<core::CatalogManager::ColumnInfo>& all_columns,
+            const std::vector<core::TID>& matching_tids,
+            const core::TID* exclude_tid)
+        {
+            size_t col_index = all_columns.size();
+            for (size_t i = 0; i < all_columns.size(); ++i)
+            {
+                if (all_columns[i].column_id == column.column_id)
+                {
+                    col_index = i;
+                    break;
+                }
+            }
+
+            if (col_index >= all_columns.size())
+            {
+                return !matching_tids.empty();
+            }
+
+            for (const auto& tid : matching_tids)
+            {
+                if (exclude_tid != nullptr && tid == *exclude_tid)
+                {
+                    continue;
+                }
+
+                core::Tuple tuple{};
+                core::ErrorContext tuple_ctx;
+                auto fetch_status = db_->storage_engine()->getTuple(table_id, tid, &tuple, &tuple_ctx);
+                if (fetch_status != core::Status::OK)
+                {
+                    continue;
+                }
+
+                std::vector<Value> row_values;
+                if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, row_values))
+                {
+                    continue;
+                }
+
+                if (col_index < row_values.size() &&
+                    !row_values[col_index].isNull() &&
+                    valuesEqual(value, row_values[col_index]))
+                {
+                    return true;
+                }
+            }
+
             return false;
         }
 
@@ -105856,6 +107355,35 @@ namespace scratchbird
                 return QueryResultCache::computeHash(payload);
             }
 
+            std::vector<uint8_t> buildResultCacheKeyBytes(
+                const scratchbird::sblr::v3::Instruction& inst)
+            {
+                scratchbird::sblr::v3::Instruction cache_inst = inst;
+                const auto opcode =
+                    static_cast<scratchbird::sblr::v3::Opcode>(cache_inst.opcode);
+
+                if (opcode == scratchbird::sblr::v3::Opcode::SBLR3_SELECT)
+                {
+                    if (auto* payload =
+                            std::get_if<scratchbird::sblr::v3::Value::Object>(
+                                &cache_inst.payload.data))
+                    {
+                        // Result-cache identity should remain stable when the optimizer
+                        // updates only the embedded runtime plan for the same query.
+                        payload->erase("plan");
+                    }
+                }
+
+                std::vector<uint8_t> key_bytes;
+                scratchbird::sblr::v3::DecodeError derr;
+                if (!scratchbird::sblr::v3::encodeInstructionWithSchema(
+                        cache_inst, key_bytes, derr))
+                {
+                    scratchbird::sblr::v3::encodeInstruction(cache_inst, key_bytes);
+                }
+                return key_bytes;
+            }
+
             std::unique_ptr<ResultSet> buildResultSetFromCache(const CachedResultSet& cached)
             {
                 auto result_set = std::make_unique<ResultSet>();
@@ -107617,6 +109145,26 @@ namespace scratchbird
                 }
 
                 return false;
+            }
+
+            std::string normalizeEmulatedAbsolutePrefixRoot(const std::string& root_path)
+            {
+                std::string normalized = normalizeSchemaPath(root_path);
+                if (normalized.empty())
+                {
+                    return normalized;
+                }
+
+                const std::string upper =
+                    scratchbird::core::IdentifierUtils::toUpper(normalized);
+                const std::string marker = ".DATABASES.";
+                const size_t marker_pos = upper.find(marker);
+                if (marker_pos == std::string::npos)
+                {
+                    return normalized;
+                }
+
+                return normalized.substr(0, marker_pos + std::strlen(".databases"));
             }
 
             std::string buildEmulatedTablespaceSandboxPath(const core::Database* db,

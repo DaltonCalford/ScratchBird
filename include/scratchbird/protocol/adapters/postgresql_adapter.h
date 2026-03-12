@@ -335,6 +335,16 @@ protected:
                                const uint8_t salt[4]);
     bool validateMD5Response(const std::string& response,
                              const std::string& expected_hash);
+    void applyPostgresqlSessionSchemaContextForTest(const std::string& logical_db,
+                                                    core::ErrorContext* ctx) {
+        applyPostgresqlSessionSchemaContext(logical_db, ctx);
+    }
+    void setProtocolStateForTest(PgProtocolState state) {
+        pg_state_ = state;
+    }
+    PgProtocolState protocolStateForTest() const {
+        return pg_state_;
+    }
 
 private:
     struct CopyOptions {
@@ -506,6 +516,8 @@ private:
 
     // Ensure per-emulated PostgreSQL catalog schema/views exist
     core::Status ensurePostgresSystemCatalog(core::ErrorContext* ctx);
+    void applyPostgresqlSessionSchemaContext(const std::string& logical_db,
+                                             core::ErrorContext* ctx);
 
     // Initialize default server parameters (server_version, etc.)
     void initializeServerParameters();

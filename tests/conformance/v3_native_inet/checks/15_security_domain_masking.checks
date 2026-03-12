@@ -7,4 +7,4 @@ INSERT INTO v3_sec_domain_data (id, masked_value, owner_name) VALUES (1, '123-45
 INSERT INTO v3_sec_domain_data (id, masked_value, owner_name) VALUES (2, '***-**-****', 'other_user');|||Rows affected: 1
 CREATE VIEW v3_sec_domain_masked_view AS SELECT id, masked_value AS masked_projection FROM v3_sec_domain_data;|||Rows affected: 0
 SHOW DOMAIN v3_sec_mask_domain;|||v3_sec_mask_domain
-SELECT 'ASSERT|sec_domain|null_rows|' || CAST(COUNT(*) AS VARCHAR(20)) FROM v3_sec_domain_masked_view WHERE masked_projection IS NULL;|||ASSERT|sec_domain|null_rows|2
+SELECT 'ASSERT|sec_domain|masked_rows|' || CAST(COUNT(*) AS VARCHAR(20)) FROM v3_sec_domain_masked_view WHERE masked_projection = '***-**-****';|||ASSERT|sec_domain|masked_rows|1

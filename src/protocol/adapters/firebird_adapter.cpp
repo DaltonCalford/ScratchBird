@@ -50,6 +50,37 @@ namespace scratchbird {
 namespace protocol {
 
 namespace {
+void copyErrorContextFields(core::ErrorContext* target, const core::ErrorContext& source) {
+    if (!target) {
+        return;
+    }
+    target->set(source.code,
+                source.message.c_str(),
+                source.file,
+                source.line,
+                source.function);
+    if (!source.sqlstate_text.empty()) {
+        target->setSQLState(source.sqlstate_text.c_str());
+    }
+    if (!source.vnext_code.empty()) {
+        target->setVNextCode(source.vnext_code.c_str());
+    }
+}
+
+void clearErrorContextSuccess(core::ErrorContext* ctx) {
+    if (!ctx) {
+        return;
+    }
+    ctx->code = core::Status::OK;
+    ctx->sqlstate = core::statusToSQLState(core::Status::OK);
+    ctx->sqlstate_text.clear();
+    ctx->message.clear();
+    ctx->vnext_code.clear();
+    ctx->file = nullptr;
+    ctx->line = 0;
+    ctx->function = nullptr;
+}
+
 struct FirebirdDatabaseSpec {
     std::string server;
     std::string file_path;
@@ -1314,10 +1345,10 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
 
     std::string schema_binding = database_name_;
     if (schema_binding.empty()) {
-        schema_binding = database_path_.string();
+        schema_binding = config_.default_database;
     }
     if (schema_binding.empty()) {
-        schema_binding = config_.default_database;
+        schema_binding = database_path_.string();
     }
 
     FirebirdDatabaseSpec spec = parseFirebirdDatabaseSpec(schema_binding);
@@ -1339,7 +1370,8 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
     }
 
     core::CatalogManager::SchemaInfo fb_schema;
-    auto status = catalog->getSchema(schema_name, fb_schema, ctx);
+    core::ErrorContext schema_probe_ctx;
+    auto status = catalog->getSchema(schema_name, fb_schema, &schema_probe_ctx);
     {
         std::ostringstream oss;
         oss << "ensureFirebirdSystemTables getSchema status=" << static_cast<int>(status)
@@ -1388,20 +1420,37 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         }
     }
     firebird_schema_id_ = fb_schema.schema_id;
+    applyFirebirdSessionSchemaContext(ctx);
 
     auto ensure_view = [&](const std::string& name,
                            const std::string& definition,
                            const std::vector<std::string>& column_names = {}) -> core::Status {
         core::CatalogManager::ViewInfo view_info;
-        auto s = catalog->getView(fb_schema.schema_id, name, view_info, ctx);
+        core::ErrorContext probe_ctx;
+        auto s = catalog->getView(fb_schema.schema_id, name, view_info, &probe_ctx);
         if (s == core::Status::OK) {
             return core::Status::OK;
         }
         if (s != core::Status::INVALID_ARGUMENT && s != core::Status::NOT_FOUND) {
+            if (!probe_ctx.message.empty()) {
+                copyErrorContextFields(ctx, probe_ctx);
+            }
             return s;
         }
-        return catalog->createView(fb_schema.schema_id, name, definition, false,
-                                   false, false, column_names, core::ID{}, ctx);
+        core::ErrorContext create_ctx;
+        auto create_status = catalog->createView(fb_schema.schema_id,
+                                                 name,
+                                                 definition,
+                                                 false,
+                                                 false,
+                                                 false,
+                                                 column_names,
+                                                 core::ID{},
+                                                 &create_ctx);
+        if (create_status != core::Status::OK && !create_ctx.message.empty()) {
+            copyErrorContextFields(ctx, create_ctx);
+        }
+        return create_status;
     };
 
     ensure_view("RDB$DATABASE",
@@ -1808,8 +1857,14 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         }
     }
 
-    ensure_view("RDB$PROCEDURES", procedures_sql);
-    ensure_view("RDB$PROCEDURE_PARAMETERS", procedure_params_sql);
+    auto view_status = ensure_view("RDB$PROCEDURES", procedures_sql);
+    if (view_status != core::Status::OK) {
+        return view_status;
+    }
+    view_status = ensure_view("RDB$PROCEDURE_PARAMETERS", procedure_params_sql);
+    if (view_status != core::Status::OK) {
+        return view_status;
+    }
 
     // Build RDB$VIEW_RELATIONS (map views to their base relations if known; otherwise list view names)
     auto to_lower = [](std::string s) {
@@ -1919,8 +1974,12 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
             view_relations_sql = vr.str();
         }
     }
-    ensure_view("RDB$VIEW_RELATIONS", view_relations_sql,
-                {"RDB$VIEW_NAME", "RDB$RELATION_NAME"});
+    view_status = ensure_view("RDB$VIEW_RELATIONS",
+                              view_relations_sql,
+                              {"RDB$VIEW_NAME", "RDB$RELATION_NAME"});
+    if (view_status != core::Status::OK) {
+        return view_status;
+    }
 
     if (connection_ctx_) {
         core::ErrorContext commit_ctx;
@@ -1935,7 +1994,45 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
         }
     }
 
+    clearErrorContextSuccess(ctx);
     return core::Status::OK;
+}
+
+void FirebirdAdapter::applyFirebirdSessionSchemaContext(core::ErrorContext* ctx)
+{
+    if (!connection_ctx_) {
+        return;
+    }
+
+    if (firebird_schema_name_.empty()) {
+        if (ctx && ctx->message.empty()) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                     "Firebird emulation schema root is not set",
+                     __FILE__, __LINE__, __func__);
+        }
+        return;
+    }
+
+    connection_ctx_->set_dialect_tag("firebird");
+    connection_ctx_->set_current_schema(firebird_schema_name_);
+    connection_ctx_->set_search_path({firebird_schema_name_});
+    if (firebird_schema_id_ != core::ID{}) {
+        connection_ctx_->setCurrentSchemaId(firebird_schema_id_);
+    }
+    clearErrorContextSuccess(ctx);
+}
+
+void FirebirdAdapter::applyFirebirdSessionSchemaContextForTest(core::ErrorContext* ctx)
+{
+    core::Status status = ensureEngine(ctx);
+    if (status != core::Status::OK) {
+        return;
+    }
+    status = ensureFirebirdSystemTables(ctx);
+    if (status != core::Status::OK) {
+        return;
+    }
+    applyFirebirdSessionSchemaContext(ctx);
 }
 
 core::Status FirebirdAdapter::compileQuery(const std::string& sql,
@@ -2140,6 +2237,7 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     }
     engine_database_name_ = selected_database;
     client_config_.database_name = selected_database;
+    client_config_.client_name = "sb_parser_fb";
     if (!config_.engine_endpoint.empty()) {
         client_config_.ipc_method = server::IPCMethod::AUTO;
         client_config_.socket_path = config_.engine_endpoint;

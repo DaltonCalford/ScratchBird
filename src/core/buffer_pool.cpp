@@ -459,8 +459,12 @@ namespace scratchbird::core
         frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
         frames_[frame_index].is_dirty.store(false, std::memory_order_relaxed);
 
-        // Clock Sweep: Initialize usage count for newly loaded page
-        frames_[frame_index].usage_count.store(1, std::memory_order_relaxed);
+        // Demand-loaded pages on the normal path should enter the clock sweep as hot enough
+        // to survive the initial warmup cycle. Ring-buffer strategies intentionally keep the
+        // lower insertion count so sequential/bulk traffic does not pollute the main cache.
+        const uint32_t initial_usage =
+            (effective_strategy == AccessStrategy::Normal) ? Frame::MAX_USAGE_COUNT : 1;
+        frames_[frame_index].usage_count.store(initial_usage, std::memory_order_relaxed);
 
         // P2-1: Insert into partitioned page table
         {
@@ -997,10 +1001,19 @@ namespace scratchbird::core
                     stats_.clock_hand_resets.fetch_add(1, std::memory_order_relaxed);
                 }
 
+                // Count every examined frame, even if it is pinned, so the sweep
+                // can terminate cleanly when no frame is evictable.
+                scanned_in_pass++;
+
                 // Skip pinned frames (in use)
                 // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
                 if (frame.pin_count.load(std::memory_order_relaxed) > 0)
                 {
+                    if (scanned_in_pass >= config_.pool_size)
+                    {
+                        passes++;
+                        scanned_in_pass = 0;
+                    }
                     continue;
                 }
 
@@ -1008,6 +1021,11 @@ namespace scratchbird::core
                 // PHASE 1, TASK 1.2.3: Changed page_id to gpid
                 if (frame.gpid == INVALID_GPID)
                 {
+                    if (scanned_in_pass >= config_.pool_size)
+                    {
+                        passes++;
+                        scanned_in_pass = 0;
+                    }
                     continue;
                 }
 
@@ -1039,7 +1057,6 @@ namespace scratchbird::core
 
                 // Count scanned frames deterministically. This avoids relying on start-hand
                 // comparisons that can fail when the hand was previously out of range.
-                scanned_in_pass++;
                 if (scanned_in_pass >= config_.pool_size)
                 {
                     passes++;

@@ -430,6 +430,7 @@ protected:
                                     ResultContext& result,
                                     core::ErrorContext* ctx = nullptr);
     core::Status ensureRemoteClient(core::ErrorContext* ctx);
+    void applyFirebirdSessionSchemaContextForTest(core::ErrorContext* ctx);
 
 protected:
     // ========================================================================
@@ -511,6 +512,7 @@ private:
     core::Status handlePing(network::Connection* conn);
     core::Status handleCancel(network::Connection* conn);
     core::Status handleDisconnect(network::Connection* conn);
+    void applyFirebirdSessionSchemaContext(core::ErrorContext* ctx);
 
     // ========================================================================
     // Response Sending

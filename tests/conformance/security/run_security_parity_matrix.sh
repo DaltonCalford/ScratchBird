@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${ROOT_DIR}/../../.." && pwd)"
 BUILD_DIR="${REPO_DIR}/build"
 DRIVER_DIR="${REPO_DIR}-driver"
+CLIWORK_ROOT="$(cd "${REPO_DIR}/.." && pwd)"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 RESULT_DIR="${ROOT_DIR}/results/${RUN_ID}"
 mkdir -p "${RESULT_DIR}"/{native,postgresql,mysql,firebird,diff}
@@ -116,14 +117,19 @@ run_default_lane() {
   case "${lane}" in
     postgresql)
       local pg_bin
-      pg_bin="$(resolve_executable "${SCRATCHBIRD_PG_ISQL:-}" \
-        "${REPO_DIR}/build/src/sb_pg_isql" \
-        "${REPO_DIR}/build/src/cli/sb_pg_isql" \
-        "${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_pg_isql")" || return 2
+      pg_bin="$(resolve_executable "${SCRATCHBIRD_PG_PSQL_BIN:-${SCRATCHBIRD_PG_ISQL:-}}" \
+        "${CLIWORK_ROOT}/postgresql/build_codex/src/bin/psql/psql" \
+        "${CLIWORK_ROOT}/postgresql/build_codex2/src/bin/psql/psql" \
+        "${CLIWORK_ROOT}/postgresql/build/src/bin/psql/psql" \
+        "${CLIWORK_ROOT}/postgresql/build_relwithdebinfo/src/bin/psql/psql" \
+        "${CLIWORK_ROOT}/postgresql/build_release/src/bin/psql/psql")" || return 2
+      if [[ "$(basename "${pg_bin}")" != "psql" ]]; then
+        return 2
+      fi
       local pg_host="${SCRATCHBIRD_PG_HOST:-127.0.0.1}"
       local pg_port="${SCRATCHBIRD_PG_PORT:-5432}"
       local pg_user="${SCRATCHBIRD_PG_USER:-postgres}"
-      local pg_db="${SCRATCHBIRD_PG_OWNER_DB:-${SCRATCHBIRD_PG_DB:-main}}"
+      local pg_db="${SCRATCHBIRD_PG_DB:-main}"
       {
         cat "${REPO_DIR}/tests/compatibility/postgresql/tests_conformance/security_rls_parity.sql"
         cat "${REPO_DIR}/tests/compatibility/postgresql/tests_conformance/security_column_parity.sql"
@@ -135,37 +141,48 @@ run_default_lane() {
       ;;
     mysql)
       local my_bin
-      my_bin="$(resolve_executable "${SCRATCHBIRD_MY_ISQL:-}" \
-        "${REPO_DIR}/build/src/sb_my_isql" \
-        "${REPO_DIR}/build/src/cli/sb_my_isql" \
-        "${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_my_isql")" || return 2
+      my_bin="$(resolve_executable "${SCRATCHBIRD_MYSQL_CLI_BIN:-${SCRATCHBIRD_MY_ISQL:-}}" \
+        "${CLIWORK_ROOT}/mysql-server/build_codex2/runtime_output_directory/mysql" \
+        "${CLIWORK_ROOT}/mysql-server/build_codex/runtime_output_directory/mysql" \
+        "${CLIWORK_ROOT}/mysql-server/build/runtime_output_directory/mysql")" || return 2
+      if [[ "$(basename "${my_bin}")" != "mysql" ]]; then
+        return 2
+      fi
       local my_host="${SCRATCHBIRD_MY_HOST:-127.0.0.1}"
       local my_port="${SCRATCHBIRD_MY_PORT:-3306}"
       local my_user="${SCRATCHBIRD_MY_USER:-root}"
-      local my_db="${SCRATCHBIRD_MY_OWNER_DB:-${SCRATCHBIRD_MY_DB:-main}}"
       local my_password="${SCRATCHBIRD_MY_PASSWORD:-}"
       local wrapper_sql="${RESULT_DIR}/mysql/security_parity.run.sql"
-      local pass_arg=()
-      if [[ -n "${my_password}" ]]; then
-        pass_arg=(-p"${my_password}")
-      fi
       {
         cat "${REPO_DIR}/tests/compatibility/mysql/tests_conformance/security_rls_parity.sql"
         cat "${REPO_DIR}/tests/compatibility/mysql/tests_conformance/security_column_parity.sql"
         cat "${REPO_DIR}/tests/compatibility/mysql/tests_conformance/security_domain_parity.sql"
       } > "${wrapper_sql}"
-      "${my_bin}" -h "${my_host}" -P "${my_port}" -u "${my_user}" "${pass_arg[@]}" \
-        -D "${my_db}" -f "${wrapper_sql}" -q > "${raw}" 2>&1
+      if [[ -n "${my_password}" ]]; then
+        MYSQL_PWD="${my_password}" \
+          "${my_bin}" --protocol=TCP -h "${my_host}" -P "${my_port}" -u "${my_user}" \
+          --batch --raw < "${wrapper_sql}" > "${raw}" 2>&1
+      else
+        "${my_bin}" --protocol=TCP -h "${my_host}" -P "${my_port}" -u "${my_user}" \
+          --batch --raw < "${wrapper_sql}" > "${raw}" 2>&1
+      fi
       ;;
     firebird)
       local fb_bin
-      fb_bin="$(resolve_executable "${SCRATCHBIRD_FB_ISQL:-}" \
-        "${REPO_DIR}/build/src/sb_fb_isql" \
-        "${REPO_DIR}/build/src/cli/sb_fb_isql" \
-        "${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_fb_isql")" || return 2
-      local lane_db="${RESULT_DIR}/firebird/lane.sbdb"
+      fb_bin="$(resolve_executable "${SCRATCHBIRD_FB_NATIVE_ISQL:-${SCRATCHBIRD_FB_ISQL:-}}" \
+        "${CLIWORK_ROOT}/firebird/gen/Release/firebird/bin/isql" \
+        "${CLIWORK_ROOT}/firebird/gen/Debug/firebird/bin/isql" \
+        "${CLIWORK_ROOT}/firebird/build/bin/isql" \
+        "${CLIWORK_ROOT}/firebird/build/isql")" || return 2
+      case "$(basename "${fb_bin}")" in
+        isql|isql-fb)
+          ;;
+        *)
+          return 2
+          ;;
+      esac
       local wrapper_sql="${RESULT_DIR}/firebird/security_parity.run.sql"
-      local emu_db="a55_fb_sec_${RUN_ID//[^0-9]/}_${RANDOM}"
+      local emu_db="${RESULT_DIR}/firebird/security_parity_${RUN_ID//[^0-9]/}_${RANDOM}.fdb"
       {
         printf "CREATE DATABASE '%s';\n" "${emu_db}"
         printf "CONNECT '%s';\n" "${emu_db}"
@@ -173,7 +190,14 @@ run_default_lane() {
         cat "${REPO_DIR}/tests/compatibility/firebird/tests_conformance/security_column_parity.sql"
         cat "${REPO_DIR}/tests/compatibility/firebird/tests_conformance/security_domain_parity.sql"
       } > "${wrapper_sql}"
-      "${fb_bin}" "${lane_db}" -q -f "${wrapper_sql}" > "${raw}" 2>&1
+      if ! "${fb_bin}" -user "${SCRATCHBIRD_FB_USER:-SYSDBA}" \
+        -password "${SCRATCHBIRD_FB_PASSWORD:-masterkey}" \
+        -q -i "${wrapper_sql}" > "${raw}" 2>&1; then
+        if rg -q "Interface IUtil version too old" "${raw}"; then
+          return 2
+        fi
+        return 1
+      fi
       ;;
     *)
       return 2

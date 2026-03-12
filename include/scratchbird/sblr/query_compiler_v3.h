@@ -271,6 +271,7 @@ public:
             return trace;
         }
         sblr::v3::Instruction root_inst;
+        const size_t root_offset = offset;
         if (!sblr::v3::decodeInstructionWithSchema(decoded.bytecode_stream.data(),
                                                    decoded.bytecode_stream.size(),
                                                    offset,
@@ -282,13 +283,8 @@ public:
             return trace;
         }
 
-        sblr::v3::Buffer root_bytes;
-        if (!sblr::v3::encodeInstructionWithSchema(root_inst, root_bytes, instruction_err)) {
-            addTraceError(instruction_err.message.empty()
-                              ? "V3 root instruction encode failed"
-                              : instruction_err.message);
-            return trace;
-        }
+        sblr::v3::Buffer root_bytes(decoded.bytecode_stream.begin() + root_offset,
+                                    decoded.bytecode_stream.begin() + offset);
 
         udr::LanguageUdrSblrSqlRenderRequest render_request{};
         render_request.request_id = core::generateUuidV7();

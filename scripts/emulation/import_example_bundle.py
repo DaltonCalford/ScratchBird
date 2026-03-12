@@ -139,6 +139,7 @@ def run_with_log(
     log_path: Path,
     timeout_sec: int,
     extra_env: Optional[Dict[str, str]] = None,
+    stdin_path: Optional[Path] = None,
 ) -> Tuple[int, bool, int]:
     ensure_parent(log_path)
     start = time.monotonic()
@@ -153,14 +154,22 @@ def run_with_log(
     )
 
     try:
-        proc = subprocess.run(
-            list(cmd),
-            capture_output=True,
-            text=True,
-            timeout=timeout_sec,
-            env=env,
-            check=False,
-        )
+        stdin_handle = None
+        try:
+            if stdin_path is not None:
+                stdin_handle = stdin_path.open("r", encoding="utf-8", errors="replace")
+            proc = subprocess.run(
+                list(cmd),
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                env=env,
+                check=False,
+                stdin=stdin_handle,
+            )
+        finally:
+            if stdin_handle is not None:
+                stdin_handle.close()
         duration_ms = int((time.monotonic() - start) * 1000)
         body = (proc.stdout or "") + (proc.stderr or "")
         log_path.write_text(header + body, encoding="utf-8", errors="replace")
@@ -190,6 +199,10 @@ def log_contains_transient_connection_error(log_path: Path) -> bool:
         "connection failed",
     )
     return any(n in text for n in needles)
+
+
+def command_basename(path: Path) -> str:
+    return path.name.lower()
 
 
 def read_text(path: Path) -> str:
@@ -350,6 +363,7 @@ def main() -> int:
                 args.native_db,
                 "--mode=local-ipc",
                 "--ipc-method=tcp",
+                "--sslmode=disable",
                 "-H",
                 args.native_host,
                 "-p",
@@ -413,14 +427,14 @@ def main() -> int:
             s = lane_skip("not_firebird_script")
         elif not fb_isql or not fb_isql.exists():
             s = lane_skip("fb_isql_missing")
+        elif command_basename(fb_isql) not in {"isql", "isql-fb"}:
+            s = lane_skip("fb_client_deprecated")
         elif not original_copy_path.exists():
             s = lane_skip("original_script_missing")
         else:
             body = sanitize_sql(read_text(original_copy_path), lane=lane)
             firebird_db_file = fb_work_db_root / f"{script_slug}.sbdb"
-            firebird_driver_db = output_root / "emulated" / "firebird" / "driver" / f"{script_slug}.driver.sbdb"
             firebird_db_file.parent.mkdir(parents=True, exist_ok=True)
-            firebird_driver_db.parent.mkdir(parents=True, exist_ok=True)
             firebird_run = output_root / "work" / lane / engine / f"{script_slug}.sql"
             prelude = (
                 f"CREATE DATABASE '{firebird_db_file}';\n"
@@ -430,9 +444,12 @@ def main() -> int:
             fb_log = output_root / "logs" / lane / engine / f"{script_slug}.log"
             fb_cmd = [
                 str(fb_isql),
-                str(firebird_driver_db),
+                "-user",
+                args.fb_user,
+                "-password",
+                args.fb_password,
                 "-q",
-                "-f",
+                "-i",
                 str(firebird_run),
             ]
             rc, timed_out, duration_ms = run_with_log(fb_cmd, fb_log, args.timeout_sec)
@@ -462,6 +479,8 @@ def main() -> int:
             s = lane_skip("not_mysql_script")
         elif not my_isql or not my_isql.exists():
             s = lane_skip("my_isql_missing")
+        elif command_basename(my_isql) != "mysql":
+            s = lane_skip("my_client_deprecated")
         elif not original_copy_path.exists():
             s = lane_skip("original_script_missing")
         else:
@@ -475,21 +494,32 @@ def main() -> int:
             my_log = output_root / "logs" / lane / engine / f"{script_slug}.log"
             my_cmd = [
                 str(my_isql),
+                "--protocol=TCP",
                 "-h",
                 args.my_host,
                 "-P",
                 args.my_port,
                 "-u",
                 args.my_user,
-                f"-p{args.my_password}",
-                "-q",
-                "-f",
-                str(mysql_run),
+                "--force",
             ]
-            rc, timed_out, duration_ms = run_with_log(my_cmd, my_log, args.timeout_sec)
+            my_env = {"MYSQL_PWD": args.my_password} if args.my_password else None
+            rc, timed_out, duration_ms = run_with_log(
+                my_cmd,
+                my_log,
+                args.timeout_sec,
+                extra_env=my_env,
+                stdin_path=mysql_run,
+            )
             if rc != 0 and not timed_out and log_contains_transient_connection_error(my_log):
                 time.sleep(0.2)
-                rc, timed_out, retry_ms = run_with_log(my_cmd, my_log, args.timeout_sec)
+                rc, timed_out, retry_ms = run_with_log(
+                    my_cmd,
+                    my_log,
+                    args.timeout_sec,
+                    extra_env=my_env,
+                    stdin_path=mysql_run,
+                )
                 duration_ms += retry_ms
             status = "ok" if rc == 0 and not timed_out else "fail"
             s = LaneResult(
@@ -513,6 +543,8 @@ def main() -> int:
             s = lane_skip("not_postgresql_script")
         elif not pg_isql or not pg_isql.exists():
             s = lane_skip("pg_isql_missing")
+        elif command_basename(pg_isql) != "psql":
+            s = lane_skip("pg_client_deprecated")
         elif not original_copy_path.exists():
             s = lane_skip("original_script_missing")
         else:

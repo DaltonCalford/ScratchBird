@@ -1389,8 +1389,15 @@ namespace scratchbird
 
                         if (!visible && txn_mgr != nullptr)
                         {
-                            // Own changes always visible
-                            if (entry.he_xmin == current_xid)
+                            // A current-transaction delete hides the entry even if
+                            // the same transaction inserted it.
+                            if (entry.he_xmax == current_xid)
+                            {
+                                visible = false;
+                            }
+                            // Own changes always visible once they are not
+                            // self-deleted.
+                            else if (entry.he_xmin == current_xid)
                             {
                                 visible = true;
                             }

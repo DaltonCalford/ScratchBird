@@ -264,6 +264,47 @@ std::string deriveAuthPolicyScope(const std::string& database_context) {
     return canonicalizePolicyScope(scope);
 }
 
+std::string deriveParserSurfaceFromClientName(const std::string& client_name) {
+    const std::string normalized = toLowerAscii(trimAscii(client_name));
+    if (normalized.empty()) {
+        return "";
+    }
+
+    if (normalized.find("parser_mysql") != std::string::npos ||
+        normalized.find("listener_mysql") != std::string::npos ||
+        normalized.find("mysql_bridge") != std::string::npos) {
+        return "mysql";
+    }
+    if (normalized.find("parser_pg") != std::string::npos ||
+        normalized.find("listener_pg") != std::string::npos ||
+        normalized.find("parser_postgresql") != std::string::npos ||
+        normalized.find("postgresql_bridge") != std::string::npos) {
+        return "postgresql";
+    }
+    if (normalized.find("parser_fb") != std::string::npos ||
+        normalized.find("listener_fb") != std::string::npos ||
+        normalized.find("parser_firebird") != std::string::npos ||
+        normalized.find("firebird_bridge") != std::string::npos) {
+        return "firebird";
+    }
+    if (normalized.find("parser_native") != std::string::npos ||
+        normalized.find("listener_native") != std::string::npos ||
+        normalized.find("scratchbird_client") != std::string::npos) {
+        return "native";
+    }
+    return "";
+}
+
+std::string deriveAuthParserSurface(const std::string& database_context,
+                                    const std::string& client_name) {
+    std::string surface = deriveParserSurfaceFromClientName(client_name);
+    if (!surface.empty()) {
+        return surface;
+    }
+    return scratchbird::security::normalizeParserAuthSurface(
+        deriveAuthPolicyScope(database_context));
+}
+
 std::string resolveScopedEnvValue(const char* base_key, const std::string& policy_scope) {
     const std::string scope = policy_scope.empty() ? "native" : policy_scope;
     const std::string scoped_key = std::string(base_key) + "_" + toUpperAscii(scope);
@@ -1480,6 +1521,7 @@ std::vector<uint8_t> generateNegotiationNonce(size_t bytes = 16) {
 bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
                                   const IPCConnection* connection,
                                   const std::string& auth_database_context,
+                                  const std::string& client_name,
                                   std::vector<protocol::AuthMethod>& allowed_methods_out,
                                   std::vector<std::string>& allowed_method_ids_out,
                                   bool& has_required_method_out,
@@ -1507,7 +1549,7 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
     bool has_catalog_policy_rows = false;
     const std::string policy_scope = deriveAuthPolicyScope(auth_database_context);
     const std::string parser_surface =
-        scratchbird::security::normalizeParserAuthSurface(policy_scope);
+        deriveAuthParserSurface(auth_database_context, client_name);
 
     if (catalog) {
         std::vector<CM::AuthPolicyCatalogInfo> policies;
@@ -1586,6 +1628,22 @@ bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
         required_method_out = protocol::AuthMethod::PASSWORD;
         peer_mode_out = CM::AuthPeerMode::DISABLED;
     } else {
+        const bool trusted_emulation_parser_bridge =
+            isTrustedLocalIpc(connection) &&
+            (parser_surface == "mysql" ||
+             parser_surface == "postgresql" ||
+             parser_surface == "firebird");
+        if (trusted_emulation_parser_bridge) {
+            allow_legacy_password_fallback = true;
+            if (parser_surface == "postgresql") {
+                allowed_method_mask |=
+                    CM::AUTH_POLICY_METHOD_PASSWORD | CM::AUTH_POLICY_METHOD_MD5;
+            } else {
+                allowed_method_mask |= CM::AUTH_POLICY_METHOD_PASSWORD;
+            }
+            has_required_method_out = false;
+        }
+
         const bool relaxed_emulation = relaxedEmulationAuthPolicyEnabled();
         if (relaxed_emulation) {
             // Local emulation harnesses may rely on bootstrap/password login for
@@ -2098,6 +2156,7 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
 
     client_connect_flags_ = client_flags;
     auth_database_context_ = database;
+    client_name_ = client_name;
 
     const bool manager_bound_connect =
         (client_flags & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0;
@@ -2487,6 +2546,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         if (!resolveAuthNegotiationPolicy(catalog,
                                           connection_,
                                           auth_database_context_,
+                                          client_name_,
                                           auth_negotiation_allowed_methods_,
                                           auth_negotiation_allowed_method_ids_,
                                           auth_negotiation_has_required_method_,
@@ -3233,6 +3293,26 @@ core::Status ServerSession::sendPendingNotices(core::ErrorContext* ctx) {
 core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode,
                                             const std::string& sql,
                                             core::ErrorContext* ctx) {
+    const bool debug_create_database =
+        std::getenv("SCRATCHBIRD_DEBUG_CREATE_DATABASE_FLOW") != nullptr &&
+        !sql.empty() &&
+        sql.find("CREATE DATABASE") == 0;
+    const bool debug_mysql_exec =
+        std::getenv("SCRATCHBIRD_MY_DEBUG_EXEC") != nullptr &&
+        !sql.empty();
+    if (debug_create_database) {
+        std::fprintf(stderr,
+                     "[create_db_debug] server_session executeBytecode start sql=%s\n",
+                     sql.c_str());
+        std::fflush(stderr);
+    }
+    if (debug_mysql_exec) {
+        std::fprintf(stderr,
+                     "[my_exec] server_session executeBytecode start schema=%s sql=%s\n",
+                     conn_ctx_ ? conn_ctx_->current_schema().c_str() : "<null>",
+                     sql.c_str());
+        std::fflush(stderr);
+    }
     stats_.queries_executed++;
 
     if (executor_) {
@@ -3366,6 +3446,22 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
     sblr::ExecutionResult exec_result;
     try {
         exec_result = executor_->execute(bytecode);
+        if (debug_mysql_exec) {
+            std::fprintf(stderr,
+                         "[my_exec] server_session executor returned success=%d has_rs=%d affected=%lld\n",
+                         exec_result.success() ? 1 : 0,
+                         exec_result.hasResultSet() ? 1 : 0,
+                         static_cast<long long>(exec_result.affectedCount()));
+            std::fflush(stderr);
+        }
+        if (debug_create_database) {
+            std::fprintf(stderr,
+                         "[create_db_debug] server_session executor returned success=%d has_rs=%d affected=%lld\n",
+                         exec_result.success() ? 1 : 0,
+                         exec_result.hasResultSet() ? 1 : 0,
+                         static_cast<long long>(exec_result.affectedCount()));
+            std::fflush(stderr);
+        }
     } catch (const std::exception& ex) {
         stats_.queries_failed++;
         if (copy_active) {
@@ -3464,15 +3560,65 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
     protocol::Message response = protocol::ProtocolCodec::buildCommandComplete(
         command, exec_result.affectedCount());
     if (conn_ctx_) {
+        if (debug_mysql_exec) {
+            std::fprintf(stderr,
+                         "[my_exec] server_session before endStatementTrackingSuccess\n");
+            std::fflush(stderr);
+        }
+        if (debug_create_database) {
+            std::fprintf(stderr,
+                         "[create_db_debug] server_session before endStatementTrackingSuccess\n");
+            std::fflush(stderr);
+        }
         conn_ctx_->endStatementTrackingSuccess(exec_result.affectedCount());
+        if (debug_mysql_exec) {
+            std::fprintf(stderr,
+                         "[my_exec] server_session after endStatementTrackingSuccess\n");
+            std::fflush(stderr);
+        }
+        if (debug_create_database) {
+            std::fprintf(stderr,
+                         "[create_db_debug] server_session after endStatementTrackingSuccess\n");
+            std::fflush(stderr);
+        }
+    }
+    if (debug_mysql_exec) {
+        std::fprintf(stderr,
+                     "[my_exec] server_session before sendPendingNotices\n");
+        std::fflush(stderr);
+    }
+    if (debug_create_database) {
+        std::fprintf(stderr,
+                     "[create_db_debug] server_session before sendPendingNotices\n");
+        std::fflush(stderr);
     }
     core::Status notice_status = sendPendingNotices(ctx);
     if (notice_status != core::Status::OK) {
         return notice_status;
     }
+    if (debug_mysql_exec) {
+        std::fprintf(stderr,
+                     "[my_exec] server_session before command_complete send\n");
+        std::fflush(stderr);
+    }
+    if (debug_create_database) {
+        std::fprintf(stderr,
+                     "[create_db_debug] server_session before command_complete send\n");
+        std::fflush(stderr);
+    }
     core::Status send_status = protocol_session_->sendMessage(response, ctx);
     if (send_status != core::Status::OK) {
         return send_status;
+    }
+    if (debug_mysql_exec) {
+        std::fprintf(stderr,
+                     "[my_exec] server_session before end_of_results send\n");
+        std::fflush(stderr);
+    }
+    if (debug_create_database) {
+        std::fprintf(stderr,
+                     "[create_db_debug] server_session before end_of_results send\n");
+        std::fflush(stderr);
     }
     protocol::Message end_msg = protocol::ProtocolCodec::buildEndOfResults();
     return protocol_session_->sendMessage(end_msg, ctx);

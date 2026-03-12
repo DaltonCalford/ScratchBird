@@ -64,6 +64,7 @@ class PreparedStatementImpl;
  */
 struct ConnectionConfig {
     std::string database_name;              // Database name (required)
+    std::string client_name = "scratchbird_client"; // CONNECT_REQUEST client identifier
     std::string username;                   // Username for authentication
     std::string password;                   // Password for authentication
     std::string mfa_code;                   // Optional MFA challenge response code
