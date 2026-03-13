@@ -1854,8 +1854,10 @@ namespace scratchbird::core
             return status;
         }
 
-        // Delete tuple
-        HeapPage heap_page(page_data, db_->page_size());
+        // Resolve the currently visible physical version for the stable logical TID before
+        // applying a delete. Rolled-back updates can leave an aborted head version in the root
+        // slot while the committed row lives in the back-version chain.
+        HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, table_id);
 
         // Get current XID from connection context
         uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
@@ -1865,21 +1867,31 @@ namespace scratchbird::core
             current_xid = config::DEFAULT_INITIAL_XID;
         }
 
+        const uint8_t *visible_tuple_data = nullptr;
+        uint32_t visible_tuple_size = 0;
+        TID visible_tuple_tid(gpid, item_id);
+        status = heap_page.findVisibleVersion(item_id,
+                                              current_xid,
+                                              &visible_tuple_data,
+                                              &visible_tuple_size,
+                                              &visible_tuple_tid,
+                                              ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+            return status;
+        }
+
+        std::vector<uint8_t> deleted_tuple_image(
+            visible_tuple_data, visible_tuple_data + visible_tuple_size);
+        const auto *visible_tuple_hdr =
+            reinterpret_cast<const TupleHeader *>(deleted_tuple_image.data());
+
         if (table_info.temp_data_scope != CatalogManager::TempDataScope::NONE)
         {
-            const uint8_t *tuple_data = nullptr;
-            uint32_t tuple_size = 0;
-            Status get_status = heap_page.getTuple(item_id, &tuple_data, &tuple_size, ctx);
-            if (get_status != Status::OK)
-            {
-                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-                return get_status;
-            }
-
-            const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
             ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
             ID session_id = conn_ctx ? conn_ctx->effectiveSessionId() : ID{};
-            if (isZeroId(session_id) || hdr->session_id != session_id)
+            if (isZeroId(session_id) || visible_tuple_hdr->session_id != session_id)
             {
                 buffer_pool_->unpinPageGlobal(gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple not visible");
@@ -1887,27 +1899,49 @@ namespace scratchbird::core
             }
         }
 
-        status = heap_page.deleteTuple(item_id, current_xid, ctx);
+        const bool delete_on_root_page = visible_tuple_tid.gpid == gpid;
+        GPID delete_target_gpid = visible_tuple_tid.gpid;
+        uint32_t delete_target_page_id =
+            static_cast<uint32_t>(getPageNumber(delete_target_gpid));
+        uint16_t delete_target_item_id = visible_tuple_tid.slot;
+
+        void *delete_page_buffer = page_buffer;
+        uint8_t *delete_page_data = page_data;
+        if (!delete_on_root_page)
+        {
+            status = buffer_pool_->pinPageGlobal(delete_target_gpid, &delete_page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                return status;
+            }
+            delete_page_data = static_cast<uint8_t *>(delete_page_buffer);
+        }
+
+        HeapPage delete_heap_page(delete_page_data, db_->page_size(), nullptr, db_, table_id);
+        status = delete_heap_page.deleteTuple(delete_target_item_id, current_xid, ctx);
 
         if (status == Status::OK)
         {
             if (ConnectionContext* active_conn_ctx = ConnectionContext::getCurrent())
             {
-                active_conn_ctx->trackTupleDeletion(page_id, item_id);
+                active_conn_ctx->trackTupleDeletion(delete_target_page_id, delete_target_item_id);
             }
 
             // Sprint 4 Task 5.4.3: Mark page dirty if migrating
             if (is_migrating)
             {
-                catalog_manager_->markPageDirty(table_info.migration_id, page_id, ctx);
+                catalog_manager_->markPageDirty(table_info.migration_id,
+                                                delete_target_page_id,
+                                                ctx);
             }
 
             // Mark page as dirty for GC
             if (db_->garbage_collector() != nullptr)
             {
-                if (tablespace_id == PRIMARY_TABLESPACE_ID)
+                if (getTablespaceID(delete_target_gpid) == PRIMARY_TABLESPACE_ID)
                 {
-                    db_->garbage_collector()->markPageDirty(page_id);
+                    db_->garbage_collector()->markPageDirty(delete_target_page_id);
                 }
             }
 
@@ -1923,29 +1957,25 @@ namespace scratchbird::core
 
                 if (index_status == Status::OK)
                 {
-                    // Create TID for this tuple
+                    // Index identity is still the stable logical root TID even when the visible
+                    // version being deleted currently lives in a back-version slot.
                     TID tid = TID(makeGPID(tablespace_id, static_cast<uint64_t>(page_id)), item_id);
 
-                    // Get tuple data to extract keys
-                    const ItemPointer *items = reinterpret_cast<const ItemPointer *>(page_data + sizeof(PageHeader));
-                    if (item_id < heap_page.getItemCount())
+                    const uint8_t *tuple_data = deleted_tuple_image.data();
+                    uint32_t tuple_length = static_cast<uint32_t>(deleted_tuple_image.size());
+
+                    // Create IndexKeyExtractor
+                    IndexKeyExtractor extractor;
+
+                    std::vector<size_t> column_offsets;
+                    std::vector<size_t> column_sizes;
+                    Status layout_status = computeColumnLayout(tuple_data, tuple_length, columns,
+                                                               db_->domain_manager(),
+                                                               column_offsets, column_sizes, ctx);
+                    if (layout_status == Status::OK)
                     {
-                        uint32_t tuple_offset = items[item_id].offset;
-                        uint32_t tuple_length = items[item_id].length;
-                        const uint8_t *tuple_data = page_data + tuple_offset;
-
-                        // Create IndexKeyExtractor
-                        IndexKeyExtractor extractor;
-
-                        std::vector<size_t> column_offsets;
-                        std::vector<size_t> column_sizes;
-                        Status layout_status = computeColumnLayout(tuple_data, tuple_length, columns,
-                                                                   db_->domain_manager(),
-                                                                   column_offsets, column_sizes, ctx);
-                        if (layout_status == Status::OK)
-                        {
-                            // Remove from each index
-                            for (const auto &index_info : indexes)
+                        // Remove from each index
+                        for (const auto &index_info : indexes)
                         {
                             // Convert column IDs to column indices
                             std::vector<uint16_t> column_indices;
@@ -2003,13 +2033,12 @@ namespace scratchbird::core
                             }
                         }
 
-                            // Clear detoasting cache
-                            extractor.clearCache();
-                        }
-                        else
-                        {
-                            LOG_WARNING(STORAGE, "Skipping index removal due to column layout failure");
-                        }
+                        // Clear detoasting cache
+                        extractor.clearCache();
+                    }
+                    else
+                    {
+                        LOG_WARNING(STORAGE, "Skipping index removal due to column layout failure");
                     }
                 }
             }
@@ -2020,8 +2049,13 @@ namespace scratchbird::core
             }
         }
 
-        // Unpin the page
-        buffer_pool_->unpinPageGlobal(gpid, status == Status::OK, ctx);
+        if (!delete_on_root_page)
+        {
+            buffer_pool_->unpinPageGlobal(delete_target_gpid, status == Status::OK, ctx);
+        }
+
+        // Unpin the root page used for stable-TID resolution.
+        buffer_pool_->unpinPageGlobal(gpid, delete_on_root_page && status == Status::OK, ctx);
 
         return status;
     }
@@ -2619,7 +2653,7 @@ namespace scratchbird::core
                 }
 
                 // Scan items in current page
-                HeapPage heap_page(page_data_, db_->page_size());
+                HeapPage heap_page(page_data_, db_->page_size(), nullptr, db_, table_id_);
                 ErrorContext validate_ctx;
                 Status validate_status = heap_page.validate(&validate_ctx);
                 if (validate_status != Status::OK)
@@ -2646,11 +2680,11 @@ namespace scratchbird::core
                         {
                             db_->table_stats_manager()->recordSeqRowsRead(table_id_, 1);
                         }
-                        // Check visibility
                         const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
-
-                        if (ignore_visibility_ ||
-                            engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
+                        const TID candidate_tid(
+                            makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(current_page_)),
+                            current_item_ - 1);
+                        if (ignore_visibility_)
                         {
                             if (filter_session_ && hdr->session_id != session_id_)
                             {
@@ -2668,6 +2702,49 @@ namespace scratchbird::core
                             }
                             return Status::OK;
                         }
+
+                        // Ordinary scans start from the current/root tuple slot only; historical
+                        // versions are reached through the version chain rooted here.
+                        if (hdr->ctid_gpid != candidate_tid.gpid ||
+                            hdr->ctid_slot != candidate_tid.slot)
+                        {
+                            continue;
+                        }
+
+                        const uint8_t *visible_data = nullptr;
+                        uint32_t visible_size = 0;
+                        Status visible_status = heap_page.findVisibleVersion(
+                            current_item_ - 1, engine_->getCurrentXid(), &visible_data,
+                            &visible_size, nullptr, nullptr);
+                        if (visible_status != Status::OK)
+                        {
+                            continue;
+                        }
+
+                        const auto *visible_hdr =
+                            reinterpret_cast<const TupleHeader *>(visible_data);
+                        if (filter_session_ && visible_hdr->session_id != session_id_)
+                        {
+                            continue;
+                        }
+
+                        if (tuple_out != nullptr)
+                        {
+                            const uint8_t *page_begin = page_data_;
+                            const uint8_t *page_end = page_data_ + db_->page_size();
+                            if (visible_data >= page_begin && visible_data < page_end)
+                            {
+                                tuple_out->data = visible_data;
+                            }
+                            else
+                            {
+                                visible_tuple_buffer_.assign(visible_data, visible_data + visible_size);
+                                tuple_out->data = visible_tuple_buffer_.data();
+                            }
+                            tuple_out->data_size = visible_size;
+                            tuple_out->tid = candidate_tid;
+                        }
+                        return Status::OK;
                     }
                 }
 
@@ -2710,7 +2787,7 @@ namespace scratchbird::core
                 continue;
             }
 
-            HeapPage heap_page(page_data_, db_->page_size());
+            HeapPage heap_page(page_data_, db_->page_size(), nullptr, db_, table_id_);
             ErrorContext validate_ctx;
             Status validate_status = heap_page.validate(&validate_ctx);
             if (validate_status != Status::OK)
@@ -2738,9 +2815,10 @@ namespace scratchbird::core
                         db_->table_stats_manager()->recordSeqRowsRead(table_id_, 1);
                     }
                     const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
-
-                    if (ignore_visibility_ ||
-                        engine_->isVisible(hdr->xmin, hdr->xmax, engine_->getCurrentXid()))
+                    const uint64_t page_number = getPageNumber(current_gpid_);
+                    const TID candidate_tid(makeGPID(tablespace_id_, page_number),
+                                            current_item_ - 1);
+                    if (ignore_visibility_)
                     {
                         if (filter_session_ && hdr->session_id != session_id_)
                         {
@@ -2748,7 +2826,6 @@ namespace scratchbird::core
                         }
                         if (tuple_out != nullptr)
                         {
-                            uint64_t page_number = getPageNumber(current_gpid_);
                             tuple_out->data = tuple_data;
                             tuple_out->data_size = tuple_size;
                             tuple_out->tid = TID(makeGPID(tablespace_id_, page_number),
@@ -2756,6 +2833,47 @@ namespace scratchbird::core
                         }
                         return Status::OK;
                     }
+
+                    if (hdr->ctid_gpid != candidate_tid.gpid ||
+                        hdr->ctid_slot != candidate_tid.slot)
+                    {
+                        continue;
+                    }
+
+                    const uint8_t *visible_data = nullptr;
+                    uint32_t visible_size = 0;
+                    Status visible_status = heap_page.findVisibleVersion(
+                        current_item_ - 1, engine_->getCurrentXid(), &visible_data,
+                        &visible_size, nullptr, nullptr);
+                    if (visible_status != Status::OK)
+                    {
+                        continue;
+                    }
+
+                    const auto *visible_hdr =
+                        reinterpret_cast<const TupleHeader *>(visible_data);
+                    if (filter_session_ && visible_hdr->session_id != session_id_)
+                    {
+                        continue;
+                    }
+
+                    if (tuple_out != nullptr)
+                    {
+                        const uint8_t *page_begin = page_data_;
+                        const uint8_t *page_end = page_data_ + db_->page_size();
+                        if (visible_data >= page_begin && visible_data < page_end)
+                        {
+                            tuple_out->data = visible_data;
+                        }
+                        else
+                        {
+                            visible_tuple_buffer_.assign(visible_data, visible_data + visible_size);
+                            tuple_out->data = visible_tuple_buffer_.data();
+                        }
+                        tuple_out->data_size = visible_size;
+                        tuple_out->tid = candidate_tid;
+                    }
+                    return Status::OK;
                 }
             }
 
@@ -3486,8 +3604,20 @@ namespace scratchbird::core
 	            stored_back_hdr->back_version_gpid = source_old_hdr->back_version_gpid;
 	            stored_back_hdr->back_version_slot = source_old_hdr->back_version_slot;
 	            stored_back_hdr->session_id = source_old_hdr->session_id;
-	            stored_back_hdr->infomask |=
-	                (TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED | TupleHeader::HEAP_MOVED);
+	            stored_back_hdr->setTID(
+	                makeGPID(tablespace_id, static_cast<uint64_t>(page_id)),
+	                item_id);
+	            uint16_t preserved_back_infomask =
+	                stored_back_hdr->infomask &
+	                (TupleHeader::HEAP_HAS_NULLS |
+	                 TupleHeader::HEAP_XMIN_COMMITTED |
+	                 TupleHeader::HEAP_XMIN_INVALID |
+	                 TupleHeader::HEAP_XMIN_FROZEN);
+	            stored_back_hdr->infomask =
+	                preserved_back_infomask |
+	                TupleHeader::HEAP_CHAIN |
+	                TupleHeader::HEAP_UPDATED |
+	                TupleHeader::HEAP_MOVED;
 
 	            // Build GPID for back version (different page!)
 	            back_version_gpid = makeGPID(tablespace_id,

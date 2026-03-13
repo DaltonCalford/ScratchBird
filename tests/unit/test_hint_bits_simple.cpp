@@ -186,7 +186,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     std::cout << "\n--- First visibility check (should set hint bits) ---" << std::endl;
     read_data = nullptr;
     read_size = 0;
-    s = heap_page.findVisibleVersion(item_id, new_xid, &read_data, &read_size, &snapshot,
+    s = heap_page.findVisibleVersion(item_id, new_xid, &read_data, &read_size, nullptr,
                                       &err_ctx);
     if (s != Status::OK)
     {
@@ -223,7 +223,7 @@ TEST(HintBitsSimpleTest, Comprehensive) {
     std::cout << "\n--- Second visibility check (should use fast path) ---" << std::endl;
     read_data = nullptr;
     read_size = 0;
-    s = heap_page.findVisibleVersion(item_id, new_xid, &read_data, &read_size, &snapshot,
+    s = heap_page.findVisibleVersion(item_id, new_xid, &read_data, &read_size, nullptr,
                                       &err_ctx);
     if (s != Status::OK)
     {

@@ -358,7 +358,7 @@ namespace scratchbird::core
         // FIREBIRD MGA: Uses TIP-based visibility, NOT snapshots.
         // Version links are canonical TIDs (page + slot) for both same-page and cross-page chains.
         auto findVisibleVersion(uint16_t item_id, uint64_t current_xid, const uint8_t **data_out,
-                                uint32_t *size_out,
+                                uint32_t *size_out, TID *visible_tid_out = nullptr,
                                 ErrorContext *ctx = nullptr) -> Status;
 
         // Check if there's enough space for a tuple

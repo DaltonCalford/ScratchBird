@@ -213,7 +213,7 @@ TEST_F(StorageTransactionTest, UpdateCreatesBackVersion)
     db_->buffer_pool()->unpinPage(back_page_id, false, &ctx);
 }
 
-TEST_F(StorageTransactionTest, DeleteMarksTupleDeleted)
+TEST_F(StorageTransactionTest, DeleteMarksTupleSoftDeleted)
 {
     ErrorContext ctx;
     ScopedCurrentConnection scope(conn_ctx_.get());
@@ -238,7 +238,7 @@ TEST_F(StorageTransactionTest, DeleteMarksTupleDeleted)
     HeapPage heap(page_data, db_->page_size());
 
     const auto *items = reinterpret_cast<const ItemPointer *>(page_data + sizeof(PageHeader));
-    ASSERT_TRUE(items[item_id].isDeleted());
+    ASSERT_FALSE(items[item_id].isDeleted());
     const auto *hdr = reinterpret_cast<const TupleHeader *>(page_data + items[item_id].offset);
     EXPECT_EQ(hdr->xmax, xid_delete);
     EXPECT_TRUE(hdr->infomask & TupleHeader::FLAG_DELETED);

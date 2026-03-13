@@ -80,6 +80,7 @@ namespace scratchbird::core
         uint32_t ra_seq_count_ = 0;
         uint32_t ra_last_page_ = UINT32_MAX;
         size_t ra_last_index_ = std::numeric_limits<size_t>::max();
+        std::vector<uint8_t> visible_tuple_buffer_;
 
         // Current page data
         uint8_t *page_data_ = nullptr;

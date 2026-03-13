@@ -1685,6 +1685,50 @@ namespace scratchbird::core
         ProcArray *proc_array = ProcArrayManager::getInstance();
         if (proc_array)
         {
+            auto snapshotIncludesPublishedXid = [&](uint64_t xid) -> bool
+            {
+                TIPEntry tip_entry{};
+                Status tip_status = findTipEntry(xid, tip_entry, nullptr);
+                if (tip_status != Status::OK)
+                {
+                    return false;
+                }
+
+                TransactionState tip_state = TransactionState::ACTIVE;
+                if (!decodeTipState(tip_entry.state, tip_state))
+                {
+                    return false;
+                }
+
+                if (tip_state == TransactionState::ACTIVE ||
+                    tip_state == TransactionState::PREPARED)
+                {
+                    auto cache_it = transaction_cache_.find(xid);
+                    if (cache_it != transaction_cache_.end())
+                    {
+                        cache_it->second = tip_state;
+                        touchCacheEntry(xid);
+                    }
+                    else
+                    {
+                        addToCacheLRU(xid, tip_state);
+                    }
+                    return true;
+                }
+
+                auto cache_it = transaction_cache_.find(xid);
+                if (cache_it != transaction_cache_.end())
+                {
+                    cache_it->second = tip_state;
+                    touchCacheEntry(xid);
+                }
+                else
+                {
+                    addToCacheLRU(xid, tip_state);
+                }
+                return false;
+            };
+
             pthread_rwlock_rdlock(&proc_array->array_lock);
             auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
                 reinterpret_cast<uint8_t *>(proc_array) + sizeof(ProcArray));
@@ -1692,6 +1736,10 @@ namespace scratchbird::core
             {
                 const ProcessControlBlock &pcb = pcbs[i];
                 if (!pcb.is_active || pcb.xid == 0 || pcb.xid >= snapshot_out.snapshot_txid_high)
+                {
+                    continue;
+                }
+                if (!snapshotIncludesPublishedXid(pcb.xid))
                 {
                     continue;
                 }

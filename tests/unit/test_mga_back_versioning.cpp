@@ -316,20 +316,20 @@ TEST_F(MGABackVersioningTest, MVCCVisibilityAcrossVersions)
     uint32_t visible_size;
 
     // XID 350 should see V3 (newest)
-    ASSERT_EQ(heap_page.findVisibleVersion(item_id, 350, &visible_data, &visible_size, &ctx),
+    ASSERT_EQ(heap_page.findVisibleVersion(item_id, 350, &visible_data, &visible_size, nullptr, &ctx),
               Status::OK);
     EXPECT_EQ(extractTupleData(visible_data, visible_size), "Version 3 @ XID 300");
 
     // XID 250 should see no version with the current MGA visibility rules
-    ASSERT_EQ(heap_page.findVisibleVersion(item_id, 250, &visible_data, &visible_size, &ctx),
+    ASSERT_EQ(heap_page.findVisibleVersion(item_id, 250, &visible_data, &visible_size, nullptr, &ctx),
               Status::NOT_FOUND);
 
     // XID 150 should see no version with the current MGA visibility rules
-    ASSERT_EQ(heap_page.findVisibleVersion(item_id, 150, &visible_data, &visible_size, &ctx),
+    ASSERT_EQ(heap_page.findVisibleVersion(item_id, 150, &visible_data, &visible_size, nullptr, &ctx),
               Status::NOT_FOUND);
 
     // XID 50 should see nothing (before any version)
-    ASSERT_EQ(heap_page.findVisibleVersion(item_id, 50, &visible_data, &visible_size, &ctx),
+    ASSERT_EQ(heap_page.findVisibleVersion(item_id, 50, &visible_data, &visible_size, nullptr, &ctx),
               Status::NOT_FOUND);
 
     delete[] page_buffer;
@@ -390,7 +390,7 @@ TEST_F(MGABackVersioningTest, CycleDetection)
     uint32_t visible_size;
 
     // findVisibleVersion should detect the cycle and return error
-    Status result = heap_page.findVisibleVersion(item_id, 50, &visible_data, &visible_size, &ctx);
+    Status result = heap_page.findVisibleVersion(item_id, 50, &visible_data, &visible_size, nullptr, &ctx);
 
     // Should return error (not OK, not infinite loop)
     EXPECT_EQ(result, Status::PAGE_CORRUPT) << "Should detect cycle in version chain";

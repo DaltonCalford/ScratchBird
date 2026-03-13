@@ -18,6 +18,8 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/storage_engine.h"
 #include <cstring>
 #include <algorithm>
 #include <vector>
@@ -115,6 +117,64 @@ namespace scratchbird::core
             has_toast_ptr = isToastPointer(payload, sizeof(ToastPointer));
         }
         tuple_hdr->setRecordFlag(TupleHeader::RHD_TOAST_PTR, has_toast_ptr);
+    }
+
+    static auto resolveCommittedDeleteState(Database *db, TupleHeader *tuple_hdr,
+                                            bool *xmax_committed_out, ErrorContext *ctx) -> Status
+    {
+        if (xmax_committed_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "xmax_committed_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        *xmax_committed_out = false;
+        if (tuple_hdr == nullptr || tuple_hdr->xmax == 0)
+        {
+            return Status::OK;
+        }
+
+        if ((tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0u)
+        {
+            *xmax_committed_out = true;
+            return Status::OK;
+        }
+
+        if ((tuple_hdr->infomask & TupleHeader::HEAP_XMAX_INVALID) != 0u)
+        {
+            return Status::OK;
+        }
+
+        if (db == nullptr || db->transaction_manager() == nullptr)
+        {
+            return Status::OK;
+        }
+
+        TransactionState state = TransactionState::ACTIVE;
+        Status state_status = db->transaction_manager()->getTransactionState(tuple_hdr->xmax, state, ctx);
+        if (state_status != Status::OK)
+        {
+            return state_status;
+        }
+
+        if (state == TransactionState::COMMITTED)
+        {
+            tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+            tuple_hdr->infomask &= ~TupleHeader::HEAP_XMAX_INVALID;
+            tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED,
+                                     (tuple_hdr->infomask & TupleHeader::HEAP_UPDATED) == 0u);
+            *xmax_committed_out = true;
+            return Status::OK;
+        }
+
+        if (state == TransactionState::ABORTED)
+        {
+            tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_INVALID;
+            tuple_hdr->infomask &= ~TupleHeader::HEAP_XMAX_COMMITTED;
+            tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
+        }
+
+        return Status::OK;
     }
 
     HeapPage::HeapPage(uint8_t *page_data, uint32_t page_size)
@@ -604,8 +664,29 @@ namespace scratchbird::core
         {
             if (tuple_hdr->xmax != 0 || (tuple_hdr->infomask & TupleHeader::FLAG_DELETED))
             {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple already deleted");
-                return Status::NOT_FOUND;
+                bool replace_aborted_delete = false;
+                if (tuple_hdr->xmax != 0 && db_ != nullptr && db_->transaction_manager() != nullptr)
+                {
+                    TransactionState prior_delete_state = TransactionState::ACTIVE;
+                    Status prior_state_status = db_->transaction_manager()->getTransactionState(
+                        tuple_hdr->xmax, prior_delete_state, nullptr);
+                    replace_aborted_delete =
+                        prior_state_status == Status::OK &&
+                        prior_delete_state == TransactionState::ABORTED;
+                }
+
+                if (!replace_aborted_delete)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple already deleted");
+                    return Status::NOT_FOUND;
+                }
+
+                tuple_hdr->xmax = 0;
+                tuple_hdr->infomask = static_cast<uint16_t>(
+                    tuple_hdr->infomask &
+                    ~(TupleHeader::HEAP_XMAX_COMMITTED |
+                      TupleHeader::HEAP_XMAX_INVALID |
+                      TupleHeader::FLAG_DELETED));
             }
 
             tuple_hdr->xmax = xmax;
@@ -614,8 +695,12 @@ namespace scratchbird::core
                                          items[item_id].length);
         }
 
-        // Mark the line pointer deleted so scans skip the tuple and space can be reused.
-        items[item_id].setDeleted(true);
+        // MGA soft deletes must keep the line pointer live so visibility can consult xmax/TIP state.
+        // Only force-delete paths may tombstone the item pointer immediately.
+        if (force_delete)
+        {
+            items[item_id].setDeleted(true);
+        }
 
         updateHeaderStats();
 
@@ -731,6 +816,11 @@ namespace scratchbird::core
         const ItemPointer *items = getItemArray();
         for (uint16_t i = 0; i < getItemCount(); i++)
         {
+            if (items[i].isUnused())
+            {
+                continue;
+            }
+
             if (!items[i].isDeleted())
             {
                 if (items[i].offset < pageUpper(*hdr) ||
@@ -990,8 +1080,17 @@ namespace scratchbird::core
             back_version_hdr->back_version_gpid = source_old_hdr->back_version_gpid;
             back_version_hdr->back_version_slot = source_old_hdr->back_version_slot;
             back_version_hdr->session_id = source_old_hdr->session_id;
-            back_version_hdr->infomask |=
-                (TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED);
+            back_version_hdr->setTID(
+                makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id)),
+                old_item_id);
+            uint16_t preserved_infomask =
+                back_version_hdr->infomask &
+                (TupleHeader::HEAP_HAS_NULLS |
+                 TupleHeader::HEAP_XMIN_COMMITTED |
+                 TupleHeader::HEAP_XMIN_INVALID |
+                 TupleHeader::HEAP_XMIN_FROZEN);
+            back_version_hdr->infomask =
+                preserved_infomask | TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED;
             applyCanonicalRecordContract(back_version_hdr, back_version_data,
                                          back_version_size, &stable_row_uuid);
         }
@@ -1253,6 +1352,7 @@ namespace scratchbird::core
 
     auto HeapPage::findVisibleVersion(uint16_t item_id, uint64_t current_xid,
                                       const uint8_t **data_out, uint32_t *size_out,
+                                      TID *visible_tid_out,
                                       ErrorContext *ctx)
         -> Status
     {
@@ -1491,118 +1591,118 @@ namespace scratchbird::core
             // Treat invalid xmax as 0 (not deleted)
             uint64_t effective_xmax = xmax_valid ? tuple_hdr->xmax : 0;
 
-            // HINT BITS OPTIMIZATION (Issue 2.13): Check hint bits first (fast path)
-            // This avoids expensive transaction state lookups for tuples we've seen before
-            // Target: 50% reduction in TIP lookups per specification
-            bool visible = false;
-            bool hint_bits_definitive = false;
+            bool create_visible = false;
+            bool delete_visible = false;
 
-            // Fast path: Check if hint bits give us a definitive answer
-            if (tuple_hdr->infomask & TupleHeader::HEAP_XMIN_COMMITTED)
+            if (db_ != nullptr && db_->transaction_manager() != nullptr)
             {
-                // xmin is definitely committed - check xmax status
-                if (tuple_hdr->infomask & TupleHeader::HEAP_XMAX_INVALID)
+                TransactionManager *txn_mgr = db_->transaction_manager();
+                ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+
+                auto deleteVisibleInSnapshot = [&](const TransactionSnapshot &snapshot) -> bool
                 {
-                    // Not deleted - definitely visible
-                    visible = true;
-                    hint_bits_definitive = true;
-                }
-                else if (effective_xmax != 0 &&
-                         (tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED))
-                {
-                    // Deleted by a committed transaction
-                    // Check if deleted before our transaction
-                    if (effective_xmax <= current_xid)
+                    const bool active_in_snapshot =
+                        std::binary_search(snapshot.active_txid_set.begin(),
+                                           snapshot.active_txid_set.end(),
+                                           effective_xmax);
+                    if (effective_xmax == 0)
                     {
-                        visible = false;
-                        hint_bits_definitive = true;
+                        return false;
+                    }
+                    if (effective_xmax == current_xid)
+                    {
+                        return true;
+                    }
+                    if (effective_xmax >= snapshot.snapshot_txid_high)
+                    {
+                        return false;
+                    }
+
+                    TransactionState delete_state = TransactionState::ACTIVE;
+                    Status delete_status =
+                        txn_mgr->getTransactionState(effective_xmax, delete_state, nullptr);
+                    return delete_status == Status::OK &&
+                           delete_state == TransactionState::COMMITTED &&
+                           !active_in_snapshot;
+                };
+
+                if (conn_ctx != nullptr)
+                {
+                    if (const auto *replay_snapshot = conn_ctx->getForensicReplaySnapshot();
+                        replay_snapshot != nullptr)
+                    {
+                        create_visible = txn_mgr->isCreateVisibleInSnapshot(
+                            tuple_hdr->xmin, current_xid, *replay_snapshot);
+                        delete_visible = deleteVisibleInSnapshot(*replay_snapshot);
                     }
                     else
                     {
-                        // Deleted after our transaction started - still visible
-                        visible = true;
-                        hint_bits_definitive = true;
-                    }
-                }
-                else if (effective_xmax == 0)
-                {
-                    // No deleting transaction - definitely visible
-                    visible = true;
-                    hint_bits_definitive = true;
-                }
-            }
-            else if (tuple_hdr->infomask & TupleHeader::HEAP_XMIN_INVALID)
-            {
-                // xmin is definitely invalid - not visible
-                visible = false;
-                hint_bits_definitive = true;
-            }
-
-            // Slow path: Need to check transaction state if hint bits aren't definitive
-            if (!hint_bits_definitive)
-            {
-                // Check visibility of this version using Firebird MGA TIP-based visibility
-                // Simple visibility: xmin <= current_xid < xmax
-                if (tuple_hdr->xmin <= current_xid)
-                {
-                    if (effective_xmax == 0 || effective_xmax > current_xid)
-                    {
-                        visible = true;
-                    }
-                }
-
-                // SET HINT BITS for next time (only if we have transaction manager access)
-                // This optimizes future visibility checks
-                if (db_ != nullptr && db_->transaction_manager() != nullptr)
-                {
-                    TransactionManager *txn_mgr = db_->transaction_manager();
-                    ErrorContext hint_ctx; // Use separate error context for hint bit operations
-
-                    // Set xmin hint bits
-                    if (tuple_hdr->xmin <= current_xid)
-                    {
-                        TransactionState xmin_state;
-                        if (txn_mgr->getTransactionState(tuple_hdr->xmin, xmin_state, &hint_ctx) ==
-                            Status::OK)
+                        switch (conn_ctx->getIsolationLevel())
                         {
-                            if (xmin_state == TransactionState::COMMITTED)
-                            {
-                                tuple_hdr->infomask |= TupleHeader::HEAP_XMIN_COMMITTED;
-                            }
-                            else if (xmin_state == TransactionState::ABORTED)
-                            {
-                                tuple_hdr->infomask |= TupleHeader::HEAP_XMIN_INVALID;
-                            }
+                            case IsolationLevel::SNAPSHOT:
+                            case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                                if (const auto *retained_snapshot =
+                                        conn_ctx->getRetainedTransactionSnapshot();
+                                    retained_snapshot != nullptr)
+                                {
+                                    create_visible = txn_mgr->isCreateVisibleInSnapshot(
+                                        tuple_hdr->xmin, current_xid, *retained_snapshot);
+                                    delete_visible = deleteVisibleInSnapshot(*retained_snapshot);
+                                    break;
+                                }
+                                [[fallthrough]];
+
+                            case IsolationLevel::READ_COMMITTED:
+                            case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
+                            default:
+                                break;
                         }
                     }
+                }
 
-                    // Set xmax hint bits
-                    if (effective_xmax != 0 && effective_xmax <= current_xid)
+                if (!create_visible && conn_ctx == nullptr)
+                {
+                    create_visible = txn_mgr->isTransactionVisible(tuple_hdr->xmin, current_xid);
+                    delete_visible = effective_xmax != 0 &&
+                                     (effective_xmax == current_xid ||
+                                      txn_mgr->isTransactionVisible(effective_xmax, current_xid));
+                }
+                else if (conn_ctx != nullptr &&
+                         conn_ctx->getIsolationLevel() == IsolationLevel::READ_COMMITTED)
+                {
+                    create_visible = txn_mgr->isTransactionVisible(tuple_hdr->xmin, current_xid);
+                    delete_visible = effective_xmax != 0 &&
+                                     (effective_xmax == current_xid ||
+                                      txn_mgr->isTransactionVisible(effective_xmax, current_xid));
+                }
+                else if (conn_ctx != nullptr &&
+                         conn_ctx->getIsolationLevel() ==
+                             IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+                {
+                    if (const auto *statement_snapshot =
+                            conn_ctx->getStatementTransactionSnapshot();
+                        statement_snapshot != nullptr)
                     {
-                        TransactionState xmax_state;
-                        if (txn_mgr->getTransactionState(effective_xmax, xmax_state, &hint_ctx) ==
-                            Status::OK)
-                        {
-                            if (xmax_state == TransactionState::COMMITTED)
-                            {
-                                tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
-                            }
-                            else if (xmax_state == TransactionState::ABORTED)
-                            {
-                                tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_INVALID;
-                            }
-                        }
+                        create_visible = txn_mgr->isCreateVisibleInSnapshot(
+                            tuple_hdr->xmin, current_xid, *statement_snapshot);
+                        delete_visible = deleteVisibleInSnapshot(*statement_snapshot);
                     }
-
-                    // NOTE: Hint bits are written opportunistically during visibility checks
-                    // The page is modified in-memory, but we don't explicitly mark it dirty.
-                    // Hint bits will be persisted if:
-                    // 1. The page is modified by another operation (update/delete) before eviction
-                    // 2. The page is explicitly flushed
-                    // Lost hint bits are acceptable - they're a performance optimization that
-                    // can be recreated on next visibility check.
+                    else
+                    {
+                        create_visible = txn_mgr->isTransactionVisible(tuple_hdr->xmin, current_xid);
+                        delete_visible = effective_xmax != 0 &&
+                                         (effective_xmax == current_xid ||
+                                          txn_mgr->isTransactionVisible(effective_xmax, current_xid));
+                    }
                 }
             }
+            else
+            {
+                create_visible = tuple_hdr->xmin <= current_xid;
+                delete_visible = effective_xmax != 0 && effective_xmax <= current_xid;
+            }
+
+            const bool visible = create_visible && !delete_visible;
 
             if (visible)
             {
@@ -1615,6 +1715,10 @@ namespace scratchbird::core
                     if (size_out != nullptr)
                     {
                         *size_out = length;
+                    }
+                    if (visible_tid_out != nullptr)
+                    {
+                        *visible_tid_out = TID(current_gpid, current_item_id);
                     }
 
                     // Safe to return pointer - page is pinned by caller
@@ -1639,6 +1743,10 @@ namespace scratchbird::core
                 {
                     *size_out = length;
                 }
+                if (visible_tid_out != nullptr)
+                {
+                    *visible_tid_out = TID(current_gpid, current_item_id);
+                }
 
                 return Status::OK;
             }
@@ -1648,31 +1756,33 @@ namespace scratchbird::core
             // ====================================================================
             // This version is not visible to our transaction.
             // Follow back version pointer BACKWARD to older version.
-            if (tuple_hdr->hasBackVersion())
+            if (!create_visible)
             {
-                TID back_tid = tuple_hdr->getBackVersionTID();
-                if (back_tid.gpid == INVALID_GPID)
+                if (tuple_hdr->hasBackVersion())
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                      "Invalid back version target");
-                    return Status::PAGE_CORRUPT;
-                }
+                    TID back_tid = tuple_hdr->getBackVersionTID();
+                    if (back_tid.gpid == INVALID_GPID)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                          "Invalid back version target");
+                        return Status::PAGE_CORRUPT;
+                    }
 
-                Status switch_status = switchToPage(back_tid.gpid);
-                if (switch_status != Status::OK)
-                {
-                    return switch_status;
-                }
-                current_item_id = back_tid.slot;
+                    Status switch_status = switchToPage(back_tid.gpid);
+                    if (switch_status != Status::OK)
+                    {
+                        return switch_status;
+                    }
+                    current_item_id = back_tid.slot;
 
-                chain_length++;
+                    chain_length++;
+                    continue;
+                }
             }
-            else
-            {
-                // End of chain, no visible version found
-                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No visible version in chain");
-                return Status::NOT_FOUND;
-            }
+
+            // End of chain, or this logical row is deleted for the reader snapshot.
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "No visible version in chain");
+            return Status::NOT_FOUND;
         }
 
         // Chain too long - possible cycle or corruption
@@ -1782,7 +1892,10 @@ namespace scratchbird::core
             }
 
             auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[item_id].offset);
-            if (tuple_hdr->ctid_gpid != current_gpid || tuple_hdr->ctid_slot != item_id)
+            const bool is_chain_member =
+                (tuple_hdr->infomask & TupleHeader::HEAP_CHAIN) != 0u;
+            if (!is_chain_member &&
+                (tuple_hdr->ctid_gpid != current_gpid || tuple_hdr->ctid_slot != item_id))
             {
                 tuple_hdr->setTID(current_gpid, item_id);
                 ++repairs;
@@ -1817,9 +1930,9 @@ namespace scratchbird::core
 
                 auto *back_hdr =
                     reinterpret_cast<TupleHeader *>(page_data_ + items[back_tid.slot].offset);
-                if (back_hdr->ctid_gpid != current_gpid || back_hdr->ctid_slot != back_tid.slot)
+                if (back_hdr->ctid_gpid != current_gpid || back_hdr->ctid_slot != item_id)
                 {
-                    back_hdr->setTID(current_gpid, back_tid.slot);
+                    back_hdr->setTID(current_gpid, item_id);
                     ++repairs;
                 }
                 continue;
@@ -1872,10 +1985,10 @@ namespace scratchbird::core
 
             auto *target_tuple_hdr = reinterpret_cast<TupleHeader *>(
                 target_page_data + target_items[back_tid.slot].offset);
-            if (target_tuple_hdr->ctid_gpid != back_tid.gpid ||
-                target_tuple_hdr->ctid_slot != back_tid.slot)
+            if (target_tuple_hdr->ctid_gpid != current_gpid ||
+                target_tuple_hdr->ctid_slot != item_id)
             {
-                target_tuple_hdr->setTID(back_tid.gpid, back_tid.slot);
+                target_tuple_hdr->setTID(current_gpid, item_id);
                 target_dirty = true;
                 ++repairs;
             }
@@ -2111,8 +2224,15 @@ namespace scratchbird::core
             // 3. xmax is committed
             if (tuple_hdr->xmax != 0 && tuple_hdr->xmax < oit)
             {
-                // Check if XMAX_COMMITTED flag is set
-                if ((tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0)
+                bool xmax_committed = false;
+                Status resolve_status =
+                    resolveCommittedDeleteState(db_, tuple_hdr, &xmax_committed, ctx);
+                if (resolve_status != Status::OK)
+                {
+                    return resolve_status;
+                }
+
+                if (xmax_committed)
                 {
                     // Tuple is garbage - mark as unused
                     items[i].setUnused();
@@ -2190,8 +2310,15 @@ namespace scratchbird::core
             // 3. xmax is committed
             if (tuple_hdr->xmax != 0 && tuple_hdr->xmax < oit)
             {
-                // Check if XMAX_COMMITTED flag is set
-                if ((tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0)
+                bool xmax_committed = false;
+                Status resolve_status =
+                    resolveCommittedDeleteState(db_, tuple_hdr, &xmax_committed, ctx);
+                if (resolve_status != Status::OK)
+                {
+                    return resolve_status;
+                }
+
+                if (xmax_committed)
                 {
                     // PHASE 1.5: Create TID struct (already using GPID internally)
                     TID tid = tuple_hdr->getTID();

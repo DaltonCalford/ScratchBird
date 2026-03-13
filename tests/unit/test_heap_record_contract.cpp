@@ -164,7 +164,7 @@ TEST_F(HeapRecordContractTest, DeleteMarksCanonicalDeletedFlagOnTupleHeader)
     const auto *items =
         reinterpret_cast<const ItemPointer *>(page_buffer_.data() + sizeof(PageHeader));
     ASSERT_LT(item_id, static_cast<uint16_t>((pageLower(*pg_hdr) - sizeof(PageHeader)) / sizeof(ItemPointer)));
-    EXPECT_TRUE(items[item_id].isDeleted());
+    EXPECT_FALSE(items[item_id].isDeleted());
 
     const auto *tuple_hdr =
         reinterpret_cast<const TupleHeader *>(page_buffer_.data() + items[item_id].offset);
