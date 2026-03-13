@@ -610,6 +610,9 @@ namespace scratchbird::core
         ID current_transaction_uuid_;               // Stable UUID lineage identity for current transaction
         std::chrono::microseconds xact_start_time_; // Transaction start time
         ID lineage_root_event_id_;
+        uint64_t transaction_start_oit_ = 0;
+        uint64_t transaction_start_oat_ = 0;
+        uint64_t transaction_start_ost_ = 0;
 
         struct ForensicReplayBinding
         {

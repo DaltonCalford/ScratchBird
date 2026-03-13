@@ -22,6 +22,7 @@
 
 namespace scratchbird::core
 {
+    class Database;
 
     struct MetricPolicyViolation
     {
@@ -72,6 +73,88 @@ namespace scratchbird::core
         double value = 0.0;
         std::string labels_json;
         uint64_t updated_at = 0;
+    };
+
+    struct SqlMgaActiveTransactionRow
+    {
+        std::string db_uuid;
+        uint64_t txid = 0;
+        std::string state;
+        std::string isolation_mode;
+        bool has_xmin = false;
+        uint64_t xmin = 0;
+        double age_seconds = 0.0;
+        uint64_t retained_bytes = 0;
+        uint64_t started_at_ms = 0;
+    };
+
+    struct SqlMgaCleanupDebtRow
+    {
+        std::string db_uuid;
+        std::string relation_name;
+        uint64_t cleanup_debt_bytes = 0;
+        uint64_t retained_dead_bytes = 0;
+        bool has_chain_scatter_bucket = false;
+        std::string chain_scatter_bucket;
+        bool rewrite_recommended = false;
+        uint64_t sweep_generation = 0;
+        uint64_t observed_at_ms = 0;
+    };
+
+    struct SqlMgaSnapshotBlockerRow
+    {
+        std::string db_uuid;
+        uint64_t blocker_txid = 0;
+        std::string blocker_identity;
+        uint64_t retained_bytes = 0;
+        double snapshot_age_seconds = 0.0;
+        uint64_t ost_txid = 0;
+        uint64_t observed_at_ms = 0;
+    };
+
+    struct SqlMgaTransactionHistoryRow
+    {
+        std::string db_uuid;
+        uint64_t txid = 0;
+        std::string state;
+        bool has_start_oit = false;
+        uint64_t start_oit = 0;
+        bool has_end_oit = false;
+        uint64_t end_oit = 0;
+        bool has_start_oat = false;
+        uint64_t start_oat = 0;
+        bool has_end_oat = false;
+        uint64_t end_oat = 0;
+        bool has_start_ost = false;
+        uint64_t start_ost = 0;
+        bool has_end_ost = false;
+        uint64_t end_ost = 0;
+        uint64_t restart_count = 0;
+        bool has_publication_fence_seconds = false;
+        double publication_fence_seconds = 0.0;
+        bool has_limbo_state = false;
+        std::string limbo_state;
+        uint64_t started_at_ms = 0;
+        bool has_ended_at_ms = false;
+        uint64_t ended_at_ms = 0;
+    };
+
+    struct SqlMgaWaitHistoryRow
+    {
+        std::string db_uuid;
+        std::string wait_event_id;
+        std::string wait_mode;
+        bool has_blocker_txid = false;
+        uint64_t blocker_txid = 0;
+        bool has_victim_txid = false;
+        uint64_t victim_txid = 0;
+        bool has_blocker_identity = false;
+        std::string blocker_identity;
+        bool has_victim_identity = false;
+        std::string victim_identity;
+        double wait_seconds = 0.0;
+        std::string outcome;
+        uint64_t observed_at_ms = 0;
     };
 
     struct ClusterShardObservabilityInput
@@ -198,8 +281,34 @@ namespace scratchbird::core
                                      uint64_t updated_at_ms,
                                      std::vector<SqlRuntimeMetricRow>& rows_out) -> Status;
 
+        static auto buildMgaRuntimeRows(const Database& db,
+                                        const MetricsRegistry& registry,
+                                        uint64_t updated_at_ms,
+                                        std::vector<SqlRuntimeMetricRow>& rows_out) -> Status;
+
         static auto buildHealthRows(const std::vector<HealthComponentRow>& health_components,
                                     std::vector<HealthComponentRow>& rows_out) -> Status;
+
+        static auto buildMgaActiveTransactionRows(const Database& db,
+                                                  uint64_t observed_at_ms,
+                                                  std::vector<SqlMgaActiveTransactionRow>& rows_out) -> Status;
+
+        static auto buildMgaCleanupDebtRows(const Database& db,
+                                            const MetricsRegistry& registry,
+                                            uint64_t observed_at_ms,
+                                            std::vector<SqlMgaCleanupDebtRow>& rows_out) -> Status;
+
+        static auto buildMgaSnapshotBlockerRows(const Database& db,
+                                                const MetricsRegistry& registry,
+                                                uint64_t observed_at_ms,
+                                                std::vector<SqlMgaSnapshotBlockerRow>& rows_out) -> Status;
+
+        static auto buildMgaTransactionHistoryRows(
+            const Database& db,
+            std::vector<SqlMgaTransactionHistoryRow>& rows_out) -> Status;
+
+        static auto buildMgaWaitHistoryRows(const Database& db,
+                                            std::vector<SqlMgaWaitHistoryRow>& rows_out) -> Status;
 
         static auto buildClusterShardRows(
             const std::vector<ClusterShardObservabilityInput>& shards,

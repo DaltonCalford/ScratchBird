@@ -17,6 +17,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/observability_contract.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/types.h"
@@ -483,7 +484,13 @@ void SysCatalogHandler::initializeTableNames() {
         "shard_status",
         "shard_migrations",
         "plugin",
-        "prepared_statement"
+        "prepared_statement",
+        "sb_mga_runtime_metrics",
+        "sb_mga_active_transactions",
+        "sb_mga_cleanup_debt",
+        "sb_mga_snapshot_blockers",
+        "sb_mga_transaction_history",
+        "sb_mga_wait_history"
     };
 }
 
@@ -962,6 +969,76 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"is_valid", DataType::BOOLEAN, false}
     };
 
+    static const ColumnDefs kMgaRuntimeMetricsColumns = {
+        {"metric_name", DataType::TEXT, false},
+        {"metric_type", DataType::TEXT, false},
+        {"value", DataType::FLOAT64, false},
+        {"labels_json", DataType::JSON, false},
+        {"updated_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kMgaActiveTransactionsColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"txid", DataType::INT64, false},
+        {"state", DataType::TEXT, false},
+        {"isolation_mode", DataType::TEXT, false},
+        {"xmin", DataType::INT64, true},
+        {"age_seconds", DataType::FLOAT64, false},
+        {"retained_bytes", DataType::INT64, false},
+        {"started_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kMgaCleanupDebtColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"relation_name", DataType::TEXT, false},
+        {"cleanup_debt_bytes", DataType::INT64, false},
+        {"retained_dead_bytes", DataType::INT64, false},
+        {"chain_scatter_bucket", DataType::TEXT, true},
+        {"rewrite_recommended", DataType::BOOLEAN, false},
+        {"sweep_generation", DataType::INT64, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kMgaSnapshotBlockersColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"blocker_txid", DataType::INT64, false},
+        {"blocker_identity", DataType::TEXT, false},
+        {"retained_bytes", DataType::INT64, false},
+        {"snapshot_age_seconds", DataType::FLOAT64, false},
+        {"ost_txid", DataType::INT64, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kMgaTransactionHistoryColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"txid", DataType::INT64, false},
+        {"state", DataType::TEXT, false},
+        {"start_oit", DataType::INT64, true},
+        {"end_oit", DataType::INT64, true},
+        {"start_oat", DataType::INT64, true},
+        {"end_oat", DataType::INT64, true},
+        {"start_ost", DataType::INT64, true},
+        {"end_ost", DataType::INT64, true},
+        {"restart_count", DataType::INT64, false},
+        {"publication_fence_seconds", DataType::FLOAT64, true},
+        {"limbo_state", DataType::TEXT, true},
+        {"started_at_ms", DataType::INT64, false},
+        {"ended_at_ms", DataType::INT64, true}
+    };
+
+    static const ColumnDefs kMgaWaitHistoryColumns = {
+        {"db_uuid", DataType::UUID, false},
+        {"wait_event_id", DataType::TEXT, false},
+        {"wait_mode", DataType::TEXT, false},
+        {"blocker_txid", DataType::INT64, true},
+        {"victim_txid", DataType::INT64, true},
+        {"blocker_identity", DataType::TEXT, true},
+        {"victim_identity", DataType::TEXT, true},
+        {"wait_seconds", DataType::FLOAT64, false},
+        {"outcome", DataType::TEXT, false},
+        {"observed_at_ms", DataType::INT64, false}
+    };
+
     if (equalsCaseInsensitive(table_name, "sessions")) {
         return &kSessionsColumns;
     }
@@ -1030,6 +1107,24 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     }
     if (equalsCaseInsensitive(table_name, "prepared_statement")) {
         return &kPreparedStatementColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_runtime_metrics")) {
+        return &kMgaRuntimeMetricsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_active_transactions")) {
+        return &kMgaActiveTransactionsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_cleanup_debt")) {
+        return &kMgaCleanupDebtColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_snapshot_blockers")) {
+        return &kMgaSnapshotBlockersColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_transaction_history")) {
+        return &kMgaTransactionHistoryColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_wait_history")) {
+        return &kMgaWaitHistoryColumns;
     }
 
     return nullptr;
@@ -1184,6 +1279,24 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     if (equalsCaseInsensitive(table_name, "prepared_statement")) {
         return queryPreparedStatements(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_runtime_metrics")) {
+        return queryMgaRuntimeMetrics(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_active_transactions")) {
+        return queryMgaActiveTransactions(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_cleanup_debt")) {
+        return queryMgaCleanupDebt(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_snapshot_blockers")) {
+        return queryMgaSnapshotBlockers(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_transaction_history")) {
+        return queryMgaTransactionHistory(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_wait_history")) {
+        return queryMgaWaitHistory(results, ctx);
     }
 
     return Status::OK;
@@ -3409,6 +3522,248 @@ Status SysCatalogHandler::queryPreparedStatements(VirtualResultSet& results, Err
         }
     }
 
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaRuntimeMetrics(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlRuntimeMetricRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildMgaRuntimeRows(
+        *db, core::MetricsRegistry::getInstance(), now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    for (const auto& metric_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"metric_name", core::TypedValue::makeText(metric_row.metric_name)},
+            {"metric_type", core::TypedValue::makeText(metric_row.metric_type)},
+            {"value", core::TypedValue::makeFloat64(metric_row.value)},
+            {"labels_json", core::TypedValue::makeJSON(metric_row.labels_json)},
+            {"updated_at_ms", core::TypedValue::makeInt64(static_cast<int64_t>(metric_row.updated_at))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaActiveTransactions(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlMgaActiveTransactionRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildMgaActiveTransactionRows(*db, now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& active_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"txid", core::TypedValue::makeInt64(static_cast<int64_t>(active_row.txid))},
+            {"state", core::TypedValue::makeText(active_row.state)},
+            {"isolation_mode", core::TypedValue::makeText(active_row.isolation_mode)},
+            {"xmin", active_row.has_xmin
+                         ? core::TypedValue::makeInt64(static_cast<int64_t>(active_row.xmin))
+                         : core::TypedValue::makeNull(DataType::INT64)},
+            {"age_seconds", core::TypedValue::makeFloat64(active_row.age_seconds)},
+            {"retained_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(active_row.retained_bytes))},
+            {"started_at_ms", core::TypedValue::makeInt64(static_cast<int64_t>(active_row.started_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaCleanupDebt(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlMgaCleanupDebtRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildMgaCleanupDebtRows(
+        *db, core::MetricsRegistry::getInstance(), now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& debt_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"relation_name", core::TypedValue::makeText(debt_row.relation_name)},
+            {"cleanup_debt_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(debt_row.cleanup_debt_bytes))},
+            {"retained_dead_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(debt_row.retained_dead_bytes))},
+            {"chain_scatter_bucket", debt_row.has_chain_scatter_bucket
+                                         ? core::TypedValue::makeText(debt_row.chain_scatter_bucket)
+                                         : core::TypedValue::makeNull(DataType::TEXT)},
+            {"rewrite_recommended", core::TypedValue::makeBoolean(debt_row.rewrite_recommended)},
+            {"sweep_generation", core::TypedValue::makeInt64(static_cast<int64_t>(debt_row.sweep_generation))},
+            {"observed_at_ms", core::TypedValue::makeInt64(static_cast<int64_t>(debt_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaSnapshotBlockers(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    auto& metrics = core::ScratchBirdMetrics::getInstance();
+    metrics.initialize();
+
+    const uint64_t now_ms = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<core::SqlMgaSnapshotBlockerRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildMgaSnapshotBlockerRows(
+        *db, core::MetricsRegistry::getInstance(), now_ms, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& blocker_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"blocker_txid", core::TypedValue::makeInt64(static_cast<int64_t>(blocker_row.blocker_txid))},
+            {"blocker_identity", core::TypedValue::makeText(blocker_row.blocker_identity)},
+            {"retained_bytes", core::TypedValue::makeInt64(static_cast<int64_t>(blocker_row.retained_bytes))},
+            {"snapshot_age_seconds", core::TypedValue::makeFloat64(blocker_row.snapshot_age_seconds)},
+            {"ost_txid", core::TypedValue::makeInt64(static_cast<int64_t>(blocker_row.ost_txid))},
+            {"observed_at_ms", core::TypedValue::makeInt64(static_cast<int64_t>(blocker_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaTransactionHistory(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    std::vector<core::SqlMgaTransactionHistoryRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildMgaTransactionHistoryRows(*db, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& history_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"txid", core::TypedValue::makeInt64(static_cast<int64_t>(history_row.txid))},
+            {"state", core::TypedValue::makeText(history_row.state)},
+            {"start_oit", history_row.has_start_oit
+                              ? core::TypedValue::makeInt64(static_cast<int64_t>(history_row.start_oit))
+                              : core::TypedValue::makeNull(DataType::INT64)},
+            {"end_oit", history_row.has_end_oit
+                            ? core::TypedValue::makeInt64(static_cast<int64_t>(history_row.end_oit))
+                            : core::TypedValue::makeNull(DataType::INT64)},
+            {"start_oat", history_row.has_start_oat
+                              ? core::TypedValue::makeInt64(static_cast<int64_t>(history_row.start_oat))
+                              : core::TypedValue::makeNull(DataType::INT64)},
+            {"end_oat", history_row.has_end_oat
+                            ? core::TypedValue::makeInt64(static_cast<int64_t>(history_row.end_oat))
+                            : core::TypedValue::makeNull(DataType::INT64)},
+            {"start_ost", history_row.has_start_ost
+                              ? core::TypedValue::makeInt64(static_cast<int64_t>(history_row.start_ost))
+                              : core::TypedValue::makeNull(DataType::INT64)},
+            {"end_ost", history_row.has_end_ost
+                            ? core::TypedValue::makeInt64(static_cast<int64_t>(history_row.end_ost))
+                            : core::TypedValue::makeNull(DataType::INT64)},
+            {"restart_count", core::TypedValue::makeInt64(static_cast<int64_t>(history_row.restart_count))},
+            {"publication_fence_seconds",
+             history_row.has_publication_fence_seconds
+                 ? core::TypedValue::makeFloat64(history_row.publication_fence_seconds)
+                 : core::TypedValue::makeNull(DataType::FLOAT64)},
+            {"limbo_state", history_row.has_limbo_state
+                                ? core::TypedValue::makeText(history_row.limbo_state)
+                                : core::TypedValue::makeNull(DataType::TEXT)},
+            {"started_at_ms", core::TypedValue::makeInt64(static_cast<int64_t>(history_row.started_at_ms))},
+            {"ended_at_ms", history_row.has_ended_at_ms
+                                ? core::TypedValue::makeInt64(static_cast<int64_t>(history_row.ended_at_ms))
+                                : core::TypedValue::makeNull(DataType::INT64)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaWaitHistory(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    std::vector<core::SqlMgaWaitHistoryRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildMgaWaitHistoryRows(*db, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    const core::TypedValue db_uuid = uuidValueOrNull(db->uuid());
+    for (const auto& wait_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"db_uuid", db_uuid},
+            {"wait_event_id", core::TypedValue::makeText(wait_row.wait_event_id)},
+            {"wait_mode", core::TypedValue::makeText(wait_row.wait_mode)},
+            {"blocker_txid", wait_row.has_blocker_txid
+                                 ? core::TypedValue::makeInt64(static_cast<int64_t>(wait_row.blocker_txid))
+                                 : core::TypedValue::makeNull(DataType::INT64)},
+            {"victim_txid", wait_row.has_victim_txid
+                                ? core::TypedValue::makeInt64(static_cast<int64_t>(wait_row.victim_txid))
+                                : core::TypedValue::makeNull(DataType::INT64)},
+            {"blocker_identity", wait_row.has_blocker_identity
+                                     ? core::TypedValue::makeText(wait_row.blocker_identity)
+                                     : core::TypedValue::makeNull(DataType::TEXT)},
+            {"victim_identity", wait_row.has_victim_identity
+                                    ? core::TypedValue::makeText(wait_row.victim_identity)
+                                    : core::TypedValue::makeNull(DataType::TEXT)},
+            {"wait_seconds", core::TypedValue::makeFloat64(wait_row.wait_seconds)},
+            {"outcome", core::TypedValue::makeText(wait_row.outcome)},
+            {"observed_at_ms", core::TypedValue::makeInt64(static_cast<int64_t>(wait_row.observed_at_ms))}
+        };
+        results.rows.push_back(std::move(row));
+    }
     return Status::OK;
 }
 

@@ -188,6 +188,46 @@ namespace scratchbird::core
         return true;
     }
 
+    auto StorageEngine::listFragmentationAdvisories(
+        std::vector<FragmentationAdvisorySnapshot>& advisories_out) const -> Status
+    {
+        advisories_out.clear();
+
+        std::lock_guard<std::mutex> lock(fragmentation_advisory_mutex_);
+        size_t advisory_count = 0;
+        for (const auto& [table_id, page_map] : fragmentation_advisories_)
+        {
+            advisory_count += page_map.size();
+        }
+
+        advisories_out.reserve(advisory_count);
+        for (const auto& [table_id, page_map] : fragmentation_advisories_)
+        {
+            for (const auto& [page_id, advisory] : page_map)
+            {
+                (void)page_id;
+                FragmentationAdvisorySnapshot snapshot{};
+                snapshot.table_id = table_id;
+                snapshot.advisory = advisory;
+                advisories_out.push_back(std::move(snapshot));
+            }
+        }
+
+        std::sort(advisories_out.begin(),
+                  advisories_out.end(),
+                  [](const FragmentationAdvisorySnapshot& lhs,
+                     const FragmentationAdvisorySnapshot& rhs) {
+                      const std::string lhs_table_id = lhs.table_id.toString();
+                      const std::string rhs_table_id = rhs.table_id.toString();
+                      if (lhs_table_id != rhs_table_id)
+                      {
+                          return lhs_table_id < rhs_table_id;
+                      }
+                      return lhs.advisory.page_id < rhs.advisory.page_id;
+                  });
+        return Status::OK;
+    }
+
     // LSM Integration Phase 4: Helper method to insert into any index type
     namespace {
         std::vector<uint8_t> encodeLsmValue(const TID &tid)

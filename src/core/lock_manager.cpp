@@ -59,6 +59,18 @@ namespace scratchbird::core
             return oss.str();
         }
 
+        auto isZeroIdLocal(const ID& id) -> bool
+        {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         bool lockModesConflictForTag(const LockTag &tag, LockMode held_mode, LockMode requested_mode,
                                      const bool conflict_matrix[8][8])
         {
@@ -102,6 +114,36 @@ namespace scratchbird::core
             entry.victim_reason_code = victim_reason_code != nullptr ? victim_reason_code : "";
             entry.retry_eligible = retry_eligible;
             entry.timed_out = timed_out;
+
+            const std::vector<Database::ConnectionIoSnapshot> snapshots =
+                db->snapshotConnectionIoStats();
+            for (const Database::ConnectionIoSnapshot& snapshot : snapshots)
+            {
+                if (snapshot.proc_id == waiter_proc_id)
+                {
+                    if (snapshot.transaction_id != 0)
+                    {
+                        entry.has_victim_txid = true;
+                        entry.victim_txid = snapshot.transaction_id;
+                    }
+                    if (!isZeroIdLocal(snapshot.session_id))
+                    {
+                        entry.victim_identity = snapshot.session_id.toString();
+                    }
+                }
+                if (snapshot.proc_id == blocker_proc_id)
+                {
+                    if (snapshot.transaction_id != 0)
+                    {
+                        entry.has_blocker_txid = true;
+                        entry.blocker_txid = snapshot.transaction_id;
+                    }
+                    if (!isZeroIdLocal(snapshot.session_id))
+                    {
+                        entry.blocker_identity = snapshot.session_id.toString();
+                    }
+                }
+            }
             db->catalog_manager()->recordWaitHistory(entry, nullptr);
         }
     } // namespace

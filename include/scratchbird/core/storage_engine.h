@@ -145,6 +145,12 @@ namespace scratchbird::core
             bool compaction_applied = false;
         };
 
+        struct FragmentationAdvisorySnapshot
+        {
+            ID table_id{};
+            FragmentationAdvisory advisory{};
+        };
+
         explicit StorageEngine(Database *db);
         ~StorageEngine();
 
@@ -221,6 +227,8 @@ namespace scratchbird::core
         [[nodiscard]] auto getFragmentationAdvisory(const ID &table_id, uint32_t page_id,
                                                     FragmentationAdvisory *advisory_out) const
             -> bool;
+        auto listFragmentationAdvisories(std::vector<FragmentationAdvisorySnapshot>& advisories_out) const
+            -> Status;
 
     private:
         friend class IndexScanIterator;

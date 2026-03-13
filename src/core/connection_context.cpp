@@ -844,6 +844,9 @@ namespace scratchbird::core
           current_transaction_uuid_(),
           xact_start_time_(std::chrono::microseconds(0)),
           lineage_root_event_id_(),
+          transaction_start_oit_(0),
+          transaction_start_oat_(0),
+          transaction_start_ost_(0),
           current_schema_epoch_uuid_(),
           transaction_start_schema_epoch_uuid_(),
           retained_transaction_snapshot_(nullptr),
@@ -955,6 +958,9 @@ namespace scratchbird::core
           current_xid_(other.current_xid_), current_transaction_uuid_(other.current_transaction_uuid_),
           xact_start_time_(other.xact_start_time_),
           lineage_root_event_id_(other.lineage_root_event_id_),
+          transaction_start_oit_(other.transaction_start_oit_),
+          transaction_start_oat_(other.transaction_start_oat_),
+          transaction_start_ost_(other.transaction_start_ost_),
           current_schema_epoch_uuid_(other.current_schema_epoch_uuid_),
           transaction_start_schema_epoch_uuid_(other.transaction_start_schema_epoch_uuid_),
           retained_transaction_snapshot_(std::move(other.retained_transaction_snapshot_)),
@@ -1128,6 +1134,9 @@ namespace scratchbird::core
             current_transaction_uuid_ = other.current_transaction_uuid_;
             xact_start_time_ = other.xact_start_time_;
             lineage_root_event_id_ = other.lineage_root_event_id_;
+            transaction_start_oit_ = other.transaction_start_oit_;
+            transaction_start_oat_ = other.transaction_start_oat_;
+            transaction_start_ost_ = other.transaction_start_ost_;
             current_schema_epoch_uuid_ = other.current_schema_epoch_uuid_;
             transaction_start_schema_epoch_uuid_ = other.transaction_start_schema_epoch_uuid_;
             retained_transaction_snapshot_ = std::move(other.retained_transaction_snapshot_);
@@ -1219,6 +1228,9 @@ namespace scratchbird::core
             other.proc_id_ = UINT32_MAX;  // Invalidate so destructor doesn't double-unregister
             other.current_xid_ = 0;
             other.statement_xid_ = 0;
+            other.transaction_start_oit_ = 0;
+            other.transaction_start_oat_ = 0;
+            other.transaction_start_ost_ = 0;
             std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
             std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
             std::memset(&other.current_transaction_uuid_, 0, sizeof(other.current_transaction_uuid_));
@@ -2798,6 +2810,9 @@ namespace scratchbird::core
         savepoint_level_ = 0;
         command_id_ = 0;
         current_xid_ = 0;
+        transaction_start_oit_ = 0;
+        transaction_start_oat_ = 0;
+        transaction_start_ost_ = 0;
         xact_start_time_ = std::chrono::microseconds(0);
 
         applyStagedSettings();
@@ -3531,6 +3546,9 @@ namespace scratchbird::core
             LOG_WARNING(TRANSACTION, "Failed to update transaction markers");
             // Non-fatal - continue with transaction
         }
+        transaction_start_oit_ = txn_manager_->getOldestXid();
+        transaction_start_oat_ = txn_manager_->getOldestActiveXid();
+        transaction_start_ost_ = txn_manager_->getOldestSnapshot();
 
         // Acquire table locks if using SNAPSHOT TABLE STABILITY
         if (isolation_level_ == IsolationLevel::SNAPSHOT_TABLE_STABILITY &&
@@ -3628,6 +3646,9 @@ namespace scratchbird::core
             std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
             std::memset(&lineage_root_event_id_, 0, sizeof(lineage_root_event_id_));
             xact_start_time_ = std::chrono::microseconds(0);
+            transaction_start_oit_ = 0;
+            transaction_start_oat_ = 0;
+            transaction_start_ost_ = 0;
             retained_transaction_snapshot_.reset();
             pending_transactional_ddl_batches_.clear();
         };
@@ -3752,6 +3773,12 @@ namespace scratchbird::core
                 CatalogManager::TransactionHistoryEntry entry;
                 entry.thread_id = proc_id_;
                 entry.trx_id = ended_xid;
+                entry.start_oit = transaction_start_oit_;
+                entry.end_oit = txn_manager_->getOldestXid();
+                entry.start_oat = transaction_start_oat_;
+                entry.end_oat = txn_manager_->getOldestActiveXid();
+                entry.start_ost = transaction_start_ost_;
+                entry.end_ost = txn_manager_->getOldestSnapshot();
                 entry.timer_start = start_time;
                 entry.timer_end = end_time;
                 entry.timer_wait = (start_time != 0 && end_time >= start_time) ? (end_time - start_time) : 0;
@@ -3810,6 +3837,9 @@ namespace scratchbird::core
         std::memset(&lineage_root_event_id_, 0, sizeof(lineage_root_event_id_));
         std::memset(&transaction_start_schema_epoch_uuid_, 0, sizeof(transaction_start_schema_epoch_uuid_));
         current_xid_ = 0;
+        transaction_start_oit_ = 0;
+        transaction_start_oat_ = 0;
+        transaction_start_ost_ = 0;
         xact_start_time_ = std::chrono::microseconds(0);
 
         // Update transaction markers (OAT, OST) after ending transaction

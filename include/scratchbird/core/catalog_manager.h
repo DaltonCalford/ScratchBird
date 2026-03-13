@@ -10849,13 +10849,23 @@ public:
             uint64_t event_id = 0;
             uint64_t end_event_id = 0;
             uint64_t trx_id = 0;
+            uint64_t start_oit = 0;
+            uint64_t end_oit = 0;
+            uint64_t start_oat = 0;
+            uint64_t end_oat = 0;
+            uint64_t start_ost = 0;
+            uint64_t end_ost = 0;
             uint64_t timer_start = 0;
             uint64_t timer_end = 0;
             uint64_t timer_wait = 0;
+            uint64_t restart_count = 0;
             bool read_only = false;
             uint8_t isolation_level = 0;
             bool autocommit = false;
             bool committed = false;
+            bool has_publication_fence_us = false;
+            uint64_t publication_fence_us = 0;
+            std::string limbo_state;
         };
 
         struct WaitHistoryEntry
@@ -10867,12 +10877,18 @@ public:
             uint64_t timer_end = 0;
             uint64_t timer_wait = 0;
             uint64_t object_instance_begin = 0;
+            bool has_blocker_txid = false;
+            uint64_t blocker_txid = 0;
+            bool has_victim_txid = false;
+            uint64_t victim_txid = 0;
             std::string resource_class;
             std::string resource_id;
             uint8_t requested_mode = 0;
             uint8_t blocker_mode = 0;
             std::string outcome_code;
             std::string victim_reason_code;
+            std::string blocker_identity;
+            std::string victim_identity;
             bool retry_eligible = false;
             bool timed_out = false;
         };

@@ -1173,6 +1173,7 @@ void ScratchBirdMetrics::initialize() {
     // Register canonical SB-OBS namespace metrics in parallel with legacy
     // scratchbird_* metrics while migration remains in progress.
     (void)MetricContractPolicy::registerSbObsBaselineMetrics(reg);
+    (void)MgaObservabilityContract::registerRequiredMetrics(reg);
 
     initialized_ = true;
 }

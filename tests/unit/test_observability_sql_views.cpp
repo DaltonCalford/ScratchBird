@@ -10,16 +10,86 @@
 #include "scratchbird/core/observability_contract.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <memory>
+#include <string>
+#include <unistd.h>
 
 #include <gtest/gtest.h>
+
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/error_context.h"
+#include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/types.h"
+#include "scratchbird/core/uuidv7.h"
 
 namespace scratchbird::core
 {
 
+    class MgaObservabilityLiveViewsTest : public ::testing::Test
+    {
+    protected:
+        std::string db_path_;
+        std::unique_ptr<Database> db_;
+        CatalogManager* catalog_ = nullptr;
+        std::unique_ptr<ConnectionContext> conn_;
+        ID schema_id_{};
+        ID table_id_{};
+
+        void SetUp() override
+        {
+            db_path_ = "/tmp/test_mga_observability_views_" + std::to_string(getpid()) + ".db";
+            std::remove(db_path_.c_str());
+
+            ErrorContext ctx;
+            ASSERT_EQ(Database::create(db_path_, 16384, &ctx), Status::OK) << ctx.message;
+
+            db_ = std::make_unique<Database>();
+            ASSERT_EQ(db_->open(db_path_, &ctx), Status::OK) << ctx.message;
+            catalog_ = db_->catalog_manager();
+            ASSERT_NE(catalog_, nullptr);
+
+            ASSERT_EQ(db_->connect(conn_, &ctx), Status::OK) << ctx.message;
+            ConnectionContext::setCurrent(conn_.get());
+
+            ASSERT_EQ(catalog_->createSchema("mga_obs", "system", schema_id_, &ctx), Status::OK)
+                << ctx.message;
+
+            CatalogManager::ColumnInfo col{};
+            col.column_name = "id";
+            col.data_type = static_cast<uint16_t>(DataType::INT64);
+            col.nullable = false;
+            std::vector<CatalogManager::ColumnInfo> cols{col};
+            ASSERT_EQ(catalog_->createTable(schema_id_, "orders", cols, table_id_, 0, &ctx), Status::OK)
+                << ctx.message;
+        }
+
+        void TearDown() override
+        {
+            ConnectionContext::setCurrent(nullptr);
+            conn_.reset();
+            if (db_)
+            {
+                db_->close();
+                db_.reset();
+            }
+            std::remove(db_path_.c_str());
+        }
+
+        auto nowMicros() const -> uint64_t
+        {
+            return static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+        }
+    };
+
     TEST(SqlObservabilityViewBuilderTest, BuildsRuntimeAndHealthRowsWithDeterministicOrdering)
     {
-        MetricsRegistry& registry = MetricsRegistry::getInstance();
-        registry.clear();
+        MetricsRegistry registry;
 
         auto* queries = registry.registerCounter(
             "sb_engine_queries_total",
@@ -153,6 +223,132 @@ namespace scratchbird::core
         ASSERT_NE(restart_dashboard, dashboards.end());
         EXPECT_EQ(restart_dashboard->panels[1].source_view, "sb_mga_failpoint_events");
         EXPECT_EQ(restart_dashboard->alerts[0].predicate, "commit fence backlog older than 2 s");
+    }
+
+    TEST_F(MgaObservabilityLiveViewsTest, BuildsLiveMgaRowsFromRuntimeCatalogAndFragmentationState)
+    {
+        MetricsRegistry& registry = MetricsRegistry::getInstance();
+
+        const uint64_t now_us = nowMicros();
+
+        CatalogManager::RuntimeTransactionCatalogInfo tx_active{};
+        tx_active.txid = 41;
+        tx_active.tx_uuid = generateUuidV7();
+        tx_active.database_id = db_->uuid();
+        tx_active.user_id = catalog_->getSystemUserId(nullptr);
+        tx_active.isolation_level = static_cast<uint8_t>(IsolationLevel::SNAPSHOT);
+        tx_active.state = CatalogManager::RuntimeTransactionState::IN_PROGRESS;
+        tx_active.start_time = now_us - 6'000'000;
+        tx_active.created_time = now_us - 6'000'000;
+        tx_active.last_modified_time = now_us - 1'000'000;
+        ASSERT_EQ(catalog_->upsertRuntimeTransactionCatalogEntry(tx_active, nullptr), Status::OK);
+
+        CatalogManager::RuntimeTransactionCatalogInfo tx_prepared = tx_active;
+        tx_prepared.txid = 42;
+        tx_prepared.tx_uuid = generateUuidV7();
+        tx_prepared.state = CatalogManager::RuntimeTransactionState::PREPARED;
+        tx_prepared.start_time = now_us - 12'000'000;
+        tx_prepared.created_time = now_us - 12'000'000;
+        tx_prepared.has_end_time = true;
+        tx_prepared.end_time = now_us - 500'000;
+        ASSERT_EQ(catalog_->upsertRuntimeTransactionCatalogEntry(tx_prepared, nullptr), Status::OK);
+
+        CatalogManager::TransactionHistoryEntry committed{};
+        committed.thread_id = 7;
+        committed.event_id = 100;
+        committed.end_event_id = 101;
+        committed.trx_id = 40;
+        committed.start_oit = 30;
+        committed.end_oit = 31;
+        committed.start_oat = 40;
+        committed.end_oat = 41;
+        committed.start_ost = 40;
+        committed.end_ost = 41;
+        committed.timer_start = now_us - 20'000'000;
+        committed.timer_end = now_us - 19'000'000;
+        committed.timer_wait = 1'000'000;
+        committed.committed = true;
+        ASSERT_EQ(catalog_->recordTransactionHistory(committed, nullptr), Status::OK);
+
+        CatalogManager::WaitHistoryEntry wait{};
+        wait.thread_id = 17;
+        wait.blocker_thread_id = 18;
+        wait.event_id = 200;
+        wait.timer_start = now_us - 4'000'000;
+        wait.timer_end = now_us - 3'000'000;
+        wait.timer_wait = 1'000'000;
+        wait.has_blocker_txid = true;
+        wait.blocker_txid = 41;
+        wait.has_victim_txid = true;
+        wait.victim_txid = 42;
+        wait.requested_mode = static_cast<uint8_t>(LockMode::LOCK_EXCLUSIVE);
+        wait.blocker_mode = static_cast<uint8_t>(LockMode::LOCK_SHARE);
+        wait.outcome_code = "DEADLOCK_DETECTED";
+        wait.victim_reason_code = "youngest_xid";
+        wait.blocker_identity = tx_active.session_id.toString();
+        wait.victim_identity = tx_prepared.session_id.toString();
+        ASSERT_EQ(catalog_->recordWaitHistory(wait, nullptr), Status::OK);
+
+        StorageEngine::FragmentationAdvisory advisory{};
+        advisory.page_id = 17;
+        advisory.reclaimable_bytes = 512;
+        advisory.dead_space_ratio = 0.40;
+        advisory.rewrite_recommended = true;
+        db_->storage_engine()->publishFragmentationAdvisory(table_id_, advisory.page_id, advisory);
+
+        std::vector<SqlMgaActiveTransactionRow> active_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaActiveTransactionRows(
+                      *db_, now_us / 1000, active_rows),
+                  Status::OK);
+        ASSERT_EQ(active_rows.size(), 3u);
+        EXPECT_EQ(active_rows.front().txid, 42u);
+        EXPECT_GT(active_rows.front().age_seconds, 0.0);
+        EXPECT_NE(std::find_if(active_rows.begin(),
+                               active_rows.end(),
+                               [this](const SqlMgaActiveTransactionRow& row) {
+                                   return row.txid == conn_->getCurrentXid();
+                               }),
+                  active_rows.end());
+        EXPECT_NE(std::find_if(active_rows.begin(),
+                               active_rows.end(),
+                               [](const SqlMgaActiveTransactionRow& row) {
+                                   return row.txid == 41u;
+                               }),
+                  active_rows.end());
+        EXPECT_NE(std::find_if(active_rows.begin(),
+                               active_rows.end(),
+                               [](const SqlMgaActiveTransactionRow& row) {
+                                   return row.txid == 42u;
+                               }),
+                  active_rows.end());
+
+        std::vector<SqlMgaCleanupDebtRow> cleanup_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaCleanupDebtRows(
+                      *db_, registry, now_us / 1000, cleanup_rows),
+                  Status::OK);
+        ASSERT_EQ(cleanup_rows.size(), 1u);
+        EXPECT_EQ(cleanup_rows[0].relation_name, "orders");
+        EXPECT_EQ(cleanup_rows[0].cleanup_debt_bytes, 512u);
+        EXPECT_TRUE(cleanup_rows[0].rewrite_recommended);
+
+        std::vector<SqlMgaWaitHistoryRow> wait_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaWaitHistoryRows(*db_, wait_rows), Status::OK);
+        ASSERT_EQ(wait_rows.size(), 1u);
+        EXPECT_EQ(wait_rows[0].outcome, "DEADLOCK_DETECTED");
+        EXPECT_TRUE(wait_rows[0].has_blocker_txid);
+        EXPECT_EQ(wait_rows[0].blocker_txid, 41u);
+
+        std::vector<SqlRuntimeMetricRow> runtime_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaRuntimeRows(
+                      *db_, registry, now_us / 1000, runtime_rows),
+                  Status::OK);
+        EXPECT_FALSE(runtime_rows.empty());
+        const auto committed_metric = std::find_if(
+            runtime_rows.begin(), runtime_rows.end(), [](const SqlRuntimeMetricRow& row) {
+                return row.metric_name == "sb_tx_committed_total";
+            });
+        ASSERT_NE(committed_metric, runtime_rows.end());
+        EXPECT_EQ(committed_metric->value, 1.0);
     }
 
 } // namespace scratchbird::core

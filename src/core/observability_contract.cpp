@@ -9,9 +9,17 @@
  */
 #include "scratchbird/core/observability_contract.h"
 
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/sweep_manager.h"
+#include "scratchbird/core/transaction_manager.h"
+
 #include <algorithm>
 #include <cctype>
 #include <map>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <nlohmann/json.hpp>
@@ -87,6 +95,139 @@ namespace scratchbird::core
                 return "counter";
             }
             return "gauge";
+        }
+
+        auto isZeroId(const ID& id) -> bool
+        {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto microsToMillis(uint64_t micros) -> uint64_t
+        {
+            return micros / 1000;
+        }
+
+        auto microsToSeconds(uint64_t micros) -> double
+        {
+            return static_cast<double>(micros) / 1000000.0;
+        }
+
+        auto ageSecondsFromMicros(uint64_t now_ms, uint64_t started_at_micros) -> double
+        {
+            const uint64_t now_micros = now_ms * 1000;
+            if (started_at_micros == 0 || now_micros <= started_at_micros)
+            {
+                return 0.0;
+            }
+            return microsToSeconds(now_micros - started_at_micros);
+        }
+
+        auto dbUuidString(const Database& db) -> std::string
+        {
+            return db.uuid().toString();
+        }
+
+        auto relationNameForTableId(CatalogManager* catalog, const ID& table_id) -> std::string
+        {
+            if (catalog == nullptr || isZeroId(table_id))
+            {
+                return {};
+            }
+            CatalogManager::TableInfo table{};
+            if (catalog->getTable(table_id, table, nullptr) != Status::OK)
+            {
+                return {};
+            }
+            return table.table_name;
+        }
+
+        auto isolationModeName(uint8_t isolation_level) -> std::string
+        {
+            switch (static_cast<IsolationLevel>(isolation_level))
+            {
+                case IsolationLevel::READ_COMMITTED:
+                case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
+                    return "read_committed";
+                case IsolationLevel::SNAPSHOT:
+                    return "snapshot";
+                case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                    return "snapshot_table_stability";
+            }
+            return "unknown";
+        }
+
+        auto runtimeTransactionStateName(CatalogManager::RuntimeTransactionState state) -> const char*
+        {
+            switch (state)
+            {
+                case CatalogManager::RuntimeTransactionState::IN_PROGRESS:
+                    return "IN_PROGRESS";
+                case CatalogManager::RuntimeTransactionState::COMMITTED:
+                    return "COMMITTED";
+                case CatalogManager::RuntimeTransactionState::ABORTED:
+                    return "ABORTED";
+                case CatalogManager::RuntimeTransactionState::PREPARED:
+                    return "PREPARED";
+            }
+            return "UNKNOWN";
+        }
+
+        auto lockModeNameFromByte(uint8_t mode) -> std::string
+        {
+            switch (static_cast<LockMode>(mode))
+            {
+                case LockMode::LOCK_ACCESS_SHARE:
+                    return "ACCESS_SHARE";
+                case LockMode::LOCK_ROW_SHARE:
+                    return "ROW_SHARE";
+                case LockMode::LOCK_ROW_EXCLUSIVE:
+                    return "ROW_EXCLUSIVE";
+                case LockMode::LOCK_SHARE_UPDATE_EXCLUSIVE:
+                    return "SHARE_UPDATE_EXCLUSIVE";
+                case LockMode::LOCK_SHARE:
+                    return "SHARE";
+                case LockMode::LOCK_SHARE_ROW_EXCLUSIVE:
+                    return "SHARE_ROW_EXCLUSIVE";
+                case LockMode::LOCK_EXCLUSIVE:
+                    return "EXCLUSIVE";
+                case LockMode::LOCK_ACCESS_EXCLUSIVE:
+                    return "ACCESS_EXCLUSIVE";
+            }
+            return "UNKNOWN";
+        }
+
+        auto chainScatterBucketForPages(size_t page_count) -> std::string
+        {
+            if (page_count <= 1)
+            {
+                return "same_page";
+            }
+            if (page_count <= 4)
+            {
+                return "local";
+            }
+            if (page_count <= 16)
+            {
+                return "scattered";
+            }
+            return "wide";
+        }
+
+        auto makeLabelsJson(const std::vector<MetricLabel>& labels) -> std::string
+        {
+            nlohmann::ordered_json doc = nlohmann::ordered_json::object();
+            for (const MetricLabel& label : labels)
+            {
+                doc[label.name] = label.value;
+            }
+            return doc.dump();
         }
 
         auto makeMetricDefinition(std::string metric_name,
@@ -839,6 +980,15 @@ namespace scratchbird::core
         const auto& definitions = metricDefinitions();
         for (const MetricSchemaDefinition& definition : definitions)
         {
+            Metric* existing = registry.get(definition.metric_name);
+            if (existing != nullptr)
+            {
+                if (existing->type() != definition.metric_type)
+                {
+                    return Status::INVALID_ARGUMENT;
+                }
+                continue;
+            }
             switch (definition.metric_type)
             {
                 case MetricType::COUNTER:
@@ -936,6 +1086,642 @@ namespace scratchbird::core
                           return lhs.labels_json < rhs.labels_json;
                       }
                       return lhs.value < rhs.value;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildMgaRuntimeRows(const Database& db,
+                                                          const MetricsRegistry& registry,
+                                                          uint64_t updated_at_ms,
+                                                          std::vector<SqlRuntimeMetricRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        std::unordered_set<std::string> required_metric_names;
+        for (const MetricSchemaDefinition& definition : metricDefinitions())
+        {
+            required_metric_names.insert(definition.metric_name);
+        }
+
+        std::map<std::string, SqlRuntimeMetricRow> row_map;
+        auto add_row = [&row_map](SqlRuntimeMetricRow row) {
+            row_map[row.metric_name + "\n" + row.labels_json] = std::move(row);
+        };
+
+        const std::vector<MetricSampleRow> samples = registry.snapshotSamples();
+        for (const MetricSampleRow& sample : samples)
+        {
+            if (required_metric_names.find(sample.metric_name) == required_metric_names.end())
+            {
+                continue;
+            }
+
+            SqlRuntimeMetricRow row{};
+            row.metric_name = sample.metric_name;
+            Metric* metric = const_cast<MetricsRegistry&>(registry).get(sample.metric_name);
+            row.metric_type = metric ? typeToString(metric->type()) : inferTypeFromSampleName(sample.metric_name);
+            row.value = sample.value;
+            row.labels_json = makeLabelsJson(sample.labels);
+            row.updated_at = updated_at_ms;
+            add_row(std::move(row));
+        }
+
+        const std::string db_uuid = dbUuidString(db);
+        auto db_labels_json = [&db_uuid]() {
+            return makeLabelsJson({{"db", db_uuid}});
+        };
+        auto db_wait_labels_json = [&db_uuid](const std::string& wait_mode) {
+            return makeLabelsJson({{"db", db_uuid}, {"wait_mode", wait_mode}});
+        };
+        auto db_relation_labels_json = [&db_uuid](const std::string& relation) {
+            return makeLabelsJson({{"db", db_uuid}, {"relation", relation}});
+        };
+
+        std::vector<SqlMgaActiveTransactionRow> active_rows;
+        Status status = buildMgaActiveTransactionRows(db, updated_at_ms, active_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlMgaCleanupDebtRow> cleanup_rows;
+        status = buildMgaCleanupDebtRows(db, registry, updated_at_ms, cleanup_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlMgaSnapshotBlockerRow> blocker_rows;
+        status = buildMgaSnapshotBlockerRows(db, registry, updated_at_ms, blocker_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlMgaTransactionHistoryRow> history_rows;
+        status = buildMgaTransactionHistoryRows(db, history_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<SqlMgaWaitHistoryRow> wait_rows;
+        status = buildMgaWaitHistoryRows(db, wait_rows);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (const auto* txn_mgr = db.transaction_manager())
+        {
+            add_row(SqlRuntimeMetricRow{
+                "sb_mga_oit", "gauge", static_cast<double>(txn_mgr->getOldestXid()),
+                db_labels_json(), updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_mga_oat", "gauge", static_cast<double>(txn_mgr->getOldestActiveXid()),
+                db_labels_json(), updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_mga_ost", "gauge", static_cast<double>(txn_mgr->getOldestSnapshot()),
+                db_labels_json(), updated_at_ms});
+        }
+
+        size_t active_count = 0;
+        size_t limbo_count = 0;
+        for (const SqlMgaActiveTransactionRow& row : active_rows)
+        {
+            if (row.state == "PREPARED")
+            {
+                ++limbo_count;
+            }
+            else if (row.state == "IN_PROGRESS")
+            {
+                ++active_count;
+            }
+        }
+
+        add_row(SqlRuntimeMetricRow{
+            "sb_tx_active", "gauge", static_cast<double>(active_count),
+            db_labels_json(), updated_at_ms});
+        add_row(SqlRuntimeMetricRow{
+            "sb_tx_limbo", "gauge", static_cast<double>(limbo_count),
+            makeLabelsJson({{"db", db_uuid}, {"limbo_state", "prepared"}}), updated_at_ms});
+        add_row(SqlRuntimeMetricRow{
+            "sb_mga_long_snapshot_count", "gauge", static_cast<double>(blocker_rows.size()),
+            db_labels_json(), updated_at_ms});
+
+        uint64_t committed_total = 0;
+        uint64_t aborted_total = 0;
+        for (const SqlMgaTransactionHistoryRow& row : history_rows)
+        {
+            if (row.state == "COMMITTED")
+            {
+                ++committed_total;
+            }
+            else if (row.state == "ABORTED")
+            {
+                ++aborted_total;
+            }
+        }
+        add_row(SqlRuntimeMetricRow{
+            "sb_tx_committed_total", "counter", static_cast<double>(committed_total),
+            db_labels_json(), updated_at_ms});
+        add_row(SqlRuntimeMetricRow{
+            "sb_tx_aborted_total", "counter", static_cast<double>(aborted_total),
+            db_labels_json(), updated_at_ms});
+
+        std::unordered_map<std::string, double> wait_seconds_by_mode;
+        std::unordered_map<std::string, double> deadlocks_by_reason;
+        for (const SqlMgaWaitHistoryRow& row : wait_rows)
+        {
+            wait_seconds_by_mode[row.wait_mode] += row.wait_seconds;
+            if (row.outcome == "DEADLOCK_DETECTED")
+            {
+                deadlocks_by_reason["youngest_xid"] += 1.0;
+            }
+        }
+        for (const auto& [wait_mode, total_seconds] : wait_seconds_by_mode)
+        {
+            add_row(SqlRuntimeMetricRow{
+                "sb_lock_wait_seconds_total",
+                "counter",
+                total_seconds,
+                db_wait_labels_json(wait_mode),
+                updated_at_ms});
+        }
+        for (const auto& [reason, count] : deadlocks_by_reason)
+        {
+            add_row(SqlRuntimeMetricRow{
+                "sb_lock_deadlocks_total",
+                "counter",
+                count,
+                makeLabelsJson({{"db", db_uuid}, {"reason", reason}}),
+                updated_at_ms});
+        }
+
+        const uint64_t sweep_generation =
+            db.sweep_manager() ? db.sweep_manager()->getStatistics().sweep_count : 0;
+        add_row(SqlRuntimeMetricRow{
+            "sb_gc_sweep_generation", "gauge", static_cast<double>(sweep_generation),
+            db_labels_json(), updated_at_ms});
+
+        for (const SqlMgaCleanupDebtRow& row : cleanup_rows)
+        {
+            add_row(SqlRuntimeMetricRow{
+                "sb_gc_cleanup_debt_bytes",
+                "gauge",
+                static_cast<double>(row.cleanup_debt_bytes),
+                db_relation_labels_json(row.relation_name),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_mga_dead_space_bytes",
+                "gauge",
+                static_cast<double>(row.cleanup_debt_bytes),
+                db_relation_labels_json(row.relation_name),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_mga_retained_dead_bytes",
+                "gauge",
+                static_cast<double>(row.retained_dead_bytes),
+                db_relation_labels_json(row.relation_name),
+                updated_at_ms});
+            if (row.has_chain_scatter_bucket)
+            {
+                add_row(SqlRuntimeMetricRow{
+                    "sb_mga_chain_scatter_bucket",
+                    "gauge",
+                    1.0,
+                    makeLabelsJson(
+                        {{"db", db_uuid}, {"relation", row.relation_name}, {"bucket", row.chain_scatter_bucket}}),
+                    updated_at_ms});
+            }
+            if (row.rewrite_recommended)
+            {
+                add_row(SqlRuntimeMetricRow{
+                    "sb_mga_rewrite_recommendations_total",
+                    "counter",
+                    1.0,
+                    makeLabelsJson(
+                        {{"db", db_uuid}, {"relation", row.relation_name}, {"reason", "fragmentation"}}),
+                    updated_at_ms});
+            }
+        }
+
+        if (const auto* lock_mgr = db.lock_manager())
+        {
+            std::vector<LockSnapshot> locks;
+            if (lock_mgr->listLocks(locks) == Status::OK)
+            {
+                std::unordered_map<std::string, double> blockers_by_mode;
+                for (const LockSnapshot& snapshot : locks)
+                {
+                    if (!snapshot.granted)
+                    {
+                        blockers_by_mode[lockModeNameFromByte(static_cast<uint8_t>(snapshot.mode))] += 1.0;
+                    }
+                }
+                for (const auto& [wait_mode, blocker_count] : blockers_by_mode)
+                {
+                    add_row(SqlRuntimeMetricRow{
+                        "sb_lock_blockers",
+                        "gauge",
+                        blocker_count,
+                        db_wait_labels_json(wait_mode),
+                        updated_at_ms});
+                }
+            }
+        }
+
+        rows_out.clear();
+        rows_out.reserve(row_map.size());
+        for (auto& [key, row] : row_map)
+        {
+            (void)key;
+            rows_out.push_back(std::move(row));
+        }
+        std::sort(rows_out.begin(), rows_out.end(),
+                  [](const SqlRuntimeMetricRow& lhs, const SqlRuntimeMetricRow& rhs) {
+                      if (lhs.metric_name != rhs.metric_name)
+                      {
+                          return lhs.metric_name < rhs.metric_name;
+                      }
+                      if (lhs.labels_json != rhs.labels_json)
+                      {
+                          return lhs.labels_json < rhs.labels_json;
+                      }
+                      return lhs.value < rhs.value;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildMgaActiveTransactionRows(
+        const Database& db,
+        uint64_t observed_at_ms,
+        std::vector<SqlMgaActiveTransactionRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::RuntimeTransactionCatalogInfo> runtime_rows;
+        Status status = catalog->listRuntimeTransactionCatalogEntries(db.uuid(), runtime_rows, nullptr);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        const std::string db_uuid = dbUuidString(db);
+        const uint64_t ost = db.transaction_manager() ? db.transaction_manager()->getOldestSnapshot() : 0;
+        uint64_t total_retained = 0;
+        std::vector<StorageEngine::FragmentationAdvisorySnapshot> advisories;
+        if (db.storage_engine() && db.storage_engine()->listFragmentationAdvisories(advisories) == Status::OK)
+        {
+            for (const StorageEngine::FragmentationAdvisorySnapshot& advisory : advisories)
+            {
+                total_retained += advisory.advisory.reclaimable_bytes;
+            }
+        }
+
+        rows_out.reserve(runtime_rows.size());
+        for (const CatalogManager::RuntimeTransactionCatalogInfo& info : runtime_rows)
+        {
+            if (info.state != CatalogManager::RuntimeTransactionState::IN_PROGRESS &&
+                info.state != CatalogManager::RuntimeTransactionState::PREPARED)
+            {
+                continue;
+            }
+
+            SqlMgaActiveTransactionRow row{};
+            row.db_uuid = db_uuid;
+            row.txid = info.txid;
+            row.state = runtimeTransactionStateName(info.state);
+            row.isolation_mode = isolationModeName(info.isolation_level);
+            if (info.txid != 0)
+            {
+                row.has_xmin = true;
+                row.xmin = info.txid;
+            }
+            row.age_seconds = ageSecondsFromMicros(observed_at_ms, info.start_time);
+            row.retained_bytes = (ost != 0 && info.txid != 0 && info.txid <= ost) ? total_retained : 0;
+            row.started_at_ms = microsToMillis(info.start_time);
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlMgaActiveTransactionRow& lhs, const SqlMgaActiveTransactionRow& rhs) {
+                      if (lhs.started_at_ms != rhs.started_at_ms)
+                      {
+                          return lhs.started_at_ms < rhs.started_at_ms;
+                      }
+                      return lhs.txid < rhs.txid;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildMgaCleanupDebtRows(
+        const Database& db,
+        const MetricsRegistry& registry,
+        uint64_t observed_at_ms,
+        std::vector<SqlMgaCleanupDebtRow>& rows_out) -> Status
+    {
+        (void)registry;
+        rows_out.clear();
+
+        StorageEngine* storage = const_cast<StorageEngine*>(db.storage_engine());
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (storage == nullptr || catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<StorageEngine::FragmentationAdvisorySnapshot> advisories;
+        Status status = storage->listFragmentationAdvisories(advisories);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        struct Aggregate
+        {
+            uint64_t cleanup_debt_bytes = 0;
+            uint64_t retained_dead_bytes = 0;
+            bool rewrite_recommended = false;
+            std::unordered_set<uint32_t> pages;
+        };
+
+        std::unordered_map<ID, Aggregate, IDHash> aggregates;
+        for (const StorageEngine::FragmentationAdvisorySnapshot& snapshot : advisories)
+        {
+            Aggregate& agg = aggregates[snapshot.table_id];
+            agg.cleanup_debt_bytes += snapshot.advisory.reclaimable_bytes;
+            agg.retained_dead_bytes += snapshot.advisory.reclaimable_bytes;
+            agg.rewrite_recommended = agg.rewrite_recommended || snapshot.advisory.rewrite_recommended;
+            agg.pages.insert(snapshot.advisory.page_id);
+        }
+
+        const std::string db_uuid = dbUuidString(db);
+        const uint64_t sweep_generation =
+            db.sweep_manager() ? db.sweep_manager()->getStatistics().sweep_count : 0;
+        rows_out.reserve(aggregates.size());
+        for (const auto& [table_id, agg] : aggregates)
+        {
+            SqlMgaCleanupDebtRow row{};
+            row.db_uuid = db_uuid;
+            row.relation_name = relationNameForTableId(catalog, table_id);
+            if (row.relation_name.empty())
+            {
+                row.relation_name = table_id.toString();
+            }
+            row.cleanup_debt_bytes = agg.cleanup_debt_bytes;
+            row.retained_dead_bytes = agg.retained_dead_bytes;
+            row.has_chain_scatter_bucket = true;
+            row.chain_scatter_bucket = chainScatterBucketForPages(agg.pages.size());
+            row.rewrite_recommended = agg.rewrite_recommended;
+            row.sweep_generation = sweep_generation;
+            row.observed_at_ms = observed_at_ms;
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlMgaCleanupDebtRow& lhs, const SqlMgaCleanupDebtRow& rhs) {
+                      return lhs.relation_name < rhs.relation_name;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildMgaSnapshotBlockerRows(
+        const Database& db,
+        const MetricsRegistry& registry,
+        uint64_t observed_at_ms,
+        std::vector<SqlMgaSnapshotBlockerRow>& rows_out) -> Status
+    {
+        (void)registry;
+        rows_out.clear();
+
+        const TransactionManager* txn_mgr = db.transaction_manager();
+        if (txn_mgr == nullptr)
+        {
+            return Status::OK;
+        }
+
+        const uint64_t ost = txn_mgr->getOldestSnapshot();
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::RuntimeTransactionCatalogInfo> runtime_rows;
+        Status status = catalog->listRuntimeTransactionCatalogEntries(db.uuid(), runtime_rows, nullptr);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        uint64_t total_retained = 0;
+        std::vector<StorageEngine::FragmentationAdvisorySnapshot> advisories;
+        if (db.storage_engine() && db.storage_engine()->listFragmentationAdvisories(advisories) == Status::OK)
+        {
+            for (const StorageEngine::FragmentationAdvisorySnapshot& advisory : advisories)
+            {
+                total_retained += advisory.advisory.reclaimable_bytes;
+            }
+        }
+
+        const std::string db_uuid = dbUuidString(db);
+        for (const CatalogManager::RuntimeTransactionCatalogInfo& info : runtime_rows)
+        {
+            if (info.state != CatalogManager::RuntimeTransactionState::IN_PROGRESS &&
+                info.state != CatalogManager::RuntimeTransactionState::PREPARED)
+            {
+                continue;
+            }
+            if (info.txid == 0)
+            {
+                continue;
+            }
+            const bool ost_matches = (ost != 0 && info.txid <= ost);
+            if (!ost_matches && !rows_out.empty())
+            {
+                continue;
+            }
+            if (!ost_matches && ost != 0)
+            {
+                continue;
+            }
+
+            SqlMgaSnapshotBlockerRow row{};
+            row.db_uuid = db_uuid;
+            row.blocker_txid = info.txid;
+            row.blocker_identity = isZeroId(info.session_id) ? info.tx_uuid.toString() : info.session_id.toString();
+            row.retained_bytes = total_retained;
+            row.snapshot_age_seconds = ageSecondsFromMicros(observed_at_ms, info.start_time);
+            row.ost_txid = ost != 0 ? ost : info.txid;
+            row.observed_at_ms = observed_at_ms;
+            rows_out.push_back(std::move(row));
+        }
+
+        if (rows_out.empty())
+        {
+            const auto oldest_it = std::min_element(
+                runtime_rows.begin(),
+                runtime_rows.end(),
+                [](const CatalogManager::RuntimeTransactionCatalogInfo& lhs,
+                   const CatalogManager::RuntimeTransactionCatalogInfo& rhs) {
+                    if (lhs.start_time != rhs.start_time)
+                    {
+                        return lhs.start_time < rhs.start_time;
+                    }
+                    return lhs.txid < rhs.txid;
+                });
+            if (oldest_it != runtime_rows.end() && oldest_it->txid != 0 &&
+                (oldest_it->state == CatalogManager::RuntimeTransactionState::IN_PROGRESS ||
+                 oldest_it->state == CatalogManager::RuntimeTransactionState::PREPARED))
+            {
+                SqlMgaSnapshotBlockerRow row{};
+                row.db_uuid = db_uuid;
+                row.blocker_txid = oldest_it->txid;
+                row.blocker_identity = isZeroId(oldest_it->session_id)
+                    ? oldest_it->tx_uuid.toString()
+                    : oldest_it->session_id.toString();
+                row.retained_bytes = total_retained;
+                row.snapshot_age_seconds = ageSecondsFromMicros(observed_at_ms, oldest_it->start_time);
+                row.ost_txid = ost != 0 ? ost : oldest_it->txid;
+                row.observed_at_ms = observed_at_ms;
+                rows_out.push_back(std::move(row));
+            }
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlMgaSnapshotBlockerRow& lhs, const SqlMgaSnapshotBlockerRow& rhs) {
+                      if (lhs.snapshot_age_seconds != rhs.snapshot_age_seconds)
+                      {
+                          return lhs.snapshot_age_seconds > rhs.snapshot_age_seconds;
+                      }
+                      return lhs.blocker_txid < rhs.blocker_txid;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildMgaTransactionHistoryRows(
+        const Database& db,
+        std::vector<SqlMgaTransactionHistoryRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::TransactionHistoryEntry> entries;
+        Status status = catalog->listTransactionHistory(entries, nullptr);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        const std::string db_uuid = dbUuidString(db);
+        rows_out.reserve(entries.size());
+        for (const CatalogManager::TransactionHistoryEntry& entry : entries)
+        {
+            SqlMgaTransactionHistoryRow row{};
+            row.db_uuid = db_uuid;
+            row.txid = entry.trx_id;
+            row.state = entry.committed ? "COMMITTED" : "ABORTED";
+            row.has_start_oit = entry.start_oit != 0;
+            row.start_oit = entry.start_oit;
+            row.has_end_oit = entry.end_oit != 0;
+            row.end_oit = entry.end_oit;
+            row.has_start_oat = entry.start_oat != 0;
+            row.start_oat = entry.start_oat;
+            row.has_end_oat = entry.end_oat != 0;
+            row.end_oat = entry.end_oat;
+            row.has_start_ost = entry.start_ost != 0;
+            row.start_ost = entry.start_ost;
+            row.has_end_ost = entry.end_ost != 0;
+            row.end_ost = entry.end_ost;
+            row.restart_count = entry.restart_count;
+            row.has_publication_fence_seconds = entry.has_publication_fence_us;
+            row.publication_fence_seconds = microsToSeconds(entry.publication_fence_us);
+            row.has_limbo_state = !entry.limbo_state.empty();
+            row.limbo_state = entry.limbo_state;
+            row.started_at_ms = microsToMillis(entry.timer_start);
+            row.has_ended_at_ms = entry.timer_end != 0;
+            row.ended_at_ms = microsToMillis(entry.timer_end);
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlMgaTransactionHistoryRow& lhs,
+                     const SqlMgaTransactionHistoryRow& rhs) {
+                      if (lhs.started_at_ms != rhs.started_at_ms)
+                      {
+                          return lhs.started_at_ms < rhs.started_at_ms;
+                      }
+                      return lhs.txid < rhs.txid;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildMgaWaitHistoryRows(
+        const Database& db,
+        std::vector<SqlMgaWaitHistoryRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        if (catalog == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::WaitHistoryEntry> entries;
+        Status status = catalog->listWaitHistory(entries, nullptr);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        const std::string db_uuid = dbUuidString(db);
+        rows_out.reserve(entries.size());
+        for (const CatalogManager::WaitHistoryEntry& entry : entries)
+        {
+            SqlMgaWaitHistoryRow row{};
+            row.db_uuid = db_uuid;
+            row.wait_event_id = std::to_string(entry.event_id);
+            row.wait_mode = lockModeNameFromByte(entry.requested_mode);
+            row.has_blocker_txid = entry.has_blocker_txid;
+            row.blocker_txid = entry.blocker_txid;
+            row.has_victim_txid = entry.has_victim_txid;
+            row.victim_txid = entry.victim_txid;
+            row.has_blocker_identity = !entry.blocker_identity.empty();
+            row.blocker_identity = entry.blocker_identity;
+            row.has_victim_identity = !entry.victim_identity.empty();
+            row.victim_identity = entry.victim_identity;
+            row.wait_seconds = microsToSeconds(entry.timer_wait);
+            row.outcome = entry.outcome_code;
+            row.observed_at_ms = microsToMillis(entry.timer_end != 0 ? entry.timer_end : entry.timer_start);
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlMgaWaitHistoryRow& lhs, const SqlMgaWaitHistoryRow& rhs) {
+                      if (lhs.observed_at_ms != rhs.observed_at_ms)
+                      {
+                          return lhs.observed_at_ms < rhs.observed_at_ms;
+                      }
+                      return lhs.wait_event_id < rhs.wait_event_id;
                   });
         return Status::OK;
     }

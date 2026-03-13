@@ -118,6 +118,12 @@ private:
     Status queryShardMigrations(VirtualResultSet& results, ErrorContext* ctx);
     Status queryPlugin(VirtualResultSet& results, ErrorContext* ctx);
     Status queryPreparedStatements(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaRuntimeMetrics(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaActiveTransactions(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaCleanupDebt(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaSnapshotBlockers(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaTransactionHistory(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaWaitHistory(VirtualResultSet& results, ErrorContext* ctx);
 };
 
 } // namespace scratchbird::catalog

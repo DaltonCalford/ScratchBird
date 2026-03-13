@@ -210,6 +210,7 @@ private:
 class MetricsRegistry {
 public:
     static MetricsRegistry& getInstance();
+    MetricsRegistry() = default;
 
     // Register metrics
     Counter* registerCounter(const std::string& name, const std::string& help,
@@ -233,7 +234,6 @@ public:
     void clear();
 
 private:
-    MetricsRegistry() = default;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::unique_ptr<Metric>> metrics_;
 };

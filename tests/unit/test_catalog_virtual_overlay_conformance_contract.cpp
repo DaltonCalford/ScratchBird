@@ -9,6 +9,7 @@
  */
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdio>
 #include <memory>
 #include <string>
@@ -20,6 +21,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 
@@ -456,4 +458,104 @@ TEST_F(CatalogVirtualOverlayConformanceContractTest, VirtualOverlayConformance)
               Status::OK)
         << ctx.message;
     ASSERT_FALSE(cassandra_tables.empty());
+}
+
+TEST_F(CatalogVirtualOverlayConformanceContractTest, SysMgaObservabilityViewsAreQueryable)
+{
+    ErrorContext ctx;
+    const uint64_t now_us = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    ID table_id = createSimpleTable("mga_view_table");
+
+    CatalogManager::RuntimeTransactionCatalogInfo tx{};
+    tx.txid = 77;
+    tx.tx_uuid = generateUuidV7();
+    tx.database_id = db_->uuid();
+    tx.session_id = session_.session_id;
+    tx.user_id = system_user_id_;
+    tx.isolation_level = static_cast<uint8_t>(IsolationLevel::SNAPSHOT);
+    tx.state = CatalogManager::RuntimeTransactionState::IN_PROGRESS;
+    tx.start_time = now_us - 8'000'000;
+    tx.created_time = now_us - 8'000'000;
+    tx.last_modified_time = now_us - 1'000'000;
+    ASSERT_EQ(catalog_->upsertRuntimeTransactionCatalogEntry(tx, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::TransactionHistoryEntry history{};
+    history.thread_id = 9;
+    history.event_id = 300;
+    history.end_event_id = 301;
+    history.trx_id = 66;
+    history.start_oit = 60;
+    history.end_oit = 61;
+    history.start_oat = 66;
+    history.end_oat = 67;
+    history.start_ost = 66;
+    history.end_ost = 67;
+    history.timer_start = now_us - 12'000'000;
+    history.timer_end = now_us - 11'000'000;
+    history.timer_wait = 1'000'000;
+    history.committed = true;
+    ASSERT_EQ(catalog_->recordTransactionHistory(history, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::WaitHistoryEntry wait{};
+    wait.thread_id = 9;
+    wait.blocker_thread_id = 10;
+    wait.event_id = 400;
+    wait.timer_start = now_us - 3'000'000;
+    wait.timer_end = now_us - 2'000'000;
+    wait.timer_wait = 1'000'000;
+    wait.has_blocker_txid = true;
+    wait.blocker_txid = 77;
+    wait.has_victim_txid = true;
+    wait.victim_txid = 66;
+    wait.requested_mode = static_cast<uint8_t>(LockMode::LOCK_EXCLUSIVE);
+    wait.blocker_mode = static_cast<uint8_t>(LockMode::LOCK_SHARE);
+    wait.outcome_code = "WAIT_GRANTED";
+    wait.blocker_identity = session_.session_id.toString();
+    wait.victim_identity = "victim-session";
+    ASSERT_EQ(catalog_->recordWaitHistory(wait, &ctx), Status::OK) << ctx.message;
+
+    StorageEngine::FragmentationAdvisory advisory{};
+    advisory.page_id = 12;
+    advisory.reclaimable_bytes = 256;
+    advisory.rewrite_recommended = true;
+    db_->storage_engine()->publishFragmentationAdvisory(table_id, advisory.page_id, advisory);
+
+    VirtualResultSet result;
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_runtime_metrics", "", result, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(result.empty());
+
+    result = {};
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_active_transactions", "", result, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(result.empty());
+
+    result = {};
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_cleanup_debt", "", result, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(result.empty());
+
+    result = {};
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_snapshot_blockers", "", result, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(result.empty());
+
+    result = {};
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_transaction_history", "", result, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(result.empty());
+
+    result = {};
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_wait_history", "", result, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(result.empty());
 }

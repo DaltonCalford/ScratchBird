@@ -18,8 +18,7 @@ namespace scratchbird::core
 
     TEST(MetricContractPolicyTest, RegistryAuditFlagsLegacyNamesAndForbiddenLabels)
     {
-        MetricsRegistry& registry = MetricsRegistry::getInstance();
-        registry.clear();
+        MetricsRegistry registry;
 
         auto* canonical = registry.registerCounter(
             "sb_cluster_replication_apply_total",
@@ -68,8 +67,7 @@ namespace scratchbird::core
 
     TEST(MetricContractPolicyTest, RegistersBaselineSbObsMetricsAndProducesNoPolicyViolations)
     {
-        MetricsRegistry& registry = MetricsRegistry::getInstance();
-        registry.clear();
+        MetricsRegistry registry;
 
         ASSERT_EQ(MetricContractPolicy::registerSbObsBaselineMetrics(registry), Status::OK);
 
@@ -97,8 +95,7 @@ namespace scratchbird::core
 
     TEST(MetricContractPolicyTest, MgaContractIsVersionedAndRegistryAuditPasses)
     {
-        MetricsRegistry& registry = MetricsRegistry::getInstance();
-        registry.clear();
+        MetricsRegistry registry;
 
         EXPECT_STREQ(MgaObservabilityContract::contract_id(), "sb_mga_observability/v1");
         EXPECT_EQ(MgaObservabilityContract::metric_schema_version(), 1u);
