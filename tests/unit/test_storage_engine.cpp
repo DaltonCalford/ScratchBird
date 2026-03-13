@@ -9,6 +9,7 @@
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/btree.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/storage_engine.h"
@@ -109,6 +110,52 @@ protected:
             db_->catalog_manager()->createTable(schema_id_, name, columns, table_id, 0, &ctx);
         EXPECT_EQ(status, Status::OK) << ctx.message;
         return table_id;
+    }
+
+    ID createSingleIntTable(const std::string &name)
+    {
+        ErrorContext ctx;
+        std::vector<CatalogManager::ColumnInfo> columns;
+
+        CatalogManager::ColumnInfo id_col;
+        id_col.column_name = "id";
+        id_col.ordinal = 1;
+        id_col.data_type = static_cast<uint16_t>(DataType::INT32);
+        id_col.type_precision = 4;
+        id_col.nullable = false;
+        columns.push_back(id_col);
+
+        ID table_id;
+        Status status =
+            db_->catalog_manager()->createTable(schema_id_, name, columns, table_id, 0, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return table_id;
+    }
+
+    ID createSingleIntIndex(const ID &table_id,
+                            const std::string &index_name,
+                            bool is_unique)
+    {
+        ErrorContext ctx;
+        ID index_id;
+        Status status = db_->catalog_manager()->createIndex(
+            table_id, index_name, {"id"}, index_id, is_unique,
+            CatalogManager::IndexType::BTREE, PRIMARY_TABLESPACE_ID, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return index_id;
+    }
+
+    std::vector<uint8_t> buildIntTuple(int32_t value,
+                                       uint64_t xmin = config::DEFAULT_INITIAL_XID)
+    {
+        return buildTuple(&value, sizeof(value), xmin);
+    }
+
+    std::vector<uint8_t> encodeIntKey(int32_t value)
+    {
+        std::vector<uint8_t> key(sizeof(value), 0);
+        std::memcpy(key.data(), &value, sizeof(value));
+        return key;
     }
 
     std::vector<uint8_t> buildTuple(const void *payload, size_t payload_size,
@@ -258,6 +305,83 @@ TEST_F(StorageEngineTest, SequentialScan)
         count++;
     }
     EXPECT_EQ(count, rows.size());
+}
+
+TEST_F(StorageEngineTest, IndexScanFiltersHeapInvisibleOrMismatchedCandidates)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("index_scan_visibility");
+    ID index_id = createSingleIntIndex(table_id, "idx_index_scan_visibility", false);
+
+    auto tuple = buildIntTuple(20);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id, tuple.data(), static_cast<uint32_t>(tuple.size()),
+                                   &page_id, &item_id, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::IndexInfo index_info;
+    ASSERT_EQ(db_->catalog_manager()->getIndex(index_id, index_info, &ctx), Status::OK)
+        << ctx.message;
+    auto btree = BTree::open(db_.get(), index_id, index_info.root_gpid, &ctx);
+    ASSERT_NE(btree, nullptr);
+
+    TID live_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+    auto stale_key = encodeIntKey(10);
+    ASSERT_EQ(btree->insert(stale_key, live_tid, engine_->getCurrentXid(), &ctx), Status::OK)
+        << ctx.message;
+
+    auto scan = engine_->createIndexScan(index_id, &ctx);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->seek(stale_key, &ctx), Status::OK) << ctx.message;
+
+    Tuple found{};
+    EXPECT_EQ(scan->next(&found, &ctx), Status::NOT_FOUND);
+}
+
+TEST_F(StorageEngineTest, UniqueInsertIgnoresStaleIndexEntryWithMismatchedHeapKey)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("unique_stale_index");
+    ID index_id = createSingleIntIndex(table_id, "uq_unique_stale_index", true);
+
+    auto first_tuple = buildIntTuple(20);
+    uint32_t first_page_id = 0;
+    uint16_t first_item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id, first_tuple.data(),
+                                   static_cast<uint32_t>(first_tuple.size()),
+                                   &first_page_id, &first_item_id, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::IndexInfo index_info;
+    ASSERT_EQ(db_->catalog_manager()->getIndex(index_id, index_info, &ctx), Status::OK)
+        << ctx.message;
+    auto btree = BTree::open(db_.get(), index_id, index_info.root_gpid, &ctx);
+    ASSERT_NE(btree, nullptr);
+
+    TID stale_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(first_page_id)),
+                  first_item_id);
+    auto stale_key = encodeIntKey(10);
+    ASSERT_EQ(btree->insert(stale_key, stale_tid, engine_->getCurrentXid(), &ctx), Status::OK)
+        << ctx.message;
+
+    auto second_tuple = buildIntTuple(10);
+    uint32_t second_page_id = 0;
+    uint16_t second_item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id, second_tuple.data(),
+                                   static_cast<uint32_t>(second_tuple.size()),
+                                   &second_page_id, &second_item_id, &ctx), Status::OK)
+        << ctx.message;
+
+    auto scan = engine_->createIndexScan(index_id, &ctx);
+    ASSERT_NE(scan, nullptr);
+    ASSERT_EQ(scan->seek(stale_key, &ctx), Status::OK) << ctx.message;
+
+    Tuple found{};
+    ASSERT_EQ(scan->next(&found, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(found.tid, TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(second_page_id)),
+                             second_item_id));
+    EXPECT_EQ(scan->next(&found, &ctx), Status::NOT_FOUND);
 }
 
 TEST_F(StorageEngineTest, PageFullAllocatesNewPage)

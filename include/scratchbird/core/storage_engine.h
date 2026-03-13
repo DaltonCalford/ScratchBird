@@ -223,6 +223,8 @@ namespace scratchbird::core
             -> bool;
 
     private:
+        friend class IndexScanIterator;
+
         Database *db_;
         BufferPool *buffer_pool_;
         PageManager *page_manager_;
@@ -250,6 +252,32 @@ namespace scratchbird::core
 
         // Get or create ToastManager for a table
         auto getOrCreateToastManager(const ID &table_id, ErrorContext *ctx) -> ToastManager *;
+        auto extractStoredIndexKey(const ID &table_id,
+                                   const std::vector<ID> &indexed_column_ids,
+                                   const Tuple &tuple,
+                                   std::vector<uint8_t> *key_out,
+                                   ErrorContext *ctx) -> Status;
+        auto filterIndexCandidatesByVisibleHeap(const ID &table_id,
+                                                const std::vector<ID> &indexed_column_ids,
+                                                bool enforce_key_semantics,
+                                                const std::vector<uint8_t> &search_key,
+                                                const std::vector<TID> &candidate_tids,
+                                                const TID *exclude_tid,
+                                                std::vector<TID> *visible_tids,
+                                                ErrorContext *ctx) -> Status;
+        auto preflightUniqueInsert(const ID &table_id,
+                                   const uint8_t *tuple_data,
+                                   uint32_t tuple_size,
+                                   uint64_t current_xid,
+                                   ErrorContext *ctx) -> Status;
+        auto preflightUniqueUpdate(const ID &table_id,
+                                   const uint8_t *old_tuple_data,
+                                   uint32_t old_tuple_size,
+                                   const uint8_t *new_tuple_data,
+                                   uint32_t new_tuple_size,
+                                   const TID &stable_tid,
+                                   uint64_t current_xid,
+                                   ErrorContext *ctx) -> Status;
 
         // Lock management helpers
         auto acquireTupleLock(const ID &table_id, uint32_t page_id, uint16_t item_id,

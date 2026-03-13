@@ -417,8 +417,29 @@ Status HnswIndex::search(const VectorValue &query_vector,
     // Return top k results
     std::sort(candidates.begin(), candidates.end());
 
+    StorageEngine *storage = db_->storage_engine();
     for (size_t i = 0; i < std::min(static_cast<size_t>(k), candidates.size()); i++)
     {
+        if (storage != nullptr)
+        {
+            Tuple tuple{};
+            ErrorContext tuple_ctx;
+            Status tuple_status =
+                storage->getTuple(index_info_.idx_table_uuid, candidates[i].tid, &tuple, &tuple_ctx);
+            if (tuple_status == Status::NOT_FOUND)
+            {
+                continue;
+            }
+            if (tuple_status != Status::OK)
+            {
+                LOG_WARNING(GENERAL,
+                            "HNSW search heap visibility check failed for TID %s: %s",
+                            tidToString(candidates[i].tid).c_str(),
+                            tuple_ctx.message.c_str());
+                continue;
+            }
+        }
+
         results_out->push_back(candidates[i]);
     }
 

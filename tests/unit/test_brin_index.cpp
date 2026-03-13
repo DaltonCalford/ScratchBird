@@ -413,7 +413,7 @@ TEST_F(BrinIndexTest, RemoveDeadEntriesEmpty)
     EXPECT_EQ(pages_modified, 0);
 }
 
-// Test 10: Remove dead entries (partial range - should remove)
+// Test 10: Remove dead entries (partial range - should not tombstone summary)
 TEST_F(BrinIndexTest, RemoveDeadEntriesPartial)
 {
     ErrorContext ctx;
@@ -447,7 +447,15 @@ TEST_F(BrinIndexTest, RemoveDeadEntriesPartial)
     status = brin->removeDeadEntries(dead_tids, &entries_removed, &pages_modified, &ctx);
 
     EXPECT_EQ(status, Status::OK);
-    EXPECT_EQ(entries_removed, 1) << "Should remove range (any dead block is treated as unsafe)";
+    EXPECT_EQ(entries_removed, 0) << "Partial dead blocks must not tombstone the whole range";
+    EXPECT_EQ(pages_modified, 0);
+
+    std::vector<uint8_t> min_val = encodeUint64(900);
+    std::vector<uint32_t> blocks;
+    uint64_t current_xid = currentXid();
+    status = brin->scan(&min_val, nullptr, current_xid, &blocks, &ctx);
+    EXPECT_EQ(status, Status::OK);
+    EXPECT_GT(blocks.size(), 0) << "Partially-dead range should remain queryable";
 }
 
 // Test 11: Remove dead entries (complete range - should remove)

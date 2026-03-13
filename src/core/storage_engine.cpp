@@ -759,6 +759,96 @@ namespace scratchbird::core
             return std::memcmp(special->table_id.bytes.data(), table_id.bytes.data(),
                                table_id.bytes.size()) == 0;
         }
+
+        void propagateErrorContext(ErrorContext *dst, const ErrorContext &src)
+        {
+            if (dst == nullptr)
+            {
+                return;
+            }
+
+            dst->code = src.code;
+            dst->sqlstate_text = src.sqlstate_text;
+            dst->sqlstate = dst->sqlstate_text.empty() ? src.sqlstate : dst->sqlstate_text.c_str();
+            dst->message = src.message;
+            dst->vnext_code = src.vnext_code;
+            dst->file = src.file;
+            dst->line = src.line;
+            dst->function = src.function;
+            dst->constraint_name = src.constraint_name;
+            dst->table_name = src.table_name;
+            dst->column_name = src.column_name;
+            dst->violating_value = src.violating_value;
+            dst->referenced_table = src.referenced_table;
+            dst->referenced_column = src.referenced_column;
+            dst->check_expression = src.check_expression;
+            dst->hint = src.hint;
+        }
+
+        [[nodiscard]] bool supportsExactKeyLookup(CatalogManager::IndexType index_type)
+        {
+            switch (index_type)
+            {
+                case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::STL_SORT:
+                case CatalogManager::IndexType::ART:
+                case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                case CatalogManager::IndexType::NEO4J_RANGE:
+                case CatalogManager::IndexType::NEO4J_POINT:
+                case CatalogManager::IndexType::REDIS_LIST:
+                case CatalogManager::IndexType::REDIS_ZSET:
+                case CatalogManager::IndexType::REDIS_STREAM:
+                case CatalogManager::IndexType::HASH:
+                case CatalogManager::IndexType::REDIS_STRING:
+                case CatalogManager::IndexType::REDIS_HASH:
+                case CatalogManager::IndexType::REDIS_SET:
+                case CatalogManager::IndexType::REDIS_HLL:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        Status searchExactIndexCandidates(CatalogManager::IndexType index_type,
+                                          void *index_ptr,
+                                          const std::vector<uint8_t> &key,
+                                          uint64_t current_xid,
+                                          std::vector<TID> *tids_out,
+                                          ErrorContext *ctx)
+        {
+            if (index_ptr == nullptr || tids_out == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid exact index lookup");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            switch (index_type)
+            {
+                case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::STL_SORT:
+                case CatalogManager::IndexType::ART:
+                case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                case CatalogManager::IndexType::NEO4J_RANGE:
+                case CatalogManager::IndexType::NEO4J_POINT:
+                case CatalogManager::IndexType::REDIS_LIST:
+                case CatalogManager::IndexType::REDIS_ZSET:
+                case CatalogManager::IndexType::REDIS_STREAM:
+                    return static_cast<BTree *>(index_ptr)->search(key, current_xid, tids_out, ctx);
+
+                case CatalogManager::IndexType::HASH:
+                case CatalogManager::IndexType::REDIS_STRING:
+                case CatalogManager::IndexType::REDIS_HASH:
+                case CatalogManager::IndexType::REDIS_SET:
+                case CatalogManager::IndexType::REDIS_HLL:
+                    return static_cast<HashIndex *>(index_ptr)->find(
+                        key.data(), key.size(), current_xid, tids_out, ctx);
+
+                default:
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Index type does not support exact key lookup");
+                    return Status::INVALID_ARGUMENT;
+            }
+        }
     } // anonymous namespace
 
     // TASK-DML-2: Public wrapper for removeFromIndex (for executor)
@@ -773,6 +863,371 @@ namespace scratchbird::core
         // Cast uint8_t to IndexType enum to avoid circular include dependency
         auto index_type = static_cast<CatalogManager::IndexType>(index_type_value);
         return removeFromIndex(index_type, index_ptr, key, tid, xid, ctx);
+    }
+
+    auto StorageEngine::extractStoredIndexKey(const ID &table_id,
+                                              const std::vector<ID> &indexed_column_ids,
+                                              const Tuple &tuple,
+                                              std::vector<uint8_t> *key_out,
+                                              ErrorContext *ctx) -> Status
+    {
+        if (key_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid index key output buffer");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        Status status = catalog_manager_->getColumns(table_id, columns, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<uint16_t> column_indices;
+        column_indices.reserve(indexed_column_ids.size());
+        for (const auto &column_id : indexed_column_ids)
+        {
+            bool found = false;
+            for (size_t i = 0; i < columns.size(); ++i)
+            {
+                if (columns[i].column_id == column_id)
+                {
+                    column_indices.push_back(static_cast<uint16_t>(i));
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Indexed column not found in table metadata");
+                return Status::INVALID_ARGUMENT;
+            }
+        }
+
+        std::vector<size_t> column_offsets;
+        std::vector<size_t> column_sizes;
+        Status layout_status = computeColumnLayout(tuple.data, tuple.data_size, columns,
+                                                   db_->domain_manager(),
+                                                   column_offsets, column_sizes, ctx);
+        if (layout_status != Status::OK)
+        {
+            return layout_status;
+        }
+
+        IndexKeyExtractor extractor;
+        return extractor.extractKey(tuple.data, tuple.data_size,
+                                    column_offsets, column_sizes,
+                                    column_indices,
+                                    getOrCreateToastManager(table_id, ctx),
+                                    getCurrentXid(),
+                                    key_out, ctx);
+    }
+
+    auto StorageEngine::filterIndexCandidatesByVisibleHeap(
+        const ID &table_id,
+        const std::vector<ID> &indexed_column_ids,
+        bool enforce_key_semantics,
+        const std::vector<uint8_t> &search_key,
+        const std::vector<TID> &candidate_tids,
+        const TID *exclude_tid,
+        std::vector<TID> *visible_tids,
+        ErrorContext *ctx) -> Status
+    {
+        if (visible_tids == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid visible TID output buffer");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        visible_tids->clear();
+
+        for (const auto &candidate_tid : candidate_tids)
+        {
+            if (exclude_tid != nullptr && candidate_tid == *exclude_tid)
+            {
+                continue;
+            }
+
+            Tuple tuple{};
+            ErrorContext tuple_ctx;
+            Status tuple_status = getTuple(table_id, candidate_tid, &tuple, &tuple_ctx);
+            if (tuple_status == Status::NOT_FOUND)
+            {
+                continue;
+            }
+            if (tuple_status != Status::OK)
+            {
+                if (ctx != nullptr && ctx->message.empty())
+                {
+                    propagateErrorContext(ctx, tuple_ctx);
+                }
+                return tuple_status;
+            }
+
+            std::vector<uint8_t> tuple_copy(tuple.data, tuple.data + tuple.data_size);
+            Tuple stable_tuple{tuple_copy.data(), static_cast<uint32_t>(tuple_copy.size()), candidate_tid};
+
+            bool matches_key_semantics = true;
+            if (enforce_key_semantics)
+            {
+                std::vector<uint8_t> visible_key;
+                ErrorContext key_ctx;
+                Status key_status = extractStoredIndexKey(table_id, indexed_column_ids, stable_tuple,
+                                                          &visible_key, &key_ctx);
+                if (key_status != Status::OK)
+                {
+                    if (ctx != nullptr && ctx->message.empty())
+                    {
+                        propagateErrorContext(ctx, key_ctx);
+                    }
+                    return key_status;
+                }
+
+                matches_key_semantics = (visible_key == search_key);
+            }
+
+            if (matches_key_semantics)
+            {
+                visible_tids->push_back(candidate_tid);
+            }
+        }
+
+        return Status::OK;
+    }
+
+    auto StorageEngine::preflightUniqueInsert(const ID &table_id,
+                                              const uint8_t *tuple_data,
+                                              uint32_t tuple_size,
+                                              uint64_t current_xid,
+                                              ErrorContext *ctx) -> Status
+    {
+        std::vector<CatalogManager::IndexInfo> indexes;
+        Status status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
+        if (status != Status::OK || indexes.empty())
+        {
+            return status == Status::OK ? Status::OK : status;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        status = catalog_manager_->getColumns(table_id, columns, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<size_t> column_offsets;
+        std::vector<size_t> column_sizes;
+        status = computeColumnLayout(tuple_data, tuple_size, columns,
+                                     db_->domain_manager(),
+                                     column_offsets, column_sizes, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        IndexKeyExtractor extractor;
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        for (const auto &index_info : indexes)
+        {
+            if (!index_info.is_unique || index_info.is_expression_index || index_info.is_partial_index)
+            {
+                continue;
+            }
+
+            CatalogManager::IndexType actual_index_type;
+            void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+            if (!index_ptr || !supportsExactKeyLookup(actual_index_type))
+            {
+                continue;
+            }
+
+            std::vector<uint16_t> column_indices;
+            column_indices.reserve(index_info.column_ids.size());
+            for (const auto &column_id : index_info.column_ids)
+            {
+                for (size_t i = 0; i < columns.size(); ++i)
+                {
+                    if (columns[i].column_id == column_id)
+                    {
+                        column_indices.push_back(static_cast<uint16_t>(i));
+                        break;
+                    }
+                }
+            }
+
+            std::vector<uint8_t> key;
+            status = extractor.extractKey(tuple_data, tuple_size,
+                                          column_offsets, column_sizes,
+                                          column_indices,
+                                          toast_mgr,
+                                          current_xid,
+                                          &key, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            std::vector<TID> candidate_tids;
+            ErrorContext lookup_ctx;
+            status = searchExactIndexCandidates(actual_index_type, index_ptr, key, current_xid,
+                                                &candidate_tids, &lookup_ctx);
+            if (status == Status::NOT_FOUND)
+            {
+                continue;
+            }
+            if (status != Status::OK)
+            {
+                if (ctx != nullptr)
+                {
+                    propagateErrorContext(ctx, lookup_ctx);
+                }
+                return status;
+            }
+
+            std::vector<TID> visible_tids;
+            status = filterIndexCandidatesByVisibleHeap(table_id, index_info.column_ids,
+                                                        true, key, candidate_tids, nullptr,
+                                                        &visible_tids, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (!visible_tids.empty())
+            {
+                std::string msg = "UNIQUE index violation on index '" + index_info.index_name + "'";
+                SET_ERROR_CONTEXT(ctx, Status::UNIQUE_VIOLATION, msg.c_str());
+                return Status::UNIQUE_VIOLATION;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    auto StorageEngine::preflightUniqueUpdate(const ID &table_id,
+                                              const uint8_t *old_tuple_data,
+                                              uint32_t old_tuple_size,
+                                              const uint8_t *new_tuple_data,
+                                              uint32_t new_tuple_size,
+                                              const TID &stable_tid,
+                                              uint64_t current_xid,
+                                              ErrorContext *ctx) -> Status
+    {
+        std::vector<CatalogManager::IndexInfo> indexes;
+        Status status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
+        if (status != Status::OK || indexes.empty())
+        {
+            return status == Status::OK ? Status::OK : status;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        status = catalog_manager_->getColumns(table_id, columns, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        std::vector<size_t> old_offsets;
+        std::vector<size_t> old_sizes;
+        std::vector<size_t> new_offsets;
+        std::vector<size_t> new_sizes;
+        status = computeColumnLayout(old_tuple_data, old_tuple_size, columns,
+                                     db_->domain_manager(), old_offsets, old_sizes, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = computeColumnLayout(new_tuple_data, new_tuple_size, columns,
+                                     db_->domain_manager(), new_offsets, new_sizes, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        IndexKeyExtractor extractor;
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        for (const auto &index_info : indexes)
+        {
+            if (!index_info.is_unique || index_info.is_expression_index || index_info.is_partial_index)
+            {
+                continue;
+            }
+
+            CatalogManager::IndexType actual_index_type;
+            void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+            if (!index_ptr || !supportsExactKeyLookup(actual_index_type))
+            {
+                continue;
+            }
+
+            std::vector<uint16_t> column_indices;
+            column_indices.reserve(index_info.column_ids.size());
+            for (const auto &column_id : index_info.column_ids)
+            {
+                for (size_t i = 0; i < columns.size(); ++i)
+                {
+                    if (columns[i].column_id == column_id)
+                    {
+                        column_indices.push_back(static_cast<uint16_t>(i));
+                        break;
+                    }
+                }
+            }
+
+            std::vector<uint8_t> old_key;
+            std::vector<uint8_t> new_key;
+            status = extractor.extractKeyForUpdate(old_tuple_data, old_tuple_size, old_offsets, old_sizes,
+                                                   new_tuple_data, new_tuple_size, new_offsets, new_sizes,
+                                                   column_indices, toast_mgr, current_xid,
+                                                   &old_key, &new_key, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (old_key == new_key)
+            {
+                continue;
+            }
+
+            std::vector<TID> candidate_tids;
+            ErrorContext lookup_ctx;
+            status = searchExactIndexCandidates(actual_index_type, index_ptr, new_key, current_xid,
+                                                &candidate_tids, &lookup_ctx);
+            if (status == Status::NOT_FOUND)
+            {
+                continue;
+            }
+            if (status != Status::OK)
+            {
+                if (ctx != nullptr)
+                {
+                    propagateErrorContext(ctx, lookup_ctx);
+                }
+                return status;
+            }
+
+            std::vector<TID> visible_tids;
+            status = filterIndexCandidatesByVisibleHeap(table_id, index_info.column_ids,
+                                                        true, new_key, candidate_tids, &stable_tid,
+                                                        &visible_tids, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            if (!visible_tids.empty())
+            {
+                std::string msg = "UNIQUE index violation on index '" + index_info.index_name + "'";
+                SET_ERROR_CONTEXT(ctx, Status::UNIQUE_VIOLATION, msg.c_str());
+                return Status::UNIQUE_VIOLATION;
+            }
+        }
+
+        return Status::OK;
     }
 
     auto StorageEngine::insertTuple(const ID &table_id, const uint8_t *tuple_data,
@@ -847,6 +1302,12 @@ namespace scratchbird::core
         ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
         // Note: toast_mgr can be nullptr if TOAST table doesn't exist
         // HeapPage will handle this gracefully by not TOASTing
+
+        status = preflightUniqueInsert(table_id, tuple_data_ptr, tuple_size, current_xid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // A stale free-space estimate can surface as PAGE_FULL after pinning.
         // Retry with a newly selected page a few times before surfacing failure.
@@ -2546,6 +3007,21 @@ namespace scratchbird::core
             memcpy(old_tuple_buffer.data(), page_data + old_offset, old_tuple_length);
         }
 
+        TID stable_tid = TID(makeGPID(tablespace_id, static_cast<uint64_t>(page_id)), item_id);
+        Status unique_status = preflightUniqueUpdate(table_id,
+                                                     old_tuple_buffer.data(),
+                                                     old_tuple_length,
+                                                     tuple_data_ptr,
+                                                     new_tuple_size,
+                                                     stable_tid,
+                                                     xmax,
+                                                     ctx);
+        if (unique_status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+            return unique_status;
+        }
+
         // Try to update tuple on same page
         HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
         uint16_t new_item_id;
@@ -3096,30 +3572,43 @@ namespace scratchbird::core
             return status;
         }
 
-        // Create a BTree instance for this index
-        SBBTreeIndex btree_info;
-        btree_info.idx_uuid = index_info.index_id;
-        btree_info.idx_table_uuid = index_info.table_id;
-        btree_info.idx_root_page = static_cast<uint32_t>(getPageNumber(index_info.root_gpid));
-        btree_info.idx_tablespace_id = getTablespaceID(index_info.root_gpid);
+        CatalogManager::IndexType actual_index_type;
+        void *index_ptr = db_->catalog_manager()->getIndexPtr(index_info.index_id, &actual_index_type);
+        if (index_ptr == nullptr)
+        {
+            done_ = true;
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Index object not found in cache");
+            return Status::NOT_FOUND;
+        }
 
-        BTree btree(db_, btree_info);
-
-        // Search for the key in the B-tree
         current_tuple_ids_.clear();
         current_tuple_index_ = 0;
         current_key_ = key;
 
-        // PHASE 1 TASK 1.1.5: Pass nullptr for snapshot (Phase 1 Task 1.2 will pass actual snapshot)
-        status = btree.search(key, 0, &current_tuple_ids_, ctx);
+        std::vector<TID> candidate_tids;
+        status = searchExactIndexCandidates(actual_index_type, index_ptr, key,
+                                            engine_->getCurrentXid(),
+                                            &candidate_tids, ctx);
         if (status == Status::NOT_FOUND)
         {
-            // No matching key found, mark as done
             done_ = true;
             initialized_ = true;
             return Status::OK;
         }
         else if (status != Status::OK)
+        {
+            done_ = true;
+            return status;
+        }
+
+        status = engine_->filterIndexCandidatesByVisibleHeap(
+            table_id_,
+            index_info.column_ids,
+            !index_info.is_expression_index && !index_info.is_partial_index &&
+                supportsExactKeyLookup(actual_index_type),
+            key, candidate_tids,
+                                                             nullptr, &current_tuple_ids_, ctx);
+        if (status != Status::OK)
         {
             done_ = true;
             return status;

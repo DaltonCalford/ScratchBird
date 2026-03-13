@@ -28,6 +28,7 @@
 #include <cstring>
 #include <set>
 #include <algorithm>
+#include <limits>
 
 namespace scratchbird::core
 {
@@ -748,15 +749,11 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                    uint64_t *pages_modified_out,
                                    ErrorContext *ctx)
 {
-    // Plan 01 Task D.3: BRIN GC implementation
-    //
-    // NOTE: The specification requires rescanning heap blocks to recompute min/max,
-    // but BRIN doesn't have heap access in the current architecture. Full
-    // resummarization would require adding heap access infrastructure.
-    //
-    // This implementation uses a conservative approach: mark affected ranges as
-    // DELETED. This is alpha-safe (won't return incorrect results) but may over-
-    // invalidate ranges. A future enhancement could add heap rescanning capability.
+    // MGA hardening: summary indexes must not blindly tombstone a range when only a
+    // subset of heap blocks are dead. Until heap resummarization is added here, the
+    // bounded safe behavior is:
+    // - remove a range only when every block in that range is proven dead
+    // - leave partially-dead ranges in place for later resummarization / rebuild work
 
     // Empty dead_tids is a no-op
     if (dead_tids.empty())
@@ -798,7 +795,7 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
     uint64_t ranges_removed = 0;
     uint64_t pages_modified = 0;
 
-    // Step 2: Traverse all BRIN pages and mark affected ranges as DELETED
+    // Step 2: Traverse all BRIN pages and mark fully-dead ranges as DELETED
     uint32_t current_page_id = index_info_.idx_root_page;
 
     while (current_page_id != 0)
@@ -823,22 +820,29 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
         {
             SBBrinRange *range = reinterpret_cast<SBBrinRange*>(page_data + offset);
 
-            // Conservative: delete range if ANY block in the range is dead
-            bool range_has_dead = false;
+            bool range_fully_dead = false;
             uint32_t range_start = range->brn_start_block;
             uint32_t range_end = range->brn_end_block;
             if (range_end >= range_start)
             {
-                auto it = dead_blocks.lower_bound(range_start);
-                if (it != dead_blocks.end() && *it <= range_end)
+                range_fully_dead = true;
+                for (uint32_t block = range_start; block <= range_end; ++block)
                 {
-                    range_has_dead = true;
+                    if (dead_blocks.find(block) == dead_blocks.end())
+                    {
+                        range_fully_dead = false;
+                        break;
+                    }
+
+                    if (block == std::numeric_limits<uint32_t>::max())
+                    {
+                        break;
+                    }
                 }
             }
 
-            if (range_has_dead && range->brn_xmax == 0)
+            if (range_fully_dead && range->brn_xmax == 0)
             {
-                // Mark range as deleted (conservative approach without heap rescan)
                 range->brn_xmax = current_xid;
                 range->brn_flags |= static_cast<uint16_t>(BrinRangeFlags::DELETED);
 

@@ -213,7 +213,8 @@ TEST_F(HnswIndexTest, InsertMultipleVectorsAndSearch)
     std::vector<HnswSearchResult> results;
     status = hnsw->search(query, 3, 0, &results, &ctx);
     EXPECT_EQ(status, Status::OK);
-    // Stub implementation returns empty, so no results expected yet
+    EXPECT_TRUE(results.empty())
+        << "User-visible HNSW results must be backed by heap-visible tuples";
 }
 
 // Test 5: Test different distance metrics
@@ -343,7 +344,37 @@ TEST_F(HnswIndexTest, RemoveDeadEntriesWithTids)
 
     status = hnsw->removeDeadEntries(dead_tids, &entries_removed, &pages_modified, &ctx);
     EXPECT_EQ(status, Status::OK);
-    // Stub returns 0, but this validates the API
+    EXPECT_EQ(entries_removed, 1);
+    EXPECT_EQ(pages_modified, 1);
+}
+
+// Test 8A: Search filters candidates without a visible heap tuple backing them
+TEST_F(HnswIndexTest, SearchDropsCandidatesWithoutHeapVisibility)
+{
+    ErrorContext ctx;
+
+    UuidV7Bytes index_uuid = generateUuidV7();
+    UuidV7Bytes table_uuid = generateUuidV7();
+    std::vector<UuidV7Bytes> column_uuids = {generateUuidV7()};
+
+    GPID root_gpid = allocateRootGpid(&ctx);
+    Status status = HnswIndex::create(db_, index_uuid, table_uuid, column_uuids,
+                                      3, DistanceMetric::EUCLIDEAN,
+                                      16, 200, 100,
+                                      root_gpid, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    auto hnsw = HnswIndex::open(db_, index_uuid, root_gpid, &ctx);
+    ASSERT_NE(hnsw, nullptr);
+
+    VectorValue vec = createVector({1.0f, 0.0f, 0.0f});
+    ASSERT_EQ(hnsw->insert(vec, TID(makeGPID(PRIMARY_TABLESPACE_ID, 4242), 1), &ctx), Status::OK)
+        << ctx.message;
+
+    std::vector<HnswSearchResult> results;
+    status = hnsw->search(vec, 1, 0, &results, &ctx);
+    EXPECT_EQ(status, Status::OK);
+    EXPECT_TRUE(results.empty());
 }
 
 // Test 8: Soft deletion
