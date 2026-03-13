@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-**Last Updated:** 2026-02-03
+**Last Updated:** 2026-03-13
 
 
 Common issues and solutions.
@@ -11,17 +11,22 @@ Common issues and solutions.
 ## Quick Diagnostics
 
 ```bash
-# Check server status
-systemctl status scratchbird
+# Check the full runtime stack
+pgrep -af 'sb_listener|sb_parser|sb_server|sb_manager'
 
 # View recent logs
 journalctl -u scratchbird -n 50
 
-# Test connectivity
-sb_isql -H localhost -P 3092 -c "SELECT 1"
-
 # Check listening ports
 ss -tlnp | grep -E "3092|5432|3306|3050"
+```
+
+Open a native listener session for the PH6 checks:
+
+```sql
+SHOW READINESS HEALTH WINDOW MINUTES 15;
+SHOW ALERT DASHBOARD WINDOW MINUTES 15;
+SHOW SUPPORT BUNDLE SAFETY WINDOW MINUTES 60;
 ```
 
 ---
@@ -34,15 +39,15 @@ ss -tlnp | grep -E "3092|5432|3306|3050"
 
 **Solution:**
 ```bash
-# Check if running
-systemctl status scratchbird
+# Verify the listener/parser/server stack
+pgrep -af 'sb_listener|sb_parser|sb_server|sb_manager'
 
-# If stopped, start it
-sudo systemctl start scratchbird
-
-# Check listening ports
-ss -tlnp | grep sb_server
+# Verify listener ports
+ss -tlnp | grep -E '3092|5432|3306|3050'
 ```
+
+ScratchBird clients do not connect directly to the engine; restore the
+listener/parser stack instead of attempting a direct engine-port workaround.
 
 ### "No pg_hba.conf entry"
 
@@ -146,14 +151,9 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO username;
 
 **Solution:**
 ```sql
--- List tables
-\dt
-
--- Check schema
-\dt *.tablename
-
--- Set search path
-SET search_path TO myschema, public;
+-- Confirm the effective current schema and object visibility.
+-- Current schema is resolved from session override, then user/role/group
+-- defaults, then users.public.
 ```
 
 ### "Disk full"

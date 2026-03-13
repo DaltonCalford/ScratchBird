@@ -42,6 +42,8 @@
 
 - [Installation Index](installation/README)
 - [Admin Index](admin/README)
+- [Operations Runbook](admin/operations-runbook)
+- [On-Call Protocol](admin/on-call-protocol)
 - [Troubleshooting](admin/troubleshooting)
 
 ### Reference

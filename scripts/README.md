@@ -71,6 +71,37 @@ Master script that runs all three statistics scripts.
 ./scripts/generate-all-stats.sh
 ```
 
+### 5. release/generate_sbom_inventory.py
+Generates deterministic dependency-inventory and SBOM bundle artifacts for the
+release-integrity lane.
+
+**Output:** `artifacts/release_integrity/sbom/`
+
+**Usage:**
+```bash
+python3 scripts/release/generate_sbom_inventory.py generate
+python3 scripts/release/generate_sbom_inventory.py validate
+python3 scripts/release/generate_sbom_inventory.py generate \
+  --repo ScratchBird=/home/dcalford/CliWork/ScratchBird \
+  --repo ScratchBird-driver=/home/dcalford/CliWork/ScratchBird-driver \
+  --out-dir /tmp/sb-release-sbom
+```
+
+### 6. release/sign_release_bundle.py
+Signs a generated release bundle manifest and emits provenance attestations plus
+verification metadata.
+
+**Usage:**
+```bash
+python3 scripts/release/sign_release_bundle.py sign \
+  --bundle-manifest /tmp/sb-release-sbom/release-sbom-manifest.json \
+  --private-key /path/to/release.pem \
+  --out-dir /tmp/sb-release-signatures
+python3 scripts/release/sign_release_bundle.py verify \
+  --bundle-manifest /tmp/sb-release-sbom/release-sbom-manifest.json \
+  --signing-manifest /tmp/sb-release-signatures/release-bundle-signing-manifest.json
+```
+
 ---
 
 ## 🚀 Quick Start

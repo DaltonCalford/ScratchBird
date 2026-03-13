@@ -1,9 +1,14 @@
 # Monitoring
 
-**Last Updated:** 2026-02-03
+**Last Updated:** 2026-03-13
 
 
 Monitor ScratchBird health and performance.
+
+ScratchBird is operated as a listener/parser/server stack. Client sessions
+connect to listeners, listeners manage parser pools, and parsers communicate
+with the engine over IPC. Monitor ingress and parser health alongside engine
+health; a healthy engine process by itself does not mean the service is ready.
 
 
 ---
@@ -16,6 +21,25 @@ Monitor ScratchBird health and performance.
 | **Prometheus** | Time-series metrics |
 | **Logging** | Debug and audit |
 | **System tools** | OS-level monitoring |
+
+---
+
+## Operational SQL Surfaces
+
+Run these through a native listener session:
+
+```sql
+SHOW READINESS HEALTH WINDOW MINUTES 15;
+SHOW ALERT DASHBOARD WINDOW MINUTES 15;
+SHOW SLO STATUS;
+SHOW ERROR BUDGET STATUS;
+SHOW AUTOSCALE ACTIONS WINDOW MINUTES 60;
+SHOW ADMISSION TUNING HISTORY WINDOW MINUTES 60;
+SHOW SUPPORT BUNDLE SAFETY WINDOW MINUTES 60;
+```
+
+Use them as the first operational health readout before collecting deeper
+evidence or restarting components.
 
 ---
 
