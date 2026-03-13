@@ -1063,6 +1063,18 @@ set_tests_properties(AuthPluginEnterpriseSoak PROPERTIES
     TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_STRESS}
 )
 
+add_executable(operational_reliability_soak stress/test_operational_reliability_soak.cpp)
+target_link_libraries(operational_reliability_soak
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME OperationalReliabilitySoak COMMAND operational_reliability_soak)
+set_tests_properties(OperationalReliabilitySoak PROPERTIES
+    LABELS "soak;stress;reliability;operability"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_STRESS}
+)
+
 # Wave 1 Tests (Phase 2 Parallel Development)
 # NOTE: Temporarily disabled - test files need API updates for spatial types
 # TODO: Fix test_spatial_types.cpp, test_multi_geometry.cpp TypedValue::makePoint API
