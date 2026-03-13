@@ -102,6 +102,70 @@ python3 scripts/release/sign_release_bundle.py verify \
   --signing-manifest /tmp/sb-release-signatures/release-bundle-signing-manifest.json
 ```
 
+### 7. release/triage_cve_feed.py
+Ingests advisory data against the generated dependency inventories and produces
+deterministic patch-SLA triage plus remediation queue outputs.
+
+**Usage:**
+```bash
+python3 scripts/release/triage_cve_feed.py triage \
+  --bundle-manifest /tmp/sb-release-sbom/release-sbom-manifest.json \
+  --advisories /tmp/cve-feed.json \
+  --out-dir /tmp/sb-cve-triage \
+  --now 2026-03-13T00:00:00Z
+python3 scripts/release/triage_cve_feed.py validate \
+  --out-dir /tmp/sb-cve-triage
+```
+
+### 8. release/verify_repro_build.py
+Re-runs manifest generators, compares outputs byte-for-byte, and optionally
+verifies the signed release bundle from the prior PH6 lanes.
+
+**Usage:**
+```bash
+python3 scripts/release/verify_repro_build.py generate \
+  --out-dir /tmp/sb-repro-check \
+  --linux-build-dir /home/dcalford/CliWork/ScratchBird/build \
+  --bundle-manifest /tmp/sb-release-sbom-ncw065/release-sbom-manifest.json \
+  --signing-manifest /tmp/sb-release-signatures-ncw066/release-bundle-signing-manifest.json
+python3 scripts/release/verify_repro_build.py validate \
+  --report-path /tmp/sb-repro-check/repro-build-report.json
+```
+
+### 9. release/generate_compliance_bundle.py
+Packages in-tree legal artifacts and the PH6 release-integrity outputs into one
+deterministic compliance bundle.
+
+**Usage:**
+```bash
+python3 scripts/release/generate_compliance_bundle.py generate \
+  --out-dir /tmp/sb-compliance-bundle \
+  --bundle-manifest /tmp/sb-release-sbom-ncw065/release-sbom-manifest.json \
+  --signing-manifest /tmp/sb-release-signatures-ncw066/release-bundle-signing-manifest.json \
+  --triage-report /tmp/sb-cve-triage-ncw067/cve-triage-report.json
+python3 scripts/release/generate_compliance_bundle.py validate \
+  --bundle-dir /tmp/sb-compliance-bundle
+```
+
+### 10. release/run_integrated_gameday.py
+Executes the PH7 non-cluster integrated gameday by validating the PH6 release
+bundle and running focused adversarial recovery, security, forensic, and
+reliability drills against `scratchbird_tests`.
+
+**Usage:**
+```bash
+python3 scripts/release/run_integrated_gameday.py generate \
+  --out-dir /tmp/sb-integrated-gameday \
+  --scratchbird-tests /home/dcalford/CliWork/ScratchBird/build/tests/scratchbird_tests \
+  --bundle-manifest /tmp/sb-release-sbom-ncw065/release-sbom-manifest.json \
+  --signing-manifest /tmp/sb-release-signatures-ncw066/release-bundle-signing-manifest.json \
+  --triage-dir /tmp/sb-cve-triage-ncw067 \
+  --repro-report /tmp/sb-repro-check-ncw068/repro-build-report.json \
+  --compliance-bundle-dir /tmp/sb-compliance-bundle-ncw069
+python3 scripts/release/run_integrated_gameday.py validate \
+  --report-path /tmp/sb-integrated-gameday/integrated-gameday-report.json
+```
+
 ---
 
 ## 🚀 Quick Start

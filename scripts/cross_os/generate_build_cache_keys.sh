@@ -28,7 +28,7 @@ tmp_lock_material="$(mktemp)"
 trap 'rm -f "${tmp_lock_material}"' EXIT
 
 for f in "${lock_inputs[@]}"; do
-  printf "%s %s\n" "$(hash_file "${f}")" "${f}" >> "${tmp_lock_material}"
+  printf "%s %s\n" "$(hash_file "${f}")" "${f#${repo_root}/}" >> "${tmp_lock_material}"
 done
 
 dependency_lock_hash="$(sha256sum "${tmp_lock_material}" | awk '{print $1}')"

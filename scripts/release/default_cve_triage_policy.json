@@ -1,0 +1,30 @@
+{
+  "schema": "scratchbird.release.cve_triage_policy.v1",
+  "severity_defaults": {
+    "critical": {
+      "breach_action": "SECOPS_REMEDIATE",
+      "open_action": "SECOPS_TRACK",
+      "sla_days": 7
+    },
+    "high": {
+      "breach_action": "SECOPS_REMEDIATE",
+      "open_action": "SECOPS_TRACK",
+      "sla_days": 14
+    },
+    "low": {
+      "breach_action": "SECOPS_REVIEW",
+      "open_action": "SECOPS_TRACK",
+      "sla_days": 60
+    },
+    "medium": {
+      "breach_action": "SECOPS_TRACK",
+      "open_action": "SECOPS_TRACK",
+      "sla_days": 30
+    },
+    "unknown": {
+      "breach_action": "SECOPS_REVIEW",
+      "open_action": "SECOPS_REVIEW",
+      "sla_days": 90
+    }
+  }
+}

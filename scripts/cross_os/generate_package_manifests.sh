@@ -92,12 +92,12 @@ write_or_placeholder "${out_dir}/windows-qa-manifest.txt" "${collect_windows_qa[
 
 cat > "${out_dir}/README.md" <<EOF
 # Cross-OS Package Manifests
-Last-Modified: $(date +%Y-%m-%d)
 
 - linux-runtime-manifest.txt: runtime binaries for Linux package.
 - linux-qa-manifest.txt: Linux QA/test binaries.
 - windows-runtime-manifest.txt: runtime binaries for Windows package.
 - windows-qa-manifest.txt: Windows QA/test binaries.
+- generation is deterministic for identical manifest inputs and build contents.
 EOF
 
 echo "Wrote manifests in ${out_dir}"
