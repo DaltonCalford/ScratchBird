@@ -21,8 +21,10 @@
 #include "scratchbird/optimizer/query_planner.h"
 
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/observability_contract.h"
 #include <array>
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -57,6 +59,26 @@ namespace scratchbird::optimizer
             std::string runtime_filter_column;
             std::string runtime_filter_index_name;
             std::string runtime_filter_index_id_text;
+        };
+
+        struct MgaRelationCostSignal
+        {
+            bool available = false;
+            double cleanup_debt_bytes = 0.0;
+            double retained_dead_bytes = 0.0;
+            double index_backlog_entries = 0.0;
+            double same_page_update_ratio = 1.0;
+            std::unordered_map<std::string, double> chain_depth_buckets;
+            std::unordered_map<std::string, double> chain_scatter_buckets;
+        };
+
+        struct MgaCostingSnapshot
+        {
+            bool available = false;
+            std::string contract_id;
+            uint32_t metric_schema_version = 0;
+            double commit_fence_backlog = 0.0;
+            std::unordered_map<std::string, MgaRelationCostSignal> relations;
         };
 
         struct PlannerPartitionBound
@@ -161,6 +183,314 @@ namespace scratchbird::optimizer
                 return relation.table_info.table_name;
             }
             return relation.table_path;
+        }
+
+        auto currentEpochMillis() -> uint64_t
+        {
+            return static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch())
+                    .count());
+        }
+
+        auto normalizeMetricDimension(std::string value) -> std::string
+        {
+            auto not_space = [](unsigned char ch) { return !std::isspace(ch); };
+            value.erase(value.begin(),
+                        std::find_if(value.begin(), value.end(), not_space));
+            value.erase(std::find_if(value.rbegin(), value.rend(), not_space).base(),
+                        value.end());
+            return core::IdentifierUtils::toUpper(std::move(value));
+        }
+
+        auto parseMetricLabelsJson(const std::string &labels_json,
+                                   std::unordered_map<std::string, std::string> &labels_out)
+            -> bool
+        {
+            labels_out.clear();
+            if (labels_json.empty())
+            {
+                return false;
+            }
+
+            try
+            {
+                const auto parsed = nlohmann::json::parse(labels_json);
+                if (!parsed.is_object())
+                {
+                    return false;
+                }
+                for (auto it = parsed.begin(); it != parsed.end(); ++it)
+                {
+                    if (it.value().is_string())
+                    {
+                        labels_out.emplace(it.key(), it.value().get<std::string>());
+                    }
+                }
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        auto relationMetricLookupKeys(const ResolvedRelation &relation)
+            -> std::vector<std::string>
+        {
+            std::vector<std::string> keys;
+            auto append_key = [&keys](const std::string &value) {
+                const std::string normalized = normalizeMetricDimension(value);
+                if (normalized.empty() ||
+                    std::find(keys.begin(), keys.end(), normalized) != keys.end())
+                {
+                    return;
+                }
+                keys.push_back(normalized);
+            };
+
+            append_key(relation.table_info.table_name);
+            append_key(relation.table_path);
+            append_key(relation.physical_table_path);
+            append_key(relation.alias);
+            return keys;
+        }
+
+        auto lookupMgaRelationCostSignal(const MgaCostingSnapshot &snapshot,
+                                         const ResolvedRelation &relation)
+            -> const MgaRelationCostSignal *
+        {
+            for (const std::string &key : relationMetricLookupKeys(relation))
+            {
+                const auto it = snapshot.relations.find(key);
+                if (it != snapshot.relations.end() && it->second.available)
+                {
+                    return &it->second;
+                }
+            }
+            return nullptr;
+        }
+
+        auto highestBucketWeight(const std::unordered_map<std::string, double> &bucket_counts,
+                                 std::initializer_list<std::pair<const char *, double>> weights)
+            -> double
+        {
+            double penalty = 0.0;
+            for (const auto &[bucket, weight] : weights)
+            {
+                auto it = bucket_counts.find(bucket);
+                if (it != bucket_counts.end() && it->second > 0.0)
+                {
+                    penalty = std::max(penalty, weight);
+                }
+            }
+            return penalty;
+        }
+
+        auto describeMgaCostSignal(const MgaRelationCostSignal &signal,
+                                   double commit_fence_backlog) -> std::string
+        {
+            std::ostringstream out;
+            out << "cleanup_debt_bytes=" << signal.cleanup_debt_bytes
+                << ", retained_dead_bytes=" << signal.retained_dead_bytes
+                << ", index_backlog_entries=" << signal.index_backlog_entries
+                << ", same_page_update_ratio=" << signal.same_page_update_ratio
+                << ", commit_fence_backlog=" << commit_fence_backlog;
+            if (!signal.chain_scatter_buckets.empty())
+            {
+                out << ", chain_scatter=";
+                bool first = true;
+                for (const auto &entry : signal.chain_scatter_buckets)
+                {
+                    if (!first)
+                    {
+                        out << ';';
+                    }
+                    out << entry.first << ':' << entry.second;
+                    first = false;
+                }
+            }
+            if (!signal.chain_depth_buckets.empty())
+            {
+                out << ", chain_depth=";
+                bool first = true;
+                for (const auto &entry : signal.chain_depth_buckets)
+                {
+                    if (!first)
+                    {
+                        out << ';';
+                    }
+                    out << entry.first << ':' << entry.second;
+                    first = false;
+                }
+            }
+            return out.str();
+        }
+
+        auto applyMgaCostPenalty(CostEstimate &cost,
+                                 const MgaRelationCostSignal *signal,
+                                 double commit_fence_backlog,
+                                 uint64_t base_pages,
+                                 uint64_t base_rows,
+                                 const std::string &scan_kind) -> double
+        {
+            if (signal == nullptr || !signal->available)
+            {
+                return 0.0;
+            }
+
+            const double relation_bytes =
+                std::max<double>(1.0, static_cast<double>(std::max<uint64_t>(1, base_pages)) * 8192.0);
+            const double row_basis =
+                std::max<double>(1.0, static_cast<double>(std::max<uint64_t>(1, base_rows)));
+
+            double cleanup_weight = 1.0;
+            double index_weight = 0.35;
+            if (scan_kind == "INDEX_SCAN" || scan_kind == "LSM_SCAN")
+            {
+                cleanup_weight = 0.65;
+                index_weight = 0.85;
+            }
+            else if (scan_kind == "INDEX_ONLY_SCAN")
+            {
+                cleanup_weight = 0.35;
+                index_weight = 1.0;
+            }
+            else if (scan_kind == "BITMAP_INDEX_SCAN")
+            {
+                cleanup_weight = 0.8;
+                index_weight = 0.75;
+            }
+
+            const double cleanup_ratio =
+                std::min(1.0, signal->cleanup_debt_bytes / relation_bytes);
+            const double retained_ratio =
+                std::min(1.0, signal->retained_dead_bytes / relation_bytes);
+            const double index_backlog_ratio =
+                std::min(1.0, signal->index_backlog_entries / row_basis);
+            const double same_page_penalty =
+                std::clamp(1.0 - signal->same_page_update_ratio, 0.0, 1.0);
+            const double chain_scatter_penalty = highestBucketWeight(
+                signal->chain_scatter_buckets,
+                {{"wide", 0.80}, {"scattered", 0.45}, {"local", 0.15}, {"same_page", 0.0}});
+            const double chain_depth_penalty = highestBucketWeight(
+                signal->chain_depth_buckets,
+                {{"depth_8_plus", 0.90},
+                 {"depth_4_7", 0.55},
+                 {"depth_2_3", 0.20},
+                 {"depth_1", 0.0}});
+            const double fence_penalty =
+                std::min(1.0, commit_fence_backlog / 64.0) * 0.20;
+
+            const double penalty = std::min(
+                4.0,
+                (cleanup_ratio * 1.50 * cleanup_weight) +
+                    (retained_ratio * 1.00 * cleanup_weight) +
+                    (index_backlog_ratio * 0.80 * index_weight) +
+                    chain_scatter_penalty + chain_depth_penalty +
+                    (same_page_penalty * 0.50) + fence_penalty);
+            if (penalty <= 0.0)
+            {
+                return 0.0;
+            }
+
+            cost.run_cost += penalty;
+            cost.total_cost = cost.startup_cost + cost.run_cost;
+            return penalty;
+        }
+
+        auto loadMgaCostingSnapshot(core::Database *db) -> MgaCostingSnapshot
+        {
+            MgaCostingSnapshot snapshot;
+            snapshot.contract_id = core::MgaObservabilityContract::contract_id();
+            snapshot.metric_schema_version =
+                core::MgaObservabilityContract::metric_schema_version();
+            if (db == nullptr)
+            {
+                return snapshot;
+            }
+
+            std::vector<core::SqlRuntimeMetricRow> rows;
+            if (core::SqlObservabilityViewBuilder::buildMgaRuntimeRows(
+                    *db,
+                    core::MetricsRegistry::getInstance(),
+                    currentEpochMillis(),
+                    rows) != core::Status::OK)
+            {
+                return snapshot;
+            }
+
+            const std::string db_uuid = db->uuid().toString();
+            std::unordered_map<std::string, std::string> labels;
+            for (const auto &row : rows)
+            {
+                if (!parseMetricLabelsJson(row.labels_json, labels))
+                {
+                    continue;
+                }
+                const auto db_it = labels.find("db");
+                if (db_it != labels.end() && db_it->second != db_uuid)
+                {
+                    continue;
+                }
+
+                if (row.metric_name == "sb_buf_commit_fence_backlog")
+                {
+                    snapshot.commit_fence_backlog =
+                        std::max(snapshot.commit_fence_backlog, row.value);
+                    snapshot.available = true;
+                    continue;
+                }
+
+                const auto relation_it = labels.find("relation");
+                if (relation_it == labels.end())
+                {
+                    continue;
+                }
+
+                auto &signal =
+                    snapshot.relations[normalizeMetricDimension(relation_it->second)];
+                signal.available = true;
+                snapshot.available = true;
+
+                if (row.metric_name == "sb_gc_cleanup_debt_bytes")
+                {
+                    signal.cleanup_debt_bytes = std::max(signal.cleanup_debt_bytes, row.value);
+                }
+                else if (row.metric_name == "sb_mga_retained_dead_bytes")
+                {
+                    signal.retained_dead_bytes =
+                        std::max(signal.retained_dead_bytes, row.value);
+                }
+                else if (row.metric_name == "sb_gc_index_backlog_entries")
+                {
+                    signal.index_backlog_entries =
+                        std::max(signal.index_backlog_entries, row.value);
+                }
+                else if (row.metric_name == "sb_mga_same_page_update_ratio")
+                {
+                    signal.same_page_update_ratio =
+                        std::clamp(row.value, 0.0, 1.0);
+                }
+                else if (row.metric_name == "sb_mga_chain_scatter_bucket")
+                {
+                    const auto bucket_it = labels.find("bucket");
+                    if (bucket_it != labels.end())
+                    {
+                        signal.chain_scatter_buckets[bucket_it->second] += row.value;
+                    }
+                }
+                else if (row.metric_name == "sb_mga_chain_depth_bucket")
+                {
+                    const auto bucket_it = labels.find("bucket");
+                    if (bucket_it != labels.end())
+                    {
+                        signal.chain_depth_buckets[bucket_it->second] += row.value;
+                    }
+                }
+            }
+
+            return snapshot;
         }
 
         auto trimWhitespace(std::string value) -> std::string
@@ -2518,6 +2848,25 @@ namespace scratchbird::optimizer
         const PlannerSpillPolicy spill_policy = planner_controls.spill_policy;
         const std::string spill_policy_text = plannerSpillPolicyName(spill_policy);
         CostModel active_cost_model(planner_params);
+        const MgaCostingSnapshot mga_costing_snapshot = loadMgaCostingSnapshot(db_);
+        upsertPlannerControl(planner_controls.runtime_controls,
+                             "MGA_COSTING_CONTRACT",
+                             mga_costing_snapshot.contract_id,
+                             "CANONICAL_METRIC_CONTRACT");
+        upsertPlannerControl(planner_controls.runtime_controls,
+                             "MGA_COSTING_METRIC_SCHEMA",
+                             std::to_string(mga_costing_snapshot.metric_schema_version),
+                             "CANONICAL_METRIC_CONTRACT");
+        upsertPlannerControl(planner_controls.runtime_controls,
+                             "MGA_COSTING_MODE",
+                             "CANONICAL_ONLY",
+                             "CANONICAL_METRIC_CONTRACT");
+        upsertPlannerControl(planner_controls.runtime_controls,
+                             "MGA_COSTING_ACTIVE",
+                             mga_costing_snapshot.available ? "true" : "false",
+                             mga_costing_snapshot.available
+                                 ? "CANONICAL_METRIC_CONTRACT"
+                                 : "DEFAULT");
 
         struct ParameterBindingScope
         {
@@ -2705,6 +3054,8 @@ namespace scratchbird::optimizer
 
             const std::string relation_name = displayRelationName(relation);
             const std::string relation_subject = "relation:" + relation_name;
+            const MgaRelationCostSignal *mga_relation_signal =
+                lookupMgaRelationCostSignal(mga_costing_snapshot, relation);
             double qual_cost = 0.0;
             const bool predicate_or =
                 core::IdentifierUtils::toUpper(relation.predicate_combination) == "OR";
@@ -2741,6 +3092,14 @@ namespace scratchbird::optimizer
             const uint64_t base_pages =
                 pruning.pruned && pruning.pages > 0 ? pruning.pages : unpruned_base_pages;
             const uint64_t seq_rows = relationOutputRows(base_rows, selectivity);
+            if (mga_relation_signal != nullptr)
+            {
+                appendStatsProvenance(statistics_provenance,
+                                      relation_subject,
+                                      "MGA_CANONICAL_METRICS",
+                                      describeMgaCostSignal(*mga_relation_signal,
+                                                            mga_costing_snapshot.commit_fence_backlog));
+            }
             appendStatsProvenance(
                 statistics_provenance,
                 relation_subject,
@@ -2799,6 +3158,25 @@ namespace scratchbird::optimizer
             }
             CostEstimate best_cost =
                 active_cost_model.costSeqScan(base_pages, seq_rows, qual_cost, ctx);
+            const double seq_mga_penalty = applyMgaCostPenalty(best_cost,
+                                                               mga_relation_signal,
+                                                               mga_costing_snapshot.commit_fence_backlog,
+                                                               base_pages,
+                                                               base_rows,
+                                                               "SEQ_SCAN");
+            if (seq_mga_penalty > 0.0)
+            {
+                appendRuntimeTrace(considered_paths,
+                                   "MGA_COSTING",
+                                   relation_subject,
+                                   "SEQ_SCAN",
+                                   "ADJUSTED",
+                                   "canonical MGA telemetry penalty=" +
+                                       std::to_string(seq_mga_penalty),
+                                   best_cost.startup_cost,
+                                   best_cost.total_cost,
+                                   best_cost.rows);
+            }
             appendRuntimeTrace(considered_paths,
                                "ACCESS_PATH",
                                relation_subject,
@@ -2916,6 +3294,28 @@ namespace scratchbird::optimizer
                                                                qual_cost,
                                                                correlation,
                                                                ctx);
+                }
+                const double candidate_mga_penalty = applyMgaCostPenalty(
+                    candidate_cost,
+                    mga_relation_signal,
+                    mga_costing_snapshot.commit_fence_backlog,
+                    base_pages,
+                    base_rows,
+                    scan_kind);
+                if (candidate_mga_penalty > 0.0)
+                {
+                    appendRuntimeTrace(considered_paths,
+                                       "MGA_COSTING",
+                                       relation_subject,
+                                       accessTraceCandidateLabel(scan_kind,
+                                                                index.index_name,
+                                                                std::string()),
+                                       "ADJUSTED",
+                                       "canonical MGA telemetry penalty=" +
+                                           std::to_string(candidate_mga_penalty),
+                                       candidate_cost.startup_cost,
+                                       candidate_cost.total_cost,
+                                       candidate_cost.rows);
                 }
 
                 appendRuntimeTrace(considered_paths,
@@ -3059,6 +3459,30 @@ namespace scratchbird::optimizer
                                                qual_cost,
                                                predicate_or ? "OR" : "AND",
                                                ctx);
+                const double bitmap_mga_penalty = applyMgaCostPenalty(
+                    bitmap_cost,
+                    mga_relation_signal,
+                    mga_costing_snapshot.commit_fence_backlog,
+                    base_pages,
+                    base_rows,
+                    "BITMAP_INDEX_SCAN");
+                if (bitmap_mga_penalty > 0.0)
+                {
+                    appendRuntimeTrace(considered_paths,
+                                       "MGA_COSTING",
+                                       relation_subject,
+                                       accessTraceCandidateLabel("BITMAP_INDEX_SCAN",
+                                                                bitmap_index_names.empty()
+                                                                    ? std::string()
+                                                                    : bitmap_index_names.front(),
+                                                                predicate_or ? "OR" : "AND"),
+                                       "ADJUSTED",
+                                       "canonical MGA telemetry penalty=" +
+                                           std::to_string(bitmap_mga_penalty),
+                                       bitmap_cost.startup_cost,
+                                       bitmap_cost.total_cost,
+                                       bitmap_cost.rows);
+                }
                 appendRuntimeTrace(considered_paths,
                                    "ACCESS_PATH",
                                    relation_subject,

@@ -11,6 +11,7 @@
 
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/storage_engine.h"
 #include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/query_profiler.h"
 #include "scratchbird/optimizer/query_planner.h"
@@ -1057,6 +1058,69 @@ TEST_F(QueryPlannerIntegrationTest, DisconnectedJoinGraphKeepsExplicitCrossJoinS
     ASSERT_EQ(rows.size(), 2u);
     EXPECT_EQ(rows[0], "1");
     EXPECT_EQ(rows[1], "1");
+}
+
+TEST_F(QueryPlannerIntegrationTest, MgaCanonicalTelemetryFeedsPlannerCostingAndRuntimePlanProvenance)
+{
+    ASSERT_TRUE(createDatabase());
+
+    CatalogManager::TableInfo orders_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(connection_ctx_->getCurrentSchemaId(),
+                                               "orders",
+                                               orders_info,
+                                               nullptr),
+              Status::OK);
+
+    StorageEngine::FragmentationAdvisory advisory{};
+    advisory.page_id = 23;
+    advisory.reclaimable_bytes = 8192;
+    advisory.deleted_slots = 12;
+    advisory.chain_depth_hint = 8;
+    advisory.same_page_back_versions = 1;
+    advisory.same_page_update_ratio = 0.125;
+    advisory.dead_space_ratio = 0.45;
+    advisory.rewrite_recommended = true;
+    db_->storage_engine()->publishFragmentationAdvisory(
+        orders_info.table_id, advisory.page_id, advisory);
+
+    auto bytecode = compileSQL("SELECT * FROM orders WHERE user_id = 7");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+
+    const auto *mga_active = findOptimizerControl(plan, "MGA_COSTING_ACTIVE");
+    ASSERT_NE(mga_active, nullptr);
+    EXPECT_EQ(mga_active->value, "true");
+
+    const auto *mga_contract = findOptimizerControl(plan, "MGA_COSTING_CONTRACT");
+    ASSERT_NE(mga_contract, nullptr);
+    EXPECT_EQ(mga_contract->value, "sb_mga_observability/v1");
+
+    auto provenance_it = std::find_if(
+        plan.statistics_provenance.begin(),
+        plan.statistics_provenance.end(),
+        [](const scratchbird::optimizer::RuntimePlanStatisticsProvenance &entry) {
+            return entry.subject == "relation:orders" &&
+                   entry.source == "MGA_CANONICAL_METRICS";
+        });
+    ASSERT_NE(provenance_it, plan.statistics_provenance.end());
+    EXPECT_NE(provenance_it->detail.find("cleanup_debt_bytes=8192"),
+              std::string::npos);
+    EXPECT_NE(provenance_it->detail.find("same_page_update_ratio=0.125"),
+              std::string::npos);
+
+    auto trace_it = std::find_if(
+        plan.considered_paths.begin(),
+        plan.considered_paths.end(),
+        [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+            return entry.phase == "MGA_COSTING" &&
+                   entry.subject == "relation:orders" &&
+                   entry.verdict == "ADJUSTED";
+        });
+    ASSERT_NE(trace_it, plan.considered_paths.end());
+    EXPECT_NE(trace_it->reason.find("penalty="), std::string::npos);
+    EXPECT_GT(trace_it->total_cost, 0.0);
 }
 
 TEST_F(QueryPlannerIntegrationTest, HashJoinPlanExecutesAndReturnsExpectedRows)

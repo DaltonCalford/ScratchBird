@@ -2148,6 +2148,17 @@ namespace scratchbird::core
                 ++metrics.live_slots;
                 metrics.live_tuple_bytes += item.length;
             }
+
+            const uint8_t *tuple_data = page_data_ + item.offset;
+            const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+            if (tuple_hdr->hasBackVersion())
+            {
+                ++metrics.chain_depth_hint;
+                if (getPageNumber(tuple_hdr->back_version_gpid) == hdr->page_id)
+                {
+                    ++metrics.same_page_back_versions;
+                }
+            }
         }
 
         const uint32_t lower = pageLower(*hdr);
@@ -2172,6 +2183,12 @@ namespace scratchbird::core
         {
             metrics.dead_space_ratio = static_cast<double>(metrics.reclaimable_bytes) /
                                        static_cast<double>(usable_page_bytes);
+        }
+        if (metrics.chain_depth_hint != 0)
+        {
+            metrics.same_page_update_ratio =
+                static_cast<double>(metrics.same_page_back_versions) /
+                static_cast<double>(metrics.chain_depth_hint);
         }
 
         metrics.warn_threshold =

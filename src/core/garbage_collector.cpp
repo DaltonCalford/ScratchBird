@@ -820,6 +820,7 @@ namespace scratchbird::core
         stats_.tuples_removed += tuples_removed;
         stats_.pages_cleaned += pages_cleaned;
         stats_.space_reclaimed_bytes += space_reclaimed;
+        stats_.cooperative_reclaimed_bytes += space_reclaimed;
         stats_.cooperative_runs++;
 
         // Track page efficiency metrics
@@ -840,6 +841,7 @@ namespace scratchbird::core
         stats_.tuples_removed += tuples_removed;
         stats_.pages_cleaned += pages_cleaned;
         stats_.space_reclaimed_bytes += space_reclaimed;
+        stats_.background_reclaimed_bytes += space_reclaimed;
         stats_.background_runs++;
         stats_.last_background_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                           std::chrono::system_clock::now().time_since_epoch())

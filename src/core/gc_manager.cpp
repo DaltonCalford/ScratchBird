@@ -674,6 +674,9 @@ namespace scratchbird::core
         advisory.live_slots = metrics.live_slots;
         advisory.deleted_slots = metrics.deleted_slots;
         advisory.unused_slots = metrics.unused_slots;
+        advisory.chain_depth_hint = metrics.chain_depth_hint;
+        advisory.same_page_back_versions = metrics.same_page_back_versions;
+        advisory.same_page_update_ratio = metrics.same_page_update_ratio;
         advisory.dead_space_ratio = metrics.dead_space_ratio;
         advisory.warn_threshold = metrics.warn_threshold;
         advisory.compact_threshold = metrics.compact_threshold;

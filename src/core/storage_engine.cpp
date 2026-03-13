@@ -20,6 +20,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/table_stats_manager.h"
+#include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
@@ -230,6 +231,37 @@ namespace scratchbird::core
 
     // LSM Integration Phase 4: Helper method to insert into any index type
     namespace {
+        auto metricDbLabel(const Database *db) -> std::string
+        {
+            return db != nullptr ? db->uuid().toString() : std::string();
+        }
+
+        auto metricRelationLabel(CatalogManager *catalog, const ID &table_id) -> std::string
+        {
+            if (catalog != nullptr)
+            {
+                CatalogManager::TableInfo table_info;
+                ErrorContext ctx;
+                if (catalog->getTable(table_id, table_info, &ctx) == Status::OK &&
+                    !table_info.table_name.empty())
+                {
+                    return table_info.table_name;
+                }
+            }
+            return table_id.toString();
+        }
+
+        void incrementCanonicalCounter(const std::string &metric_name,
+                                       const std::vector<std::string> &labels)
+        {
+            auto *counter = dynamic_cast<Counter *>(
+                MetricsRegistry::getInstance().get(metric_name));
+            if (counter != nullptr)
+            {
+                counter->inc(1.0, labels);
+            }
+        }
+
         std::vector<uint8_t> encodeLsmValue(const TID &tid)
         {
             std::vector<uint8_t> value;
@@ -1138,6 +1170,9 @@ namespace scratchbird::core
 
             if (!visible_tids.empty())
             {
+                incrementCanonicalCounter(
+                    "sb_lock_unique_conflicts_total",
+                    {metricDbLabel(db_), metricRelationLabel(catalog_manager_, table_id)});
                 std::string msg = "UNIQUE index violation on index '" + index_info.index_name + "'";
                 SET_ERROR_CONTEXT(ctx, Status::UNIQUE_VIOLATION, msg.c_str());
                 return Status::UNIQUE_VIOLATION;
@@ -1261,6 +1296,9 @@ namespace scratchbird::core
 
             if (!visible_tids.empty())
             {
+                incrementCanonicalCounter(
+                    "sb_lock_unique_conflicts_total",
+                    {metricDbLabel(db_), metricRelationLabel(catalog_manager_, table_id)});
                 std::string msg = "UNIQUE index violation on index '" + index_info.index_name + "'";
                 SET_ERROR_CONTEXT(ctx, Status::UNIQUE_VIOLATION, msg.c_str());
                 return Status::UNIQUE_VIOLATION;
@@ -3878,6 +3916,12 @@ namespace scratchbird::core
                 conn_ctx != nullptr &&
                 conn_ctx->getIsolationLevel() == IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
             {
+                incrementCanonicalCounter(
+                    "sb_lock_read_consistency_restarts_total",
+                    {metricDbLabel(db_), "tuple_write_conflict"});
+                incrementCanonicalCounter(
+                    "sb_mga_statement_restarts_total",
+                    {metricDbLabel(db_), "tuple_write_conflict"});
                 SET_ERROR_CONTEXT(ctx, Status::SERIALIZATION_FAILURE,
                                   "READ_CONSISTENCY_RESTART_REQUIRED: tuple write conflict");
                 return Status::SERIALIZATION_FAILURE;

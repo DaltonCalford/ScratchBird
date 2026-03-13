@@ -139,6 +139,9 @@ namespace scratchbird::core
             uint16_t live_slots = 0;
             uint16_t deleted_slots = 0;
             uint16_t unused_slots = 0;
+            uint16_t chain_depth_hint = 0;
+            uint16_t same_page_back_versions = 0;
+            double same_page_update_ratio = 1.0;
             double dead_space_ratio = 0.0;
             bool warn_threshold = false;
             bool compact_threshold = false;

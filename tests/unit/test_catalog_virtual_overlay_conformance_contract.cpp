@@ -538,6 +538,10 @@ TEST_F(CatalogVirtualOverlayConformanceContractTest, SysMgaObservabilityViewsAre
     StorageEngine::FragmentationAdvisory advisory{};
     advisory.page_id = 12;
     advisory.reclaimable_bytes = 256;
+    advisory.deleted_slots = 4;
+    advisory.chain_depth_hint = 4;
+    advisory.same_page_back_versions = 1;
+    advisory.same_page_update_ratio = 0.25;
     advisory.rewrite_recommended = true;
     db_->storage_engine()->publishFragmentationAdvisory(table_id, advisory.page_id, advisory);
 
@@ -546,6 +550,31 @@ TEST_F(CatalogVirtualOverlayConformanceContractTest, SysMgaObservabilityViewsAre
               Status::OK)
         << ctx.message;
     ASSERT_FALSE(result.empty());
+    bool saw_chain_depth = false;
+    bool saw_same_page_ratio = false;
+    for (const auto& row : result.rows)
+    {
+        const auto* metric_name = row.getColumn("metric_name");
+        const auto* labels_json = row.getColumn("labels_json");
+        if (metric_name == nullptr || labels_json == nullptr)
+        {
+            continue;
+        }
+        const std::string metric_text = metric_name->toString();
+        const std::string labels_text = labels_json->toString();
+        if (metric_text == "sb_mga_chain_depth_bucket" &&
+            labels_text.find("\"relation\":\"mga_view_table\"") != std::string::npos)
+        {
+            saw_chain_depth = true;
+        }
+        if (metric_text == "sb_mga_same_page_update_ratio" &&
+            labels_text.find("\"relation\":\"mga_view_table\"") != std::string::npos)
+        {
+            saw_same_page_ratio = true;
+        }
+    }
+    EXPECT_TRUE(saw_chain_depth);
+    EXPECT_TRUE(saw_same_page_ratio);
 
     result = {};
     ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_active_transactions", "", result, &ctx),

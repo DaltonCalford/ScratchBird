@@ -47,6 +47,8 @@ namespace scratchbird::core
         uint64_t last_background_duration_ms; // Duration of last background run
         uint64_t dirty_page_count;            // Current dirty pages
         uint64_t space_reclaimed_bytes;       // Total bytes reclaimed
+        uint64_t cooperative_reclaimed_bytes; // Bytes reclaimed by cooperative GC
+        uint64_t background_reclaimed_bytes;  // Bytes reclaimed by background GC
 
         // Enhanced metrics - Duration histogram (background GC runs)
         uint64_t duration_0_10ms;      // Runs that took 0-10ms
@@ -70,10 +72,12 @@ namespace scratchbird::core
         GCStatistics()
             : tuples_removed(0), pages_cleaned(0), cooperative_runs(0), background_runs(0),
               last_background_time(0), last_background_duration_ms(0), dirty_page_count(0),
-              space_reclaimed_bytes(0), duration_0_10ms(0), duration_10_50ms(0),
+              space_reclaimed_bytes(0), cooperative_reclaimed_bytes(0),
+              background_reclaimed_bytes(0), duration_0_10ms(0), duration_10_50ms(0),
               duration_50_100ms(0), duration_100_500ms(0), duration_500_1000ms(0),
-              duration_1000ms_plus(0), pages_with_no_garbage(0), max_space_reclaimed_single_page(0),
-              total_dirty_pages_marked(0), current_cooperative_rate(100),
+              duration_1000ms_plus(0), pages_with_no_garbage(0),
+              max_space_reclaimed_single_page(0), total_dirty_pages_marked(0),
+              current_cooperative_rate(100),
               current_background_interval_ms(5000)
         {
         }

@@ -308,6 +308,10 @@ namespace scratchbird::core
         StorageEngine::FragmentationAdvisory advisory{};
         advisory.page_id = 17;
         advisory.reclaimable_bytes = 512;
+        advisory.deleted_slots = 7;
+        advisory.chain_depth_hint = 5;
+        advisory.same_page_back_versions = 1;
+        advisory.same_page_update_ratio = 0.25;
         advisory.dead_space_ratio = 0.40;
         advisory.rewrite_recommended = true;
         db_->storage_engine()->publishFragmentationAdvisory(table_id_, advisory.page_id, advisory);
@@ -369,12 +373,48 @@ namespace scratchbird::core
                       *db_, registry, now_us / 1000, runtime_rows),
                   Status::OK);
         EXPECT_FALSE(runtime_rows.empty());
-        const auto committed_metric = std::find_if(
-            runtime_rows.begin(), runtime_rows.end(), [](const SqlRuntimeMetricRow& row) {
-                return row.metric_name == "sb_tx_committed_total";
-            });
+        auto find_metric = [&runtime_rows](const std::string& metric_name,
+                                           const std::string& labels_fragment)
+            -> std::vector<SqlRuntimeMetricRow>::const_iterator {
+            return std::find_if(
+                runtime_rows.begin(), runtime_rows.end(),
+                [&](const SqlRuntimeMetricRow& row) {
+                    return row.metric_name == metric_name &&
+                           row.labels_json.find(labels_fragment) != std::string::npos;
+                });
+        };
+
+        const auto committed_metric = find_metric("sb_tx_committed_total", "\"db\":");
         ASSERT_NE(committed_metric, runtime_rows.end());
         EXPECT_EQ(committed_metric->value, 1.0);
+
+        const auto commit_fence_metric =
+            find_metric("sb_buf_commit_fence_backlog", "\"db\":");
+        ASSERT_NE(commit_fence_metric, runtime_rows.end());
+
+        const auto background_reclaim_metric =
+            find_metric("sb_gc_background_reclaim_bytes_total",
+                        "\"relation\":\"__database__\"");
+        ASSERT_NE(background_reclaim_metric, runtime_rows.end());
+
+        const auto chain_depth_metric =
+            find_metric("sb_mga_chain_depth_bucket",
+                        "\"relation\":\"orders\"");
+        ASSERT_NE(chain_depth_metric, runtime_rows.end());
+        EXPECT_NE(chain_depth_metric->labels_json.find("\"bucket\":\"depth_4_7\""),
+                  std::string::npos);
+
+        const auto same_page_ratio_metric =
+            find_metric("sb_mga_same_page_update_ratio",
+                        "\"relation\":\"orders\"");
+        ASSERT_NE(same_page_ratio_metric, runtime_rows.end());
+        EXPECT_DOUBLE_EQ(same_page_ratio_metric->value, 0.25);
+
+        const auto index_backlog_metric =
+            find_metric("sb_gc_index_backlog_entries",
+                        "\"relation\":\"orders\"");
+        ASSERT_NE(index_backlog_metric, runtime_rows.end());
+        EXPECT_DOUBLE_EQ(index_backlog_metric->value, 7.0);
     }
 
 } // namespace scratchbird::core

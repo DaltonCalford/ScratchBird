@@ -10,7 +10,9 @@
 #include "scratchbird/core/observability_contract.h"
 
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/storage_engine.h"
@@ -219,6 +221,23 @@ namespace scratchbird::core
                 return "scattered";
             }
             return "wide";
+        }
+
+        auto chainDepthBucketForDepth(uint16_t depth_hint) -> std::string
+        {
+            if (depth_hint <= 1)
+            {
+                return "depth_1";
+            }
+            if (depth_hint <= 3)
+            {
+                return "depth_2_3";
+            }
+            if (depth_hint <= 7)
+            {
+                return "depth_4_7";
+            }
+            return "depth_8_plus";
         }
 
         auto makeLabelsJson(const std::vector<MetricLabel>& labels) -> std::string
@@ -1173,6 +1192,85 @@ namespace scratchbird::core
             return status;
         }
 
+        if (const auto* buffer_pool = db.buffer_pool())
+        {
+            const auto stats = buffer_pool->getStats();
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_commit_fence_backlog",
+                "gauge",
+                static_cast<double>(stats.mga_commit_fence_backlog),
+                db_labels_json(),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_gc_candidate_queue",
+                "gauge",
+                static_cast<double>(stats.mga_frames_gc_candidate),
+                db_labels_json(),
+                updated_at_ms});
+
+            const std::array<std::pair<const char*, uint64_t>, 6> frame_counts{{
+                {"tx_state", stats.mga_frames_tx_state},
+                {"version_root", stats.mga_frames_version_root},
+                {"chain_heavy", stats.mga_frames_chain_heavy},
+                {"gc_candidate", stats.mga_frames_gc_candidate},
+                {"scan_probation", stats.mga_frames_scan_probation},
+                {"index_churn", stats.mga_frames_index_churn},
+            }};
+            for (const auto& [klass, count] : frame_counts)
+            {
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_frames_by_class",
+                    "gauge",
+                    static_cast<double>(count),
+                    makeLabelsJson({{"db", db_uuid}, {"class", klass}}),
+                    updated_at_ms});
+            }
+
+            const std::array<std::pair<const char*, uint64_t>, 6> eviction_counts{{
+                {"tx_state", stats.mga_evictions_tx_state},
+                {"version_root", stats.mga_evictions_version_root},
+                {"chain_heavy", stats.mga_evictions_chain_heavy},
+                {"gc_candidate", stats.mga_evictions_gc_candidate},
+                {"scan_probation", stats.mga_evictions_scan_probation},
+                {"index_churn", stats.mga_evictions_index_churn},
+            }};
+            for (const auto& [klass, count] : eviction_counts)
+            {
+                add_row(SqlRuntimeMetricRow{
+                    "sb_buf_evictions_by_class_total",
+                    "counter",
+                    static_cast<double>(count),
+                    makeLabelsJson(
+                        {{"db", db_uuid}, {"class", klass}, {"reason", "capacity"}}),
+                    updated_at_ms});
+            }
+
+            add_row(SqlRuntimeMetricRow{
+                "sb_buf_scan_probation_churn_total",
+                "counter",
+                static_cast<double>(stats.mga_scan_probation_churn),
+                makeLabelsJson({{"db", db_uuid}, {"class", "scan_probation"}}),
+                updated_at_ms});
+        }
+
+        if (const auto* gc = db.garbage_collector())
+        {
+            const auto gc_stats = gc->getStatistics();
+            const std::string db_total_relation = "__database__";
+            add_row(SqlRuntimeMetricRow{
+                "sb_gc_cooperative_reclaim_bytes_total",
+                "counter",
+                static_cast<double>(gc_stats.cooperative_reclaimed_bytes),
+                db_relation_labels_json(db_total_relation),
+                updated_at_ms});
+            add_row(SqlRuntimeMetricRow{
+                "sb_gc_background_reclaim_bytes_total",
+                "counter",
+                static_cast<double>(gc_stats.background_reclaimed_bytes),
+                db_relation_labels_json(db_total_relation),
+                updated_at_ms});
+        }
+
         if (const auto* txn_mgr = db.transaction_manager())
         {
             add_row(SqlRuntimeMetricRow{
@@ -1230,6 +1328,18 @@ namespace scratchbird::core
             "sb_tx_aborted_total", "counter", static_cast<double>(aborted_total),
             db_labels_json(), updated_at_ms});
 
+        double statement_restart_total = 0.0;
+        for (const SqlMgaTransactionHistoryRow& row : history_rows)
+        {
+            statement_restart_total += static_cast<double>(row.restart_count);
+        }
+        add_row(SqlRuntimeMetricRow{
+            "sb_mga_statement_restarts_total",
+            "counter",
+            statement_restart_total,
+            makeLabelsJson({{"db", db_uuid}, {"reason", "statement_restart"}}),
+            updated_at_ms});
+
         std::unordered_map<std::string, double> wait_seconds_by_mode;
         std::unordered_map<std::string, double> deadlocks_by_reason;
         for (const SqlMgaWaitHistoryRow& row : wait_rows)
@@ -1259,11 +1369,91 @@ namespace scratchbird::core
                 updated_at_ms});
         }
 
+        if (const auto* lock_mgr = db.lock_manager())
+        {
+            LockStats lock_stats{};
+            lock_mgr->getStatistics(&lock_stats);
+            add_row(SqlRuntimeMetricRow{
+                "sb_lock_read_consistency_restarts_total",
+                "counter",
+                static_cast<double>(lock_stats.no_wait_rejections),
+                makeLabelsJson({{"db", db_uuid}, {"reason", "no_wait_conflict"}}),
+                updated_at_ms});
+        }
+
         const uint64_t sweep_generation =
             db.sweep_manager() ? db.sweep_manager()->getStatistics().sweep_count : 0;
         add_row(SqlRuntimeMetricRow{
             "sb_gc_sweep_generation", "gauge", static_cast<double>(sweep_generation),
             db_labels_json(), updated_at_ms});
+
+        CatalogManager* catalog = const_cast<CatalogManager*>(db.catalog_manager());
+        StorageEngine* storage = const_cast<StorageEngine*>(db.storage_engine());
+        if (catalog != nullptr && storage != nullptr)
+        {
+            struct FragmentationAggregate
+            {
+                double index_backlog_entries = 0.0;
+                double same_page_ratio_sum = 0.0;
+                double same_page_ratio_weight = 0.0;
+                std::unordered_map<std::string, double> chain_depth_buckets;
+            };
+
+            std::vector<StorageEngine::FragmentationAdvisorySnapshot> advisory_rows;
+            status = storage->listFragmentationAdvisories(advisory_rows);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            std::unordered_map<ID, FragmentationAggregate, IDHash> advisory_aggregates;
+            for (const auto& advisory_row : advisory_rows)
+            {
+                auto& aggregate = advisory_aggregates[advisory_row.table_id];
+                aggregate.index_backlog_entries +=
+                    static_cast<double>(advisory_row.advisory.deleted_slots);
+                if (advisory_row.advisory.chain_depth_hint != 0)
+                {
+                    aggregate.chain_depth_buckets[chainDepthBucketForDepth(
+                        advisory_row.advisory.chain_depth_hint)] += 1.0;
+                    aggregate.same_page_ratio_sum +=
+                        advisory_row.advisory.same_page_update_ratio;
+                    aggregate.same_page_ratio_weight += 1.0;
+                }
+            }
+
+            for (const auto& [table_id, aggregate] : advisory_aggregates)
+            {
+                const std::string relation_name = relationNameForTableId(catalog, table_id);
+                const std::string relation_label =
+                    relation_name.empty() ? table_id.toString() : relation_name;
+                add_row(SqlRuntimeMetricRow{
+                    "sb_gc_index_backlog_entries",
+                    "gauge",
+                    aggregate.index_backlog_entries,
+                    db_relation_labels_json(relation_label),
+                    updated_at_ms});
+                for (const auto& [bucket, count] : aggregate.chain_depth_buckets)
+                {
+                    add_row(SqlRuntimeMetricRow{
+                        "sb_mga_chain_depth_bucket",
+                        "gauge",
+                        count,
+                        makeLabelsJson(
+                            {{"db", db_uuid}, {"relation", relation_label}, {"bucket", bucket}}),
+                        updated_at_ms});
+                }
+                if (aggregate.same_page_ratio_weight > 0.0)
+                {
+                    add_row(SqlRuntimeMetricRow{
+                        "sb_mga_same_page_update_ratio",
+                        "gauge",
+                        aggregate.same_page_ratio_sum / aggregate.same_page_ratio_weight,
+                        db_relation_labels_json(relation_label),
+                        updated_at_ms});
+                }
+            }
+        }
 
         for (const SqlMgaCleanupDebtRow& row : cleanup_rows)
         {
