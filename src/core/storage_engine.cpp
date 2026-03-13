@@ -3700,7 +3700,21 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        return lock_mgr->acquireLock(proc_id, tag, LockMode::LOCK_ROW_EXCLUSIVE, wait, 0, ctx);
+        Status status = lock_mgr->acquireLock(proc_id, tag, LockMode::LOCK_ROW_EXCLUSIVE, wait, 0,
+                                              ctx);
+        if (status == Status::LOCK_CONFLICT)
+        {
+            if (ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+                conn_ctx != nullptr &&
+                conn_ctx->getIsolationLevel() == IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::SERIALIZATION_FAILURE,
+                                  "READ_CONSISTENCY_RESTART_REQUIRED: tuple write conflict");
+                return Status::SERIALIZATION_FAILURE;
+            }
+        }
+
+        return status;
     }
 
     auto StorageEngine::releaseTupleLock(const ID &table_id, uint32_t page_id, uint16_t item_id,

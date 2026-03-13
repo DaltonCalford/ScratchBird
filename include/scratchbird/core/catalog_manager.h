@@ -10861,11 +10861,19 @@ public:
         struct WaitHistoryEntry
         {
             uint32_t thread_id = 0;
+            uint32_t blocker_thread_id = 0;
             uint64_t event_id = 0;
             uint64_t timer_start = 0;
             uint64_t timer_end = 0;
             uint64_t timer_wait = 0;
             uint64_t object_instance_begin = 0;
+            std::string resource_class;
+            std::string resource_id;
+            uint8_t requested_mode = 0;
+            uint8_t blocker_mode = 0;
+            std::string outcome_code;
+            std::string victim_reason_code;
+            bool retry_eligible = false;
             bool timed_out = false;
         };
 

@@ -51,7 +51,7 @@ protected:
     static LockTag makeTag()
     {
         LockTag tag{};
-        tag.target_type = LockTarget::LOCK_TARGET_TUPLE;
+        tag.target_type = LockTarget::LOCK_TARGET_TABLE;
         for (size_t i = 0; i < tag.object_uuid.bytes.size(); ++i)
         {
             tag.object_uuid.bytes[i] = static_cast<uint8_t>(i + 1);
@@ -185,6 +185,20 @@ TEST_F(LockConflictMatrixTest, SelfCompatibility)
 
     lock_mgr_->releaseLock(proc1, tag, LockMode::LOCK_ACCESS_SHARE, nullptr);
     lock_mgr_->releaseLock(proc1, tag, LockMode::LOCK_ACCESS_SHARE, nullptr);
+}
+
+TEST_F(LockConflictMatrixTest, SelfConflictingModesSkipOwnProc)
+{
+    const uint32_t proc1 = 1001;
+    const LockTag tag = makeTag();
+
+    EXPECT_EQ(lock_mgr_->acquireLock(proc1, tag, LockMode::LOCK_EXCLUSIVE, false, 0, nullptr),
+              Status::OK);
+    EXPECT_EQ(lock_mgr_->acquireLock(proc1, tag, LockMode::LOCK_EXCLUSIVE, false, 0, nullptr),
+              Status::OK);
+
+    lock_mgr_->releaseLock(proc1, tag, LockMode::LOCK_EXCLUSIVE, nullptr);
+    lock_mgr_->releaseLock(proc1, tag, LockMode::LOCK_EXCLUSIVE, nullptr);
 }
 
 TEST_F(LockConflictMatrixTest, AccessExclusiveBlocksAll)

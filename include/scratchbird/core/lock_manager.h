@@ -94,6 +94,10 @@ namespace scratchbird::core
         LockMode mode;         // Requested mode
         bool granted;          // Is lock granted?
         uint64_t request_time; // When requested (microseconds)
+        Status terminal_status = Status::OK;
+        uint32_t blocker_proc_id = 0;
+        LockMode blocker_mode = LockMode::LOCK_ACCESS_SHARE;
+        bool retry_eligible = false;
     };
 
     struct Lock;
@@ -145,6 +149,7 @@ namespace scratchbird::core
         uint64_t readonly_locks_acquired; // Locks acquired by read-only transactions
         uint64_t readonly_fast_path;      // Fast-path acquisitions (no conflicts)
         uint64_t readonly_lock_waits;     // Read-only transactions that had to wait
+        uint64_t no_wait_rejections;      // Immediate no-wait conflict rejections
     };
 
     // Deadlock detector (forward declaration)
@@ -219,7 +224,9 @@ namespace scratchbird::core
         Lock *findOrCreateLock(const LockTag &tag);
         void removeLockIfUnused(const LockTag &tag);
         void grantWaitingLocks(Lock *lock);
-        bool checkConflictInternal(const Lock *lock, LockMode mode, uint32_t skip_proc_id) const;
+        bool checkConflictInternal(const Lock *lock, LockMode mode, uint32_t skip_proc_id,
+                                   uint32_t *blocker_proc_id_out = nullptr,
+                                   LockMode *blocker_mode_out = nullptr) const;
 
         // READ ONLY transaction optimization helpers
         bool isReadOnlyTransaction(uint32_t proc_id) const;

@@ -18,9 +18,94 @@
 #include <chrono>
 #include <algorithm>
 #include <cstring>
+#include <sstream>
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        auto lockModeName(LockMode mode) -> const char *
+        {
+            switch (mode)
+            {
+                case LockMode::LOCK_ACCESS_SHARE: return "ACCESS_SHARE";
+                case LockMode::LOCK_ROW_SHARE: return "ROW_SHARE";
+                case LockMode::LOCK_ROW_EXCLUSIVE: return "ROW_EXCLUSIVE";
+                case LockMode::LOCK_SHARE_UPDATE_EXCLUSIVE: return "SHARE_UPDATE_EXCLUSIVE";
+                case LockMode::LOCK_SHARE: return "SHARE";
+                case LockMode::LOCK_SHARE_ROW_EXCLUSIVE: return "SHARE_ROW_EXCLUSIVE";
+                case LockMode::LOCK_EXCLUSIVE: return "EXCLUSIVE";
+                case LockMode::LOCK_ACCESS_EXCLUSIVE: return "ACCESS_EXCLUSIVE";
+            }
+            return "UNKNOWN";
+        }
+
+        auto lockTargetName(LockTarget target) -> const char *
+        {
+            switch (target)
+            {
+                case LockTarget::LOCK_TARGET_DATABASE: return "database";
+                case LockTarget::LOCK_TARGET_TABLE: return "table";
+                case LockTarget::LOCK_TARGET_PAGE: return "page";
+                case LockTarget::LOCK_TARGET_TUPLE: return "tuple";
+            }
+            return "unknown";
+        }
+
+        auto formatLockResourceId(const LockTag &tag) -> std::string
+        {
+            std::ostringstream oss;
+            oss << tag.object_uuid.toString() << ":" << tag.page_num << ":" << tag.offset_num;
+            return oss.str();
+        }
+
+        bool lockModesConflictForTag(const LockTag &tag, LockMode held_mode, LockMode requested_mode,
+                                     const bool conflict_matrix[8][8])
+        {
+            if (tag.target_type == LockTarget::LOCK_TARGET_TUPLE)
+            {
+                return true;
+            }
+
+            const uint8_t held_idx = static_cast<uint8_t>(held_mode) - 1;
+            const uint8_t req_idx = static_cast<uint8_t>(requested_mode) - 1;
+            return conflict_matrix[held_idx][req_idx];
+        }
+
+        void recordLockWaitHistory(Database *db, uint32_t waiter_proc_id,
+                                   uint32_t blocker_proc_id, const LockTag &tag,
+                                   LockMode requested_mode, LockMode blocker_mode,
+                                   uint64_t timer_start, uint64_t timer_end, bool timed_out,
+                                   const char *outcome_code, const char *victim_reason_code,
+                                   bool retry_eligible)
+        {
+            if (db == nullptr || db->catalog_manager() == nullptr)
+            {
+                return;
+            }
+
+            CatalogManager::WaitHistoryEntry entry;
+            entry.thread_id = waiter_proc_id;
+            entry.blocker_thread_id = blocker_proc_id;
+            entry.event_id = timer_start != 0 ? timer_start : waiter_proc_id;
+            entry.timer_start = timer_start;
+            entry.timer_end = timer_end;
+            entry.timer_wait = (timer_start != 0 && timer_end >= timer_start)
+                ? (timer_end - timer_start)
+                : 0;
+            entry.object_instance_begin = timer_start;
+            entry.resource_class = lockTargetName(tag.target_type);
+            entry.resource_id = formatLockResourceId(tag);
+            entry.requested_mode = static_cast<uint8_t>(requested_mode);
+            entry.blocker_mode = static_cast<uint8_t>(blocker_mode);
+            entry.outcome_code = outcome_code != nullptr ? outcome_code : "";
+            entry.victim_reason_code = victim_reason_code != nullptr ? victim_reason_code : "";
+            entry.retry_eligible = retry_eligible;
+            entry.timed_out = timed_out;
+            db->catalog_manager()->recordWaitHistory(entry, nullptr);
+        }
+    } // namespace
+
     // Lock conflict matrix [held_mode][requested_mode]
     // true = conflict (must wait), false = no conflict (can grant)
     // Modes are 1-indexed (LOCK_ACCESS_SHARE=1), so subtract 1 for array index
@@ -144,9 +229,25 @@ namespace scratchbird::core
         // Check for conflicts with existing locks
         if (checkConflictInternal(lock_obj, mode, proc_id))
         {
+            uint32_t blocker_proc_id = 0;
+            LockMode blocker_mode = LockMode::LOCK_ACCESS_SHARE;
+            (void)checkConflictInternal(lock_obj, mode, proc_id, &blocker_proc_id, &blocker_mode);
+
             if (!wait)
             {
-                SET_ERROR_CONTEXT(ctx, Status::LOCK_CONFLICT, "Lock conflict, no wait requested");
+                stats_.no_wait_rejections++;
+                const uint64_t end_time = std::chrono::duration_cast<std::chrono::microseconds>(
+                                              std::chrono::system_clock::now().time_since_epoch())
+                                              .count();
+                const std::string message =
+                    "LOCK_CONFLICT_NO_WAIT: blocker_proc_id=" +
+                    std::to_string(blocker_proc_id) + " requested_mode=" + lockModeName(mode) +
+                    " blocker_mode=" + lockModeName(blocker_mode) + " resource=" +
+                    formatLockResourceId(tag);
+                recordLockWaitHistory(db_, proc_id, blocker_proc_id, tag, mode, blocker_mode,
+                                      end_time, end_time, false, "LOCK_CONFLICT_NO_WAIT", "",
+                                      false);
+                SET_ERROR_CONTEXT(ctx, Status::LOCK_CONFLICT, message.c_str());
                 return Status::LOCK_CONFLICT;
             }
 
@@ -160,6 +261,8 @@ namespace scratchbird::core
             req->request_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                     std::chrono::system_clock::now().time_since_epoch())
                                     .count();
+            req->blocker_proc_id = blocker_proc_id;
+            req->blocker_mode = blocker_mode;
 
             // Add to wait queue
             lock_obj->wait_queue.push_back(std::move(req_ptr));
@@ -174,13 +277,16 @@ namespace scratchbird::core
             auto timeout = (timeout_ms == 0) ? std::chrono::milliseconds::max()
                                              : std::chrono::milliseconds(timeout_ms);
 
-            bool granted = lock_wait_cv_.wait_for(lock, timeout, [req]() { return req->granted; });
+            bool granted = lock_wait_cv_.wait_for(lock, timeout, [req]() {
+                return req->granted || req->terminal_status != Status::OK;
+            });
             uint64_t end_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                     std::chrono::system_clock::now().time_since_epoch())
                                     .count();
 
             if (!granted)
             {
+                const uint64_t request_time = req->request_time;
                 // Timeout - remove from queue (RAII handles deletion)
                 auto it = std::find_if(lock_obj->wait_queue.begin(), lock_obj->wait_queue.end(),
                                        [req](const std::unique_ptr<LockRequest> &r)
@@ -189,26 +295,49 @@ namespace scratchbird::core
                 {
                     lock_obj->wait_queue.erase(it);
                 }
-                if (db_ && db_->catalog_manager())
-                {
-                    CatalogManager::WaitHistoryEntry entry;
-                    entry.thread_id = proc_id;
-                    entry.event_id = req->request_time != 0 ? req->request_time : proc_id;
-                    entry.timer_start = req->request_time;
-                    entry.timer_end = end_time;
-                    entry.timer_wait = (req->request_time != 0 && end_time >= req->request_time)
-                        ? (end_time - req->request_time)
-                        : 0;
-                    entry.object_instance_begin = req->request_time;
-                    entry.timed_out = true;
-                    db_->catalog_manager()->recordWaitHistory(entry, nullptr);
-                }
+                uint32_t timeout_blocker_proc_id = 0;
+                LockMode timeout_blocker_mode = LockMode::LOCK_ACCESS_SHARE;
+                (void)checkConflictInternal(lock_obj, mode, proc_id, &timeout_blocker_proc_id,
+                                            &timeout_blocker_mode);
+                recordLockWaitHistory(db_, proc_id, timeout_blocker_proc_id, tag, mode,
+                                      timeout_blocker_mode, request_time, end_time, true,
+                                      "LOCK_TIMEOUT", "", false);
                 stats_.lock_timeouts++;
                 SET_ERROR_CONTEXT(ctx, Status::LOCK_TIMEOUT, "Lock acquisition timeout");
                 return Status::LOCK_TIMEOUT;
             }
 
+            if (req->terminal_status != Status::OK)
+            {
+                const Status terminal_status = req->terminal_status;
+                const uint32_t blocker_proc_id = req->blocker_proc_id;
+                const LockMode terminal_blocker_mode = req->blocker_mode;
+                const uint64_t request_time = req->request_time;
+                const bool retry_eligible = req->retry_eligible;
+                auto it = std::find_if(lock_obj->wait_queue.begin(), lock_obj->wait_queue.end(),
+                                       [req](const std::unique_ptr<LockRequest> &r)
+                                       { return r.get() == req; });
+                if (it != lock_obj->wait_queue.end())
+                {
+                    lock_obj->wait_queue.erase(it);
+                }
+                recordLockWaitHistory(db_, proc_id, blocker_proc_id, tag, mode,
+                                      terminal_blocker_mode, request_time, end_time, false,
+                                      "DEADLOCK_DETECTED", "youngest_xid",
+                                      retry_eligible);
+                const std::string message =
+                    "DEADLOCK_DETECTED: blocker_proc_id=" + std::to_string(blocker_proc_id) +
+                    " requested_mode=" + lockModeName(mode) +
+                    " blocker_mode=" + lockModeName(terminal_blocker_mode) +
+                    " resource=" + formatLockResourceId(tag);
+                SET_ERROR_CONTEXT(ctx, terminal_status, message.c_str());
+                return terminal_status;
+            }
+
             // Lock granted, remove from queue (RAII handles deletion)
+            const uint32_t granted_blocker_proc_id = req->blocker_proc_id;
+            const LockMode granted_blocker_mode = req->blocker_mode;
+            const uint64_t request_time = req->request_time;
             auto it = std::find_if(lock_obj->wait_queue.begin(), lock_obj->wait_queue.end(),
                                    [req](const std::unique_ptr<LockRequest> &r)
                                    { return r.get() == req; });
@@ -216,20 +345,9 @@ namespace scratchbird::core
             {
                 lock_obj->wait_queue.erase(it);
             }
-            if (db_ && db_->catalog_manager())
-            {
-                CatalogManager::WaitHistoryEntry entry;
-                entry.thread_id = proc_id;
-                entry.event_id = req->request_time != 0 ? req->request_time : proc_id;
-                entry.timer_start = req->request_time;
-                entry.timer_end = end_time;
-                entry.timer_wait = (req->request_time != 0 && end_time >= req->request_time)
-                    ? (end_time - req->request_time)
-                    : 0;
-                entry.object_instance_begin = req->request_time;
-                entry.timed_out = false;
-                db_->catalog_manager()->recordWaitHistory(entry, nullptr);
-            }
+            recordLockWaitHistory(db_, proc_id, granted_blocker_proc_id, tag, mode,
+                                  granted_blocker_mode, request_time, end_time, false,
+                                  "WAIT_GRANTED", "", false);
         }
 
         // Grant the lock
@@ -503,6 +621,10 @@ namespace scratchbird::core
             for (auto &req_ptr : lock_obj->wait_queue)
             {
                 LockRequest *req = req_ptr.get();
+                if (req->terminal_status != Status::OK)
+                {
+                    continue;
+                }
                 if (!checkConflictInternal(lock_obj, req->mode, req->proc_id))
                 {
                     // Can grant this lock
@@ -521,20 +643,37 @@ namespace scratchbird::core
     }
 
     bool LockManager::checkConflictInternal(const Lock *lock_obj, LockMode mode,
-                                            uint32_t skip_proc_id) const
+                                            uint32_t skip_proc_id,
+                                            uint32_t *blocker_proc_id_out,
+                                            LockMode *blocker_mode_out) const
     {
-        uint8_t req_mode_idx = static_cast<uint8_t>(mode) - 1;
-
-        // Check conflict with each granted lock
-        for (uint8_t held_idx = 0; held_idx < 8; ++held_idx)
+        for (const auto &proc_pair : proc_locks_)
         {
-            if (lock_obj->granted_counts[held_idx] > 0)
+            const uint32_t holder_proc_id = proc_pair.first;
+            const ProcLockEntry &entry = proc_pair.second;
+            if (entry.lock != lock_obj)
             {
-                if (conflict_matrix_[held_idx][req_mode_idx])
-                {
-                    return true; // Conflict
-                }
+                continue;
             }
+            if (skip_proc_id != 0 && holder_proc_id == skip_proc_id)
+            {
+                continue;
+            }
+
+            if (!lockModesConflictForTag(lock_obj->tag, entry.mode, mode, conflict_matrix_))
+            {
+                continue;
+            }
+
+            if (blocker_proc_id_out != nullptr)
+            {
+                *blocker_proc_id_out = holder_proc_id;
+            }
+            if (blocker_mode_out != nullptr)
+            {
+                *blocker_mode_out = entry.mode;
+            }
+            return true;
         }
 
         return false;
@@ -600,6 +739,8 @@ namespace scratchbird::core
         if (!victims.empty())
         {
             // Deadlock detected! Abort one transaction from each cycle
+            std::sort(victims.begin(), victims.end());
+            victims.erase(std::unique(victims.begin(), victims.end()), victims.end());
             for (uint32_t victim : victims)
             {
                 Status status = abortTransaction(victim, ctx);
@@ -677,8 +818,6 @@ namespace scratchbird::core
                 const LockRequest *req = req_ptr.get();
                 uint32_t waiter_proc_id = req->proc_id;
                 LockMode waiter_mode = req->mode;
-                uint8_t waiter_mode_idx = static_cast<uint8_t>(waiter_mode) - 1;
-
                 // Determine which granted locks block this waiter
                 // We need to check which holder proc_ids have locks that conflict
 
@@ -688,7 +827,10 @@ namespace scratchbird::core
                     if (lock_obj->granted_counts[held_idx] > 0)
                     {
                         // Check if this held mode conflicts with waiter's requested mode
-                        if (lock_mgr_->conflict_matrix_[held_idx][waiter_mode_idx])
+                        if (lockModesConflictForTag(lock_obj->tag,
+                                                    static_cast<LockMode>(held_idx + 1),
+                                                    waiter_mode,
+                                                    lock_mgr_->conflict_matrix_))
                         {
                             // This lock mode conflicts! Find which proc_ids hold it
                             // We need to scan proc_locks_ to find holders
@@ -857,7 +999,44 @@ namespace scratchbird::core
             pthread_rwlock_unlock(&proc_array->array_lock);
         }
 
-        // Rollback the transaction in TransactionManager
+        {
+            std::lock_guard<std::mutex> lock(lock_mgr_->lock_table_mutex_);
+            for (auto &pair : lock_mgr_->lock_table_)
+            {
+                Lock *lock_obj = pair.second.get();
+                for (auto &req_ptr : lock_obj->wait_queue)
+                {
+                    LockRequest *req = req_ptr.get();
+                    if (req->proc_id != proc_id)
+                    {
+                        continue;
+                    }
+
+                    req->terminal_status = Status::DEADLOCK;
+                    req->retry_eligible = true;
+
+                    auto waiters = wait_graph_.find(proc_id);
+                    if (waiters != wait_graph_.end() && !waiters->second.empty())
+                    {
+                        req->blocker_proc_id = waiters->second.front();
+                        for (const auto &proc_pair : lock_mgr_->proc_locks_)
+                        {
+                            if (proc_pair.first == req->blocker_proc_id &&
+                                proc_pair.second.lock == lock_obj)
+                            {
+                                req->blocker_mode = proc_pair.second.mode;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            lock_mgr_->lock_wait_cv_.notify_all();
+        }
+
+        // Rollback the transaction in TransactionManager after the victim has
+        // already been marked, so the waiting backend can surface DEADLOCK
+        // without sitting on the full timeout window.
         if (xid != 0 && lock_mgr_ && lock_mgr_->db_)
         {
             TransactionManager *txn_mgr = lock_mgr_->db_->transaction_manager();

@@ -11,6 +11,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/types.h"
@@ -382,6 +383,68 @@ TEST_F(StorageEngineTest, UniqueInsertIgnoresStaleIndexEntryWithMismatchedHeapKe
     EXPECT_EQ(found.tid, TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(second_page_id)),
                              second_item_id));
     EXPECT_EQ(scan->next(&found, &ctx), Status::NOT_FOUND);
+}
+
+TEST_F(StorageEngineTest, ReadConsistencyNoWaitUpdateRequiresRestart)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("rc_restart_table");
+
+    auto tuple = buildIntTuple(41, conn_ctx_->getCurrentXid());
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id, tuple.data(), static_cast<uint32_t>(tuple.size()),
+                                   &page_id, &item_id, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    LockTag tag{};
+    tag.target_type = LockTarget::LOCK_TARGET_TUPLE;
+    tag.object_uuid = table_id;
+    tag.page_num = page_id;
+    tag.offset_num = item_id;
+    tag.padding = 0;
+    uint32_t blocker_proc_id = 0;
+    ASSERT_EQ(ProcArrayManager::registerBackend(&blocker_proc_id, &ctx), Status::OK)
+        << ctx.message;
+    uint64_t blocker_xid = 0;
+    ASSERT_EQ(db_->transaction_manager()->beginTransaction(blocker_proc_id, blocker_xid, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->lock_manager()->acquireLock(blocker_proc_id, tag,
+                                               LockMode::LOCK_ROW_EXCLUSIVE, true, 0, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_TRUE(db_->lock_manager()->checkConflict(tag, LockMode::LOCK_ROW_EXCLUSIVE));
+
+    std::unique_ptr<ConnectionContext> conn2;
+    ASSERT_EQ(db_->connect(conn2, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn2->initialize(&ctx), Status::OK) << ctx.message;
+    ID system_user = db_->catalog_manager()->getSystemUserId(&ctx);
+    conn2->setCurrentUser(system_user, true);
+    ASSERT_EQ(conn2->startTransaction(false, IsolationLevel::READ_COMMITTED_READ_CONSISTENCY,
+                                      true, &ctx),
+              Status::OK)
+        << ctx.message;
+    conn2->setWaitForLocks(false);
+    ASSERT_NE(conn2->getProcId(), blocker_proc_id);
+
+    auto updated_tuple = buildIntTuple(42, conn2->getCurrentXid());
+    ConnectionContext::setCurrent(conn2.get());
+    ASSERT_NE(ConnectionContext::getCurrentProcId(), static_cast<int32_t>(blocker_proc_id));
+    uint32_t new_page_id = 0;
+    uint16_t new_item_id = 0;
+    Status status = engine_->updateTuple(table_id, page_id, item_id,
+                                         updated_tuple.data(),
+                                         static_cast<uint32_t>(updated_tuple.size()),
+                                         &new_page_id, &new_item_id, &ctx);
+    EXPECT_EQ(status, Status::SERIALIZATION_FAILURE);
+    EXPECT_NE(ctx.message.find("READ_CONSISTENCY_RESTART_REQUIRED"), std::string::npos);
+
+    ConnectionContext::setCurrent(conn_ctx_.get());
+    db_->lock_manager()->releaseAllLocks(blocker_proc_id, nullptr);
+    db_->transaction_manager()->rollbackTransaction(blocker_proc_id, blocker_xid, nullptr);
+    ProcArrayManager::unregisterBackend(blocker_proc_id, &ctx);
 }
 
 TEST_F(StorageEngineTest, PageFullAllocatesNewPage)

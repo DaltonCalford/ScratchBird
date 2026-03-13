@@ -4,6 +4,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/transaction_manager.h"
@@ -190,6 +192,30 @@ TEST_F(DeadlockDetectionTest, DetectsAndResolvesDeadlock)
         deadlock_ready = true;
     }
 
+    if (deadlock_ready)
+    {
+        auto waiter_start = std::chrono::steady_clock::now();
+        while (true)
+        {
+            std::vector<LockSnapshot> locks;
+            ASSERT_EQ(lock_mgr_->listLocks(locks), Status::OK);
+            size_t waiting = 0;
+            for (const auto &snap : locks)
+            {
+                if (!snap.granted && (snap.proc_id == proc1 || snap.proc_id == proc2))
+                {
+                    waiting++;
+                }
+            }
+            if (waiting >= 2)
+            {
+                break;
+            }
+            ASSERT_LT(std::chrono::steady_clock::now() - waiter_start, std::chrono::seconds(2));
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+
     // Trigger deadlock detection.
     if (deadlock_ready)
     {
@@ -203,10 +229,13 @@ TEST_F(DeadlockDetectionTest, DetectsAndResolvesDeadlock)
     lock_mgr_->getStatistics(&stats);
     EXPECT_GE(stats.deadlocks_detected, 1u);
 
-    // At least one thread should have acquired its second lock after resolution.
+    // Resolution must surface as either a granted waiter or an explicit deadlock victim.
     const Status s1 = t1_status.load();
     const Status s2 = t2_status.load();
-    EXPECT_TRUE(s1 == Status::OK || s2 == Status::OK);
+    EXPECT_TRUE(s1 == Status::OK || s2 == Status::OK ||
+                s1 == Status::DEADLOCK || s2 == Status::DEADLOCK)
+        << "s1=" << static_cast<uint32_t>(s1)
+        << " s2=" << static_cast<uint32_t>(s2);
 
     ProcArrayManager::unregisterBackend(proc1, &ctx);
     ProcArrayManager::unregisterBackend(proc2, &ctx);
@@ -295,13 +324,97 @@ TEST_F(DeadlockDetectionTest, SimpleTwoProcessDeadlock)
     t1.join();
     t2.join();
 
-    // One of the processes should have been aborted (victim)
-    // The other should have acquired its lock or timed out
-    bool one_aborted = (proc1_result == Status::LOCK_TIMEOUT) ||
+    // One of the processes should have been aborted as the deadlock victim.
+    bool one_aborted = (proc1_result == Status::DEADLOCK) ||
+                       (proc2_result == Status::DEADLOCK) ||
+                       (proc1_result == Status::LOCK_TIMEOUT) ||
                        (proc2_result == Status::LOCK_TIMEOUT);
-    EXPECT_TRUE(one_aborted) << "At least one process should timeout/abort";
+    EXPECT_TRUE(one_aborted) << "At least one process should deadlock/timeout";
 
     // Cleanup
+    lock_mgr_->releaseAllLocks(proc1, &ctx);
+    lock_mgr_->releaseAllLocks(proc2, &ctx);
+    unregisterBackend(proc1);
+    unregisterBackend(proc2);
+}
+
+TEST_F(DeadlockDetectionTest, DeadlockVictimPublishesBlockerDiagnostics)
+{
+    ErrorContext ctx;
+
+    uint32_t proc1 = registerBackend();
+    uint32_t proc2 = registerBackend();
+
+    uint64_t xid1 = 0;
+    uint64_t xid2 = 0;
+    ASSERT_EQ(txn_mgr_->beginTransaction(proc1, xid1, &ctx), Status::OK);
+    ASSERT_EQ(txn_mgr_->beginTransaction(proc2, xid2, &ctx), Status::OK);
+
+    LockTag lockA = createLockTag(11);
+    LockTag lockB = createLockTag(12);
+    ASSERT_EQ(lock_mgr_->acquireLock(proc1, lockA, LockMode::LOCK_EXCLUSIVE, true, 0, &ctx),
+              Status::OK);
+    ASSERT_EQ(lock_mgr_->acquireLock(proc2, lockB, LockMode::LOCK_EXCLUSIVE, true, 0, &ctx),
+              Status::OK);
+
+    std::atomic<Status> proc1_result{Status::OK};
+    std::atomic<Status> proc2_result{Status::OK};
+
+    std::thread t1([&]() {
+        ErrorContext local_ctx;
+        proc1_result = lock_mgr_->acquireLock(proc1, lockB, LockMode::LOCK_EXCLUSIVE, true, 2000,
+                                              &local_ctx);
+    });
+    std::thread t2([&]() {
+        ErrorContext local_ctx;
+        proc2_result = lock_mgr_->acquireLock(proc2, lockA, LockMode::LOCK_EXCLUSIVE, true, 2000,
+                                              &local_ctx);
+    });
+
+    auto waiter_start = std::chrono::steady_clock::now();
+    while (true)
+    {
+        std::vector<LockSnapshot> locks;
+        ASSERT_EQ(lock_mgr_->listLocks(locks), Status::OK);
+        size_t waiting = 0;
+        for (const auto &snap : locks)
+        {
+            if (!snap.granted && (snap.proc_id == proc1 || snap.proc_id == proc2))
+            {
+                waiting++;
+            }
+        }
+        if (waiting >= 2)
+        {
+            break;
+        }
+        ASSERT_LT(std::chrono::steady_clock::now() - waiter_start, std::chrono::seconds(2));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    ASSERT_EQ(lock_mgr_->detectDeadlocks(&ctx), Status::OK);
+
+    t1.join();
+    t2.join();
+
+    std::vector<CatalogManager::WaitHistoryEntry> entries;
+    ASSERT_EQ(db_->catalog_manager()->listWaitHistory(entries, &ctx), Status::OK);
+    auto it = std::find_if(entries.rbegin(), entries.rend(), [](const auto &entry) {
+        return entry.outcome_code == "DEADLOCK_DETECTED";
+    });
+    ASSERT_NE(it, entries.rend());
+    EXPECT_TRUE(it->thread_id == proc1 || it->thread_id == proc2);
+    EXPECT_TRUE(it->blocker_thread_id == proc1 || it->blocker_thread_id == proc2);
+    EXPECT_EQ(it->resource_class, "table");
+    EXPECT_EQ(it->requested_mode, static_cast<uint8_t>(LockMode::LOCK_EXCLUSIVE));
+    EXPECT_TRUE(it->retry_eligible);
+    EXPECT_EQ(it->victim_reason_code, "youngest_xid");
+    const Status result1 = proc1_result.load();
+    const Status result2 = proc2_result.load();
+    EXPECT_TRUE(result1 == Status::DEADLOCK || result2 == Status::DEADLOCK)
+        << "proc1=" << static_cast<uint32_t>(result1)
+        << " proc2=" << static_cast<uint32_t>(result2);
+
     lock_mgr_->releaseAllLocks(proc1, &ctx);
     lock_mgr_->releaseAllLocks(proc2, &ctx);
     unregisterBackend(proc1);
