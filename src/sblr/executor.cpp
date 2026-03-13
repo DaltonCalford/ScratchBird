@@ -71615,8 +71615,6 @@ namespace scratchbird
                                     result_set->addColumn("role", core::DataType::VARCHAR);
                                     result_set->addColumn("node_name", core::DataType::VARCHAR);
                                     result_set->addColumn("profile_name", core::DataType::VARCHAR);
-                                    result_set->addColumn("binding_present", core::DataType::BOOLEAN);
-                                    result_set->addColumn("metrics_present", core::DataType::BOOLEAN);
                                     result_set->addColumn("availability_sli_pct", core::DataType::DOUBLE);
                                     result_set->addColumn("error_rate_sli_pct", core::DataType::DOUBLE);
                                     result_set->addColumn("request_count", core::DataType::INT64);
