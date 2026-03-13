@@ -54,9 +54,12 @@ namespace scratchbird::core
     // The active_txid_set is sorted ascending for binary-search membership tests.
     struct TransactionSnapshot
     {
+        uint64_t snapshot_txid_low = 0;
         uint64_t snapshot_txid_high = 0;
         std::vector<uint64_t> active_txid_set;
         uint64_t snapshot_commit_seqno_high = 0;
+        uint64_t snapshot_serial = 0;
+        uint64_t capture_time = 0;
     };
 
 // Transaction Inventory Page (TIP) format
@@ -256,6 +259,20 @@ namespace scratchbird::core
             return oldest_snapshot_;
         }
 
+        // Get current inventory generation marker.
+        auto getInventoryGeneration() const -> uint64_t
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return inventory_generation_;
+        }
+
+        // Get oldest persisted snapshot serial marker.
+        auto getOldestSnapshotSerial() const -> uint64_t
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return oldest_snapshot_serial_;
+        }
+
         // Update oldest XID after GC/sweep completes
         // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto setOldestXid(uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
@@ -264,6 +281,13 @@ namespace scratchbird::core
         // LOCKING: Thread-safe. Acquires mutex_ internally, then acquires ProcArray read lock.
         //          Lock order: mutex_ → ProcArray::array_lock (rwlock read).
         auto updateTransactionMarkers(ErrorContext *ctx = nullptr) -> Status;
+
+        // Register or clear a snapshot pin for a backend. Callers must update markers after
+        // changing pin state.
+        auto registerSnapshotPin(uint32_t proc_id, uint64_t owner_xid,
+                                 const TransactionSnapshot &snapshot,
+                                 ErrorContext *ctx = nullptr) -> Status;
+        auto clearSnapshotPin(uint32_t proc_id, ErrorContext *ctx = nullptr) -> Status;
 
         // Check if approaching XID wraparound
         // LOCKING: Thread-safe. Acquires mutex_ internally.
@@ -380,11 +404,22 @@ namespace scratchbird::core
         BufferPool *buffer_pool_;
         PageManager *page_manager_;
 
+        struct SnapshotPin
+        {
+            uint64_t owner_xid = 0;
+            uint64_t xmin = 0;
+            uint64_t xmax = 0;
+            uint64_t snapshot_serial = 0;
+        };
+
         // Transaction state
         std::atomic<uint64_t> next_xid_{config::DEFAULT_INITIAL_XID}; // Next XID to allocate (NEXT) - ATOMIC for thread safety
         uint64_t oldest_xid_ = FROZEN_XID + 1;            // Oldest Interesting Transaction (OIT)
-        uint64_t oldest_active_xid_ = 0;                  // Oldest Active Transaction (OAT)
-        uint64_t oldest_snapshot_ = 0;                    // Oldest Snapshot Transaction (OST)
+        uint64_t oldest_active_xid_ = config::DEFAULT_INITIAL_XID + 1; // Oldest Active Transaction (OAT)
+        uint64_t oldest_snapshot_ = config::DEFAULT_INITIAL_XID + 1;   // Oldest Snapshot Transaction (OST)
+        uint64_t inventory_generation_ = 1;
+        uint64_t next_snapshot_serial_ = 1;
+        uint64_t oldest_snapshot_serial_ = 0;
         uint32_t tip_root_page_ = 0;                      // Root TIP page ID
 
         // In-memory cache of recent transactions (LRU cache)
@@ -398,6 +433,7 @@ namespace scratchbird::core
 
         // Prepared transaction XIDs (2PC limbo); used to keep OAT pinned.
         std::unordered_set<uint64_t> prepared_xids_;
+        std::unordered_map<uint32_t, SnapshotPin> snapshot_pins_;
 
         // TIP page location cache (Issue 3.1 optimization)
         // Maps XID -> TIP page ID to avoid scanning entire chain
@@ -468,10 +504,14 @@ namespace scratchbird::core
         // Returns Status::OK if safe, Status::PAGE_FULL if critical, Status::PAGE_CORRUPT if blocked
         auto checkXIDWraparound(ErrorContext *ctx) -> Status;
 
-        // Startup normalization for unclean shutdown handling:
-        // any pre-existing ACTIVE TIP state is rewritten to ABORTED.
+        // Startup normalization for clean/unclean restart handling:
+        // ACTIVE TIP rows are reconciled against limbo evidence and terminal
+        // TIP/catalog mismatches are closed conservatively before startup
+        // proceeds.
         // LOCKING: Requires mutex_ held by caller.
-        auto normalizeStartupTipStates(ErrorContext *ctx) -> Status;
+        auto normalizeStartupTipStates(bool clean_shutdown_marker,
+                                       bool *startup_repair_out,
+                                       ErrorContext *ctx) -> Status;
 
         // Persist OAT/OST markers from current in-memory values.
         // LOCKING: Requires mutex_ held by caller.

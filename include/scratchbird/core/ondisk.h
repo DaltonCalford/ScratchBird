@@ -469,8 +469,10 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         uint64_t last_checkpoint_txid;
         uint64_t last_checkpoint_time;
         uint64_t startup_counter;
+        uint64_t restart_generation;
+        uint64_t last_clean_shutdown_generation;
         uint64_t config_flags;
-        uint64_t reserved[12];
+        uint64_t reserved[10];
     };
 
     struct BootstrapCatalogRootHeader

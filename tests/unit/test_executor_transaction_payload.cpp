@@ -8,8 +8,14 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include <gtest/gtest.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cerrno>
+#include <cstring>
 #include <sstream>
 #include <vector>
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/clog.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
@@ -98,6 +104,126 @@ protected:
         ASSERT_TRUE(compiled.success()) << joinErrors(compiled.errors());
         auto result = executor_->execute(compiled.bytecode());
         ASSERT_TRUE(result.success()) << result.error();
+    }
+
+    void bindConnectionContext() {
+        ErrorContext ctx;
+        scratchbird::core::CatalogManager::SchemaInfo schema_info;
+        ASSERT_EQ(db_.catalog_manager()->getSchema("PUBLIC", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        conn_->setCurrentSchemaId(schema_info.schema_id);
+        auto system_user_id = db_.catalog_manager()->getSystemUserId(&ctx);
+        conn_->setCurrentUser(system_user_id, true);
+        ConnectionContext::setCurrent(conn_.get());
+    }
+
+    void reopenDatabase() {
+        executor_.reset();
+        ConnectionContext::setCurrent(nullptr);
+        conn_.reset();
+        db_.close();
+
+        ErrorContext ctx;
+        ASSERT_EQ(db_.open(db_file_->path(), &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(db_.connect(conn_, &ctx), Status::OK) << ctx.message;
+        bindConnectionContext();
+
+        executor_ = std::make_unique<Executor>(&db_);
+        executor_->setConnectionContext(conn_.get());
+    }
+
+    void closeDatabase() {
+        executor_.reset();
+        ConnectionContext::setCurrent(nullptr);
+        conn_.reset();
+        db_.close();
+    }
+
+    scratchbird::core::BootstrapSystemStatePage readSystemStatePageFromOpenDb() {
+        std::vector<uint8_t> buffer(db_.page_size());
+        ErrorContext ctx;
+        EXPECT_EQ(db_.read_page(scratchbird::core::BOOTSTRAP_PAGE_SYSTEM_STATE,
+                                buffer.data(),
+                                &ctx),
+                  Status::OK) << ctx.message;
+        scratchbird::core::BootstrapSystemStatePage state{};
+        std::memcpy(&state, buffer.data(), sizeof(state));
+        return state;
+    }
+
+    scratchbird::core::BootstrapSystemStatePage readSystemStatePageFromFile() {
+        scratchbird::core::BootstrapSystemStatePage state{};
+        std::vector<uint8_t> buffer(db_.page_size());
+        const int fd = ::open(db_file_->path().c_str(), O_RDWR);
+        EXPECT_GE(fd, 0) << std::strerror(errno);
+        if (fd < 0) {
+            return state;
+        }
+        const off_t offset = static_cast<off_t>(scratchbird::core::BOOTSTRAP_PAGE_SYSTEM_STATE) *
+                             static_cast<off_t>(db_.page_size());
+        const ssize_t bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        EXPECT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        if (bytes == static_cast<ssize_t>(buffer.size())) {
+            std::memcpy(&state, buffer.data(), sizeof(state));
+        }
+        ::close(fd);
+        return state;
+    }
+
+    void writeSystemStatePageToFile(
+        const scratchbird::core::BootstrapSystemStatePage& state_in) {
+        std::vector<uint8_t> buffer(db_.page_size());
+
+        const int fd = ::open(db_file_->path().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0) << std::strerror(errno);
+        const off_t offset = static_cast<off_t>(scratchbird::core::BOOTSTRAP_PAGE_SYSTEM_STATE) *
+                             static_cast<off_t>(db_.page_size());
+        const ssize_t read_bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(read_bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+
+        auto state = state_in;
+        std::memcpy(buffer.data(), &state, sizeof(state));
+        auto *page = reinterpret_cast<scratchbird::core::BootstrapSystemStatePage *>(buffer.data());
+        page->page_header.checksum =
+            scratchbird::core::calculatePageChecksum(buffer.data(), db_.page_size());
+
+        const ssize_t bytes = ::pwrite(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
+        ::close(fd);
+    }
+
+    void patchTipStateInFile(uint64_t xid, scratchbird::core::TransactionState new_state) {
+        std::vector<uint8_t> buffer(db_.page_size());
+        const int fd = ::open(db_file_->path().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0) << std::strerror(errno);
+        const off_t offset = static_cast<off_t>(scratchbird::core::BOOTSTRAP_PAGE_TX_MAP_ROOT) *
+                             static_cast<off_t>(db_.page_size());
+        const ssize_t bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+
+        auto *tip_header =
+            reinterpret_cast<scratchbird::core::TIPPageHeader *>(buffer.data());
+        auto *entries = reinterpret_cast<scratchbird::core::TIPEntry *>(
+            buffer.data() + sizeof(scratchbird::core::TIPPageHeader));
+
+        bool found = false;
+        for (uint32_t i = 0; i < tip_header->num_transactions; ++i) {
+            if (entries[i].xid == xid) {
+                entries[i].state = static_cast<uint8_t>(new_state);
+                entries[i].commit_time = 0;
+                found = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(found);
+
+        tip_header->page_header.checksum =
+            scratchbird::core::calculatePageChecksum(buffer.data(), db_.page_size());
+        const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
+        ::close(fd);
     }
 
     Database db_{};
@@ -216,6 +342,326 @@ TEST_F(ExecutorTransactionPayloadTest, PrepareRollbackPrepared) {
     ASSERT_EQ(txn_manager->getTransactionState(prepared_xid, state, &err_ctx), Status::OK)
         << err_ctx.message;
     EXPECT_EQ(state, scratchbird::core::TransactionState::ABORTED);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, ActiveStateNormalizesToAbortedAcrossRestart) {
+    auto *txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+
+    const uint64_t active_xid = conn_->getCurrentXid();
+    ASSERT_NE(active_xid, 0u);
+
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::COMMITTED;
+    ErrorContext ctx;
+    ASSERT_EQ(txn_manager->getTransactionState(active_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::ACTIVE);
+
+    reopenDatabase();
+
+    txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    ASSERT_EQ(txn_manager->getTransactionState(active_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::ABORTED);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, CleanShutdownMarkerTracksStartupGeneration) {
+    const auto startup_state = readSystemStatePageFromOpenDb();
+    EXPECT_EQ(startup_state.clean_shutdown, 0u);
+    EXPECT_GE(startup_state.startup_counter, 2u);
+
+    const uint64_t startup_generation = startup_state.startup_counter;
+    const uint64_t restart_generation = startup_state.restart_generation;
+
+    closeDatabase();
+
+    const auto closed_state = readSystemStatePageFromFile();
+    EXPECT_EQ(closed_state.clean_shutdown, 1u);
+    EXPECT_EQ(closed_state.startup_counter, startup_generation);
+    EXPECT_EQ(closed_state.last_clean_shutdown_generation, startup_generation);
+
+    reopenDatabase();
+
+    const auto reopened_state = readSystemStatePageFromOpenDb();
+    EXPECT_EQ(reopened_state.clean_shutdown, 0u);
+    EXPECT_EQ(reopened_state.startup_counter, startup_generation + 1);
+    EXPECT_EQ(reopened_state.restart_generation, restart_generation);
+    EXPECT_TRUE(db_.last_shutdown_was_clean());
+    EXPECT_EQ(db_.startup_generation(), reopened_state.startup_counter);
+    EXPECT_EQ(db_.restart_generation(), reopened_state.restart_generation);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, UncleanRestartIncrementsRestartGeneration) {
+    const auto startup_state = readSystemStatePageFromOpenDb();
+    closeDatabase();
+
+    auto closed_state = readSystemStatePageFromFile();
+    closed_state.clean_shutdown = 0;
+    writeSystemStatePageToFile(closed_state);
+
+    reopenDatabase();
+
+    const auto reopened_state = readSystemStatePageFromOpenDb();
+    EXPECT_EQ(reopened_state.clean_shutdown, 0u);
+    EXPECT_EQ(reopened_state.startup_counter, startup_state.startup_counter + 1);
+    EXPECT_EQ(reopened_state.restart_generation, startup_state.restart_generation + 1);
+    EXPECT_FALSE(db_.last_shutdown_was_clean());
+}
+
+TEST_F(ExecutorTransactionPayloadTest, UncleanRestartNormalizesPatchedActiveTipToAborted) {
+    const uint64_t active_xid = conn_->getCurrentXid();
+    ASSERT_NE(active_xid, 0u);
+
+    closeDatabase();
+
+    auto state_page = readSystemStatePageFromFile();
+    state_page.clean_shutdown = 0;
+    writeSystemStatePageToFile(state_page);
+    patchTipStateInFile(active_xid, scratchbird::core::TransactionState::ACTIVE);
+
+    reopenDatabase();
+
+    auto *txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::COMMITTED;
+    ErrorContext ctx;
+    ASSERT_EQ(txn_manager->getTransactionState(active_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::ABORTED);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, CommittedStatePersistsAcrossRestart) {
+    auto *txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+
+    const uint64_t committed_xid = conn_->getCurrentXid();
+    ASSERT_NE(committed_xid, 0u);
+
+    ErrorContext ctx;
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::ACTIVE;
+    ASSERT_EQ(txn_manager->getTransactionState(committed_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
+
+    reopenDatabase();
+
+    txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    ASSERT_EQ(txn_manager->getTransactionState(committed_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, PreparedStatePersistsAcrossRestartAndRemainsResolvable) {
+    auto *txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+
+    const uint64_t prepared_xid = conn_->getCurrentXid();
+    ASSERT_NE(prepared_xid, 0u);
+
+    ErrorContext ctx;
+    ASSERT_EQ(conn_->prepareTransaction("gid_restart_persist_test", &ctx), Status::OK)
+        << ctx.message;
+
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::ACTIVE;
+    ASSERT_EQ(txn_manager->getTransactionState(prepared_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::PREPARED);
+
+    scratchbird::core::CatalogManager::PreparedTransactionInfo info{};
+    ASSERT_EQ(db_.catalog_manager()->getPreparedTransactionByGid("gid_restart_persist_test",
+                                                                 info,
+                                                                 &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(info.txn_id, prepared_xid);
+
+    reopenDatabase();
+
+    txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    ASSERT_EQ(txn_manager->getTransactionState(prepared_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::PREPARED);
+
+    scratchbird::core::CatalogManager::PreparedTransactionInfo reopened_info{};
+    ASSERT_EQ(db_.catalog_manager()->getPreparedTransactionByGid("gid_restart_persist_test",
+                                                                 reopened_info,
+                                                                 &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(reopened_info.txn_id, prepared_xid);
+
+    ASSERT_EQ(txn_manager->commitPreparedTransaction("gid_restart_persist_test", &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(txn_manager->getTransactionState(prepared_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
+    EXPECT_EQ(db_.catalog_manager()->getPreparedTransactionByGid("gid_restart_persist_test",
+                                                                 reopened_info,
+                                                                 &ctx),
+              Status::NOT_FOUND);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, UncleanRestartPromotesPreparedEvidenceBackToPrepared) {
+    auto *txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+
+    const uint64_t prepared_xid = conn_->getCurrentXid();
+    ASSERT_NE(prepared_xid, 0u);
+
+    ErrorContext ctx;
+    ASSERT_EQ(conn_->prepareTransaction("gid_restart_promote_test", &ctx), Status::OK)
+        << ctx.message;
+
+    closeDatabase();
+
+    auto state_page = readSystemStatePageFromFile();
+    state_page.clean_shutdown = 0;
+    writeSystemStatePageToFile(state_page);
+    patchTipStateInFile(prepared_xid, scratchbird::core::TransactionState::ACTIVE);
+
+    reopenDatabase();
+
+    txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::ACTIVE;
+    ASSERT_EQ(txn_manager->getTransactionState(prepared_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::PREPARED);
+
+    scratchbird::core::CatalogManager::PreparedTransactionInfo info{};
+    ASSERT_EQ(db_.catalog_manager()->getPreparedTransactionByGid("gid_restart_promote_test",
+                                                                 info,
+                                                                 &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(info.txn_id, prepared_xid);
+
+    ASSERT_EQ(txn_manager->commitPreparedTransaction("gid_restart_promote_test", &ctx), Status::OK)
+        << ctx.message;
+}
+
+TEST_F(ExecutorTransactionPayloadTest, PreparedTipWithoutCatalogRowFailsRestart) {
+    ErrorContext ctx;
+    ASSERT_EQ(conn_->prepareTransaction("gid_restart_missing_record", &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_.catalog_manager()->deletePreparedTransaction("gid_restart_missing_record", &ctx),
+              Status::OK) << ctx.message;
+
+    closeDatabase();
+
+    ErrorContext reopen_ctx;
+    EXPECT_EQ(db_.open(db_file_->path(), &reopen_ctx), Status::PAGE_CORRUPT)
+        << reopen_ctx.message;
+    EXPECT_NE(reopen_ctx.message.find("TX_LIMBO_FENCE_MISMATCH"), std::string::npos)
+        << reopen_ctx.message;
+}
+
+TEST_F(ExecutorTransactionPayloadTest, CommittedRowRemainsVisibleAcrossRestart) {
+    ErrorContext ctx;
+
+    auto create_compiled = compile(
+        "CREATE TABLE commit_restart_visibility_test (id INT PRIMARY KEY, val INT)");
+    ASSERT_TRUE(create_compiled.success()) << joinErrors(create_compiled.errors());
+    auto result = executor_->execute(create_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    auto insert_compiled =
+        compile("INSERT INTO commit_restart_visibility_test(id, val) VALUES (1, 10)");
+    ASSERT_TRUE(insert_compiled.success()) << joinErrors(insert_compiled.errors());
+    result = executor_->execute(insert_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    const uint64_t committed_xid = conn_->getCurrentXid();
+    ASSERT_NE(committed_xid, 0u);
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    reopenDatabase();
+
+    auto verify_compiled =
+        compile("SELECT val FROM commit_restart_visibility_test WHERE id = 1");
+    ASSERT_TRUE(verify_compiled.success()) << joinErrors(verify_compiled.errors());
+    result = executor_->execute(verify_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toInt64(), 10);
+
+    auto *txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::ACTIVE;
+    ASSERT_EQ(txn_manager->getTransactionState(committed_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, RolledBackRowRemainsInvisibleAcrossRestart) {
+    ErrorContext ctx;
+
+    auto create_compiled = compile(
+        "CREATE TABLE rollback_restart_visibility_test (id INT PRIMARY KEY, val INT)");
+    ASSERT_TRUE(create_compiled.success()) << joinErrors(create_compiled.errors());
+    auto result = executor_->execute(create_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    auto insert_compiled =
+        compile("INSERT INTO rollback_restart_visibility_test(id, val) VALUES (1, 20)");
+    ASSERT_TRUE(insert_compiled.success()) << joinErrors(insert_compiled.errors());
+    result = executor_->execute(insert_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    const uint64_t rolled_back_xid = conn_->getCurrentXid();
+    ASSERT_NE(rolled_back_xid, 0u);
+    ASSERT_EQ(conn_->rollback(&ctx), Status::OK) << ctx.message;
+
+    reopenDatabase();
+
+    auto verify_compiled =
+        compile("SELECT val FROM rollback_restart_visibility_test WHERE id = 1");
+    ASSERT_TRUE(verify_compiled.success()) << joinErrors(verify_compiled.errors());
+    result = executor_->execute(verify_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    EXPECT_EQ(result.resultSet()->rowCount(), 0u);
+
+    auto *txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::ACTIVE;
+    ASSERT_EQ(txn_manager->getTransactionState(rolled_back_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::ABORTED);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, TipStateOverridesContradictoryDurableClogOnRestart) {
+    auto *txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+
+    const uint64_t committed_xid = conn_->getCurrentXid();
+    ASSERT_NE(committed_xid, 0u);
+
+    ErrorContext ctx;
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    ASSERT_EQ(db_.clog()->setStatus(committed_xid,
+                                    scratchbird::core::ClogStatus::ABORTED,
+                                    &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(db_.buffer_pool()->flushAll(&ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(db_.sync(&ctx), Status::OK) << ctx.message;
+
+    reopenDatabase();
+
+    txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::ACTIVE;
+    ASSERT_EQ(txn_manager->getTransactionState(committed_xid, state, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
 }
 
 TEST_F(ExecutorTransactionPayloadTest, SavepointSqlCreatesExpectedSavepoint) {

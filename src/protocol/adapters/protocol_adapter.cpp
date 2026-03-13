@@ -722,7 +722,18 @@ core::Status ProtocolAdapter::executeQuery(const QueryContext& query, ResultCont
 
         // Track the statement for dormant reattach inspection (no cursor state retained).
         if (connection_ctx_) {
-            connection_ctx_->beginStatementTracking(query.query);
+            core::Status tracking_status =
+                connection_ctx_->beginStatementTracking(query.query, &ctx);
+            if (tracking_status != core::Status::OK) {
+                result.has_error = true;
+                result.error_code = static_cast<uint32_t>(tracking_status);
+                result.sqlstate = tracking_status == core::Status::SERIALIZATION_FAILURE
+                    ? "40001"
+                    : "HY000";
+                result.error_message =
+                    ctx.message.empty() ? "Failed to initialize statement snapshot" : ctx.message;
+                return core::Status::OK;
+            }
         }
 
         std::vector<uint8_t> bytecode;

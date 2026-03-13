@@ -9,6 +9,8 @@
  */
 #include "scratchbird/core/observability_contract.h"
 
+#include <algorithm>
+
 #include <gtest/gtest.h>
 
 namespace scratchbird::core
@@ -91,6 +93,60 @@ namespace scratchbird::core
         ASSERT_EQ(MetricContractPolicy::buildLegacyNameMapping(mapping), Status::OK);
         ASSERT_FALSE(mapping.empty());
         EXPECT_EQ(mapping.front().first, "scratchbird_buffer_pool_hits_total");
+    }
+
+    TEST(MetricContractPolicyTest, MgaContractIsVersionedAndRegistryAuditPasses)
+    {
+        MetricsRegistry& registry = MetricsRegistry::getInstance();
+        registry.clear();
+
+        EXPECT_STREQ(MgaObservabilityContract::contract_id(), "sb_mga_observability/v1");
+        EXPECT_EQ(MgaObservabilityContract::metric_schema_version(), 1u);
+        EXPECT_EQ(MgaObservabilityContract::sql_view_schema_version(), 1u);
+        EXPECT_EQ(MgaObservabilityContract::dashboard_schema_version(), 1u);
+
+        std::vector<MetricSchemaDefinition> definitions;
+        ASSERT_EQ(MgaObservabilityContract::appendMetricDefinitions(definitions), Status::OK);
+        ASSERT_EQ(definitions.size(), 33u);
+        EXPECT_EQ(definitions.front().metric_name, "sb_buf_commit_fence_backlog");
+        EXPECT_EQ(definitions.back().metric_name, "sb_tx_restart_normalized_total");
+        for (const MetricSchemaDefinition& definition : definitions)
+        {
+            EXPECT_TRUE(MetricContractPolicy::isCanonicalMetricName(definition.metric_name))
+                << definition.metric_name;
+        }
+
+        ASSERT_EQ(MgaObservabilityContract::registerRequiredMetrics(registry), Status::OK);
+        std::vector<std::string> missing_metrics;
+        ASSERT_EQ(
+            MgaObservabilityContract::verifyRegistryContainsRequiredMetrics(registry, missing_metrics),
+            Status::OK);
+        EXPECT_TRUE(missing_metrics.empty());
+
+        auto* tx_active = dynamic_cast<Gauge*>(registry.get("sb_tx_active"));
+        auto* tx_limbo = dynamic_cast<Gauge*>(registry.get("sb_tx_limbo"));
+        auto* commit_fence =
+            dynamic_cast<Histogram*>(registry.get("sb_tx_commit_fence_flush_seconds"));
+        auto* chain_depth = dynamic_cast<Gauge*>(registry.get("sb_mga_chain_depth_bucket"));
+        auto* buf_frames = dynamic_cast<Gauge*>(registry.get("sb_buf_frames_by_class"));
+        auto* lock_wait = dynamic_cast<Counter*>(registry.get("sb_lock_wait_seconds_total"));
+        ASSERT_NE(tx_active, nullptr);
+        ASSERT_NE(tx_limbo, nullptr);
+        ASSERT_NE(commit_fence, nullptr);
+        ASSERT_NE(chain_depth, nullptr);
+        ASSERT_NE(buf_frames, nullptr);
+        ASSERT_NE(lock_wait, nullptr);
+
+        tx_active->set(7.0, {"sb"});
+        tx_limbo->set(1.0, {"sb", "prepared"});
+        commit_fence->observe(0.012, {"sb", "ok"});
+        chain_depth->set(4.0, {"sb", "orders", "depth_4_7"});
+        buf_frames->set(128.0, {"sb", "commit_fence"});
+        lock_wait->inc(0.50, {"sb", "WAIT"});
+
+        std::vector<MetricPolicyViolation> violations;
+        ASSERT_EQ(MetricContractPolicy::auditRegistry(registry, violations), Status::OK);
+        EXPECT_TRUE(violations.empty());
     }
 
 } // namespace scratchbird::core

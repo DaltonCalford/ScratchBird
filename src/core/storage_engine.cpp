@@ -1542,63 +1542,58 @@ namespace scratchbird::core
                 case IsolationLevel::SNAPSHOT:
                 case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
                 {
-                    // Firebird MGA: SNAPSHOT isolation uses transaction start XID with TIP-based visibility
-                    // current_xid represents the XID when the transaction started
-                    // No snapshot structures needed - TIP provides all visibility info
+                    const auto *retained_snapshot = conn_ctx->getRetainedTransactionSnapshot();
+                    if (retained_snapshot != nullptr)
+                    {
+                        return tm->isRecordVersionVisibleInSnapshot(
+                            xmin, xmax, current_xid, *retained_snapshot);
+                    }
 
-                    // Tuple is visible if created before transaction start and not deleted before transaction start
+                    // Fallback for paths that do not yet have a retained snapshot bound.
                     if (!tm->isVersionVisible(xmin, current_xid))
                     {
                         return false;
                     }
-
-                    // If deleted, check if deletion is visible
                     if (xmax != 0)
                     {
-                        // Special case: deleted by current transaction
                         if (xmax == current_xid)
                         {
-                            return false; // We deleted it - not visible
+                            return false;
                         }
-
-                        // Check if deletion is visible using TIP
                         if (tm->isVersionVisible(xmax, current_xid))
                         {
-                            return false; // Deletion committed before transaction start - not visible
+                            return false;
                         }
                     }
-
                     return true;
                 }
 
                 case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
                 {
-                    // Firebird MGA: READ COMMITTED READ CONSISTENCY uses statement-level XID with TIP visibility
-                    // Get statement XID (returns current_xid if no statement-level XID set)
-                    uint64_t stmt_xid = conn_ctx->getStatementXID();
+                    const auto *statement_snapshot = conn_ctx->getStatementTransactionSnapshot();
+                    if (statement_snapshot != nullptr)
+                    {
+                        return tm->isRecordVersionVisibleInSnapshot(
+                            xmin, xmax, current_xid, *statement_snapshot);
+                    }
 
-                    // Check if creating transaction is visible at statement start
+                    uint64_t stmt_xid = conn_ctx->getStatementXID();
                     if (!tm->isVersionVisible(xmin, stmt_xid))
                     {
                         return false;
                     }
 
-                    // If deleted, check if deleting transaction is visible at statement start
                     if (xmax != 0)
                     {
-                        // Special case: deleted by current transaction
                         if (xmax == current_xid)
                         {
-                            return false; // We deleted it - not visible
+                            return false;
                         }
-
-                        // Check if deletion is visible using TIP
                         if (tm->isVersionVisible(xmax, stmt_xid))
                         {
-                            return false; // Deletion committed before statement - not visible
+                            return false;
                         }
                     }
-
                     return true;
                 }
 

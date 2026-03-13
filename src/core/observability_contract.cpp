@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <unordered_set>
 
 #include <nlohmann/json.hpp>
@@ -88,6 +89,479 @@ namespace scratchbird::core
             return "gauge";
         }
 
+        auto makeMetricDefinition(std::string metric_name,
+                                  MetricType metric_type,
+                                  std::vector<std::string> label_names,
+                                  std::string help,
+                                  std::string unit) -> MetricSchemaDefinition
+        {
+            MetricSchemaDefinition definition{};
+            definition.metric_name = std::move(metric_name);
+            definition.metric_type = metric_type;
+            definition.label_names = std::move(label_names);
+            definition.help = std::move(help);
+            definition.unit = std::move(unit);
+            return definition;
+        }
+
+        auto makeColumn(std::string column_name, std::string column_type, bool nullable)
+            -> SqlViewColumnDefinition
+        {
+            SqlViewColumnDefinition column{};
+            column.column_name = std::move(column_name);
+            column.column_type = std::move(column_type);
+            column.nullable = nullable;
+            return column;
+        }
+
+        auto makePanel(std::string panel_id,
+                       std::string source_view,
+                       std::vector<std::string> required_fields) -> DashboardPanelDefinition
+        {
+            DashboardPanelDefinition panel{};
+            panel.panel_id = std::move(panel_id);
+            panel.source_view = std::move(source_view);
+            panel.required_fields = std::move(required_fields);
+            return panel;
+        }
+
+        auto makeAlert(std::string alert_id, std::string predicate, std::string severity)
+            -> DashboardAlertDefinition
+        {
+            DashboardAlertDefinition alert{};
+            alert.alert_id = std::move(alert_id);
+            alert.predicate = std::move(predicate);
+            alert.severity = std::move(severity);
+            return alert;
+        }
+
+        auto metricDefinitions() -> const std::vector<MetricSchemaDefinition>&
+        {
+            static const std::vector<MetricSchemaDefinition> kDefinitions = [] {
+                std::vector<MetricSchemaDefinition> definitions{
+                    makeMetricDefinition("sb_buf_commit_fence_backlog",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Pending commit-fence publication backlog.",
+                                         "count"),
+                    makeMetricDefinition("sb_buf_evictions_by_class_total",
+                                         MetricType::COUNTER,
+                                         {"db", "class", "reason"},
+                                         "Buffer evictions by MGA page class.",
+                                         "frames"),
+                    makeMetricDefinition("sb_buf_frames_by_class",
+                                         MetricType::GAUGE,
+                                         {"db", "class"},
+                                         "Resident buffer frames by MGA page class.",
+                                         "frames"),
+                    makeMetricDefinition("sb_buf_gc_candidate_queue",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Queued GC candidate pages.",
+                                         "pages"),
+                    makeMetricDefinition("sb_buf_scan_probation_churn_total",
+                                         MetricType::COUNTER,
+                                         {"db", "class"},
+                                         "Scan-resistance probation churn events.",
+                                         "events"),
+                    makeMetricDefinition("sb_gc_background_reclaim_bytes_total",
+                                         MetricType::COUNTER,
+                                         {"db", "relation"},
+                                         "Bytes reclaimed by background GC.",
+                                         "bytes"),
+                    makeMetricDefinition("sb_gc_cleanup_debt_bytes",
+                                         MetricType::GAUGE,
+                                         {"db", "relation"},
+                                         "Cleanup debt still retained on disk.",
+                                         "bytes"),
+                    makeMetricDefinition("sb_gc_cooperative_reclaim_bytes_total",
+                                         MetricType::COUNTER,
+                                         {"db", "relation"},
+                                         "Bytes reclaimed by cooperative GC.",
+                                         "bytes"),
+                    makeMetricDefinition("sb_gc_index_backlog_entries",
+                                         MetricType::GAUGE,
+                                         {"db", "relation"},
+                                         "Pending dead index entries awaiting cleanup.",
+                                         "entries"),
+                    makeMetricDefinition("sb_gc_sweep_generation",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Current sweep generation.",
+                                         "generation"),
+                    makeMetricDefinition("sb_gc_sweep_resumes_total",
+                                         MetricType::COUNTER,
+                                         {"db", "reason"},
+                                         "Sweep resume events after interruption.",
+                                         "events"),
+                    makeMetricDefinition("sb_lock_blockers",
+                                         MetricType::GAUGE,
+                                         {"db", "wait_mode"},
+                                         "Active blockers observed by wait mode.",
+                                         "count"),
+                    makeMetricDefinition("sb_lock_deadlocks_total",
+                                         MetricType::COUNTER,
+                                         {"db", "reason"},
+                                         "Detected deadlocks.",
+                                         "events"),
+                    makeMetricDefinition("sb_lock_read_consistency_restarts_total",
+                                         MetricType::COUNTER,
+                                         {"db", "reason"},
+                                         "Read-consistency restart outcomes.",
+                                         "events"),
+                    makeMetricDefinition("sb_lock_unique_conflicts_total",
+                                         MetricType::COUNTER,
+                                         {"db", "relation"},
+                                         "Unique-key conflict outcomes.",
+                                         "events"),
+                    makeMetricDefinition("sb_lock_wait_seconds_total",
+                                         MetricType::COUNTER,
+                                         {"db", "wait_mode"},
+                                         "Accumulated lock wait time.",
+                                         "seconds"),
+                    makeMetricDefinition("sb_mga_chain_depth_bucket",
+                                         MetricType::GAUGE,
+                                         {"db", "relation", "bucket"},
+                                         "Version-chain depth bucket counts.",
+                                         "count"),
+                    makeMetricDefinition("sb_mga_chain_scatter_bucket",
+                                         MetricType::GAUGE,
+                                         {"db", "relation", "bucket"},
+                                         "Version-chain scatter bucket counts.",
+                                         "count"),
+                    makeMetricDefinition("sb_mga_dead_space_bytes",
+                                         MetricType::GAUGE,
+                                         {"db", "relation"},
+                                         "Dead space retained on relation pages.",
+                                         "bytes"),
+                    makeMetricDefinition("sb_mga_long_snapshot_count",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Long-lived active snapshots.",
+                                         "count"),
+                    makeMetricDefinition("sb_mga_oat",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Oldest active transaction boundary.",
+                                         "txid"),
+                    makeMetricDefinition("sb_mga_oit",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Oldest interesting transaction boundary.",
+                                         "txid"),
+                    makeMetricDefinition("sb_mga_ost",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Oldest snapshot transaction boundary.",
+                                         "txid"),
+                    makeMetricDefinition("sb_mga_retained_dead_bytes",
+                                         MetricType::GAUGE,
+                                         {"db", "relation"},
+                                         "Dead bytes retained by old snapshots.",
+                                         "bytes"),
+                    makeMetricDefinition("sb_mga_rewrite_recommendations_total",
+                                         MetricType::COUNTER,
+                                         {"db", "relation", "reason"},
+                                         "Rewrite recommendations issued by fragmentation policy.",
+                                         "events"),
+                    makeMetricDefinition("sb_mga_same_page_update_ratio",
+                                         MetricType::GAUGE,
+                                         {"db", "relation"},
+                                         "Ratio of updates that remain on the same page.",
+                                         "ratio"),
+                    makeMetricDefinition("sb_mga_statement_restarts_total",
+                                         MetricType::COUNTER,
+                                         {"db", "reason"},
+                                         "Statement restarts triggered by MGA visibility or conflicts.",
+                                         "events"),
+                    makeMetricDefinition("sb_tx_aborted_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Aborted transactions.",
+                                         "transactions"),
+                    makeMetricDefinition("sb_tx_active",
+                                         MetricType::GAUGE,
+                                         {"db"},
+                                         "Currently active transactions.",
+                                         "transactions"),
+                    makeMetricDefinition("sb_tx_commit_fence_flush_seconds",
+                                         MetricType::HISTOGRAM,
+                                         {"db", "result"},
+                                         "Commit-fence flush latency.",
+                                         "seconds"),
+                    makeMetricDefinition("sb_tx_committed_total",
+                                         MetricType::COUNTER,
+                                         {"db"},
+                                         "Committed transactions.",
+                                         "transactions"),
+                    makeMetricDefinition("sb_tx_limbo",
+                                         MetricType::GAUGE,
+                                         {"db", "limbo_state"},
+                                         "Transactions retained in limbo/prepared state.",
+                                         "transactions"),
+                    makeMetricDefinition("sb_tx_restart_normalized_total",
+                                         MetricType::COUNTER,
+                                         {"db", "reason"},
+                                         "Transactions normalized during restart reconciliation.",
+                                         "events"),
+                };
+
+                std::sort(definitions.begin(),
+                          definitions.end(),
+                          [](const MetricSchemaDefinition& lhs, const MetricSchemaDefinition& rhs) {
+                              return lhs.metric_name < rhs.metric_name;
+                          });
+                return definitions;
+            }();
+            return kDefinitions;
+        }
+
+        auto sqlViewDefinitions() -> const std::vector<SqlViewSchemaDefinition>&
+        {
+            static const std::vector<SqlViewSchemaDefinition> kDefinitions = [] {
+                std::vector<SqlViewSchemaDefinition> definitions;
+
+                SqlViewSchemaDefinition active_transactions{};
+                active_transactions.view_name = "sb_mga_active_transactions";
+                active_transactions.schema_version = 1;
+                active_transactions.purpose = "Active transaction inventory with retained-byte attribution.";
+                active_transactions.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("txid", "BIGINT", false),
+                    makeColumn("state", "VARCHAR", false),
+                    makeColumn("isolation_mode", "VARCHAR", false),
+                    makeColumn("xmin", "BIGINT", true),
+                    makeColumn("age_seconds", "DOUBLE", false),
+                    makeColumn("retained_bytes", "BIGINT", false),
+                    makeColumn("started_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(active_transactions));
+
+                SqlViewSchemaDefinition cleanup_debt{};
+                cleanup_debt.view_name = "sb_mga_cleanup_debt";
+                cleanup_debt.schema_version = 1;
+                cleanup_debt.purpose = "Cleanup debt and rewrite recommendation summary by relation.";
+                cleanup_debt.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("relation_name", "VARCHAR", false),
+                    makeColumn("cleanup_debt_bytes", "BIGINT", false),
+                    makeColumn("retained_dead_bytes", "BIGINT", false),
+                    makeColumn("chain_scatter_bucket", "VARCHAR", true),
+                    makeColumn("rewrite_recommended", "BOOLEAN", false),
+                    makeColumn("sweep_generation", "BIGINT", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(cleanup_debt));
+
+                SqlViewSchemaDefinition failpoint_events{};
+                failpoint_events.view_name = "sb_mga_failpoint_events";
+                failpoint_events.schema_version = 1;
+                failpoint_events.purpose = "Injected failpoint events and replay outcomes.";
+                failpoint_events.columns = {
+                    makeColumn("event_id", "VARCHAR", false),
+                    makeColumn("seed_id", "VARCHAR", false),
+                    makeColumn("trigger_name", "VARCHAR", false),
+                    makeColumn("outcome", "VARCHAR", false),
+                    makeColumn("db_uuid", "UUID", true),
+                    makeColumn("txid", "BIGINT", true),
+                    makeColumn("occurred_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(failpoint_events));
+
+                SqlViewSchemaDefinition runtime_metrics{};
+                runtime_metrics.view_name = "sb_mga_runtime_metrics";
+                runtime_metrics.schema_version = 1;
+                runtime_metrics.purpose = "Canonical sb_* MGA metric samples.";
+                runtime_metrics.columns = {
+                    makeColumn("metric_name", "VARCHAR", false),
+                    makeColumn("metric_type", "VARCHAR", false),
+                    makeColumn("value", "DOUBLE", false),
+                    makeColumn("labels_json", "JSON", false),
+                    makeColumn("updated_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(runtime_metrics));
+
+                SqlViewSchemaDefinition snapshot_blockers{};
+                snapshot_blockers.view_name = "sb_mga_snapshot_blockers";
+                snapshot_blockers.schema_version = 1;
+                snapshot_blockers.purpose = "Long-snapshot blockers retaining OST and dead bytes.";
+                snapshot_blockers.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("blocker_txid", "BIGINT", false),
+                    makeColumn("blocker_identity", "VARCHAR", false),
+                    makeColumn("retained_bytes", "BIGINT", false),
+                    makeColumn("snapshot_age_seconds", "DOUBLE", false),
+                    makeColumn("ost_txid", "BIGINT", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(snapshot_blockers));
+
+                SqlViewSchemaDefinition transaction_history{};
+                transaction_history.view_name = "sb_mga_transaction_history";
+                transaction_history.schema_version = 1;
+                transaction_history.purpose = "Transaction lifecycle history with horizon and fence latency.";
+                transaction_history.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("txid", "BIGINT", false),
+                    makeColumn("state", "VARCHAR", false),
+                    makeColumn("start_oit", "BIGINT", true),
+                    makeColumn("end_oit", "BIGINT", true),
+                    makeColumn("start_oat", "BIGINT", true),
+                    makeColumn("end_oat", "BIGINT", true),
+                    makeColumn("start_ost", "BIGINT", true),
+                    makeColumn("end_ost", "BIGINT", true),
+                    makeColumn("restart_count", "BIGINT", false),
+                    makeColumn("publication_fence_seconds", "DOUBLE", true),
+                    makeColumn("limbo_state", "VARCHAR", true),
+                    makeColumn("started_at_ms", "BIGINT", false),
+                    makeColumn("ended_at_ms", "BIGINT", true),
+                };
+                definitions.push_back(std::move(transaction_history));
+
+                SqlViewSchemaDefinition wait_history{};
+                wait_history.view_name = "sb_mga_wait_history";
+                wait_history.schema_version = 1;
+                wait_history.purpose = "Blocker/victim wait history for MGA conflicts and deadlocks.";
+                wait_history.columns = {
+                    makeColumn("db_uuid", "UUID", false),
+                    makeColumn("wait_event_id", "VARCHAR", false),
+                    makeColumn("wait_mode", "VARCHAR", false),
+                    makeColumn("blocker_txid", "BIGINT", true),
+                    makeColumn("victim_txid", "BIGINT", true),
+                    makeColumn("blocker_identity", "VARCHAR", true),
+                    makeColumn("victim_identity", "VARCHAR", true),
+                    makeColumn("wait_seconds", "DOUBLE", false),
+                    makeColumn("outcome", "VARCHAR", false),
+                    makeColumn("observed_at_ms", "BIGINT", false),
+                };
+                definitions.push_back(std::move(wait_history));
+
+                std::sort(definitions.begin(),
+                          definitions.end(),
+                          [](const SqlViewSchemaDefinition& lhs, const SqlViewSchemaDefinition& rhs) {
+                              return lhs.view_name < rhs.view_name;
+                          });
+                return definitions;
+            }();
+            return kDefinitions;
+        }
+
+        auto dashboardDefinitions() -> const std::vector<DashboardSchemaDefinition>&
+        {
+            static const std::vector<DashboardSchemaDefinition> kDefinitions = [] {
+                std::vector<DashboardSchemaDefinition> definitions;
+
+                DashboardSchemaDefinition chain_locality{};
+                chain_locality.dashboard_id = "sb_mga_chain_locality_fragmentation";
+                chain_locality.schema_version = 1;
+                chain_locality.title = "Chain locality and fragmentation";
+                chain_locality.panels = {
+                    makePanel("chain_depth_distribution",
+                              "sb_mga_runtime_metrics",
+                              {"metric_name", "labels_json", "value"}),
+                    makePanel("dead_space_by_relation",
+                              "sb_mga_cleanup_debt",
+                              {"relation_name", "cleanup_debt_bytes", "retained_dead_bytes"}),
+                };
+                chain_locality.alerts = {
+                    makeAlert("cleanup_debt_ratio",
+                              "cleanup_debt_bytes > 10% object_size for 2 sweep intervals",
+                              "WARN"),
+                };
+                definitions.push_back(std::move(chain_locality));
+
+                DashboardSchemaDefinition cleanup_debt{};
+                cleanup_debt.dashboard_id = "sb_mga_cleanup_debt_and_sweep_debt";
+                cleanup_debt.schema_version = 1;
+                cleanup_debt.title = "Cleanup debt and sweep debt";
+                cleanup_debt.panels = {
+                    makePanel("cleanup_debt_summary",
+                              "sb_mga_cleanup_debt",
+                              {"relation_name", "cleanup_debt_bytes", "sweep_generation"}),
+                    makePanel("runtime_cleanup_metric",
+                              "sb_mga_runtime_metrics",
+                              {"metric_name", "value", "updated_at_ms"}),
+                };
+                cleanup_debt.alerts = {
+                    makeAlert("cleanup_debt_growth",
+                              "cleanup_debt_bytes > 10% object_size for 2 sweep intervals",
+                              "WARN"),
+                };
+                definitions.push_back(std::move(cleanup_debt));
+
+                DashboardSchemaDefinition conflict_storm{};
+                conflict_storm.dashboard_id = "sb_mga_conflict_storm_deadlock_heatmap";
+                conflict_storm.schema_version = 1;
+                conflict_storm.title = "Conflict storm and deadlock heatmap";
+                conflict_storm.panels = {
+                    makePanel("wait_history_heatmap",
+                              "sb_mga_wait_history",
+                              {"wait_mode", "wait_seconds", "outcome"}),
+                    makePanel("blocker_counts",
+                              "sb_mga_runtime_metrics",
+                              {"metric_name", "labels_json", "value"}),
+                };
+                conflict_storm.alerts = {
+                    makeAlert("deadlock_rate_baseline",
+                              "deadlock rate exceeds configured baseline multiplier",
+                              "WARN"),
+                };
+                definitions.push_back(std::move(conflict_storm));
+
+                DashboardSchemaDefinition long_snapshot{};
+                long_snapshot.dashboard_id = "sb_mga_long_snapshot_blockers";
+                long_snapshot.schema_version = 1;
+                long_snapshot.title = "Long-snapshot blocker list";
+                long_snapshot.panels = {
+                    makePanel("blocker_list",
+                              "sb_mga_snapshot_blockers",
+                              {"blocker_txid", "blocker_identity", "retained_bytes", "snapshot_age_seconds"}),
+                    makePanel("active_transaction_inventory",
+                              "sb_mga_active_transactions",
+                              {"txid", "state", "retained_bytes", "age_seconds"}),
+                };
+                long_snapshot.alerts = {
+                    makeAlert("long_snapshot_age",
+                              "snapshot_age_seconds > 300",
+                              "WARN"),
+                    makeAlert("long_snapshot_retained_bytes",
+                              "retained_bytes > 1073741824",
+                              "WARN"),
+                };
+                definitions.push_back(std::move(long_snapshot));
+
+                DashboardSchemaDefinition restart_anomalies{};
+                restart_anomalies.dashboard_id = "sb_mga_restart_crash_window_anomalies";
+                restart_anomalies.schema_version = 1;
+                restart_anomalies.title = "Restart and crash-window anomaly summary";
+                restart_anomalies.panels = {
+                    makePanel("restart_normalization",
+                              "sb_mga_runtime_metrics",
+                              {"metric_name", "labels_json", "value"}),
+                    makePanel("failpoint_event_log",
+                              "sb_mga_failpoint_events",
+                              {"seed_id", "trigger_name", "outcome", "occurred_at_ms"}),
+                    makePanel("transaction_history",
+                              "sb_mga_transaction_history",
+                              {"txid", "state", "restart_count", "publication_fence_seconds"}),
+                };
+                restart_anomalies.alerts = {
+                    makeAlert("commit_fence_backlog_age",
+                              "commit fence backlog older than 2 s",
+                              "WARN"),
+                };
+                definitions.push_back(std::move(restart_anomalies));
+
+                std::sort(definitions.begin(),
+                          definitions.end(),
+                          [](const DashboardSchemaDefinition& lhs, const DashboardSchemaDefinition& rhs) {
+                              return lhs.dashboard_id < rhs.dashboard_id;
+                          });
+                return definitions;
+            }();
+            return kDefinitions;
+        }
+
     } // namespace
 
     auto MetricContractPolicy::isCanonicalMetricName(std::string_view metric_name) -> bool
@@ -104,6 +578,11 @@ namespace scratchbird::core
             "cache",
             "planner",
             "exec",
+            "tx",
+            "mga",
+            "gc",
+            "buf",
+            "lock",
         };
 
         if (metric_name.size() < 6 || metric_name.substr(0, 3) != "sb_")
@@ -139,6 +618,12 @@ namespace scratchbird::core
             "driver",
             "result",
             "reason",
+            "relation",
+            "class",
+            "bucket",
+            "wait_mode",
+            "limbo_state",
+            "le",
         };
         return kAllowedLabels.find(toLower(label_name)) != kAllowedLabels.end();
     }
@@ -305,6 +790,98 @@ namespace scratchbird::core
         };
 
         std::sort(mapping_out.begin(), mapping_out.end());
+        return Status::OK;
+    }
+
+    auto MgaObservabilityContract::contract_id() -> const char*
+    {
+        return "sb_mga_observability/v1";
+    }
+
+    auto MgaObservabilityContract::metric_schema_version() -> uint32_t
+    {
+        return 1;
+    }
+
+    auto MgaObservabilityContract::sql_view_schema_version() -> uint32_t
+    {
+        return 1;
+    }
+
+    auto MgaObservabilityContract::dashboard_schema_version() -> uint32_t
+    {
+        return 1;
+    }
+
+    auto MgaObservabilityContract::appendMetricDefinitions(
+        std::vector<MetricSchemaDefinition>& definitions_out) -> Status
+    {
+        definitions_out = metricDefinitions();
+        return Status::OK;
+    }
+
+    auto MgaObservabilityContract::appendSqlViewDefinitions(
+        std::vector<SqlViewSchemaDefinition>& definitions_out) -> Status
+    {
+        definitions_out = sqlViewDefinitions();
+        return Status::OK;
+    }
+
+    auto MgaObservabilityContract::appendDashboardDefinitions(
+        std::vector<DashboardSchemaDefinition>& definitions_out) -> Status
+    {
+        definitions_out = dashboardDefinitions();
+        return Status::OK;
+    }
+
+    auto MgaObservabilityContract::registerRequiredMetrics(MetricsRegistry& registry) -> Status
+    {
+        const auto& definitions = metricDefinitions();
+        for (const MetricSchemaDefinition& definition : definitions)
+        {
+            switch (definition.metric_type)
+            {
+                case MetricType::COUNTER:
+                    registry.registerCounter(
+                        definition.metric_name, definition.help, definition.label_names);
+                    break;
+                case MetricType::GAUGE:
+                    registry.registerGauge(
+                        definition.metric_name, definition.help, definition.label_names);
+                    break;
+                case MetricType::HISTOGRAM:
+                    registry.registerHistogram(
+                        definition.metric_name,
+                        definition.help,
+                        Histogram::DEFAULT_LATENCY_BUCKETS,
+                        definition.label_names);
+                    break;
+                case MetricType::SUMMARY:
+                    return Status::INVALID_ARGUMENT;
+            }
+        }
+        return Status::OK;
+    }
+
+    auto MgaObservabilityContract::verifyRegistryContainsRequiredMetrics(
+        const MetricsRegistry& registry,
+        std::vector<std::string>& missing_metrics_out) -> Status
+    {
+        missing_metrics_out.clear();
+        for (const MetricSchemaDefinition& definition : metricDefinitions())
+        {
+            Metric* metric =
+                const_cast<MetricsRegistry&>(registry).get(definition.metric_name);
+            if (metric == nullptr)
+            {
+                missing_metrics_out.push_back(definition.metric_name);
+                continue;
+            }
+            if (metric->type() != definition.metric_type)
+            {
+                missing_metrics_out.push_back(definition.metric_name + ":type_mismatch");
+            }
+        }
         return Status::OK;
     }
 

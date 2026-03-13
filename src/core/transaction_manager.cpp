@@ -34,6 +34,27 @@ namespace {
                 std::chrono::system_clock::now().time_since_epoch())
                 .count());
     }
+
+    scratchbird::core::ClogStatus clogStatusForTransactionState(
+        scratchbird::core::TransactionState state)
+    {
+        using scratchbird::core::ClogStatus;
+        using scratchbird::core::TransactionState;
+
+        switch (state)
+        {
+            case TransactionState::ACTIVE:
+                return ClogStatus::IN_PROGRESS;
+            case TransactionState::COMMITTED:
+                return ClogStatus::COMMITTED;
+            case TransactionState::ABORTED:
+                return ClogStatus::ABORTED;
+            case TransactionState::PREPARED:
+                return ClogStatus::PREPARED;
+        }
+
+        return ClogStatus::IN_PROGRESS;
+    }
 }
 
 namespace scratchbird::core
@@ -103,6 +124,7 @@ namespace scratchbird::core
     auto TransactionManager::load(ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        snapshot_pins_.clear();
 
         // Read database header to get TIP root page
         void *header_buffer;
@@ -119,6 +141,11 @@ namespace scratchbird::core
         oldest_xid_ = db_header->oldest_transaction_id;
         oldest_active_xid_ = db_header->oldest_active_xid;
         oldest_snapshot_ = db_header->oldest_snapshot;
+        inventory_generation_ = db_header->inventory_generation == 0
+            ? 1
+            : db_header->inventory_generation;
+        oldest_snapshot_serial_ = db_header->oldest_snapshot_serial;
+        next_snapshot_serial_ = oldest_snapshot_serial_ + 1;
 
         // DATABASE HEADER VALIDATION: Validate next_xid is sane
         uint64_t current_next_xid = next_xid_.load(std::memory_order_acquire);
@@ -170,6 +197,16 @@ namespace scratchbird::core
             buffer_pool_->unpinPage(0, false, ctx);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
             return Status::PAGE_CORRUPT;
+        }
+
+        if (oldest_active_xid_ == 0 || oldest_active_xid_ > current_next_xid)
+        {
+            oldest_active_xid_ = current_next_xid;
+        }
+
+        if (oldest_snapshot_ == 0 || oldest_snapshot_ > current_next_xid)
+        {
+            oldest_snapshot_ = current_next_xid;
         }
 
         buffer_pool_->unpinPage(0, false, ctx);
@@ -225,12 +262,14 @@ namespace scratchbird::core
             }
         }
 
-        status = normalizeStartupTipStates(ctx);
+        bool startup_repair = false;
+        status = normalizeStartupTipStates(db_->last_shutdown_was_clean(), &startup_repair, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
+        uint64_t reconciled_oat = current_next_xid;
         if (!prepared_xids_.empty())
         {
             uint64_t prepared_min = UINT64_MAX;
@@ -238,17 +277,33 @@ namespace scratchbird::core
             {
                 prepared_min = std::min(prepared_min, prepared_xid);
             }
-            oldest_active_xid_ = (prepared_min == UINT64_MAX) ? 0 : prepared_min;
+            reconciled_oat = (prepared_min == UINT64_MAX) ? current_next_xid : prepared_min;
         }
-        else
+
+        const uint64_t reconciled_ost = current_next_xid;
+        const uint64_t reconciled_snapshot_serial = 0;
+        const bool markers_changed =
+            oldest_active_xid_ != reconciled_oat ||
+            oldest_snapshot_ != reconciled_ost ||
+            oldest_snapshot_serial_ != reconciled_snapshot_serial;
+
+        oldest_active_xid_ = reconciled_oat;
+        oldest_snapshot_ = reconciled_ost;
+        oldest_snapshot_serial_ = reconciled_snapshot_serial;
+        next_snapshot_serial_ = oldest_snapshot_serial_ + 1;
+
+        if (!db_->last_shutdown_was_clean() || startup_repair)
         {
-            oldest_active_xid_ = 0;
+            ++inventory_generation_;
         }
-        oldest_snapshot_ = 0;
-        status = persistTransactionMarkersLocked(ctx);
-        if (status != Status::OK)
+
+        if (markers_changed || !db_->last_shutdown_was_clean() || startup_repair)
         {
-            return status;
+            status = persistTransactionMarkersLocked(ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
         }
 
         return Status::OK;
@@ -357,28 +412,11 @@ namespace scratchbird::core
             next_xid_.store(FROZEN_XID + 1, std::memory_order_release);
         }
 
-        // Record transaction as active (with LRU tracking)
-        addToCacheLRU(new_xid, TransactionState::ACTIVE);
-
-        // Track statistics
-        stats_.transactions_started++;
-
-        // Register in ProcArray
-        Status status = ProcArrayManager::setTransactionId(proc_id, new_xid, ctx);
+        // Persist ACTIVE state and next_xid advance before publishing the
+        // transaction in attachment-visible inventory.
+        Status status = writeTipEntry(new_xid, TransactionState::ACTIVE, ctx);
         if (status != Status::OK)
         {
-            // Rollback on failure
-            removeFromCacheLRU(new_xid);
-            return status;
-        }
-
-        // Write to TIP
-        status = writeTipEntry(new_xid, TransactionState::ACTIVE, ctx);
-        if (status != Status::OK)
-        {
-            // Rollback on failure
-            removeFromCacheLRU(new_xid);
-            ProcArrayManager::clearTransactionId(proc_id, ctx);
             return status;
         }
 
@@ -386,8 +424,6 @@ namespace scratchbird::core
         Status clog_status = db_->clog()->setStatus(new_xid, ClogStatus::IN_PROGRESS, ctx);
         if (clog_status != Status::OK)
         {
-            removeFromCacheLRU(new_xid);
-            ProcArrayManager::clearTransactionId(proc_id, ctx);
             // Best-effort mark as aborted in TIP to avoid dangling ACTIVE state
             writeTipEntry(new_xid, TransactionState::ABORTED, nullptr);
             return clog_status;
@@ -399,6 +435,24 @@ namespace scratchbird::core
         {
             db_->update_header_next_xid(current_next_xid_for_header, ctx);
         }
+
+        status = flushTransactionState(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        status = ProcArrayManager::setTransactionId(proc_id, new_xid, ctx);
+        if (status != Status::OK)
+        {
+            writeTipEntry(new_xid, TransactionState::ABORTED, nullptr);
+            db_->clog()->setStatus(new_xid, ClogStatus::ABORTED, nullptr);
+            flushTransactionState(nullptr);
+            return status;
+        }
+
+        addToCacheLRU(new_xid, TransactionState::ACTIVE);
+        stats_.transactions_started++;
 
         xid_out = new_xid;
         return Status::OK;
@@ -435,42 +489,13 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        Status status;
-
-        // Perform pre-commit work within mutex
+        Status status = flushTransactionState(ctx);
+        if (status != Status::OK)
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-
-            // Update cache state
-            auto cache_it = transaction_cache_.find(xid);
-            if (cache_it != transaction_cache_.end())
-            {
-                cache_it->second = TransactionState::COMMITTED;
-                touchCacheEntry(xid);
-            }
-            else
-            {
-                addToCacheLRU(xid, TransactionState::COMMITTED);
-            }
-
-            // Write to CLOG (commit log)
-            status = db_->clog()->setStatus(xid, ClogStatus::COMMITTED, ctx);
-            if (status != Status::OK)
-            {
-                // Rollback cache on CLOG failure
-                auto it = transaction_cache_.find(xid);
-                if (it != transaction_cache_.end())
-                {
-                    it->second = TransactionState::ABORTED;
-                    touchCacheEntry(xid);
-                }
-                return status;
-            }
-
-            // Track statistics
-            stats_.transactions_committed++;
+            SET_ERROR_CONTEXT_VNEXT(ctx, status, "TXN_0216",
+                                    "Commit fence flush failed before durable publish");
+            return status;
         }
-        // Mutex released - don't hold during I/O!
 
         // GROUP COMMIT OPTIMIZATION (Issue 2.19)
         if (group_commit_enabled_.load(std::memory_order_acquire))
@@ -560,13 +585,20 @@ namespace scratchbird::core
         }
         else
         {
-            // Fallback: Traditional individual commit (for testing/debugging)
             status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
-            if (status != Status::OK)
+            if (status == Status::OK)
             {
-                LOG_WARNING(TRANSACTION, "Failed to update TIP entry for committed XID %lu", xid);
+                status = db_->clog()->setStatus(xid, ClogStatus::COMMITTED, ctx);
             }
-            status = db_->sync(ctx);
+            if (status == Status::OK)
+            {
+                status = flushTransactionState(ctx);
+            }
+        }
+
+        if (status != Status::OK)
+        {
+            return status;
         }
 
         // Clear ProcArray slot after durability guaranteed (Issue 1.14)
@@ -574,6 +606,33 @@ namespace scratchbird::core
         if (clear_status != Status::OK)
         {
             LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for committed XID %lu", xid);
+        }
+
+        Status marker_status = updateTransactionMarkers(ctx);
+        if (marker_status != Status::OK)
+        {
+            return marker_status;
+        }
+
+        status = flushTransactionState(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto cache_it = transaction_cache_.find(xid);
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::COMMITTED;
+                touchCacheEntry(xid);
+            }
+            else
+            {
+                addToCacheLRU(xid, TransactionState::COMMITTED);
+            }
+            stats_.transactions_committed++;
         }
 
         // Check sweep trigger (non-blocking)
@@ -654,11 +713,48 @@ namespace scratchbird::core
             return status;
         }
 
+        status = flushTransactionState(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        status = writeTipEntry(xid, TransactionState::PREPARED, ctx);
+        if (status == Status::OK)
+        {
+            status = db_->clog()->setStatus(xid, ClogStatus::PREPARED, ctx);
+        }
+        if (status == Status::OK)
+        {
+            status = flushTransactionState(ctx);
+        }
+        if (status != Status::OK)
+        {
+            ErrorContext cleanup_ctx;
+            catalog->deletePreparedTransaction(gid, &cleanup_ctx);
+            return status;
+        }
+
+        Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
+        if (clear_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for prepared XID %lu", xid);
+        }
+
+        status = updateTransactionMarkers(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = flushTransactionState(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         {
             std::lock_guard<std::mutex> lock(mutex_);
-
             prepared_xids_.insert(xid);
-
             auto cache_it = transaction_cache_.find(xid);
             if (cache_it != transaction_cache_.end())
             {
@@ -669,54 +765,9 @@ namespace scratchbird::core
             {
                 addToCacheLRU(xid, TransactionState::PREPARED);
             }
-
-            status = db_->clog()->setStatus(xid, ClogStatus::PREPARED, ctx);
-            if (status != Status::OK)
-            {
-                prepared_xids_.erase(xid);
-                if (cache_it != transaction_cache_.end())
-                {
-                    cache_it->second = TransactionState::ACTIVE;
-                    touchCacheEntry(xid);
-                }
-                else
-                {
-                    removeFromCacheLRU(xid);
-                }
-
-                ErrorContext cleanup_ctx;
-                catalog->deletePreparedTransaction(gid, &cleanup_ctx);
-
-                return status;
-            }
         }
 
-        Status tip_status = writeTipEntry(xid, TransactionState::PREPARED, ctx);
-        if (tip_status != Status::OK)
-        {
-            LOG_WARNING(TRANSACTION, "Failed to update TIP entry for prepared XID %lu", xid);
-            status = tip_status;
-        }
-
-        Status sync_status = db_->sync(ctx);
-        if (sync_status != Status::OK)
-        {
-            status = sync_status;
-        }
-
-        Status clear_status = ProcArrayManager::clearTransactionId(proc_id, ctx);
-        if (clear_status != Status::OK)
-        {
-            LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for prepared XID %lu", xid);
-        }
-
-        Status marker_status = updateTransactionMarkers(ctx);
-        if (marker_status != Status::OK)
-        {
-            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after prepare");
-        }
-
-        return status;
+        return Status::OK;
     }
 
     auto TransactionManager::commitPreparedTransaction(const std::string& gid,
@@ -771,55 +822,18 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        status = writeTipEntry(info.txn_id, TransactionState::COMMITTED, ctx);
+        if (status == Status::OK)
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            prepared_xids_.erase(info.txn_id);
-
-            auto cache_it = transaction_cache_.find(info.txn_id);
-            bool added_cache = false;
-            if (cache_it != transaction_cache_.end())
-            {
-                cache_it->second = TransactionState::COMMITTED;
-                touchCacheEntry(info.txn_id);
-            }
-            else
-            {
-                addToCacheLRU(info.txn_id, TransactionState::COMMITTED);
-                added_cache = true;
-            }
-
             status = db_->clog()->setStatus(info.txn_id, ClogStatus::COMMITTED, ctx);
-            if (status != Status::OK)
-            {
-                prepared_xids_.insert(info.txn_id);
-                if (cache_it != transaction_cache_.end())
-                {
-                    cache_it->second = TransactionState::PREPARED;
-                    touchCacheEntry(info.txn_id);
-                }
-                else if (added_cache)
-                {
-                    removeFromCacheLRU(info.txn_id);
-                    addToCacheLRU(info.txn_id, TransactionState::PREPARED);
-                }
-                return status;
-            }
-
-            stats_.transactions_committed++;
         }
-
-        Status tip_status = writeTipEntry(info.txn_id, TransactionState::COMMITTED, ctx);
-        if (tip_status != Status::OK)
+        if (status == Status::OK)
         {
-            LOG_WARNING(TRANSACTION, "Failed to update TIP entry for committed XID %lu",
-                        info.txn_id);
-            status = tip_status;
+            status = flushTransactionState(ctx);
         }
-
-        Status sync_status = db_->sync(ctx);
-        if (sync_status != Status::OK)
+        if (status != Status::OK)
         {
-            status = sync_status;
+            return status;
         }
 
         Status delete_status = catalog->deletePreparedTransaction(gid, ctx);
@@ -830,13 +844,39 @@ namespace scratchbird::core
             status = delete_status;
         }
 
-        Status marker_status = updateTransactionMarkers(ctx);
-        if (marker_status != Status::OK)
+        if (status != Status::OK)
         {
-            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after commit prepared");
+            return status;
         }
 
-        return status;
+        status = updateTransactionMarkers(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = flushTransactionState(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            prepared_xids_.erase(info.txn_id);
+            auto cache_it = transaction_cache_.find(info.txn_id);
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::COMMITTED;
+                touchCacheEntry(info.txn_id);
+            }
+            else
+            {
+                addToCacheLRU(info.txn_id, TransactionState::COMMITTED);
+            }
+            stats_.transactions_committed++;
+        }
+
+        return Status::OK;
     }
 
     auto TransactionManager::rollbackPreparedTransaction(const std::string& gid,
@@ -891,55 +931,18 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        status = writeTipEntry(info.txn_id, TransactionState::ABORTED, ctx);
+        if (status == Status::OK)
         {
-            std::lock_guard<std::mutex> lock(mutex_);
-            prepared_xids_.erase(info.txn_id);
-
-            auto cache_it = transaction_cache_.find(info.txn_id);
-            bool added_cache = false;
-            if (cache_it != transaction_cache_.end())
-            {
-                cache_it->second = TransactionState::ABORTED;
-                touchCacheEntry(info.txn_id);
-            }
-            else
-            {
-                addToCacheLRU(info.txn_id, TransactionState::ABORTED);
-                added_cache = true;
-            }
-
             status = db_->clog()->setStatus(info.txn_id, ClogStatus::ABORTED, ctx);
-            if (status != Status::OK)
-            {
-                prepared_xids_.insert(info.txn_id);
-                if (cache_it != transaction_cache_.end())
-                {
-                    cache_it->second = TransactionState::PREPARED;
-                    touchCacheEntry(info.txn_id);
-                }
-                else if (added_cache)
-                {
-                    removeFromCacheLRU(info.txn_id);
-                    addToCacheLRU(info.txn_id, TransactionState::PREPARED);
-                }
-                return status;
-            }
-
-            stats_.transactions_aborted++;
         }
-
-        Status tip_status = writeTipEntry(info.txn_id, TransactionState::ABORTED, ctx);
-        if (tip_status != Status::OK)
+        if (status == Status::OK)
         {
-            LOG_WARNING(TRANSACTION, "Failed to update TIP entry for aborted XID %lu",
-                        info.txn_id);
-            status = tip_status;
+            status = flushTransactionState(ctx);
         }
-
-        Status sync_status = db_->sync(ctx);
-        if (sync_status != Status::OK)
+        if (status != Status::OK)
         {
-            status = sync_status;
+            return status;
         }
 
         Status delete_status = catalog->deletePreparedTransaction(gid, ctx);
@@ -950,13 +953,39 @@ namespace scratchbird::core
             status = delete_status;
         }
 
-        Status marker_status = updateTransactionMarkers(ctx);
-        if (marker_status != Status::OK)
+        if (status != Status::OK)
         {
-            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after rollback prepared");
+            return status;
         }
 
-        return status;
+        status = updateTransactionMarkers(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = flushTransactionState(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            prepared_xids_.erase(info.txn_id);
+            auto cache_it = transaction_cache_.find(info.txn_id);
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::ABORTED;
+                touchCacheEntry(info.txn_id);
+            }
+            else
+            {
+                addToCacheLRU(info.txn_id, TransactionState::ABORTED);
+            }
+            stats_.transactions_aborted++;
+        }
+
+        return Status::OK;
     }
 
     auto TransactionManager::rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx)
@@ -991,41 +1020,6 @@ namespace scratchbird::core
         }
 
         Status status;
-
-        // Perform pre-rollback work within mutex
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-
-            // Update cache state
-            auto cache_it = transaction_cache_.find(xid);
-            if (cache_it != transaction_cache_.end())
-            {
-                cache_it->second = TransactionState::ABORTED;
-                touchCacheEntry(xid);
-            }
-            else
-            {
-                addToCacheLRU(xid, TransactionState::ABORTED);
-            }
-
-            // Write to CLOG (commit log)
-            status = db_->clog()->setStatus(xid, ClogStatus::ABORTED, ctx);
-            if (status != Status::OK)
-            {
-                // Rollback cache on CLOG failure
-                auto it = transaction_cache_.find(xid);
-                if (it != transaction_cache_.end())
-                {
-                    it->second = TransactionState::ACTIVE;
-                    touchCacheEntry(xid);
-                }
-                return status;
-            }
-
-            // Track statistics
-            stats_.transactions_aborted++;
-        }
-        // Mutex released - don't hold during I/O!
 
         // GROUP COMMIT OPTIMIZATION (Issue 2.19) - Applied to rollbacks for consistency
         if (group_commit_enabled_.load(std::memory_order_acquire))
@@ -1115,13 +1109,20 @@ namespace scratchbird::core
         }
         else
         {
-            // Fallback: Traditional individual rollback (for testing/debugging)
             status = writeTipEntry(xid, TransactionState::ABORTED, ctx);
-            if (status != Status::OK)
+            if (status == Status::OK)
             {
-                LOG_WARNING(TRANSACTION, "Failed to update TIP entry for aborted XID %lu", xid);
+                status = db_->clog()->setStatus(xid, ClogStatus::ABORTED, ctx);
             }
-            status = db_->sync(ctx);
+            if (status == Status::OK)
+            {
+                status = flushTransactionState(ctx);
+            }
+        }
+
+        if (status != Status::OK)
+        {
+            return status;
         }
 
         // Clear ProcArray slot after durability guaranteed (Issue 1.14)
@@ -1131,7 +1132,33 @@ namespace scratchbird::core
             LOG_WARNING(TRANSACTION, "Failed to clear ProcArray slot for aborted XID %lu", xid);
         }
 
-        return status;
+        status = updateTransactionMarkers(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = flushTransactionState(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto cache_it = transaction_cache_.find(xid);
+            if (cache_it != transaction_cache_.end())
+            {
+                cache_it->second = TransactionState::ABORTED;
+                touchCacheEntry(xid);
+            }
+            else
+            {
+                addToCacheLRU(xid, TransactionState::ABORTED);
+            }
+            stats_.transactions_aborted++;
+        }
+
+        return Status::OK;
     }
 
     auto TransactionManager::getTransactionState(uint64_t xid, TransactionState &state_out,
@@ -1148,9 +1175,30 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        // Not in cache, check CLOG
+        // TIP is authoritative transaction truth.
+        TIPEntry tip_entry{};
+        Status status = findTipEntry(xid, tip_entry, ctx);
+        if (status == Status::OK)
+        {
+            TransactionState tip_state = TransactionState::ACTIVE;
+            if (!decodeTipState(tip_entry.state, tip_state))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                        "Invalid TIP state during transaction lookup");
+                return Status::PAGE_CORRUPT;
+            }
+            addToCacheLRU(xid, tip_state);
+            state_out = tip_state;
+            return Status::OK;
+        }
+        if (status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        // TIP entry absent: fall back to CLOG only as a compatibility accelerator.
         ClogStatus clog_status;
-        Status status = db_->clog()->getStatus(xid, &clog_status, ctx);
+        status = db_->clog()->getStatus(xid, &clog_status, ctx);
         if (status == Status::NOT_FOUND)
         {
             // Transaction not found, assume it's too old and committed
@@ -1390,10 +1438,9 @@ namespace scratchbird::core
 
         // Compute OAT (Oldest Active Transaction) and OST (Oldest Snapshot Transaction)
         uint64_t current_next_xid = next_xid_.load(std::memory_order_acquire);
-        uint64_t new_oat = current_next_xid; // Start with next_xid (will be reduced)
-        uint64_t new_ost = current_next_xid; // Start with next_xid (will be reduced)
-        bool has_active = false;
-        bool has_snapshot = false;
+        uint64_t new_oat = current_next_xid;
+        uint64_t new_ost = current_next_xid;
+        uint64_t new_oldest_snapshot_serial = 0;
         uint64_t prepared_oat = current_next_xid;
         bool has_prepared = false;
 
@@ -1419,55 +1466,45 @@ namespace scratchbird::core
                 continue; // Skip inactive or non-transactional backends
             }
 
-            // OPTIMIZATION: Exclude read-only transactions from OAT calculation
-            // Read-only transactions don't create tuple versions, so they don't prevent VACUUM
-            // This allows VACUUM to be more aggressive when there are only read-only analytics
-            // queries
-            if (!pcb->is_read_only)
+            if (pcb->xid < new_oat)
             {
-                // Update OAT - minimum of all active WRITE transactions
-                if (pcb->xid < new_oat)
-                {
-                    new_oat = pcb->xid;
-                    has_active = true;
-                }
+                new_oat = pcb->xid;
             }
 
-            // Update OST - minimum of active SNAPSHOT transaction XIDs (regardless of read-only
-            // status) OST must include read-only transactions for correct MVCC visibility
-            if (pcb->is_snapshot_txn && pcb->xid < new_ost)
+            if (pcb->backend_xmin != 0 && pcb->backend_xmin < new_ost)
             {
-                new_ost = pcb->xid;
-                has_snapshot = true;
+                new_ost = pcb->backend_xmin;
             }
         }
 
         pthread_rwlock_unlock(&proc_array->array_lock);
 
-        // If no active transactions, set OAT to 0
-        if (!has_active)
-        {
-            new_oat = 0;
-        }
-
         if (has_prepared)
         {
-            if (!has_active || prepared_oat < new_oat)
+            if (prepared_oat < new_oat)
             {
                 new_oat = prepared_oat;
             }
-            has_active = true;
         }
 
-        // If no snapshot transactions, set OST to 0
-        if (!has_snapshot)
+        for (const auto &entry : snapshot_pins_)
         {
-            new_ost = 0;
+            const SnapshotPin &pin = entry.second;
+            if (pin.xmin != 0 && pin.xmin < new_ost)
+            {
+                new_ost = pin.xmin;
+            }
+            if (pin.snapshot_serial != 0 &&
+                (new_oldest_snapshot_serial == 0 || pin.snapshot_serial < new_oldest_snapshot_serial))
+            {
+                new_oldest_snapshot_serial = pin.snapshot_serial;
+            }
         }
 
         // Update in-memory markers
         oldest_active_xid_ = new_oat;
         oldest_snapshot_ = new_ost;
+        oldest_snapshot_serial_ = new_oldest_snapshot_serial;
 
         // Update database header with new markers
         void *header_buffer;
@@ -1480,6 +1517,8 @@ namespace scratchbird::core
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
         db_header->oldest_active_xid = oldest_active_xid_;
         db_header->oldest_snapshot = oldest_snapshot_;
+        db_header->inventory_generation = inventory_generation_;
+        db_header->oldest_snapshot_serial = oldest_snapshot_serial_;
         db_header->page_header.checksum =
             calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), db_->page_size());
 
@@ -1557,60 +1596,39 @@ namespace scratchbird::core
         -> Status
     {
         snapshot_out.active_txid_set.clear();
+        snapshot_out.snapshot_txid_low = 0;
+        snapshot_out.snapshot_serial = 0;
+        snapshot_out.capture_time = nowMicros();
 
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            snapshot_out.snapshot_txid_high = next_xid_.load(std::memory_order_acquire);
-        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        snapshot_out.snapshot_txid_high = next_xid_.load(std::memory_order_acquire);
         snapshot_out.snapshot_commit_seqno_high = 0;
+        snapshot_out.snapshot_serial = next_snapshot_serial_++;
 
-        std::lock_guard<std::mutex> tip_guard(tip_io_mutex_);
-        uint32_t current_page = tip_root_page_;
-
-        while (current_page != 0)
+        ProcArray *proc_array = ProcArrayManager::getInstance();
+        if (proc_array)
         {
-            void *page_buffer = nullptr;
-            Status status = buffer_pool_->pinPage(current_page, &page_buffer, ctx);
-            if (status != Status::OK)
+            pthread_rwlock_rdlock(&proc_array->array_lock);
+            auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+                reinterpret_cast<uint8_t *>(proc_array) + sizeof(ProcArray));
+            for (uint32_t i = 0; i < proc_array->max_backends; ++i)
             {
-                return status;
-            }
-
-            auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
-            if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
-            {
-                buffer_pool_->unpinPage(current_page, false, ctx);
-                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0206",
-                                        "Invalid TIP page during snapshot");
-                return Status::PAGE_CORRUPT;
-            }
-
-            auto *entries = reinterpret_cast<TIPEntry *>(
-                reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
-
-            for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
-            {
-                if (entries[i].xid >= snapshot_out.snapshot_txid_high)
+                const ProcessControlBlock &pcb = pcbs[i];
+                if (!pcb.is_active || pcb.xid == 0 || pcb.xid >= snapshot_out.snapshot_txid_high)
                 {
                     continue;
                 }
-                TransactionState state = TransactionState::ACTIVE;
-                if (!decodeTipState(entries[i].state, state))
-                {
-                    buffer_pool_->unpinPage(current_page, false, ctx);
-                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0207",
-                                            "Invalid TIP state byte");
-                    return Status::PAGE_CORRUPT;
-                }
-                if (state == TransactionState::ACTIVE || state == TransactionState::PREPARED)
-                {
-                    snapshot_out.active_txid_set.push_back(entries[i].xid);
-                }
+                snapshot_out.active_txid_set.push_back(pcb.xid);
             }
+            pthread_rwlock_unlock(&proc_array->array_lock);
+        }
 
-            uint32_t page_to_unpin = current_page;
-            current_page = tip_header->next_tip_page;
-            buffer_pool_->unpinPage(page_to_unpin, false, ctx);
+        for (const auto &prepared_xid : prepared_xids_)
+        {
+            if (prepared_xid != 0 && prepared_xid < snapshot_out.snapshot_txid_high)
+            {
+                snapshot_out.active_txid_set.push_back(prepared_xid);
+            }
         }
 
         std::sort(snapshot_out.active_txid_set.begin(), snapshot_out.active_txid_set.end());
@@ -1618,6 +1636,76 @@ namespace scratchbird::core
             std::unique(snapshot_out.active_txid_set.begin(), snapshot_out.active_txid_set.end()),
             snapshot_out.active_txid_set.end());
 
+        snapshot_out.snapshot_txid_low = snapshot_out.snapshot_txid_high;
+        if (!snapshot_out.active_txid_set.empty())
+        {
+            snapshot_out.snapshot_txid_low = snapshot_out.active_txid_set.front();
+        }
+
+        return Status::OK;
+    }
+
+    auto TransactionManager::registerSnapshotPin(uint32_t proc_id, uint64_t owner_xid,
+                                                 const TransactionSnapshot &snapshot,
+                                                 ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ProcArray *proc_array = ProcArrayManager::getInstance();
+        if (!proc_array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+            reinterpret_cast<uint8_t *>(proc_array) + sizeof(ProcArray));
+        if (proc_id >= proc_array->max_backends)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid backend slot");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&proc_array->array_lock);
+        ProcessControlBlock *pcb = &pcbs[proc_id];
+        if (!pcb->is_active)
+        {
+            pthread_rwlock_unlock(&proc_array->array_lock);
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Inactive backend slot");
+            return Status::INVALID_ARGUMENT;
+        }
+        pcb->backend_xmin = snapshot.snapshot_txid_low;
+        pthread_rwlock_unlock(&proc_array->array_lock);
+
+        snapshot_pins_[proc_id] = SnapshotPin{
+            owner_xid,
+            snapshot.snapshot_txid_low,
+            snapshot.snapshot_txid_high,
+            snapshot.snapshot_serial,
+        };
+        return Status::OK;
+    }
+
+    auto TransactionManager::clearSnapshotPin(uint32_t proc_id, ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ProcArray *proc_array = ProcArrayManager::getInstance();
+        if (proc_array && proc_id < proc_array->max_backends)
+        {
+            auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+                reinterpret_cast<uint8_t *>(proc_array) + sizeof(ProcArray));
+            pthread_rwlock_wrlock(&proc_array->array_lock);
+            if (pcbs[proc_id].is_active)
+            {
+                pcbs[proc_id].backend_xmin = 0;
+            }
+            pthread_rwlock_unlock(&proc_array->array_lock);
+        }
+        else if (proc_array == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+        snapshot_pins_.erase(proc_id);
         return Status::OK;
     }
 
@@ -2186,10 +2274,24 @@ namespace scratchbird::core
         // Write all TIP entries in batch
         Status status = writeTipEntriesBatch(xid_batch, ctx);
 
-        // Single fsync for entire batch (the key optimization!)
         if (status == Status::OK)
         {
-            status = db_->sync(ctx);
+            for (const auto* waiter : batch)
+            {
+                status = db_->clog()->setStatus(waiter->xid,
+                                                clogStatusForTransactionState(waiter->state),
+                                                ctx);
+                if (status != Status::OK)
+                {
+                    break;
+                }
+            }
+        }
+
+        // Single durable fence for the entire terminal-state batch.
+        if (status == Status::OK)
+        {
+            status = flushTransactionState(ctx);
         }
 
         // Wake all waiters with result
@@ -2255,17 +2357,48 @@ namespace scratchbird::core
 
     auto TransactionManager::flushTransactionState(ErrorContext *ctx) -> Status
     {
-        // Ensure all transaction state is persisted
+        Status status = buffer_pool_->flushAll(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
         return db_->sync(ctx);
     }
 
-    auto TransactionManager::normalizeStartupTipStates(ErrorContext *ctx) -> Status
+    auto TransactionManager::normalizeStartupTipStates(bool clean_shutdown_marker,
+                                                       bool *startup_repair_out,
+                                                       ErrorContext *ctx) -> Status
     {
+        if (startup_repair_out)
+        {
+            *startup_repair_out = false;
+        }
+
+        std::unordered_map<uint64_t, std::vector<std::string>> prepared_gids_by_xid;
+        CatalogManager *catalog = db_->catalog_manager();
+        if (catalog)
+        {
+            std::vector<CatalogManager::PreparedTransactionInfo> prepared;
+            Status prepared_status = catalog->listPreparedTransactions(prepared, ctx);
+            if (prepared_status == Status::OK)
+            {
+                for (const auto &entry : prepared)
+                {
+                    prepared_gids_by_xid[entry.txn_id].push_back(entry.gid);
+                }
+            }
+            else if (prepared_status != Status::NOT_FOUND)
+            {
+                return prepared_status;
+            }
+        }
+
         std::lock_guard<std::mutex> tip_guard(tip_io_mutex_);
 
         uint32_t current_page = tip_root_page_;
         bool any_mutation = false;
         const uint64_t next_xid = next_xid_.load(std::memory_order_acquire);
+        std::vector<std::pair<uint64_t, std::string>> stale_prepared_records;
 
         while (current_page != 0)
         {
@@ -2300,22 +2433,59 @@ namespace scratchbird::core
                     return Status::PAGE_CORRUPT;
                 }
 
+                const bool has_prepared_record =
+                    prepared_gids_by_xid.find(entries[i].xid) != prepared_gids_by_xid.end();
+
                 if (state == TransactionState::ACTIVE && entries[i].xid < next_xid)
                 {
-                    entries[i].state = static_cast<uint8_t>(TransactionState::ABORTED);
+                    entries[i].state = static_cast<uint8_t>(
+                        has_prepared_record ? TransactionState::PREPARED
+                                            : TransactionState::ABORTED);
                     entries[i].commit_time = nowMicros();
                     page_mutation = true;
                     any_mutation = true;
+                    if (startup_repair_out)
+                    {
+                        *startup_repair_out = true;
+                    }
+
+                    if (clean_shutdown_marker)
+                    {
+                        LOG_WARNING(TRANSACTION,
+                                    "Clean-shutdown marker contradicted TIP ACTIVE state for xid=%lu; treating startup as repaired recovery",
+                                    entries[i].xid);
+                    }
 
                     auto cache_it = transaction_cache_.find(entries[i].xid);
                     if (cache_it != transaction_cache_.end())
                     {
-                        cache_it->second = TransactionState::ABORTED;
+                        cache_it->second =
+                            has_prepared_record ? TransactionState::PREPARED
+                                                : TransactionState::ABORTED;
                         touchCacheEntry(entries[i].xid);
                     }
                     else
                     {
-                        addToCacheLRU(entries[i].xid, TransactionState::ABORTED);
+                        addToCacheLRU(entries[i].xid,
+                                      has_prepared_record ? TransactionState::PREPARED
+                                                          : TransactionState::ABORTED);
+                    }
+                }
+                else if (state == TransactionState::PREPARED)
+                {
+                    if (!has_prepared_record)
+                    {
+                        buffer_pool_->unpinPage(current_page, false, ctx);
+                        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0217",
+                                                "TX_LIMBO_FENCE_MISMATCH: PREPARED TIP state has no matching prepared transaction record");
+                        return Status::PAGE_CORRUPT;
+                    }
+                }
+                else if (has_prepared_record)
+                {
+                    for (const auto &gid : prepared_gids_by_xid[entries[i].xid])
+                    {
+                        stale_prepared_records.emplace_back(entries[i].xid, gid);
                     }
                 }
             }
@@ -2329,6 +2499,32 @@ namespace scratchbird::core
             uint32_t page_to_unpin = current_page;
             current_page = tip_header->next_tip_page;
             buffer_pool_->unpinPage(page_to_unpin, page_mutation, ctx);
+        }
+
+        if (!stale_prepared_records.empty() && catalog)
+        {
+            for (const auto &[xid, gid] : stale_prepared_records)
+            {
+                ErrorContext cleanup_ctx;
+                Status cleanup_status = catalog->deletePreparedTransaction(gid, &cleanup_ctx);
+                if (cleanup_status != Status::OK && cleanup_status != Status::NOT_FOUND)
+                {
+                    if (ctx && !cleanup_ctx.message.empty())
+                    {
+                        ctx->set(cleanup_status,
+                                 cleanup_ctx.message.c_str(),
+                                 __FILE__,
+                                 __LINE__,
+                                 __func__);
+                    }
+                    return cleanup_status;
+                }
+                prepared_xids_.erase(xid);
+                if (startup_repair_out)
+                {
+                    *startup_repair_out = true;
+                }
+            }
         }
 
         if (any_mutation)
@@ -2350,6 +2546,8 @@ namespace scratchbird::core
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
         db_header->oldest_active_xid = oldest_active_xid_;
         db_header->oldest_snapshot = oldest_snapshot_;
+        db_header->inventory_generation = inventory_generation_;
+        db_header->oldest_snapshot_serial = oldest_snapshot_serial_;
         db_header->page_header.checksum = calculatePageChecksum(
             reinterpret_cast<uint8_t *>(db_header), db_->page_size());
 

@@ -122,11 +122,11 @@ namespace scratchbird
             uint32_t tip_root_page;          // Root page of Transaction Inventory Pages
             uint32_t max_backends;           // Maximum concurrent backends
             uint32_t proc_array_initialized; // 1 if ProcArray initialized
-            uint32_t reserved3;              // Reserved
+            uint64_t inventory_generation;   // Increments whenever startup rebuilds horizons
+            uint64_t oldest_snapshot_serial; // Oldest pinned snapshot serial (0 if none)
 
-            // Checksums for critical data (16 bytes)
+            // Checksums for critical data (4 bytes)
             uint32_t catalog_checksum; // Checksum of system catalog
-            uint32_t reserved4[3];     // Reserved
 
             // Padding to page boundary - calculated dynamically based on page_size
         };
@@ -228,6 +228,22 @@ namespace scratchbird
             uint32_t page_size() const
             {
                 return page_size_;
+            }
+            bool last_shutdown_was_clean() const
+            {
+                return last_shutdown_was_clean_;
+            }
+            uint64_t startup_generation() const
+            {
+                return startup_generation_;
+            }
+            uint64_t restart_generation() const
+            {
+                return restart_generation_;
+            }
+            uint64_t last_clean_shutdown_generation() const
+            {
+                return last_clean_shutdown_generation_;
             }
             const ID &uuid() const
             {
@@ -627,6 +643,12 @@ namespace scratchbird
             std::unique_ptr<uint8_t[]> header_buffer_;       // Header buffer (LOW-1 FIX: Modern RAII)
             DatabaseHeader *header_ = nullptr;               // Cached header (points into header_buffer_)
             uint16_t connection_timezone_ = 1;               // Connection timezone (1 = UTC)
+            bool last_shutdown_was_clean_ = true;
+            bool startup_state_loaded_ = false;
+            bool clean_shutdown_eligible_ = false;
+            uint64_t startup_generation_ = 0;
+            uint64_t restart_generation_ = 0;
+            uint64_t last_clean_shutdown_generation_ = 0;
 
             // Forward declared pointers - managed via unique_ptr for RAII
             std::unique_ptr<PageManager> page_manager_;       // Page allocation manager (owned)
@@ -695,6 +717,8 @@ namespace scratchbird
             static Status create_reserved_bootstrap_page(int fd, uint32_t page_size,
                                                          uint8_t *page_buffer, const ID &db_uuid,
                                                          ErrorContext *ctx);
+            Status markStartupOpen(ErrorContext *ctx);
+            Status markCleanShutdown(ErrorContext *ctx);
             Status validate_bootstrap_page_map(ErrorContext *ctx) const;
             static Status validate_db_path(const std::string &path, std::string &canonical_path,
                                            ErrorContext *ctx);

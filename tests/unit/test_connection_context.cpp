@@ -693,14 +693,14 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyStatementSnapshot)
         << "Should use current XID between statements";
 
     // Create statement XID (simulating statement execution start)
-    conn->createStatementXID();
+    ASSERT_EQ(conn->createStatementXID(&err_ctx), Status::OK);
 
     // Should now use the statement XID (equal to current XID at statement start)
     uint64_t stmt_xid = conn->getStatementXID();
     EXPECT_EQ(stmt_xid, conn->getCurrentXid());
 
     // Clear statement XID (simulating statement execution end)
-    conn->clearStatementXID();
+    ASSERT_EQ(conn->clearStatementXID(&err_ctx), Status::OK);
 
     // Should fall back to current XID
     EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
@@ -747,7 +747,7 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyStatementConsistency)
         << "Without statement XID, should see committed transactions (READ_COMMITTED behavior)";
 
     // NOW create statement XID (simulating statement start)
-    conn_rcrc->createStatementXID();
+    ASSERT_EQ(conn_rcrc->createStatementXID(&err_ctx), Status::OK);
 
     // Create another writer transaction that commits DURING the statement
     std::unique_ptr<ConnectionContext> conn_writer2;
@@ -766,7 +766,7 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyStatementConsistency)
         << "With statement XID, should NOT see transactions active at statement start";
 
     // Clear statement XID (simulating statement end)
-    conn_rcrc->clearStatementXID();
+    ASSERT_EQ(conn_rcrc->clearStatementXID(&err_ctx), Status::OK);
 
     // After clearing: xid_writer2 is still a future transaction (> xid_rcrc)
     // so it won't be visible even without statement XID
@@ -838,7 +838,7 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyComparison)
         << "RCRC without statement XID should see committed changes";
 
     // Create statement XID for RCRC (simulating statement start)
-    conn_rcrc->createStatementXID();
+    ASSERT_EQ(conn_rcrc->createStatementXID(&err_ctx), Status::OK);
 
     // Test READ_COMMITTED_READ_CONSISTENCY with statement XID:
     // should still see xid_writer because it committed before statement XID
@@ -847,7 +847,7 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyComparison)
         << "RCRC with statement XID should see transactions committed before statement";
 
     // Clear statement XID
-    conn_rcrc->clearStatementXID();
+    ASSERT_EQ(conn_rcrc->clearStatementXID(&err_ctx), Status::OK);
 
     // Test SNAPSHOT: xid_writer committed BEFORE snapshot, so it IS visible
     ConnectionContext::setCurrent(conn_snap.get());
@@ -871,6 +871,116 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyComparison)
         << "SNAPSHOT should NOT see transactions that were active at snapshot time";
 }
 
+TEST_F(ConnectionContextTest, SnapshotIsolationUsesCapturedActiveSet)
+{
+    ErrorContext err_ctx;
+    std::unique_ptr<ConnectionContext> writer;
+    std::unique_ptr<ConnectionContext> reader;
+
+    ASSERT_EQ(db_.connect(writer, &err_ctx), Status::OK);
+    uint64_t xid_writer = writer->getCurrentXid();
+
+    ASSERT_EQ(db_.connect(reader, &err_ctx), Status::OK);
+    uint64_t xid_reader = reader->getCurrentXid();
+    ASSERT_LT(xid_writer, xid_reader);
+
+    const TransactionSnapshot *retained = reader->getRetainedTransactionSnapshot();
+    ASSERT_NE(retained, nullptr);
+    EXPECT_TRUE(std::binary_search(retained->active_txid_set.begin(),
+                                   retained->active_txid_set.end(),
+                                   xid_writer));
+    EXPECT_EQ(retained->snapshot_txid_low, xid_writer);
+
+    ASSERT_EQ(writer->commit(&err_ctx), Status::OK);
+
+    StorageEngine *storage = db_.storage_engine();
+    ASSERT_NE(storage, nullptr);
+
+    ConnectionContext::setCurrent(reader.get());
+    EXPECT_FALSE(storage->isVisible(xid_writer, 0, xid_reader))
+        << "Snapshot reader must not see a transaction that was active at capture";
+}
+
+TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyUsesStatementSnapshotInventory)
+{
+    ErrorContext err_ctx;
+    std::unique_ptr<ConnectionContext> writer;
+    std::unique_ptr<ConnectionContext> reader;
+
+    ASSERT_EQ(db_.connect(writer, &err_ctx), Status::OK);
+    uint64_t xid_writer = writer->getCurrentXid();
+
+    ASSERT_EQ(db_.connect(reader, &err_ctx), Status::OK);
+    ASSERT_EQ(reader->startTransaction(false,
+                                       IsolationLevel::READ_COMMITTED_READ_CONSISTENCY,
+                                       true,
+                                       &err_ctx),
+              Status::OK);
+    uint64_t xid_reader = reader->getCurrentXid();
+    ASSERT_LT(xid_writer, xid_reader);
+
+    ASSERT_EQ(reader->beginStatementTracking("SELECT * FROM users.public.t", &err_ctx),
+              Status::OK);
+    const TransactionSnapshot *statement_snapshot = reader->getStatementTransactionSnapshot();
+    ASSERT_NE(statement_snapshot, nullptr);
+    EXPECT_TRUE(std::binary_search(statement_snapshot->active_txid_set.begin(),
+                                   statement_snapshot->active_txid_set.end(),
+                                   xid_writer));
+
+    ASSERT_EQ(writer->commit(&err_ctx), Status::OK);
+
+    StorageEngine *storage = db_.storage_engine();
+    ASSERT_NE(storage, nullptr);
+
+    ConnectionContext::setCurrent(reader.get());
+    EXPECT_FALSE(storage->isVisible(xid_writer, 0, xid_reader))
+        << "RCRC statement snapshot must hide transactions active at statement start";
+
+    reader->endStatementTrackingSuccess(0);
+    EXPECT_EQ(reader->getStatementTransactionSnapshot(), nullptr);
+
+    ConnectionContext::setCurrent(reader.get());
+    EXPECT_TRUE(storage->isVisible(xid_writer, 0, xid_reader))
+        << "After statement end, READ COMMITTED visibility should refresh";
+}
+
+TEST_F(ConnectionContextTest, SnapshotMarkersPersistAcrossCleanReopen)
+{
+    ErrorContext err_ctx;
+    std::unique_ptr<ConnectionContext> conn;
+
+    ASSERT_EQ(db_.connect(conn, &err_ctx), Status::OK);
+    TransactionManager *txn_mgr = db_.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
+
+    uint64_t generation_before_shutdown = txn_mgr->getInventoryGeneration();
+    const TransactionSnapshot *retained = conn->getRetainedTransactionSnapshot();
+    ASSERT_NE(retained, nullptr);
+    EXPECT_EQ(txn_mgr->getOldestActiveXid(), conn->getCurrentXid());
+    EXPECT_EQ(txn_mgr->getOldestSnapshot(), retained->snapshot_txid_low);
+    EXPECT_EQ(txn_mgr->getOldestSnapshotSerial(), retained->snapshot_serial);
+
+    ASSERT_EQ(conn->shutdownTransaction(&err_ctx), Status::OK);
+    uint64_t expected_next_xid = txn_mgr->getCurrentXid() + 1;
+    EXPECT_EQ(txn_mgr->getOldestActiveXid(), expected_next_xid);
+    EXPECT_EQ(txn_mgr->getOldestSnapshot(), expected_next_xid);
+    EXPECT_EQ(txn_mgr->getOldestSnapshotSerial(), 0u);
+
+    conn.reset();
+    db_.close();
+
+    ASSERT_EQ(db_.open(test_db_path_, &err_ctx), Status::OK);
+    TransactionManager *reopened_txn_mgr = db_.transaction_manager();
+    ASSERT_NE(reopened_txn_mgr, nullptr);
+    EXPECT_TRUE(db_.last_shutdown_was_clean());
+    EXPECT_EQ(db_.restart_generation(), 0u);
+    EXPECT_EQ(db_.last_clean_shutdown_generation() + 1, db_.startup_generation());
+    EXPECT_EQ(reopened_txn_mgr->getOldestActiveXid(), reopened_txn_mgr->getCurrentXid() + 1);
+    EXPECT_EQ(reopened_txn_mgr->getOldestSnapshot(), reopened_txn_mgr->getCurrentXid() + 1);
+    EXPECT_EQ(reopened_txn_mgr->getInventoryGeneration(), generation_before_shutdown);
+    EXPECT_EQ(reopened_txn_mgr->getOldestSnapshotSerial(), 0u);
+}
+
 // Test READ_COMMITTED_READ_CONSISTENCY - transaction end clears statement XID
 TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyTransactionEnd)
 {
@@ -885,7 +995,7 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyTransactionEnd)
     ASSERT_EQ(s, Status::OK);
 
     // Create statement XID
-    conn->createStatementXID();
+    ASSERT_EQ(conn->createStatementXID(&err_ctx), Status::OK);
     uint64_t stmt_xid = conn->getStatementXID();
     ASSERT_EQ(stmt_xid, conn->getCurrentXid());
 
@@ -898,7 +1008,7 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyTransactionEnd)
         << "Statement XID should be cleared on commit";
 
     // Create another statement XID
-    conn->createStatementXID();
+    ASSERT_EQ(conn->createStatementXID(&err_ctx), Status::OK);
     uint64_t stmt_xid2 = conn->getStatementXID();
     ASSERT_EQ(stmt_xid2, conn->getCurrentXid());
 
@@ -927,12 +1037,12 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyMultipleStatements)
     // Simulate multiple statements within same transaction
     for (int i = 0; i < 3; ++i) {
         // Statement start - create statement XID
-        conn->createStatementXID();
+        ASSERT_EQ(conn->createStatementXID(&err_ctx), Status::OK);
         EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
             << "Statement XID " << i << " should match current XID";
 
         // Statement end - clear statement XID
-        conn->clearStatementXID();
+        ASSERT_EQ(conn->clearStatementXID(&err_ctx), Status::OK);
         EXPECT_EQ(conn->getStatementXID(), conn->getCurrentXid())
             << "Statement XID " << i << " should be cleared";
     }

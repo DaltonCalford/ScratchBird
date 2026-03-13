@@ -9,6 +9,8 @@
  */
 #include "scratchbird/core/observability_contract.h"
 
+#include <algorithm>
+
 #include <gtest/gtest.h>
 
 namespace scratchbird::core
@@ -86,6 +88,71 @@ namespace scratchbird::core
         EXPECT_EQ(snap_rows[0].snapshot_boundary, 12u);
         EXPECT_EQ(snap_rows[1].session_id, "sess-b");
         EXPECT_EQ(snap_rows[1].snapshot_boundary, 44u);
+    }
+
+    TEST(SqlObservabilityViewBuilderTest, FreezesMgaSqlViewsAndDashboardContracts)
+    {
+        std::vector<SqlViewSchemaDefinition> views;
+        ASSERT_EQ(MgaObservabilityContract::appendSqlViewDefinitions(views), Status::OK);
+        ASSERT_EQ(views.size(), 7u);
+        EXPECT_EQ(views.front().view_name, "sb_mga_active_transactions");
+        EXPECT_EQ(views.back().view_name, "sb_mga_wait_history");
+        for (const SqlViewSchemaDefinition& view : views)
+        {
+            EXPECT_EQ(view.schema_version, MgaObservabilityContract::sql_view_schema_version());
+            EXPECT_FALSE(view.columns.empty()) << view.view_name;
+        }
+
+        const auto runtime_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_mga_runtime_metrics";
+            });
+        ASSERT_NE(runtime_view, views.end());
+        ASSERT_EQ(runtime_view->columns.size(), 5u);
+        EXPECT_EQ(runtime_view->columns[0].column_name, "metric_name");
+        EXPECT_EQ(runtime_view->columns[0].column_type, "VARCHAR");
+        EXPECT_EQ(runtime_view->columns[3].column_name, "labels_json");
+        EXPECT_EQ(runtime_view->columns[3].column_type, "JSON");
+
+        const auto history_view = std::find_if(
+            views.begin(), views.end(), [](const SqlViewSchemaDefinition& view) {
+                return view.view_name == "sb_mga_transaction_history";
+            });
+        ASSERT_NE(history_view, views.end());
+        EXPECT_EQ(history_view->columns[10].column_name, "publication_fence_seconds");
+        EXPECT_TRUE(history_view->columns[10].nullable);
+        EXPECT_EQ(history_view->columns[11].column_name, "limbo_state");
+
+        std::vector<DashboardSchemaDefinition> dashboards;
+        ASSERT_EQ(MgaObservabilityContract::appendDashboardDefinitions(dashboards), Status::OK);
+        ASSERT_EQ(dashboards.size(), 5u);
+        EXPECT_EQ(dashboards.front().dashboard_id, "sb_mga_chain_locality_fragmentation");
+        EXPECT_EQ(dashboards.back().dashboard_id, "sb_mga_restart_crash_window_anomalies");
+        for (const DashboardSchemaDefinition& dashboard : dashboards)
+        {
+            EXPECT_EQ(dashboard.schema_version,
+                      MgaObservabilityContract::dashboard_schema_version());
+            EXPECT_FALSE(dashboard.panels.empty()) << dashboard.dashboard_id;
+            EXPECT_FALSE(dashboard.alerts.empty()) << dashboard.dashboard_id;
+        }
+
+        const auto long_snapshot_dashboard = std::find_if(
+            dashboards.begin(), dashboards.end(), [](const DashboardSchemaDefinition& dashboard) {
+                return dashboard.dashboard_id == "sb_mga_long_snapshot_blockers";
+            });
+        ASSERT_NE(long_snapshot_dashboard, dashboards.end());
+        ASSERT_EQ(long_snapshot_dashboard->panels.size(), 2u);
+        EXPECT_EQ(long_snapshot_dashboard->panels[0].source_view, "sb_mga_snapshot_blockers");
+        EXPECT_EQ(long_snapshot_dashboard->panels[0].required_fields[2], "retained_bytes");
+        EXPECT_EQ(long_snapshot_dashboard->alerts[0].predicate, "snapshot_age_seconds > 300");
+
+        const auto restart_dashboard = std::find_if(
+            dashboards.begin(), dashboards.end(), [](const DashboardSchemaDefinition& dashboard) {
+                return dashboard.dashboard_id == "sb_mga_restart_crash_window_anomalies";
+            });
+        ASSERT_NE(restart_dashboard, dashboards.end());
+        EXPECT_EQ(restart_dashboard->panels[1].source_view, "sb_mga_failpoint_events");
+        EXPECT_EQ(restart_dashboard->alerts[0].predicate, "commit fence backlog older than 2 s");
     }
 
 } // namespace scratchbird::core

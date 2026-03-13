@@ -1154,6 +1154,8 @@ namespace scratchbird::core
 
     void Database::close()
     {
+        clean_shutdown_eligible_ = clean_shutdown_eligible_ && startup_state_loaded_;
+
         // Stop long transaction monitor (before shutting down other components)
         if (long_transaction_monitor_ && long_transaction_monitor_->isMonitoring())
         {
@@ -1246,6 +1248,17 @@ namespace scratchbird::core
             page_manager_->flush(&ctx);
         }
 
+        if (buffer_pool_ != nullptr)
+        {
+            ErrorContext ctx;
+            buffer_pool_->flushAll(&ctx);
+            sync(&ctx);
+            if (clean_shutdown_eligible_)
+            {
+                markCleanShutdown(&ctx);
+            }
+        }
+
         // Sync header_buffer_ with latest header page before buffer pool shutdown
         if (buffer_pool_ != nullptr && header_buffer_ != nullptr)
         {
@@ -1289,6 +1302,13 @@ namespace scratchbird::core
             ::close(fd_);
             fd_ = -1;
         }
+
+        startup_state_loaded_ = false;
+        clean_shutdown_eligible_ = false;
+        startup_generation_ = 0;
+        restart_generation_ = 0;
+        last_clean_shutdown_generation_ = 0;
+        last_shutdown_was_clean_ = true;
     }
 
     Status Database::applySchedulerConfig(ErrorContext *ctx)
@@ -1971,6 +1991,11 @@ namespace scratchbird::core
         state_page->engine_mode = 0;
         state_page->cluster_state = 0;
         state_page->startup_counter = 1;
+        state_page->restart_generation = 0;
+        state_page->last_clean_shutdown_generation = 1;
+        state_page->last_checkpoint_txid = 0;
+        state_page->last_checkpoint_time = 0;
+        state_page->config_flags = 0;
 
         header.flags |= PAGE_FLAG_CHECKSUM_VALID;
         header.checksum = calculatePageChecksum(page_buffer, page_size);
@@ -2189,10 +2214,12 @@ namespace scratchbird::core
         // will pass visibility checks (xid < next_xid)
         header->next_transaction_id = config::DEFAULT_INITIAL_XID + 1;
         header->oldest_transaction_id = config::DEFAULT_INITIAL_XID; // OIT - lowest valid user XID
-        header->oldest_active_xid = 0;     // OAT - 0 means no active transactions
-        header->oldest_snapshot = 0;       // OST - 0 means no snapshot transactions
+        header->oldest_active_xid = header->next_transaction_id;
+        header->oldest_snapshot = header->next_transaction_id;
         header->latest_completed_xid = 0;
         header->tip_root_page = BOOTSTRAP_PAGE_TX_MAP_ROOT;
+        header->inventory_generation = 1;
+        header->oldest_snapshot_serial = 0;
 
         // Bootstrap pages are written directly and must carry valid checksum metadata.
         header->page_header.flags |= PAGE_FLAG_CHECKSUM_VALID;
@@ -2419,6 +2446,13 @@ namespace scratchbird::core
         // Close if already open
         close();
 
+        startup_state_loaded_ = false;
+        clean_shutdown_eligible_ = false;
+        startup_generation_ = 0;
+        restart_generation_ = 0;
+        last_clean_shutdown_generation_ = 0;
+        last_shutdown_was_clean_ = true;
+
         // Open file
         fd_ = platform::openFd(canonical_path.c_str(), O_RDWR);
         if (fd_ < 0)
@@ -2597,6 +2631,12 @@ namespace scratchbird::core
         {
             close();
             return status;
+        }
+
+        status = markStartupOpen(ctx);
+        if (status != Status::OK)
+        {
+            return close_with_stage_error(status, "database.markStartupOpen");
         }
 
         // Initialize catalog manager
@@ -2921,7 +2961,122 @@ namespace scratchbird::core
         // Initialize virtual catalog handlers (information_schema, pg_catalog, mysql, firebird).
         scratchbird::catalog::initializeVirtualCatalogs(catalog_manager_.get());
 
+        clean_shutdown_eligible_ = true;
         DEBUG_LOG_DB("Database opened successfully");
+        return Status::OK;
+    }
+
+    auto Database::markStartupOpen(ErrorContext *ctx) -> Status
+    {
+        if (buffer_pool_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Buffer pool not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        void *page_buffer = nullptr;
+        Status status = buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
+        if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE)
+        {
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid system state bootstrap page");
+            return Status::PAGE_CORRUPT;
+        }
+        if (!validatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_))
+        {
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH,
+                              "System state page checksum validation failed");
+            return Status::CHECKSUM_MISMATCH;
+        }
+
+        last_shutdown_was_clean_ = state_page->clean_shutdown != 0;
+        const uint64_t persisted_startup =
+            state_page->startup_counter == 0 ? 1 : state_page->startup_counter;
+        startup_generation_ = persisted_startup + 1;
+        restart_generation_ = state_page->restart_generation;
+        if (!last_shutdown_was_clean_)
+        {
+            ++restart_generation_;
+        }
+        last_clean_shutdown_generation_ = state_page->last_clean_shutdown_generation;
+
+        state_page->clean_shutdown = 0;
+        state_page->startup_counter = startup_generation_;
+        state_page->restart_generation = restart_generation_;
+        state_page->page_header.checksum =
+            calculatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_);
+        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
+
+        status = buffer_pool_->flushAll(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = sync(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        startup_state_loaded_ = true;
+        return Status::OK;
+    }
+
+    auto Database::markCleanShutdown(ErrorContext *ctx) -> Status
+    {
+        if (buffer_pool_ == nullptr || !startup_state_loaded_)
+        {
+            return Status::OK;
+        }
+
+        void *page_buffer = nullptr;
+        Status status = buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
+        if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE)
+        {
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid system state bootstrap page");
+            return Status::PAGE_CORRUPT;
+        }
+
+        state_page->clean_shutdown = 1;
+        state_page->startup_counter = startup_generation_;
+        state_page->restart_generation = restart_generation_;
+        state_page->last_clean_shutdown_generation = startup_generation_;
+        state_page->last_checkpoint_txid =
+            header_ != nullptr && header_->next_transaction_id > 0
+                ? header_->next_transaction_id - 1
+                : 0;
+        state_page->last_checkpoint_time = defaultTimeSource().nowMicros();
+        state_page->page_header.checksum =
+            calculatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_);
+        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
+
+        status = buffer_pool_->flushAll(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = sync(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        last_shutdown_was_clean_ = true;
+        last_clean_shutdown_generation_ = startup_generation_;
         return Status::OK;
     }
 

@@ -302,6 +302,8 @@ namespace scratchbird::core
         bool isForensicReplayActive() const;
         ForensicReplayStatus getForensicReplayStatus() const;
         const TransactionSnapshot* getForensicReplaySnapshot() const;
+        const TransactionSnapshot* getRetainedTransactionSnapshot() const;
+        const TransactionSnapshot* getStatementTransactionSnapshot() const;
         const ID& getCurrentSchemaEpochUuid() const { return current_schema_epoch_uuid_; }
         void setCurrentSchemaEpochUuid(const ID& schema_epoch_uuid)
         {
@@ -385,10 +387,9 @@ namespace scratchbird::core
         // Check if we're in a DEFINER context
         bool isDefinerContext() const;
 
-        // FIREBIRD MGA: Transaction visibility uses current XID, not snapshots
-        // For SNAPSHOT isolation, we simply use the XID at transaction start
-        // For READ_COMMITTED, we use the XID at statement start
-        // No snapshot structures needed - TIP provides all visibility info
+        // MGA snapshot surfaces.
+        // SNAPSHOT transactions retain a transaction-start active-set snapshot.
+        // READ COMMITTED READ CONSISTENCY binds a statement-scoped snapshot.
 
         // Statement XID support (for READ_COMMITTED_READ_CONSISTENCY)
         // Get current statement XID (returns current_xid if no statement-level XID)
@@ -397,12 +398,12 @@ namespace scratchbird::core
             return statement_xid_ != 0 ? statement_xid_ : current_xid_;
         }
 
-        // Create a new statement XID (for READ_COMMITTED_READ_CONSISTENCY)
-        // This captures the "current" XID for the statement duration
-        void createStatementXID();
+        // Create or clear the statement-scoped snapshot/pin for
+        // READ_COMMITTED_READ_CONSISTENCY.
+        Status createStatementXID(ErrorContext *ctx = nullptr);
 
         // Clear the statement XID
-        void clearStatementXID();
+        Status clearStatementXID(ErrorContext *ctx = nullptr);
 
         // Check if termination has been requested (for long transaction monitor)
         // Returns Status::IO_ERROR if termination requested, Status::OK otherwise
@@ -452,7 +453,7 @@ namespace scratchbird::core
         }
 
         // Statement tracking (used for dormant reattach inspection).
-        void beginStatementTracking(const std::string& sql);
+        Status beginStatementTracking(const std::string& sql, ErrorContext *ctx = nullptr);
         void endStatementTrackingSuccess(int64_t rows_affected);
         void endStatementTrackingFailure(uint32_t error_code, const std::string& sqlstate);
         void updateStatementSourceLocation(int32_t line, int32_t column);
@@ -641,6 +642,7 @@ namespace scratchbird::core
         ID current_schema_epoch_uuid_;
         ID transaction_start_schema_epoch_uuid_;
         std::unique_ptr<TransactionSnapshot> retained_transaction_snapshot_;
+        std::unique_ptr<TransactionSnapshot> statement_transaction_snapshot_;
         std::unique_ptr<ForensicReplayBinding> forensic_replay_binding_;
 
         // Security context (Phase 2 - Security System)

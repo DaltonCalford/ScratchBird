@@ -3321,7 +3321,18 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
     query_executing_.store(true, std::memory_order_release);
 
     if (conn_ctx_) {
-        conn_ctx_->beginStatementTracking(sql.empty() ? "SBLR" : sql);
+        core::Status tracking_status =
+            conn_ctx_->beginStatementTracking(sql.empty() ? "SBLR" : sql, ctx);
+        if (tracking_status != core::Status::OK) {
+            stats_.queries_failed++;
+            std::string err = ctx && !ctx->message.empty()
+                ? ctx->message
+                : "Failed to initialize statement snapshot";
+            return sendError(err,
+                             tracking_status == core::Status::SERIALIZATION_FAILURE ? "40001"
+                                                                                     : "HY000",
+                             ctx);
+        }
     }
 
     struct QueryExecutingGuard {

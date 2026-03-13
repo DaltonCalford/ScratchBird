@@ -124,6 +124,73 @@ namespace scratchbird::core
         uint64_t last_heartbeat = 0;
     };
 
+    struct MetricSchemaDefinition
+    {
+        std::string metric_name;
+        MetricType metric_type = MetricType::GAUGE;
+        std::vector<std::string> label_names;
+        std::string help;
+        std::string unit;
+    };
+
+    struct SqlViewColumnDefinition
+    {
+        std::string column_name;
+        std::string column_type;
+        bool nullable = false;
+    };
+
+    struct SqlViewSchemaDefinition
+    {
+        std::string view_name;
+        uint32_t schema_version = 0;
+        std::string purpose;
+        std::vector<SqlViewColumnDefinition> columns;
+    };
+
+    struct DashboardPanelDefinition
+    {
+        std::string panel_id;
+        std::string source_view;
+        std::vector<std::string> required_fields;
+    };
+
+    struct DashboardAlertDefinition
+    {
+        std::string alert_id;
+        std::string predicate;
+        std::string severity;
+    };
+
+    struct DashboardSchemaDefinition
+    {
+        std::string dashboard_id;
+        uint32_t schema_version = 0;
+        std::string title;
+        std::vector<DashboardPanelDefinition> panels;
+        std::vector<DashboardAlertDefinition> alerts;
+    };
+
+    class MgaObservabilityContract
+    {
+    public:
+        static auto contract_id() -> const char*;
+        static auto metric_schema_version() -> uint32_t;
+        static auto sql_view_schema_version() -> uint32_t;
+        static auto dashboard_schema_version() -> uint32_t;
+
+        static auto appendMetricDefinitions(std::vector<MetricSchemaDefinition>& definitions_out) -> Status;
+        static auto appendSqlViewDefinitions(std::vector<SqlViewSchemaDefinition>& definitions_out) -> Status;
+        static auto appendDashboardDefinitions(
+            std::vector<DashboardSchemaDefinition>& definitions_out) -> Status;
+
+        static auto registerRequiredMetrics(MetricsRegistry& registry) -> Status;
+
+        static auto verifyRegistryContainsRequiredMetrics(
+            const MetricsRegistry& registry,
+            std::vector<std::string>& missing_metrics_out) -> Status;
+    };
+
     class SqlObservabilityViewBuilder
     {
     public:

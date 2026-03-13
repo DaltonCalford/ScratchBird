@@ -711,11 +711,20 @@ namespace scratchbird::core
             IsolationLevel isolation_level)
         {
             std::string manifest;
+            manifest += "snapshot_txid_low=";
+            manifest += std::to_string(snapshot.snapshot_txid_low);
+            manifest.push_back('\n');
             manifest += "snapshot_txid_high=";
             manifest += std::to_string(snapshot.snapshot_txid_high);
             manifest.push_back('\n');
             manifest += "snapshot_commit_seqno_high=";
             manifest += std::to_string(snapshot.snapshot_commit_seqno_high);
+            manifest.push_back('\n');
+            manifest += "snapshot_serial=";
+            manifest += std::to_string(snapshot.snapshot_serial);
+            manifest.push_back('\n');
+            manifest += "capture_time=";
+            manifest += std::to_string(snapshot.capture_time);
             manifest.push_back('\n');
             manifest += "isolation_level=";
             manifest += std::to_string(static_cast<uint32_t>(isolation_level));
@@ -729,6 +738,17 @@ namespace scratchbird::core
                                            ErrorContext* ctx)
         {
             snapshot_out = TransactionSnapshot{};
+            const std::string txid_low_text =
+                getManifestValue(visibility_manifest, "snapshot_txid_low");
+            if (!txid_low_text.empty() &&
+                !parseUint64Ascii(txid_low_text, snapshot_out.snapshot_txid_low))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::DATA_CORRUPTED,
+                                  "forensic visibility manifest has invalid snapshot_txid_low");
+                return Status::DATA_CORRUPTED;
+            }
+
             const std::string txid_high_text =
                 getManifestValue(visibility_manifest, "snapshot_txid_high");
             if (!parseUint64Ascii(txid_high_text, snapshot_out.snapshot_txid_high))
@@ -736,6 +756,28 @@ namespace scratchbird::core
                 SET_ERROR_CONTEXT(ctx,
                                   Status::DATA_CORRUPTED,
                                   "forensic visibility manifest missing snapshot_txid_high");
+                return Status::DATA_CORRUPTED;
+            }
+
+            const std::string snapshot_serial_text =
+                getManifestValue(visibility_manifest, "snapshot_serial");
+            if (!snapshot_serial_text.empty() &&
+                !parseUint64Ascii(snapshot_serial_text, snapshot_out.snapshot_serial))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::DATA_CORRUPTED,
+                                  "forensic visibility manifest has invalid snapshot_serial");
+                return Status::DATA_CORRUPTED;
+            }
+
+            const std::string capture_time_text =
+                getManifestValue(visibility_manifest, "capture_time");
+            if (!capture_time_text.empty() &&
+                !parseUint64Ascii(capture_time_text, snapshot_out.capture_time))
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::DATA_CORRUPTED,
+                                  "forensic visibility manifest has invalid capture_time");
                 return Status::DATA_CORRUPTED;
             }
 
@@ -783,6 +825,14 @@ namespace scratchbird::core
                 std::unique(snapshot_out.active_txid_set.begin(),
                             snapshot_out.active_txid_set.end()),
                 snapshot_out.active_txid_set.end());
+            if (snapshot_out.snapshot_txid_low == 0)
+            {
+                snapshot_out.snapshot_txid_low = snapshot_out.snapshot_txid_high;
+                if (!snapshot_out.active_txid_set.empty())
+                {
+                    snapshot_out.snapshot_txid_low = snapshot_out.active_txid_set.front();
+                }
+            }
             return Status::OK;
         }
     }
@@ -797,6 +847,7 @@ namespace scratchbird::core
           current_schema_epoch_uuid_(),
           transaction_start_schema_epoch_uuid_(),
           retained_transaction_snapshot_(nullptr),
+          statement_transaction_snapshot_(nullptr),
           forensic_replay_binding_(nullptr),
           current_user_id_(), // Zero UUID - will be set during authentication
           active_role_id_(),  // Zero UUID - no role active initially
@@ -907,6 +958,7 @@ namespace scratchbird::core
           current_schema_epoch_uuid_(other.current_schema_epoch_uuid_),
           transaction_start_schema_epoch_uuid_(other.transaction_start_schema_epoch_uuid_),
           retained_transaction_snapshot_(std::move(other.retained_transaction_snapshot_)),
+          statement_transaction_snapshot_(std::move(other.statement_transaction_snapshot_)),
           forensic_replay_binding_(std::move(other.forensic_replay_binding_)),
           current_user_id_(other.current_user_id_), active_role_id_(other.active_role_id_),
           is_superuser_(other.is_superuser_),
@@ -1079,6 +1131,7 @@ namespace scratchbird::core
             current_schema_epoch_uuid_ = other.current_schema_epoch_uuid_;
             transaction_start_schema_epoch_uuid_ = other.transaction_start_schema_epoch_uuid_;
             retained_transaction_snapshot_ = std::move(other.retained_transaction_snapshot_);
+            statement_transaction_snapshot_ = std::move(other.statement_transaction_snapshot_);
             forensic_replay_binding_ = std::move(other.forensic_replay_binding_);
             current_user_id_ = other.current_user_id_;
             active_role_id_ = other.active_role_id_;
@@ -1363,6 +1416,18 @@ namespace scratchbird::core
     ConnectionContext::getForensicReplaySnapshot() const
     {
         return forensic_replay_binding_ ? &forensic_replay_binding_->snapshot : nullptr;
+    }
+
+    const TransactionSnapshot*
+    ConnectionContext::getRetainedTransactionSnapshot() const
+    {
+        return retained_transaction_snapshot_.get();
+    }
+
+    const TransactionSnapshot*
+    ConnectionContext::getStatementTransactionSnapshot() const
+    {
+        return statement_transaction_snapshot_.get();
     }
 
     Status ConnectionContext::ensureCurrentSchemaEpochInitialized(ErrorContext* ctx)
@@ -2837,7 +2902,7 @@ namespace scratchbird::core
                                  default_read_committed_mode_);
     }
 
-    void ConnectionContext::beginStatementTracking(const std::string& sql)
+    Status ConnectionContext::beginStatementTracking(const std::string& sql, ErrorContext *ctx)
     {
         // Record the SQL text so dormant reattach can show what was running.
         last_statement_text_ = sql;
@@ -2923,6 +2988,29 @@ namespace scratchbird::core
 
         last_statement_status_ = StatementStatus::IN_PROGRESS;
 
+        if (isolation_level_ == IsolationLevel::READ_COMMITTED_READ_CONSISTENCY &&
+            !isForensicReplayActive())
+        {
+            Status snapshot_status = createStatementXID(ctx);
+            if (snapshot_status != Status::OK)
+            {
+                statement_io_active_ = false;
+                statement_id_ = 0;
+                last_statement_status_ = StatementStatus::FAILED;
+                return snapshot_status;
+            }
+
+            Status marker_status = txn_manager_->updateTransactionMarkers(ctx);
+            if (marker_status != Status::OK)
+            {
+                statement_io_active_ = false;
+                statement_id_ = 0;
+                last_statement_status_ = StatementStatus::FAILED;
+                clearStatementXID(nullptr);
+                return marker_status;
+            }
+        }
+
         auto& metrics = ScratchBirdMetrics::getInstance();
         metrics.initialize();
         if (metrics.query_currently_running)
@@ -2940,10 +3028,22 @@ namespace scratchbird::core
         }
 
         ProcArrayManager::setQueryInfo(proc_id_, last_statement_time_, sql, nullptr);
+        return Status::OK;
     }
 
     void ConnectionContext::endStatementTrackingSuccess(int64_t rows_affected)
     {
+        Status clear_status = clearStatementXID(nullptr);
+        if (clear_status != Status::OK && clear_status != Status::INVALID_ARGUMENT)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to clear statement snapshot for proc_id %u", proc_id_);
+        }
+        Status marker_status = txn_manager_->updateTransactionMarkers(nullptr);
+        if (marker_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after statement success");
+        }
+
         uint64_t start_time = last_statement_time_;
         uint64_t end_time = nowMicros();
         last_statement_status_ = StatementStatus::COMPLETED;
@@ -3057,6 +3157,17 @@ namespace scratchbird::core
     void ConnectionContext::endStatementTrackingFailure(uint32_t error_code,
                                                        const std::string& sqlstate)
     {
+        Status clear_status = clearStatementXID(nullptr);
+        if (clear_status != Status::OK && clear_status != Status::INVALID_ARGUMENT)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to clear statement snapshot for proc_id %u", proc_id_);
+        }
+        Status marker_status = txn_manager_->updateTransactionMarkers(nullptr);
+        if (marker_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update transaction markers after statement failure");
+        }
+
         uint64_t start_time = last_statement_time_;
         uint64_t end_time = nowMicros();
         last_statement_status_ = StatementStatus::FAILED;
@@ -3389,14 +3500,6 @@ namespace scratchbird::core
             // Non-fatal - continue with transaction
         }
 
-        // Update transaction markers (OAT, OST) after starting new transaction
-        s = txn_manager_->updateTransactionMarkers(ctx);
-        if (s != Status::OK)
-        {
-            LOG_WARNING(TRANSACTION, "Failed to update transaction markers");
-            // Non-fatal - continue with transaction
-        }
-
         // Capture a retained transaction-start snapshot only for ordinary snapshot-style
         // transactions. Replay-bound sessions already have an immutable retained boundary.
         if (!isForensicReplayActive() &&
@@ -3411,6 +3514,22 @@ namespace scratchbird::core
                 current_xid_ = 0;
                 return s;
             }
+        }
+        else
+        {
+            Status clear_pin_status = txn_manager_->clearSnapshotPin(proc_id_, nullptr);
+            if (clear_pin_status != Status::OK && clear_pin_status != Status::INVALID_ARGUMENT)
+            {
+                LOG_WARNING(TRANSACTION, "Failed to clear snapshot pin for proc_id %u", proc_id_);
+            }
+        }
+
+        // Update transaction markers (OAT, OST) after snapshot publication is complete.
+        s = txn_manager_->updateTransactionMarkers(ctx);
+        if (s != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to update transaction markers");
+            // Non-fatal - continue with transaction
         }
 
         // Acquire table locks if using SNAPSHOT TABLE STABILITY
@@ -3667,14 +3786,24 @@ namespace scratchbird::core
             current_schema_epoch_uuid_ = transaction_start_schema_epoch_uuid_;
         }
 
-        // Clear statement XID (FIREBIRD MGA: No snapshots)
-        statement_xid_ = 0;
+        Status clear_statement_status = clearStatementXID(nullptr);
+        if (clear_statement_status != Status::OK &&
+            clear_statement_status != Status::INVALID_ARGUMENT)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to clear statement snapshot for proc_id %u", proc_id_);
+        }
 
         // Clear savepoint stack (transaction ending clears all savepoints)
         savepoint_stack_.clear();
         savepoint_level_ = 0;
         command_id_ = 0;
         retained_transaction_snapshot_.reset();
+        Status clear_snapshot_status = txn_manager_->clearSnapshotPin(proc_id_, nullptr);
+        if (clear_snapshot_status != Status::OK &&
+            clear_snapshot_status != Status::INVALID_ARGUMENT)
+        {
+            LOG_WARNING(TRANSACTION, "Failed to clear retained snapshot pin for proc_id %u", proc_id_);
+        }
 
         // Clear transaction state (will be reset by beginNewTransaction)
         std::memset(&current_transaction_uuid_, 0, sizeof(current_transaction_uuid_));
@@ -3776,32 +3905,78 @@ namespace scratchbird::core
             retained_transaction_snapshot_.reset();
             return status;
         }
+        retained_transaction_snapshot_->snapshot_txid_low =
+            std::min(retained_transaction_snapshot_->snapshot_txid_low == 0
+                         ? current_xid_
+                         : retained_transaction_snapshot_->snapshot_txid_low,
+                     current_xid_);
+        status = txn_manager_->registerSnapshotPin(proc_id_, current_xid_,
+                                                   *retained_transaction_snapshot_, ctx);
+        if (status != Status::OK)
+        {
+            retained_transaction_snapshot_.reset();
+            return status;
+        }
         LOG_DEBUG(TRANSACTION,
-                  "Captured retained transaction snapshot: proc_id=%u, xid=%lu, active=%zu",
+                  "Captured retained transaction snapshot: proc_id=%u, xid=%lu, xmin=%lu, xmax=%lu, active=%zu",
                   proc_id_,
                   current_xid_,
+                  retained_transaction_snapshot_->snapshot_txid_low,
+                  retained_transaction_snapshot_->snapshot_txid_high,
                   retained_transaction_snapshot_->active_txid_set.size());
         return Status::OK;
     }
 
-    void ConnectionContext::createStatementXID()
+    Status ConnectionContext::createStatementXID(ErrorContext *ctx)
     {
-        // For READ_COMMITTED_READ_CONSISTENCY, capture current XID for statement duration
-        // This provides consistent reads within a single statement
+        statement_transaction_snapshot_.reset();
+        statement_xid_ = 0;
         if (current_xid_ != 0)
         {
+            statement_transaction_snapshot_ = std::make_unique<TransactionSnapshot>();
+            Status status = txn_manager_->captureSnapshot(*statement_transaction_snapshot_, ctx);
+            if (status != Status::OK)
+            {
+                statement_transaction_snapshot_.reset();
+                return status;
+            }
+            statement_transaction_snapshot_->snapshot_txid_low =
+                std::min(statement_transaction_snapshot_->snapshot_txid_low == 0
+                             ? current_xid_
+                             : statement_transaction_snapshot_->snapshot_txid_low,
+                         current_xid_);
+            status = txn_manager_->registerSnapshotPin(proc_id_, current_xid_,
+                                                       *statement_transaction_snapshot_, ctx);
+            if (status != Status::OK)
+            {
+                statement_transaction_snapshot_.reset();
+                return status;
+            }
             statement_xid_ = current_xid_;
-            LOG_DEBUG(TRANSACTION, "Created statement XID: %lu", statement_xid_);
+            LOG_DEBUG(TRANSACTION,
+                      "Created statement snapshot: proc_id=%u, xid=%lu, xmin=%lu, xmax=%lu",
+                      proc_id_,
+                      statement_xid_,
+                      statement_transaction_snapshot_->snapshot_txid_low,
+                      statement_transaction_snapshot_->snapshot_txid_high);
         }
+        return Status::OK;
     }
 
-    void ConnectionContext::clearStatementXID()
+    Status ConnectionContext::clearStatementXID(ErrorContext *ctx)
     {
         if (statement_xid_ != 0)
         {
+            Status status = txn_manager_->clearSnapshotPin(proc_id_, ctx);
+            if (status != Status::OK && status != Status::INVALID_ARGUMENT)
+            {
+                return status;
+            }
             LOG_DEBUG(TRANSACTION, "Cleared statement XID %lu", statement_xid_);
             statement_xid_ = 0;
         }
+        statement_transaction_snapshot_.reset();
+        return Status::OK;
     }
 
     Status ConnectionContext::checkTerminationRequested(ErrorContext *ctx)
