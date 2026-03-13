@@ -15,6 +15,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include <chrono>
 #include <algorithm>
 #include <cstring>
@@ -773,6 +774,17 @@ namespace scratchbird::core
                 victims.reserve(cycles.size());
                 for (const auto &cycle : cycles)
                 {
+                    if (lock_mgr_ && lock_mgr_->db_ && lock_mgr_->db_->mga_failpoint_manager())
+                    {
+                        Status failpoint_status = lock_mgr_->db_->mga_failpoint_manager()->trip(
+                            MgaFailpointTriggers::kDeadlockVictimSelectionFailure,
+                            {},
+                            ctx);
+                        if (failpoint_status != Status::OK)
+                        {
+                            return failpoint_status;
+                        }
+                    }
                     victims.push_back(selectVictim(cycle));
                 }
             }
@@ -780,6 +792,18 @@ namespace scratchbird::core
 
         if (!victims.empty())
         {
+            if (lock_mgr_ && lock_mgr_->db_ && lock_mgr_->db_->mga_failpoint_manager())
+            {
+                Status stall_status = lock_mgr_->db_->mga_failpoint_manager()->trip(
+                    MgaFailpointTriggers::kDeadlockDetectorStall,
+                    {},
+                    ctx);
+                if (stall_status != Status::OK)
+                {
+                    return stall_status;
+                }
+            }
+
             // Deadlock detected! Abort one transaction from each cycle
             std::sort(victims.begin(), victims.end());
             victims.erase(std::unique(victims.begin(), victims.end()), victims.end());

@@ -22,6 +22,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 
@@ -517,6 +518,23 @@ TEST_F(CatalogVirtualOverlayConformanceContractTest, SysMgaObservabilityViewsAre
     wait.victim_identity = "victim-session";
     ASSERT_EQ(catalog_->recordWaitHistory(wait, &ctx), Status::OK) << ctx.message;
 
+    std::vector<MgaFailpointDefinition> failpoints{
+        {std::string(MgaFailpointTriggers::kAfterTipLoadBeforeActiveNormalization),
+         MgaFailpointAction::MARK_ONLY,
+         1,
+         Status::OK,
+         0,
+         "startup_probe"}};
+    ASSERT_EQ(db_->mga_failpoint_manager()->installSeed("overlay-seed", failpoints, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->mga_failpoint_manager()->trip(
+                  MgaFailpointTriggers::kAfterTipLoadBeforeActiveNormalization,
+                  {},
+                  &ctx),
+              Status::OK)
+        << ctx.message;
+
     StorageEngine::FragmentationAdvisory advisory{};
     advisory.page_id = 12;
     advisory.reclaimable_bytes = 256;
@@ -537,6 +555,12 @@ TEST_F(CatalogVirtualOverlayConformanceContractTest, SysMgaObservabilityViewsAre
 
     result = {};
     ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_cleanup_debt", "", result, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(result.empty());
+
+    result = {};
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::SCRATCHBIRD, "sys", "sb_mga_failpoint_events", "", result, &ctx),
               Status::OK)
         << ctx.message;
     ASSERT_FALSE(result.empty());

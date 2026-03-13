@@ -23,6 +23,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/uuidv7.h"
 
@@ -289,6 +290,21 @@ namespace scratchbird::core
         wait.victim_identity = tx_prepared.session_id.toString();
         ASSERT_EQ(catalog_->recordWaitHistory(wait, nullptr), Status::OK);
 
+        std::vector<MgaFailpointDefinition> failpoints{
+            {std::string(MgaFailpointTriggers::kAfterTipTerminalBeforeClientAck),
+             MgaFailpointAction::MARK_ONLY,
+             1,
+             Status::OK,
+             0,
+             "post_commit_marker"}};
+        ASSERT_EQ(db_->mga_failpoint_manager()->installSeed("obs-seed", failpoints, nullptr),
+                  Status::OK);
+        ASSERT_EQ(db_->mga_failpoint_manager()->trip(
+                      MgaFailpointTriggers::kAfterTipTerminalBeforeClientAck,
+                      {},
+                      nullptr),
+                  Status::OK);
+
         StorageEngine::FragmentationAdvisory advisory{};
         advisory.page_id = 17;
         advisory.reclaimable_bytes = 512;
@@ -337,6 +353,16 @@ namespace scratchbird::core
         EXPECT_EQ(wait_rows[0].outcome, "DEADLOCK_DETECTED");
         EXPECT_TRUE(wait_rows[0].has_blocker_txid);
         EXPECT_EQ(wait_rows[0].blocker_txid, 41u);
+
+        std::vector<SqlMgaFailpointEventRow> failpoint_rows;
+        ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaFailpointEventRows(*db_, failpoint_rows),
+                  Status::OK);
+        ASSERT_EQ(failpoint_rows.size(), 1u);
+        EXPECT_EQ(failpoint_rows[0].seed_id, "obs-seed");
+        EXPECT_EQ(failpoint_rows[0].trigger_name,
+                  MgaFailpointTriggers::kAfterTipTerminalBeforeClientAck);
+        EXPECT_EQ(failpoint_rows[0].outcome, "post_commit_marker");
+        EXPECT_FALSE(failpoint_rows[0].has_txid);
 
         std::vector<SqlRuntimeMetricRow> runtime_rows;
         ASSERT_EQ(SqlObservabilityViewBuilder::buildMgaRuntimeRows(

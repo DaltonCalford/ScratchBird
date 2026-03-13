@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/telemetry.h"
 
@@ -137,6 +138,19 @@ namespace scratchbird::core
         uint64_t started_at_ms = 0;
         bool has_ended_at_ms = false;
         uint64_t ended_at_ms = 0;
+    };
+
+    struct SqlMgaFailpointEventRow
+    {
+        std::string event_id;
+        std::string seed_id;
+        std::string trigger_name;
+        std::string outcome;
+        bool has_db_uuid = false;
+        ID db_uuid{};
+        bool has_txid = false;
+        uint64_t txid = 0;
+        uint64_t occurred_at_ms = 0;
     };
 
     struct SqlMgaWaitHistoryRow
@@ -306,6 +320,10 @@ namespace scratchbird::core
         static auto buildMgaTransactionHistoryRows(
             const Database& db,
             std::vector<SqlMgaTransactionHistoryRow>& rows_out) -> Status;
+
+        static auto buildMgaFailpointEventRows(
+            const Database& db,
+            std::vector<SqlMgaFailpointEventRow>& rows_out) -> Status;
 
         static auto buildMgaWaitHistoryRows(const Database& db,
                                             std::vector<SqlMgaWaitHistoryRow>& rows_out) -> Status;

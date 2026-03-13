@@ -20,6 +20,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/index_factory.h"
 #include "scratchbird/core/index_gc_interface.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
 #include "scratchbird/core/gin_index.h"
@@ -688,6 +689,33 @@ namespace scratchbird::core
 
         bool page_modified = (tuples_pruned > 0) || (repairs != 0);
 
+        MgaFailpointManager* failpoints = db_ ? db_->mga_failpoint_manager() : nullptr;
+        if (failpoints != nullptr)
+        {
+            ErrorContext failpoint_ctx;
+            Status failpoint_status = failpoints->trip(
+                MgaFailpointTriggers::kAfterChainUnlinkBeforeCompactionPublish,
+                {},
+                &failpoint_ctx);
+            if (failpoint_status != Status::OK)
+            {
+                LOG_WARNING(VACUUM,
+                            "Injected MGA failpoint after chain unlink on page %u: %s",
+                            page_id,
+                            failpoint_ctx.message.c_str());
+                db_->buffer_pool()->unpinPage(page_id, page_modified, ctx);
+                if (space_reclaimed_out != nullptr)
+                {
+                    *space_reclaimed_out = space_reclaimed;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
+                    dirty_pages_.erase(page_id);
+                }
+                return tuples_pruned;
+            }
+        }
+
         // Log results if we pruned any tuples
         if (tuples_pruned > 0)
         {
@@ -706,9 +734,30 @@ namespace scratchbird::core
         uint64_t index_entries_removed = 0;
         if (!dead_tids.empty())
         {
-            index_entries_removed = cleanIndexes(page_id, table_id, dead_tids, ctx);
-            LOG_DEBUG(VACUUM, "Page %u: removed %lu index entries for %zu dead tuples",
-                     page_id, index_entries_removed, dead_tids.size());
+            bool skip_index_cleanup = false;
+            if (failpoints != nullptr)
+            {
+                ErrorContext failpoint_ctx;
+                Status failpoint_status = failpoints->trip(
+                    MgaFailpointTriggers::kAfterHeapReclaimBeforeDeadEntryDelete,
+                    {},
+                    &failpoint_ctx);
+                if (failpoint_status != Status::OK)
+                {
+                    skip_index_cleanup = true;
+                    LOG_WARNING(VACUUM,
+                                "Injected MGA failpoint before dead-index cleanup on page %u: %s",
+                                page_id,
+                                failpoint_ctx.message.c_str());
+                }
+            }
+
+            if (!skip_index_cleanup)
+            {
+                index_entries_removed = cleanIndexes(page_id, table_id, dead_tids, ctx);
+                LOG_DEBUG(VACUUM, "Page %u: removed %lu index entries for %zu dead tuples",
+                          page_id, index_entries_removed, dead_tids.size());
+            }
         }
 
         uint64_t garbage_tuples_found = tuples_pruned;

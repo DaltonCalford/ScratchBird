@@ -488,6 +488,7 @@ void SysCatalogHandler::initializeTableNames() {
         "sb_mga_runtime_metrics",
         "sb_mga_active_transactions",
         "sb_mga_cleanup_debt",
+        "sb_mga_failpoint_events",
         "sb_mga_snapshot_blockers",
         "sb_mga_transaction_history",
         "sb_mga_wait_history"
@@ -999,6 +1000,16 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"observed_at_ms", DataType::INT64, false}
     };
 
+    static const ColumnDefs kMgaFailpointEventsColumns = {
+        {"event_id", DataType::TEXT, false},
+        {"seed_id", DataType::TEXT, false},
+        {"trigger_name", DataType::TEXT, false},
+        {"outcome", DataType::TEXT, false},
+        {"db_uuid", DataType::UUID, true},
+        {"txid", DataType::INT64, true},
+        {"occurred_at_ms", DataType::INT64, false}
+    };
+
     static const ColumnDefs kMgaSnapshotBlockersColumns = {
         {"db_uuid", DataType::UUID, false},
         {"blocker_txid", DataType::INT64, false},
@@ -1116,6 +1127,9 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     }
     if (equalsCaseInsensitive(table_name, "sb_mga_cleanup_debt")) {
         return &kMgaCleanupDebtColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_failpoint_events")) {
+        return &kMgaFailpointEventsColumns;
     }
     if (equalsCaseInsensitive(table_name, "sb_mga_snapshot_blockers")) {
         return &kMgaSnapshotBlockersColumns;
@@ -1288,6 +1302,9 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     if (equalsCaseInsensitive(table_name, "sb_mga_cleanup_debt")) {
         return queryMgaCleanupDebt(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "sb_mga_failpoint_events")) {
+        return queryMgaFailpointEvents(results, ctx);
     }
     if (equalsCaseInsensitive(table_name, "sb_mga_snapshot_blockers")) {
         return queryMgaSnapshotBlockers(results, ctx);
@@ -3721,6 +3738,39 @@ Status SysCatalogHandler::queryMgaTransactionHistory(VirtualResultSet& results, 
             {"ended_at_ms", history_row.has_ended_at_ms
                                 ? core::TypedValue::makeInt64(static_cast<int64_t>(history_row.ended_at_ms))
                                 : core::TypedValue::makeNull(DataType::INT64)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMgaFailpointEvents(VirtualResultSet& results, ErrorContext* /* ctx */) {
+    auto* db = catalog_manager_ ? catalog_manager_->database() : nullptr;
+    if (!db) {
+        return Status::OK;
+    }
+
+    std::vector<core::SqlMgaFailpointEventRow> rows;
+    Status status = core::SqlObservabilityViewBuilder::buildMgaFailpointEventRows(*db, rows);
+    if (status != Status::OK) {
+        return status;
+    }
+
+    for (const auto& failpoint_row : rows) {
+        VirtualRow row;
+        row.columns = {
+            {"event_id", core::TypedValue::makeText(failpoint_row.event_id)},
+            {"seed_id", core::TypedValue::makeText(failpoint_row.seed_id)},
+            {"trigger_name", core::TypedValue::makeText(failpoint_row.trigger_name)},
+            {"outcome", core::TypedValue::makeText(failpoint_row.outcome)},
+            {"db_uuid", failpoint_row.has_db_uuid
+                            ? uuidValueOrNull(failpoint_row.db_uuid)
+                            : core::TypedValue::makeNull(DataType::UUID)},
+            {"txid", failpoint_row.has_txid
+                         ? core::TypedValue::makeInt64(static_cast<int64_t>(failpoint_row.txid))
+                         : core::TypedValue::makeNull(DataType::INT64)},
+            {"occurred_at_ms",
+             core::TypedValue::makeInt64(static_cast<int64_t>(failpoint_row.occurred_at_ms))}
         };
         results.rows.push_back(std::move(row));
     }

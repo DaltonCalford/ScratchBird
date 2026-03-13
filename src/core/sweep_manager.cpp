@@ -19,6 +19,7 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/heap_toast_lob_diagnostics.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/config.h"
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -1165,6 +1166,19 @@ namespace scratchbird::core
             state.reclaimed_version_count;
         state_page->reserved[kSweepProgressSlotReclaimedBytes] = state.reclaimed_bytes;
         state_page->reserved[kSweepProgressSlotIndexBacklog] = state.index_backlog_count;
+
+        if (db_ != nullptr && db_->mga_failpoint_manager() != nullptr)
+        {
+            Status failpoint_status = db_->mga_failpoint_manager()->trip(
+                MgaFailpointTriggers::kSweepCheckpointWriteLoss,
+                {},
+                ctx);
+            if (failpoint_status != Status::OK)
+            {
+                buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+                return failpoint_status;
+            }
+        }
 
         buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
         return Status::OK;

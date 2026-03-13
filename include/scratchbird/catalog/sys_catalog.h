@@ -123,6 +123,7 @@ private:
     Status queryMgaCleanupDebt(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaSnapshotBlockers(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaTransactionHistory(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMgaFailpointEvents(VirtualResultSet& results, ErrorContext* ctx);
     Status queryMgaWaitHistory(VirtualResultSet& results, ErrorContext* ctx);
 };
 

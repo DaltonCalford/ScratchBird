@@ -21,6 +21,7 @@
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/long_transaction_monitor.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/job_scheduler.h"
 #include "scratchbird/core/domain_manager.h"
 #include "scratchbird/core/encryption_key_manager.h"
@@ -1143,6 +1144,7 @@ namespace scratchbird::core
     Database::Database()
     {
         table_stats_manager_ = std::make_unique<TableStatsManager>(this);
+        mga_failpoint_manager_ = std::make_unique<MgaFailpointManager>(this);
     }
 
     Database::~Database()
@@ -1213,7 +1215,6 @@ namespace scratchbird::core
 
         // Shut down local workload governance before the catalog manager it queries.
         workload_governance_.reset();
-
         // Shut down garbage collector first (before sweep manager)
         garbage_collector_.reset();
 

@@ -64,6 +64,7 @@ namespace scratchbird
         class EncryptionKeyManager;
         class AuditLogger;
         class WorkloadGovernance;
+        class MgaFailpointManager;
         class TIDResolver; // Sprint 4 Task 5.4.2
         class PermissionCache; // Security Phase 3.2.3
         class TableStatsManager;
@@ -547,6 +548,15 @@ namespace scratchbird
                 return workload_governance_.get();
             }
 
+            MgaFailpointManager *mga_failpoint_manager()
+            {
+                return mga_failpoint_manager_.get();
+            }
+            const MgaFailpointManager *mga_failpoint_manager() const
+            {
+                return mga_failpoint_manager_.get();
+            }
+
             // Initialize ProcArray for multi-connection support
             Status initializeProcArray(uint32_t max_backends, ErrorContext *ctx = nullptr);
 
@@ -675,6 +685,7 @@ namespace scratchbird
             std::unique_ptr<EncryptionKeyManager> encryption_key_manager_;    // Encryption key manager (owned)
             std::unique_ptr<AuditLogger> audit_logger_;                       // Audit logger (owned)
             std::unique_ptr<WorkloadGovernance> workload_governance_;         // Local workload governance (owned)
+            std::unique_ptr<MgaFailpointManager> mga_failpoint_manager_;      // MGA failpoint runtime
 
             // Security components (Phase 3.2.3)
             std::unique_ptr<PermissionCache> permission_cache_; // Permission cache (owned)

@@ -12,6 +12,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/transaction_manager.h"
@@ -1669,6 +1670,52 @@ namespace scratchbird::core
                           return lhs.started_at_ms < rhs.started_at_ms;
                       }
                       return lhs.txid < rhs.txid;
+                  });
+        return Status::OK;
+    }
+
+    auto SqlObservabilityViewBuilder::buildMgaFailpointEventRows(
+        const Database& db,
+        std::vector<SqlMgaFailpointEventRow>& rows_out) -> Status
+    {
+        rows_out.clear();
+        const MgaFailpointManager* failpoints = db.mga_failpoint_manager();
+        if (failpoints == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<MgaFailpointEvent> events;
+        Status status = failpoints->listEvents(events, nullptr);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        rows_out.reserve(events.size());
+        for (const MgaFailpointEvent& event : events)
+        {
+            SqlMgaFailpointEventRow row{};
+            row.event_id = event.event_id;
+            row.seed_id = event.seed_id;
+            row.trigger_name = event.trigger_name;
+            row.outcome = event.outcome;
+            row.has_db_uuid = event.has_db_uuid;
+            row.db_uuid = event.db_uuid;
+            row.has_txid = event.has_txid;
+            row.txid = event.txid;
+            row.occurred_at_ms = event.occurred_at_ms;
+            rows_out.push_back(std::move(row));
+        }
+
+        std::sort(rows_out.begin(),
+                  rows_out.end(),
+                  [](const SqlMgaFailpointEventRow& lhs, const SqlMgaFailpointEventRow& rhs) {
+                      if (lhs.occurred_at_ms != rhs.occurred_at_ms)
+                      {
+                          return lhs.occurred_at_ms < rhs.occurred_at_ms;
+                      }
+                      return lhs.event_id < rhs.event_id;
                   });
         return Status::OK;
     }

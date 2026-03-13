@@ -18,6 +18,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/mga_failpoint_manager.h"
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/portable_file_io.h"
 #include <algorithm>
@@ -262,6 +263,19 @@ namespace scratchbird::core
             }
         }
 
+        MgaFailpointManager* failpoints = db_ ? db_->mga_failpoint_manager() : nullptr;
+        if (failpoints != nullptr)
+        {
+            status = failpoints->trip(
+                MgaFailpointTriggers::kAfterTipLoadBeforeActiveNormalization,
+                {},
+                ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
         bool startup_repair = false;
         status = normalizeStartupTipStates(db_->last_shutdown_was_clean(), &startup_repair, ctx);
         if (status != Status::OK)
@@ -412,6 +426,22 @@ namespace scratchbird::core
             next_xid_.store(FROZEN_XID + 1, std::memory_order_release);
         }
 
+        MgaFailpointManager* failpoints = db_ ? db_->mga_failpoint_manager() : nullptr;
+        if (failpoints != nullptr)
+        {
+            MgaFailpointInvocation invocation{};
+            invocation.has_txid = true;
+            invocation.txid = new_xid;
+            Status failpoint_status = failpoints->trip(
+                MgaFailpointTriggers::kAfterTxidAllocationBeforeActive,
+                invocation,
+                ctx);
+            if (failpoint_status != Status::OK)
+            {
+                return failpoint_status;
+            }
+        }
+
         // Persist ACTIVE state and next_xid advance before publishing the
         // transaction in attachment-visible inventory.
         Status status = writeTipEntry(new_xid, TransactionState::ACTIVE, ctx);
@@ -495,6 +525,22 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT_VNEXT(ctx, status, "TXN_0216",
                                     "Commit fence flush failed before durable publish");
             return status;
+        }
+
+        MgaFailpointManager* failpoints = db_ ? db_->mga_failpoint_manager() : nullptr;
+        if (failpoints != nullptr)
+        {
+            MgaFailpointInvocation invocation{};
+            invocation.has_txid = true;
+            invocation.txid = xid;
+            status = failpoints->trip(
+                MgaFailpointTriggers::kAfterDirtyFlushBeforeTipTerminal,
+                invocation,
+                ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
         }
 
         // GROUP COMMIT OPTIMIZATION (Issue 2.19)
@@ -635,6 +681,21 @@ namespace scratchbird::core
             stats_.transactions_committed++;
         }
 
+        if (failpoints != nullptr)
+        {
+            MgaFailpointInvocation invocation{};
+            invocation.has_txid = true;
+            invocation.txid = xid;
+            status = failpoints->trip(
+                MgaFailpointTriggers::kAfterTipTerminalBeforeClientAck,
+                invocation,
+                ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
         // Check sweep trigger (non-blocking)
         if (status == Status::OK && db_->sweep_manager())
         {
@@ -717,6 +778,22 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             return status;
+        }
+
+        MgaFailpointManager* failpoints = db_ ? db_->mga_failpoint_manager() : nullptr;
+        if (failpoints != nullptr)
+        {
+            MgaFailpointInvocation invocation{};
+            invocation.has_txid = true;
+            invocation.txid = xid;
+            status = failpoints->trip(
+                MgaFailpointTriggers::kBetweenPreparedRecordAndTipPrepared,
+                invocation,
+                ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
         }
 
         status = writeTipEntry(xid, TransactionState::PREPARED, ctx);
