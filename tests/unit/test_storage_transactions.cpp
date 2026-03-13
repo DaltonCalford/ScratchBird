@@ -189,7 +189,7 @@ TEST_F(StorageTransactionTest, UpdateCreatesBackVersion)
     ASSERT_TRUE(hdr->hasBackVersion());
 
     GPID back_gpid = hdr->back_version_gpid;
-    uint16_t back_offset = hdr->back_version_slot;
+    uint16_t back_slot = hdr->back_version_slot;
     uint32_t back_page_id = static_cast<uint32_t>(getPageNumber(back_gpid));
 
     db_->buffer_pool()->unpinPage(updated_page_id, false, &ctx);
@@ -199,7 +199,12 @@ TEST_F(StorageTransactionTest, UpdateCreatesBackVersion)
         << ctx.message;
 
     auto *back_page_data = static_cast<uint8_t *>(back_page_buffer);
-    const auto *back_hdr = reinterpret_cast<const TupleHeader *>(back_page_data + back_offset);
+    HeapPage back_page(back_page_data, db_->page_size());
+    const uint8_t *back_tuple_data = nullptr;
+    uint32_t back_tuple_size = 0;
+    ASSERT_EQ(back_page.getTuple(back_slot, &back_tuple_data, &back_tuple_size, &ctx), Status::OK)
+        << ctx.message;
+    const auto *back_hdr = reinterpret_cast<const TupleHeader *>(back_tuple_data);
 
     EXPECT_TRUE(back_hdr->infomask & TupleHeader::HEAP_CHAIN);
     EXPECT_TRUE(back_hdr->infomask & TupleHeader::HEAP_UPDATED);

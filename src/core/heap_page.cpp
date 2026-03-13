@@ -844,21 +844,11 @@ namespace scratchbird::core
         }
 
         // ====================================================================
-        // PHASE 2: CREATE BACK VERSION (SAME-PAGE ONLY FOR ALPHA)
+        // PHASE 2: CREATE BACK VERSION USING CANONICAL SLOT ENCODING
         // ====================================================================
-        // Create back version to preserve old tuple state
-        // For Alpha: Only support same-page back versions (simplified)
-        // Future: Support cross-page back versions for large tuples
-        //
-        // Check if we can fit both new tuple AND back version on same page
+        // Same-page version chains must use the same page+slot encoding as
+        // cross-page chains. Raw offsets are not allowed in the tuple header.
         // ====================================================================
-
-        HeapPageSpecial *special = getSpecial();
-
-        // Calculate space needed:
-        // - New tuple at primary location
-        // - Back version copy of old tuple
-        uint32_t space_needed = new_tuple_size + primary_length;
 
         // Check if new tuple needs TOASTing
         bool new_tuple_needs_toast = (toast_mgr_ != nullptr) && (db_ != nullptr) &&
@@ -907,50 +897,103 @@ namespace scratchbird::core
             final_new_tuple_size = toasted_new_tuple.size();
         }
 
-        // Recalculate space needed with potentially toasted new tuple
-        space_needed = final_new_tuple_size + primary_length;
-
-        // Check if we have space for back version on same page (try same-page first)
-        bool back_version_same_page = hasFreeSpace(space_needed);
-        uint32_t back_version_page_id = header()->page_id;
-        uint32_t back_version_offset = 0;
-
-        // Phase 4: Allocate space for back version (same-page or cross-page)
-        if (back_version_same_page)
+        auto canAllocateSamePageBackVersion = [&]() -> bool
         {
-            // SAME-PAGE BACK VERSION (optimal case)
+            uint32_t simulated_lower = pageLower(*hdr);
+            bool reuse_deleted_slot = false;
+            for (uint16_t slot = 0; slot < getItemCount(); ++slot)
+            {
+                if (slot == old_item_id)
+                {
+                    continue;
+                }
+                if (items[slot].isDeleted() && items[slot].length >= primary_length)
+                {
+                    reuse_deleted_slot = true;
+                    break;
+                }
+            }
+            if (!reuse_deleted_slot)
+            {
+                simulated_lower += sizeof(ItemPointer);
+            }
+
             if (primary_length > pageUpper(*hdr))
             {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                  "Back version size exceeds available space");
-                return Status::PAGE_CORRUPT;
+                return false;
             }
-            back_version_offset = pageUpper(*hdr) - primary_length;
 
-            // Align to 8-byte boundary
-            back_version_offset = (back_version_offset / 8) * 8;
-
-            // Validate offset is within page bounds
-            if (back_version_offset + primary_length > page_size_)
+            uint32_t simulated_upper = (pageUpper(*hdr) - primary_length) & ~uint32_t{7};
+            if (simulated_upper < simulated_lower || simulated_upper + primary_length > page_size_)
             {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Back version offset out of bounds");
-                return Status::PAGE_CORRUPT;
+                return false;
             }
 
-            // Copy old tuple to back version location
-            memcpy(page_data_ + back_version_offset, page_data_ + primary_offset, primary_length);
+            if (final_new_tuple_size <= primary_length)
+            {
+                return true;
+            }
 
-            // Update back version tuple header
-            auto *back_version_hdr = reinterpret_cast<TupleHeader *>(page_data_ + back_version_offset);
-            back_version_hdr->xmax = xmax; // Mark as updated/deleted by xmax
-            // Back version keeps existing back_version_tid (continues chain)
-            back_version_hdr->infomask |= TupleHeader::HEAP_CHAIN; // Mark as back version
-            back_version_hdr->infomask |= TupleHeader::HEAP_UPDATED; // Mark as updated
-            applyCanonicalRecordContract(back_version_hdr, page_data_ + back_version_offset,
-                                         primary_length, &stable_row_uuid);
+            if (final_new_tuple_size > simulated_upper)
+            {
+                return false;
+            }
 
-            // Update upper boundary to reflect back version allocation
-            pageSetUpper(*hdr, back_version_offset);
+            uint32_t new_primary_offset =
+                (simulated_upper - final_new_tuple_size) & ~uint32_t{7};
+            return new_primary_offset >= simulated_lower &&
+                   new_primary_offset + final_new_tuple_size <= page_size_;
+        };
+
+        bool back_version_same_page = canAllocateSamePageBackVersion();
+        uint16_t back_version_item_id = 0;
+
+        if (back_version_same_page)
+        {
+            std::vector<uint8_t> old_tuple_buffer;
+            try
+            {
+                old_tuple_buffer.resize(primary_length);
+            }
+            catch (const std::bad_alloc &)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "Out of memory allocating back-version buffer");
+                return Status::OOM;
+            }
+
+            std::memcpy(old_tuple_buffer.data(), page_data_ + primary_offset, primary_length);
+            const auto *source_old_hdr =
+                reinterpret_cast<const TupleHeader *>(old_tuple_buffer.data());
+
+            Status insert_status =
+                insertTuple(old_tuple_buffer.data(), primary_length, source_old_hdr->xmin,
+                            &back_version_item_id, ctx);
+            if (insert_status != Status::OK)
+            {
+                return insert_status;
+            }
+
+            const uint8_t *back_version_data = nullptr;
+            uint32_t back_version_size = 0;
+            Status read_status =
+                getTuple(back_version_item_id, &back_version_data, &back_version_size, ctx);
+            if (read_status != Status::OK)
+            {
+                return read_status;
+            }
+
+            auto *back_version_hdr =
+                reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(back_version_data));
+            back_version_hdr->xmin = source_old_hdr->xmin;
+            back_version_hdr->xmax = xmax;
+            back_version_hdr->back_version_gpid = source_old_hdr->back_version_gpid;
+            back_version_hdr->back_version_slot = source_old_hdr->back_version_slot;
+            back_version_hdr->session_id = source_old_hdr->session_id;
+            back_version_hdr->infomask |=
+                (TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED);
+            applyCanonicalRecordContract(back_version_hdr, back_version_data,
+                                         back_version_size, &stable_row_uuid);
         }
         else
         {
@@ -1026,13 +1069,10 @@ namespace scratchbird::core
         // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
         // CRITICAL: Set back_version to point BACKWARD to back version
         // Build TID for back version
-        // For same-page: back_version_page_id == header()->page_id
-        // For cross-page: back_version_page_id == the new page allocated above
-        // For Alpha simplification: Store back version offset directly in slot field
-        // (This is a temporary approach - full implementation would use proper item pointers)
-        GPID back_version_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(back_version_page_id));
+        GPID back_version_gpid =
+            makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
         new_primary_hdr->back_version_gpid = back_version_gpid;
-        new_primary_hdr->back_version_slot = static_cast<uint16_t>(back_version_offset); // Temporary: use offset as slot
+        new_primary_hdr->back_version_slot = back_version_item_id;
 
         // Set primary TID to current page and item ID (stable!)
         GPID primary_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
@@ -1225,7 +1265,8 @@ namespace scratchbird::core
         // Key principles:
         // 1. Start at PRIMARY location (item_id) - newest version
         // 2. Follow back_version_tid pointers BACKWARD (N2O traversal)
-        // 3. Back versions stored by OFFSET (not item_id)
+        // 3. Back versions use the same canonical page+slot encoding for
+        //    same-page and cross-page traversal
         // 4. Uses TIP-based visibility (Firebird MGA), NOT snapshots
         // ====================================================================
 
@@ -1238,10 +1279,10 @@ namespace scratchbird::core
 
         // Start with the PRIMARY tuple (newest version at stable item_id)
         const uint32_t primary_page_id = header()->page_id;
+        const GPID primary_gpid =
+            makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(primary_page_id));
         uint16_t current_item_id = item_id;
-        uint32_t current_page_id = primary_page_id;
-        bool is_back_version = false;  // Track if we're at back version (offset-based)
-        uint32_t current_offset = 0;  // For back versions accessed by offset
+        GPID current_gpid = primary_gpid;
 
         uint8_t *current_page_data = page_data_;
         uint32_t current_page_size = page_size_;
@@ -1251,53 +1292,71 @@ namespace scratchbird::core
         constexpr uint32_t MAX_CHAIN_LENGTH = config::DEFAULT_MAX_VERSION_CHAIN_LENGTH;
         uint32_t chain_length = 0;
 
-        // CRITICAL FIX (Issue 1.19): Add visited set to detect cycles immediately
-        // For back versions (offset-based), use offset as key
-        // For primary versions (item_id-based), use item_id as key
-        std::unordered_set<uint64_t> visited_locations;
+        struct VersionLocation
+        {
+            GPID gpid;
+            uint16_t slot;
+
+            [[nodiscard]] auto operator==(const VersionLocation &other) const -> bool
+            {
+                return gpid == other.gpid && slot == other.slot;
+            }
+        };
+
+        struct VersionLocationHash
+        {
+            [[nodiscard]] auto operator()(const VersionLocation &location) const noexcept
+                -> std::size_t
+            {
+                return std::hash<uint64_t>{}(location.gpid) ^
+                       (static_cast<std::size_t>(location.slot) << 1u);
+            }
+        };
+
+        std::unordered_set<VersionLocation, VersionLocationHash> visited_locations;
 
         BufferPool *buffer_pool = (db_ != nullptr) ? db_->buffer_pool() : nullptr;
-        uint32_t pinned_page_id = 0;
+        GPID pinned_gpid = INVALID_GPID;
         uint8_t *pinned_page_data = nullptr;
 
         struct PinnedPageGuard
         {
             BufferPool *pool;
-            uint32_t *page_id;
+            GPID *gpid;
             ErrorContext *ctx;
             ~PinnedPageGuard()
             {
-                if (pool && page_id && *page_id != 0)
+                if (pool && gpid && *gpid != INVALID_GPID)
                 {
-                    pool->unpinPage(*page_id, false, ctx);
+                    pool->unpinPageGlobal(*gpid, false, ctx);
                 }
             }
         };
 
-        PinnedPageGuard pinned_guard{buffer_pool, &pinned_page_id, ctx};
+        PinnedPageGuard pinned_guard{buffer_pool, &pinned_gpid, ctx};
 
         auto unpinPinnedPage = [&]()
         {
-            if (pinned_page_id != 0 && buffer_pool != nullptr)
+            if (pinned_gpid != INVALID_GPID && buffer_pool != nullptr)
             {
-                buffer_pool->unpinPage(pinned_page_id, false, ctx);
-                pinned_page_id = 0;
+                buffer_pool->unpinPageGlobal(pinned_gpid, false, ctx);
+                pinned_gpid = INVALID_GPID;
                 pinned_page_data = nullptr;
             }
         };
 
-        auto switchToPage = [&](uint32_t target_page_id) -> Status
+        auto switchToPage = [&](GPID target_gpid) -> Status
         {
-            if (target_page_id == current_page_id)
+            if (target_gpid == current_gpid)
             {
                 return Status::OK;
             }
 
-            if (target_page_id == primary_page_id)
+            if (target_gpid == primary_gpid)
             {
                 unpinPinnedPage();
                 current_page_data = page_data_;
-                current_page_id = primary_page_id;
+                current_gpid = primary_gpid;
                 current_page_size = page_size_;
                 return Status::OK;
             }
@@ -1311,42 +1370,30 @@ namespace scratchbird::core
 
             unpinPinnedPage();
 
-            Status pin_status = buffer_pool->pinPage(target_page_id,
-                                                     reinterpret_cast<void**>(&pinned_page_data),
-                                                     ctx);
+            Status pin_status = buffer_pool->pinPageGlobal(
+                target_gpid, reinterpret_cast<void **>(&pinned_page_data), ctx);
             if (pin_status != Status::OK)
             {
                 return pin_status;
             }
 
-            pinned_page_id = target_page_id;
+            pinned_gpid = target_gpid;
             current_page_data = pinned_page_data;
-            current_page_id = target_page_id;
+            current_gpid = target_gpid;
             current_page_size = page_size_;
             return Status::OK;
         };
 
         while (chain_length < MAX_CHAIN_LENGTH)
         {
-            // CRITICAL FIX (Issue 1.19): Check for cycles immediately
-            // Build location key: for primary use item_id, for back version use offset
-            uint64_t location_key;
-            if (is_back_version)
-            {
-                location_key = (static_cast<uint64_t>(current_page_id) << 32) | current_offset;
-            }
-            else
-            {
-                location_key = (static_cast<uint64_t>(current_page_id) << 32) |
-                              (static_cast<uint64_t>(current_item_id) << 16);
-            }
-
+            VersionLocation location_key{current_gpid, current_item_id};
             if (visited_locations.count(location_key) > 0)
             {
                 // Cycle detected! We've visited this location before
                 LOG_ERROR(STORAGE,
-                          "Cycle detected in version chain at page %u - chain is corrupted",
-                          current_page_id);
+                          "Cycle detected in version chain at page %u slot %u - chain is corrupted",
+                          static_cast<uint32_t>(getPageNumber(current_gpid)),
+                          current_item_id);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                   "Cycle detected in version chain");
                 return Status::PAGE_CORRUPT;
@@ -1370,85 +1417,33 @@ namespace scratchbird::core
                 return Status::OOM;
             }
 
-            // Get tuple data based on whether we're at primary or back version
-            uint32_t offset;
-            uint32_t length;
-            TupleHeader *tuple_hdr;
-
-            if (is_back_version)
+            auto *page_header = reinterpret_cast<PageHeader *>(current_page_data);
+            auto *items = reinterpret_cast<ItemPointer *>(current_page_data + sizeof(PageHeader));
+            uint16_t item_count = static_cast<uint16_t>(
+                (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
+            if (current_item_id >= item_count)
             {
-                // Back version: access directly by offset (no item pointer)
-                offset = current_offset;
-
-                // Validate offset bounds
-                if (offset < sizeof(PageHeader) ||
-                    offset >= current_page_size - sizeof(HeapPageSpecial))
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                      "Back version offset out of bounds");
-                    return Status::PAGE_CORRUPT;
-                }
-
-                tuple_hdr = reinterpret_cast<TupleHeader *>(current_page_data + offset);
-
-                // Back versions don't have item pointers, so we need to calculate length
-                // For now, we'll need to trust the back_version_tid chain
-                // In a full implementation, we'd store length in tuple header or use
-                // the next tuple's offset
-                // For Alpha, we'll use a simplified approach
-                length = 0;  // Will be determined from tuple structure if needed
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Version chain broken");
+                return Status::NOT_FOUND;
             }
-            else
+
+            if (items[current_item_id].isUnused() ||
+                !items[current_item_id].isValid(current_page_size))
             {
-                // Primary tuple: access via item pointer array
-                auto *page_header = reinterpret_cast<PageHeader *>(current_page_data);
-                auto *items = reinterpret_cast<ItemPointer *>(current_page_data + sizeof(PageHeader));
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Item pointer out of bounds in version chain");
+                return Status::PAGE_CORRUPT;
+            }
 
-                // Validate item_id
-                uint16_t item_count =
-                    static_cast<uint16_t>((pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
-                if (current_item_id >= item_count)
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Version chain broken");
-                    return Status::NOT_FOUND;
-                }
+            uint32_t offset = items[current_item_id].offset;
+            uint32_t length = items[current_item_id].length;
+            auto *tuple_hdr = reinterpret_cast<TupleHeader *>(current_page_data + offset);
 
-                if (items[current_item_id].isDeleted())
-                {
-                    // Primary tuple is deleted - check if there's a back version
-                    if (!items[current_item_id].isValid(current_page_size))
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                          "Deleted item pointer out of bounds");
-                        return Status::PAGE_CORRUPT;
-                    }
-
-                    offset = items[current_item_id].offset;
-                    tuple_hdr = reinterpret_cast<TupleHeader *>(current_page_data + offset);
-
-                    if (!tuple_hdr->hasBackVersion())
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                                          "Version deleted, no back version");
-                        return Status::NOT_FOUND;
-                    }
-                    // Fall through to follow back version chain
-                    length = items[current_item_id].length;
-                }
-                else
-                {
-                    // Validate item pointer bounds before accessing tuple
-                    if (!items[current_item_id].isValid(current_page_size))
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                          "Item pointer out of bounds in version chain");
-                        return Status::PAGE_CORRUPT;
-                    }
-
-                    offset = items[current_item_id].offset;
-                    length = items[current_item_id].length;
-                    tuple_hdr = reinterpret_cast<TupleHeader *>(current_page_data + offset);
-                }
+            if (items[current_item_id].isDeleted() && !tuple_hdr->hasBackVersion())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                                  "Version deleted, no back version");
+                return Status::NOT_FOUND;
             }
 
             // VALIDATE XIDs FIRST - protect against corrupted tuple headers
@@ -1462,26 +1457,27 @@ namespace scratchbird::core
                 // This protects against corrupted data
                 LOG_ERROR(STORAGE,
                           "Invalid xmin %lu in version chain at page %u - skipping to back version",
-                          tuple_hdr->xmin, current_page_id);
+                          tuple_hdr->xmin,
+                          static_cast<uint32_t>(getPageNumber(current_gpid)));
 
                 if (tuple_hdr->hasBackVersion())
                 {
                     chain_length++;
                     TID back_tid = tuple_hdr->getBackVersionTID();
-                    uint64_t back_page_num = getPageNumber(back_tid);
-                    uint32_t back_offset = back_tid.slot;
-
-                    if (back_page_num != static_cast<uint64_t>(current_page_id))
+                    if (back_tid.gpid == INVALID_GPID)
                     {
-                        Status switch_status = switchToPage(static_cast<uint32_t>(back_page_num));
-                        if (switch_status != Status::OK)
-                        {
-                            return switch_status;
-                        }
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                          "Invalid back version target");
+                        return Status::PAGE_CORRUPT;
                     }
 
-                    current_offset = back_offset;
-                    is_back_version = true;
+                    Status switch_status = switchToPage(back_tid.gpid);
+                    if (switch_status != Status::OK)
+                    {
+                        return switch_status;
+                    }
+
+                    current_item_id = back_tid.slot;
                     continue;
                 }
                 else
@@ -1610,7 +1606,7 @@ namespace scratchbird::core
 
             if (visible)
             {
-                if (current_page_id == primary_page_id)
+                if (current_gpid == primary_gpid)
                 {
                     if (data_out != nullptr)
                     {
@@ -1618,10 +1614,6 @@ namespace scratchbird::core
                     }
                     if (size_out != nullptr)
                     {
-                        // For back versions (offset-based), length might be 0
-                        // In that case, we need to determine it from tuple structure
-                        // For Alpha: We'll return 0 and let caller handle it
-                        // Full implementation would calculate from tuple header + data size
                         *size_out = length;
                     }
 
@@ -1629,36 +1621,15 @@ namespace scratchbird::core
                     return Status::OK;
                 }
 
-                uint32_t tuple_size = length;
-                if (tuple_size == 0)
-                {
-                    auto *page_header = reinterpret_cast<PageHeader *>(current_page_data);
-                    auto *items = reinterpret_cast<ItemPointer *>(current_page_data + sizeof(PageHeader));
-                    uint16_t item_count =
-                        static_cast<uint16_t>((pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
-                    for (uint16_t idx = 0; idx < item_count; ++idx)
-                    {
-                        if (items[idx].offset == offset && !items[idx].isDeleted())
-                        {
-                            tuple_size = items[idx].length;
-                            break;
-                        }
-                    }
-                    if (tuple_size == 0)
-                    {
-                        tuple_size = sizeof(TupleHeader);
-                    }
-                }
-
-                if (tuple_size > page_size_)
+                if (length > page_size_)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                       "Visible tuple size invalid on cross-page chain");
                     return Status::PAGE_CORRUPT;
                 }
 
-                cross_page_buffer_.resize(tuple_size);
-                std::memcpy(cross_page_buffer_.data(), current_page_data + offset, tuple_size);
+                cross_page_buffer_.resize(length);
+                std::memcpy(cross_page_buffer_.data(), current_page_data + offset, length);
 
                 if (data_out != nullptr)
                 {
@@ -1666,7 +1637,7 @@ namespace scratchbird::core
                 }
                 if (size_out != nullptr)
                 {
-                    *size_out = tuple_size;
+                    *size_out = length;
                 }
 
                 return Status::OK;
@@ -1679,22 +1650,20 @@ namespace scratchbird::core
             // Follow back version pointer BACKWARD to older version.
             if (tuple_hdr->hasBackVersion())
             {
-                // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
                 TID back_tid = tuple_hdr->getBackVersionTID();
-                uint64_t back_page_num = getPageNumber(back_tid);
-                uint32_t back_offset = back_tid.slot;
-
-                if (back_page_num != static_cast<uint64_t>(current_page_id))
+                if (back_tid.gpid == INVALID_GPID)
                 {
-                    Status switch_status = switchToPage(static_cast<uint32_t>(back_page_num));
-                    if (switch_status != Status::OK)
-                    {
-                        return switch_status;
-                    }
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Invalid back version target");
+                    return Status::PAGE_CORRUPT;
                 }
 
-                current_offset = back_offset;
-                is_back_version = true; // Switch to offset-based access
+                Status switch_status = switchToPage(back_tid.gpid);
+                if (switch_status != Status::OK)
+                {
+                    return switch_status;
+                }
+                current_item_id = back_tid.slot;
 
                 chain_length++;
             }

@@ -336,10 +336,9 @@ namespace scratchbird::core
                            uint64_t back_version_gpid, uint16_t back_version_slot,
                            ErrorContext *ctx = nullptr) -> Status;
 
-        // Find visible version of tuple by traversing version chain
-        // FIREBIRD MGA: Uses TIP-based visibility, NOT snapshots
-        // NOTE: Currently only supports same-page back versions (Alpha limitation)
-        // Cross-page back versions will be added in future release
+        // Find visible version of tuple by traversing version chains.
+        // FIREBIRD MGA: Uses TIP-based visibility, NOT snapshots.
+        // Version links are canonical TIDs (page + slot) for both same-page and cross-page chains.
         auto findVisibleVersion(uint16_t item_id, uint64_t current_xid, const uint8_t **data_out,
                                 uint32_t *size_out,
                                 ErrorContext *ctx = nullptr) -> Status;

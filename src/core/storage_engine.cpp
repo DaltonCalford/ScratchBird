@@ -45,6 +45,7 @@
 #include <cctype>
 #include <cstring>
 #include <algorithm>
+#include <limits>
 #include <new>
 
 namespace scratchbird::core
@@ -55,6 +56,78 @@ namespace scratchbird::core
         constexpr uint32_t READAHEAD_MAX_PAGES = 32;
         constexpr uint32_t READAHEAD_SEQ_THRESHOLD = 3;
         constexpr uint32_t READAHEAD_GROWTH_FACTOR = 2;
+        constexpr uint32_t BACK_VERSION_EXTENT_PAGES = 32;
+        constexpr uint32_t BACK_VERSION_LOCALITY_BUCKET_PAGES = 128;
+
+        struct BackVersionPlacementCandidate
+        {
+            uint32_t page_id = 0;
+            uint8_t tier = std::numeric_limits<uint8_t>::max();
+            uint32_t distance = std::numeric_limits<uint32_t>::max();
+            bool valid = false;
+        };
+
+        [[nodiscard]] auto sameBackVersionExtent(uint32_t lhs, uint32_t rhs) -> bool
+        {
+            return (lhs / BACK_VERSION_EXTENT_PAGES) == (rhs / BACK_VERSION_EXTENT_PAGES);
+        }
+
+        [[nodiscard]] auto sameBackVersionBucket(uint32_t lhs, uint32_t rhs) -> bool
+        {
+            return (lhs / BACK_VERSION_LOCALITY_BUCKET_PAGES) ==
+                   (rhs / BACK_VERSION_LOCALITY_BUCKET_PAGES);
+        }
+
+        [[nodiscard]] auto scoreBackVersionPlacementCandidate(uint32_t primary_page_id,
+                                                              uint32_t candidate_page_id)
+            -> BackVersionPlacementCandidate
+        {
+            BackVersionPlacementCandidate candidate;
+            candidate.page_id = candidate_page_id;
+            candidate.distance = (candidate_page_id > primary_page_id)
+                                     ? (candidate_page_id - primary_page_id)
+                                     : (primary_page_id - candidate_page_id);
+
+            if (sameBackVersionExtent(primary_page_id, candidate_page_id) &&
+                sameBackVersionBucket(primary_page_id, candidate_page_id))
+            {
+                candidate.tier = 0;
+            }
+            else if (sameBackVersionBucket(primary_page_id, candidate_page_id))
+            {
+                candidate.tier = 1;
+            }
+            else
+            {
+                candidate.tier = 2;
+            }
+
+            candidate.valid = true;
+            return candidate;
+        }
+
+        [[nodiscard]] auto isBetterBackVersionPlacement(
+            const BackVersionPlacementCandidate &candidate,
+            const BackVersionPlacementCandidate &best) -> bool
+        {
+            if (!candidate.valid)
+            {
+                return false;
+            }
+            if (!best.valid)
+            {
+                return true;
+            }
+            if (candidate.tier != best.tier)
+            {
+                return candidate.tier < best.tier;
+            }
+            if (candidate.distance != best.distance)
+            {
+                return candidate.distance < best.distance;
+            }
+            return candidate.page_id < best.page_id;
+        }
     }
 
     StorageEngine::StorageEngine(Database *db)
@@ -1753,6 +1826,109 @@ namespace scratchbird::core
         return allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
     }
 
+    auto StorageEngine::findBackVersionPlacementPage(const ID &table_id, uint32_t tuple_size,
+                                                     uint32_t primary_page_id,
+                                                     uint16_t tablespace_id,
+                                                     uint32_t *page_id_out,
+                                                     ErrorContext *ctx) -> Status
+    {
+        if (page_id_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Back version placement output cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        BackVersionPlacementCandidate best_candidate;
+
+        auto considerPinnedPage = [&](uint32_t candidate_page_id, uint8_t *page_data) -> void
+        {
+            if (candidate_page_id == primary_page_id || page_data == nullptr)
+            {
+                return;
+            }
+
+            auto *hdr = reinterpret_cast<PageHeader *>(page_data);
+            if (hdr->page_type != PAGE_TYPE_HEAP)
+            {
+                return;
+            }
+            if (!isZeroId(table_id) && !pageTableIdMatches(hdr, table_id))
+            {
+                return;
+            }
+
+            HeapPage heap_page(page_data, db_->page_size());
+            if (!heap_page.hasFreeSpace(tuple_size))
+            {
+                return;
+            }
+
+            BackVersionPlacementCandidate candidate =
+                scoreBackVersionPlacementCandidate(primary_page_id, candidate_page_id);
+            if (isBetterBackVersionPlacement(candidate, best_candidate))
+            {
+                best_candidate = candidate;
+            }
+        };
+
+        if (tablespace_id == PRIMARY_TABLESPACE_ID)
+        {
+            uint32_t total_pages = page_manager_->totalPages();
+            uint32_t heap_start =
+                Config::getInstance().getUInt("storage", "heap_scan_start_page", 7);
+            for (uint32_t page_id = heap_start; page_id < total_pages; ++page_id)
+            {
+                void *page_buffer = nullptr;
+                Status status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    continue;
+                }
+
+                considerPinnedPage(page_id, static_cast<uint8_t *>(page_buffer));
+                buffer_pool_->unpinPage(page_id, false, ctx);
+            }
+        }
+        else
+        {
+            std::vector<GPID> allocated_pages;
+            Status status = page_manager_->getAllocatedPages(tablespace_id, allocated_pages, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            for (const auto &candidate_gpid : allocated_pages)
+            {
+                uint32_t candidate_page_id =
+                    static_cast<uint32_t>(getPageNumber(candidate_gpid));
+                if (candidate_page_id < 2)
+                {
+                    continue;
+                }
+
+                void *page_buffer = nullptr;
+                status = buffer_pool_->pinPageGlobal(candidate_gpid, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    continue;
+                }
+
+                considerPinnedPage(candidate_page_id, static_cast<uint8_t *>(page_buffer));
+                buffer_pool_->unpinPageGlobal(candidate_gpid, false, ctx);
+            }
+        }
+
+        if (best_candidate.valid)
+        {
+            *page_id_out = best_candidate.page_id;
+            return Status::OK;
+        }
+
+        return allocateHeapPage(table_id, tablespace_id, page_id_out, ctx);
+    }
+
     auto StorageEngine::allocateHeapPage(const ID &table_id, uint16_t tablespace_id,
                                          uint32_t *page_id_out, ErrorContext *ctx) -> Status
     {
@@ -2669,8 +2845,8 @@ namespace scratchbird::core
 
             // Step 2: Allocate page for BACK version (OLD data)
             uint32_t back_version_page_id;
-            status = findFreePage(table_id, old_length, &back_version_page_id,
-                                  tablespace_id, ctx);
+            status = findBackVersionPlacementPage(table_id, old_length, page_id,
+                                                  tablespace_id, &back_version_page_id, ctx);
             if (status != Status::OK)
             {
                 cleanupToastedOverwrite();

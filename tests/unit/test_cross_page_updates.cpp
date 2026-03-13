@@ -168,31 +168,48 @@ protected:
         }
 
         const uint32_t min_total = sizeof(TupleHeader) + 8;
-        // Keep updates non-TOASTed and, when possible, in-place-overwrite-safe
-        // (new tuple size <= old tuple size) so cross-page failures isolate to
-        // back-version placement, not primary growth.
-        uint32_t max_total = old_tuple_size;
-        if (max_total > 240)
+        uint32_t chosen_total = min_total;
+
+        // Prefer a tuple that still fits the overwrite path but is large enough
+        // that same-page update cannot keep both the new head and the back version.
+        if (free_space > 8)
         {
-            max_total = 240;
-        }
-        if (max_total < min_total)
-        {
-            max_total = min_total;
+            uint32_t candidate_total = free_space - 8;
+            if (candidate_total > 240)
+            {
+                candidate_total = 240;
+            }
+            if (candidate_total > old_tuple_size && candidate_total >= min_total)
+            {
+                chosen_total = candidate_total;
+            }
         }
 
-        // Force cross-page if possible: same-page algorithm requires
-        // (new_tuple + old_tuple) > free_space to return PAGE_FULL.
-        uint32_t cross_page_min_total = min_total;
-        if (free_space > old_tuple_size)
+        // Fallback for tight pages: choose the smallest tuple that pushes the
+        // same-page allocator over budget while staying non-TOASTed.
+        if (chosen_total == min_total)
         {
-            cross_page_min_total = free_space - old_tuple_size + 1;
-        }
+            uint32_t max_total = (free_space > 8) ? (free_space - 8) : free_space;
+            if (max_total > 240)
+            {
+                max_total = 240;
+            }
+            if (max_total < min_total)
+            {
+                max_total = min_total;
+            }
 
-        uint32_t chosen_total = max_total;
-        if (cross_page_min_total <= max_total)
-        {
-            chosen_total = cross_page_min_total;
+            uint32_t cross_page_min_total = min_total;
+            if (free_space > old_tuple_size)
+            {
+                cross_page_min_total = free_space - old_tuple_size + 1;
+            }
+
+            chosen_total = max_total;
+            if (cross_page_min_total <= max_total)
+            {
+                chosen_total = cross_page_min_total;
+            }
         }
 
         uint32_t payload = chosen_total - sizeof(TupleHeader);
@@ -262,6 +279,60 @@ TEST_F(CrossPageUpdateTest, BasicCrossPageUpdate)
     const TID back_tid = hdr->getBackVersionTID();
     EXPECT_NE(static_cast<uint32_t>(getPageNumber(back_tid.gpid)), page_id)
         << "Back version should be placed on a different page";
+}
+
+/**
+ * Test 1b: Back-version placement prefers the closest same-extent candidate.
+ */
+TEST_F(CrossPageUpdateTest, CrossPageBackVersionPrefersSameExtentCandidate)
+{
+    ErrorContext ctx;
+
+    auto small_tuple = createTupleData(120, 0x7A);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    Status status = storage_engine_->insertTuple(test_table_id_, small_tuple.data(),
+                                                 small_tuple.size(), &page_id, &item_id, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to insert initial tuple: " << ctx.message;
+
+    fillPageAlmostFull(page_id, &ctx);
+
+    auto spill_tuple = createTupleData(120, 0x4C);
+    uint32_t candidate_page_id = page_id;
+    uint16_t candidate_item_id = 0;
+    while (candidate_page_id == page_id)
+    {
+        status = storage_engine_->insertTuple(test_table_id_, spill_tuple.data(),
+                                             spill_tuple.size(), &candidate_page_id,
+                                             &candidate_item_id, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Failed to allocate spill candidate page: "
+                                      << ctx.message;
+    }
+
+    ASSERT_EQ(page_id / 32, candidate_page_id / 32)
+        << "Test setup expected a same-extent spill page";
+
+    auto updated_tuple = createCrossPageUpdateTuple(page_id, item_id, 0x5D, &ctx);
+    uint32_t updated_page_id = 0;
+    uint16_t updated_item_id = 0;
+    status = storage_engine_->updateTuple(test_table_id_, page_id, item_id,
+                                          updated_tuple.data(), updated_tuple.size(),
+                                          &updated_page_id, &updated_item_id, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Cross-page update failed: " << ctx.message;
+    ASSERT_EQ(updated_page_id, page_id);
+    ASSERT_EQ(updated_item_id, item_id);
+
+    Tuple tuple_out;
+    status = storage_engine_->getTuple(updated_page_id, updated_item_id, &tuple_out, &ctx);
+    ASSERT_EQ(status, Status::OK) << "Failed to read updated tuple: " << ctx.message;
+
+    const auto *hdr = reinterpret_cast<const TupleHeader *>(tuple_out.data);
+    ASSERT_TRUE(hdr->hasBackVersion());
+    const TID back_tid = hdr->getBackVersionTID();
+    const uint32_t back_page_id = static_cast<uint32_t>(getPageNumber(back_tid.gpid));
+
+    EXPECT_EQ(back_page_id, candidate_page_id)
+        << "Back-version placement should prefer the closest same-extent candidate";
 }
 
 /**

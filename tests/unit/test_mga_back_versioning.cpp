@@ -24,7 +24,7 @@ using namespace scratchbird::core;
  *
  * Tests Phases 1-3 of MGA implementation:
  * - Phase 1: Data structure changes (back_version_gpid/slot, HEAP_CHAIN flag)
- * - Phase 2: updateTuple() rewrite with offset-based back versioning
+ * - Phase 2: updateTuple() rewrite with canonical slot-based back versioning
  * - Phase 3: findVisibleVersion() rewrite with N2O traversal
  *
  * Alpha Limitations:
@@ -110,7 +110,7 @@ protected:
  * - Update tuple (new version overwrites primary location)
  * - Verify:
  *   ✅ Item pointer unchanged (same item_id)
- *   ✅ back_version_gpid/slot points to old version (offset-based slot)
+ *   ✅ back_version_gpid/slot points to old version (canonical page+slot)
  *   ✅ Old version has HEAP_CHAIN flag
  *   ✅ New version at primary location
  */
@@ -158,18 +158,21 @@ TEST_F(MGABackVersioningTest, BasicUpdate)
         << "back_version_gpid should point to old version";
     EXPECT_TRUE(new_hdr->hasBackVersion()) << "New version should have back version pointer";
 
-    // Extract back version location (offset stored in slot field for same-page)
+    // Extract back version location (canonical same-page slot)
     uint32_t back_page_id = static_cast<uint32_t>(getPageNumber(new_hdr->back_version_gpid));
-    uint32_t back_offset = static_cast<uint32_t>(new_hdr->back_version_slot);
+    uint16_t back_slot = new_hdr->back_version_slot;
 
     EXPECT_EQ(back_page_id, 1) << "Back version should be on same page (Alpha limitation)";
-    EXPECT_GT(back_offset, 0) << "Back version offset should be non-zero";
+    EXPECT_GT(back_slot, 0) << "Back version slot should be non-zero";
 
     // Verify: Old version has HEAP_CHAIN flag (marks it as a back version)
-    const uint8_t *back_version_data = page_buffer + back_offset;
+    const uint8_t *back_version_data = nullptr;
+    uint32_t back_version_size = 0;
+    ASSERT_EQ(heap_page.getTuple(back_slot, &back_version_data, &back_version_size, &ctx),
+              Status::OK);
     const TupleHeader *back_hdr = reinterpret_cast<const TupleHeader *>(back_version_data);
     EXPECT_TRUE(back_hdr->infomask & TupleHeader::HEAP_CHAIN) << "Old version should have HEAP_CHAIN flag";
-    EXPECT_EQ(extractTupleData(back_version_data, tuple_v1.size()), "Original Data V1");
+    EXPECT_EQ(extractTupleData(back_version_data, back_version_size), "Original Data V1");
 
     delete[] page_buffer;
 }
@@ -241,18 +244,16 @@ TEST_F(MGABackVersioningTest, VersionChainTraversal)
     // Follow back version chain
     while (current_hdr->hasBackVersion())
     {
-        uint32_t back_offset = static_cast<uint32_t>(current_hdr->back_version_slot);
-
-        const uint8_t *back_data = page_buffer + back_offset;
+        const uint8_t *back_data = nullptr;
+        uint32_t back_size = 0;
+        ASSERT_EQ(heap_page.getTuple(current_hdr->back_version_slot, &back_data, &back_size, &ctx),
+                  Status::OK);
         current_hdr = reinterpret_cast<const TupleHeader *>(back_data);
 
         // Verify HEAP_CHAIN flag on back versions
         EXPECT_TRUE(current_hdr->infomask & TupleHeader::HEAP_CHAIN)
             << "Back version should have HEAP_CHAIN flag";
 
-        // Extract data size from TupleHeader (we need to calculate it)
-        // For simplicity, we know the size pattern
-        uint32_t back_size = tuple_v1.size(); // All versions same size in this test
         actual_chain.push_back(extractTupleData(back_data, back_size));
     }
 
@@ -373,15 +374,16 @@ TEST_F(MGABackVersioningTest, CycleDetection)
     ASSERT_EQ(heap_page.getTuple(item_id, &second_data, &second_size, &ctx), Status::OK);
 
     const TupleHeader *second_hdr = reinterpret_cast<const TupleHeader *>(second_data);
-    uint32_t v1_offset = static_cast<uint32_t>(second_hdr->back_version_slot);
+    uint16_t v1_slot = second_hdr->back_version_slot;
 
-    // Corrupt V1 to point back to VersionTwo's offset
-    uint32_t second_offset = static_cast<uint32_t>(
-        reinterpret_cast<const uint8_t *>(second_data) - page_buffer);
+    // Corrupt V1 to point back to VersionTwo's slot
+    const uint8_t *v1_data = nullptr;
+    uint32_t v1_size = 0;
+    ASSERT_EQ(heap_page.getTuple(v1_slot, &v1_data, &v1_size, &ctx), Status::OK);
 
-    TupleHeader *v1_hdr = reinterpret_cast<TupleHeader *>(page_buffer + v1_offset);
+    auto *v1_hdr = reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(v1_data));
     v1_hdr->back_version_gpid = second_hdr->back_version_gpid;
-    v1_hdr->back_version_slot = static_cast<uint16_t>(second_offset);
+    v1_hdr->back_version_slot = item_id;
 
     // Try to find visible version - should detect cycle
     const uint8_t *visible_data;

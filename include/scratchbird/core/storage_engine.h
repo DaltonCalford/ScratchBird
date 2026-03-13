@@ -213,6 +213,11 @@ namespace scratchbird::core
         auto findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,
                           uint16_t tablespace_id, ErrorContext *ctx) -> Status;
 
+        // Find a locality-preserving page for a back version created during MGA update.
+        auto findBackVersionPlacementPage(const ID &table_id, uint32_t tuple_size,
+                                          uint32_t primary_page_id, uint16_t tablespace_id,
+                                          uint32_t *page_id_out, ErrorContext *ctx) -> Status;
+
         // Allocate a new heap page for a table
         auto allocateHeapPage(const ID &table_id, uint16_t tablespace_id, uint32_t *page_id_out,
                               ErrorContext *ctx) -> Status;

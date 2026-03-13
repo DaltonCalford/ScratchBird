@@ -137,7 +137,9 @@ TEST_F(HeapRecordContractTest, UpdatePreservesRowUuidAcrossVersionChain)
 
     ASSERT_NE(v2_hdr->back_version_gpid, INVALID_GPID);
     ASSERT_NE(v2_hdr->back_version_slot, 0u);
-    const uint8_t *back_ptr = page_buffer_.data() + v2_hdr->back_version_slot;
+    const uint8_t *back_ptr = nullptr;
+    uint32_t back_size = 0;
+    ASSERT_EQ(page.getTuple(v2_hdr->back_version_slot, &back_ptr, &back_size, &ctx), Status::OK);
     const auto *back_hdr = reinterpret_cast<const TupleHeader *>(back_ptr);
     EXPECT_EQ(back_hdr->row_uuid, original_row_uuid);
     EXPECT_TRUE(back_hdr->hasRecordFlag(TupleHeader::RHD_CHAINED));
