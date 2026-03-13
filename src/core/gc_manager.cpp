@@ -306,6 +306,9 @@ namespace scratchbird::core
 
         stats.pages_scanned++;
         std::vector<uint16_t> dead_items;
+        uint32_t reclaimable_bytes = 0;
+        uint16_t chain_depth_hint = 0;
+        uint64_t oldest_interesting_txid = 0;
         const uint16_t item_count = heap.getItemCount();
         for (uint16_t item_id = 0; item_id < item_count; ++item_id)
         {
@@ -318,12 +321,41 @@ namespace scratchbird::core
             }
 
             ++stats.tuples_scanned;
+            const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+            if (tuple_hdr->hasBackVersion())
+            {
+                ++chain_depth_hint;
+            }
+            if (tuple_hdr->xmin != 0 &&
+                (oldest_interesting_txid == 0 || tuple_hdr->xmin < oldest_interesting_txid))
+            {
+                oldest_interesting_txid = tuple_hdr->xmin;
+            }
+            if (tuple_hdr->xmax != 0 &&
+                (oldest_interesting_txid == 0 || tuple_hdr->xmax < oldest_interesting_txid))
+            {
+                oldest_interesting_txid = tuple_hdr->xmax;
+            }
             if (isTupleDead(tuple_data, horizon))
             {
                 dead_items.push_back(item_id);
+                reclaimable_bytes += tuple_size;
                 ++stats.dead_tuples_found;
             }
         }
+
+        BufferPool::MgaFrameHints hints{};
+        hints.page_class = !dead_items.empty()
+                               ? BufferPool::MgaPageClass::GC_CANDIDATE
+                               : (chain_depth_hint >= 4 ? BufferPool::MgaPageClass::CHAIN_HEAVY
+                                                        : BufferPool::MgaPageClass::VERSION_ROOT);
+        hints.oldest_interesting_txid = oldest_interesting_txid;
+        hints.prune_safe_horizon_hint = horizon;
+        hints.dead_version_bytes = reclaimable_bytes;
+        hints.chain_depth_hint = chain_depth_hint;
+        (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
+                                                             hints,
+                                                             nullptr);
 
         db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
 
@@ -420,6 +452,9 @@ namespace scratchbird::core
                 continue;
             }
             stats->pages_scanned++;
+            uint32_t reclaimable_bytes = 0;
+            uint16_t chain_depth_hint = 0;
+            uint64_t oldest_interesting_txid = 0;
 
             // Scan all tuples on page
             uint16_t item_count = heap.getItemCount();
@@ -434,6 +469,21 @@ namespace scratchbird::core
                 }
 
                 stats->tuples_scanned++;
+                const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+                if (tuple_hdr->hasBackVersion())
+                {
+                    ++chain_depth_hint;
+                }
+                if (tuple_hdr->xmin != 0 &&
+                    (oldest_interesting_txid == 0 || tuple_hdr->xmin < oldest_interesting_txid))
+                {
+                    oldest_interesting_txid = tuple_hdr->xmin;
+                }
+                if (tuple_hdr->xmax != 0 &&
+                    (oldest_interesting_txid == 0 || tuple_hdr->xmax < oldest_interesting_txid))
+                {
+                    oldest_interesting_txid = tuple_hdr->xmax;
+                }
 
                 // Check if dead
                 if (isTupleDead(tuple_data, horizon))
@@ -442,9 +492,24 @@ namespace scratchbird::core
                     uint64_t tid = (static_cast<uint64_t>(page_id) << 32) |
                                    (static_cast<uint64_t>(item_id) << 16);
                     dead_tids_out->push_back(tid);
+                    reclaimable_bytes += tuple_size;
                     stats->dead_tuples_found++;
                 }
             }
+
+            BufferPool::MgaFrameHints hints{};
+            hints.page_class = (reclaimable_bytes > 0)
+                                   ? BufferPool::MgaPageClass::GC_CANDIDATE
+                                   : (chain_depth_hint >= 4
+                                          ? BufferPool::MgaPageClass::CHAIN_HEAVY
+                                          : BufferPool::MgaPageClass::VERSION_ROOT);
+            hints.oldest_interesting_txid = oldest_interesting_txid;
+            hints.prune_safe_horizon_hint = horizon;
+            hints.dead_version_bytes = reclaimable_bytes;
+            hints.chain_depth_hint = chain_depth_hint;
+            (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
+                                                                 hints,
+                                                                 nullptr);
 
             db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
         }
@@ -479,6 +544,7 @@ namespace scratchbird::core
 
         // Scan all tuples looking for reclaimable historical versions.
         uint16_t item_count = heap.getItemCount();
+        uint16_t chain_depth_hint = 0;
         for (uint16_t item_id = 0; item_id < item_count; ++item_id)
         {
             const uint8_t *tuple_data;
@@ -489,12 +555,27 @@ namespace scratchbird::core
                 continue;
             }
 
+            const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+            if (tuple_hdr->hasBackVersion())
+            {
+                ++chain_depth_hint;
+            }
+
             // Check if this version is prunable
             if (isVersionPrunable(tuple_data, horizon))
             {
                 stats->version_chains_pruned++;
             }
         }
+
+        BufferPool::MgaFrameHints hints{};
+        hints.page_class = (chain_depth_hint >= 4) ? BufferPool::MgaPageClass::CHAIN_HEAVY
+                                                   : BufferPool::MgaPageClass::VERSION_ROOT;
+        hints.prune_safe_horizon_hint = horizon;
+        hints.chain_depth_hint = chain_depth_hint;
+        (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
+                                                             hints,
+                                                             nullptr);
 
         db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
         return Status::OK;

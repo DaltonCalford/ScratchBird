@@ -10,6 +10,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
+#include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/vnext_metrics_event_model.h"
 #include "scratchbird/core/debug.h"
@@ -43,6 +44,28 @@ namespace scratchbird::core
                     return "tablespace";
             }
             return "unknown";
+        }
+
+        const char* mgaPageClassToString(BufferPool::MgaPageClass page_class)
+        {
+            switch (page_class)
+            {
+                case BufferPool::MgaPageClass::Generic:
+                    return "GENERIC";
+                case BufferPool::MgaPageClass::TX_STATE:
+                    return "TX_STATE";
+                case BufferPool::MgaPageClass::VERSION_ROOT:
+                    return "VERSION_ROOT";
+                case BufferPool::MgaPageClass::CHAIN_HEAVY:
+                    return "CHAIN_HEAVY";
+                case BufferPool::MgaPageClass::GC_CANDIDATE:
+                    return "GC_CANDIDATE";
+                case BufferPool::MgaPageClass::SCAN_PROBATION:
+                    return "SCAN_PROBATION";
+                case BufferPool::MgaPageClass::INDEX_CHURN:
+                    return "INDEX_CHURN";
+            }
+            return "GENERIC";
         }
     }
 
@@ -99,6 +122,16 @@ namespace scratchbird::core
             // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
             frames_[i].pin_count.store(0, std::memory_order_relaxed);
             frames_[i].is_dirty.store(false, std::memory_order_relaxed);
+            frames_[i].usage_count.store(0, std::memory_order_relaxed);
+            frames_[i].mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
+                                            std::memory_order_relaxed);
+            frames_[i].oldest_interesting_txid.store(0, std::memory_order_relaxed);
+            frames_[i].prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+            frames_[i].dead_version_bytes.store(0, std::memory_order_relaxed);
+            frames_[i].chain_depth_hint.store(0, std::memory_order_relaxed);
+            frames_[i].last_gc_touch_generation.store(0, std::memory_order_relaxed);
+            frames_[i].scan_probation_generation.store(0, std::memory_order_relaxed);
+            frames_[i].commit_fence_member.store(false, std::memory_order_relaxed);
 
             // Add to LRU list (all frames start as free)
             lru_list_.push_back(i);
@@ -223,6 +256,301 @@ namespace scratchbird::core
                      static_cast<unsigned long>(misses));
     }
 
+    auto BufferPool::isIndexLikePageType(uint16_t page_type) -> bool
+    {
+        return page_type >= PAGE_TYPE_BTREE_META && page_type < PAGE_TYPE_COLUMNSTORE_META;
+    }
+
+    auto BufferPool::isVersionRootPageType(uint16_t page_type) -> bool
+    {
+        return page_type == PAGE_TYPE_HEAP || page_type == PAGE_TYPE_TEMP_HEAP ||
+               page_type == PAGE_TYPE_DOC_HEAP;
+    }
+
+    auto BufferPool::classifyPageType(const uint8_t *buffer,
+                                      uint32_t page_size,
+                                      AccessStrategy strategy) -> MgaPageClass
+    {
+        if (strategy == AccessStrategy::Sequential || strategy == AccessStrategy::Vacuum)
+        {
+            return MgaPageClass::SCAN_PROBATION;
+        }
+
+        if (buffer == nullptr || page_size < sizeof(PageHeader))
+        {
+            return MgaPageClass::Generic;
+        }
+
+        const auto *header = reinterpret_cast<const PageHeader *>(buffer);
+        switch (header->page_type)
+        {
+            case PAGE_TYPE_DATABASE_HEADER:
+            case PAGE_TYPE_SYSTEM_STATE:
+            case PAGE_TYPE_TRANSACTION_MAP:
+                return MgaPageClass::TX_STATE;
+            default:
+                break;
+        }
+
+        if (isVersionRootPageType(header->page_type))
+        {
+            return MgaPageClass::VERSION_ROOT;
+        }
+        if (isIndexLikePageType(header->page_type))
+        {
+            return MgaPageClass::INDEX_CHURN;
+        }
+        return MgaPageClass::Generic;
+    }
+
+    auto BufferPool::evictionRankForClass(MgaPageClass page_class) -> uint32_t
+    {
+        switch (page_class)
+        {
+            case MgaPageClass::SCAN_PROBATION:
+                return 0;
+            case MgaPageClass::Generic:
+                return 1;
+            case MgaPageClass::GC_CANDIDATE:
+                return 2;
+            case MgaPageClass::VERSION_ROOT:
+                return 3;
+            case MgaPageClass::INDEX_CHURN:
+                return 4;
+            case MgaPageClass::CHAIN_HEAVY:
+                return 5;
+            case MgaPageClass::TX_STATE:
+                return 6;
+        }
+        return 6;
+    }
+
+    auto BufferPool::isHardProtectedClass(MgaPageClass page_class) -> bool
+    {
+        return page_class == MgaPageClass::TX_STATE;
+    }
+
+    void BufferPool::applyAutomaticMgaClassification(uint32_t frame_index, AccessStrategy strategy)
+    {
+        if (frame_index >= frames_.size())
+        {
+            return;
+        }
+
+        Frame &frame = frames_[frame_index];
+        const MgaPageClass current_class =
+            static_cast<MgaPageClass>(frame.mga_page_class.load(std::memory_order_relaxed));
+        const MgaPageClass detected_class =
+            classifyPageType(frame.data.get(), config_.page_size, strategy);
+
+        if (detected_class == MgaPageClass::SCAN_PROBATION)
+        {
+            frame.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::SCAN_PROBATION),
+                                       std::memory_order_relaxed);
+            frame.scan_probation_generation.store(
+                mga_scan_generation_.fetch_add(1, std::memory_order_relaxed) + 1,
+                std::memory_order_relaxed);
+            return;
+        }
+
+        if (current_class == MgaPageClass::SCAN_PROBATION || current_class == MgaPageClass::Generic ||
+            detected_class == MgaPageClass::TX_STATE)
+        {
+            frame.mga_page_class.store(static_cast<uint8_t>(detected_class),
+                                       std::memory_order_relaxed);
+            if (detected_class != MgaPageClass::SCAN_PROBATION)
+            {
+                frame.scan_probation_generation.store(0, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    void BufferPool::recordMgaEviction(MgaPageClass page_class)
+    {
+        switch (page_class)
+        {
+            case MgaPageClass::TX_STATE:
+                stats_.mga_evictions_tx_state.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::VERSION_ROOT:
+                stats_.mga_evictions_version_root.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::CHAIN_HEAVY:
+                stats_.mga_evictions_chain_heavy.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::GC_CANDIDATE:
+                stats_.mga_evictions_gc_candidate.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::SCAN_PROBATION:
+                stats_.mga_evictions_scan_probation.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::INDEX_CHURN:
+                stats_.mga_evictions_index_churn.fetch_add(1, std::memory_order_relaxed);
+                break;
+            case MgaPageClass::Generic:
+            default:
+                break;
+        }
+    }
+
+    void BufferPool::offerGcCandidate(uint32_t frame_index)
+    {
+        if (frame_index >= frames_.size())
+        {
+            return;
+        }
+
+        const GPID gpid = frames_[frame_index].gpid;
+        if (gpid == INVALID_GPID || db_ == nullptr)
+        {
+            return;
+        }
+
+        auto *gc = db_->garbage_collector();
+        if (gc != nullptr && getTablespaceID(gpid) == PRIMARY_TABLESPACE_ID)
+        {
+            gc->markPageDirty(static_cast<uint32_t>(getPageNumber(gpid)));
+            stats_.mga_gc_handoff_offers.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    auto BufferPool::publishMgaFrameHintsGlobal(GPID gpid,
+                                                const MgaFrameHints &hints,
+                                                ErrorContext *ctx) -> Status
+    {
+        size_t partition_idx = getPartitionIndex(gpid);
+        auto &partition = page_table_partitions_[partition_idx];
+        std::lock_guard<std::mutex> partition_lock(partition.mutex);
+        auto it = partition.table.find(gpid);
+        if (it == partition.table.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Page not in buffer pool");
+            return Status::NOT_FOUND;
+        }
+
+        Frame &frame = frames_[it->second];
+        frame.mga_page_class.store(static_cast<uint8_t>(hints.page_class),
+                                   std::memory_order_relaxed);
+        frame.oldest_interesting_txid.store(hints.oldest_interesting_txid,
+                                            std::memory_order_relaxed);
+        frame.prune_safe_horizon_hint.store(hints.prune_safe_horizon_hint,
+                                            std::memory_order_relaxed);
+        frame.dead_version_bytes.store(hints.dead_version_bytes, std::memory_order_relaxed);
+        frame.chain_depth_hint.store(hints.chain_depth_hint, std::memory_order_relaxed);
+        uint64_t gc_touch = hints.last_gc_touch_generation;
+        if (gc_touch == 0 && (hints.dead_version_bytes > 0 || hints.chain_depth_hint > 0 ||
+                              hints.page_class == MgaPageClass::GC_CANDIDATE ||
+                              hints.page_class == MgaPageClass::CHAIN_HEAVY))
+        {
+            gc_touch = mga_gc_touch_generation_.fetch_add(1, std::memory_order_relaxed) + 1;
+        }
+        frame.last_gc_touch_generation.store(gc_touch, std::memory_order_relaxed);
+        frame.scan_probation_generation.store(hints.scan_probation_generation,
+                                              std::memory_order_relaxed);
+        frame.commit_fence_member.store(hints.commit_fence_member, std::memory_order_relaxed);
+        if (hints.page_class == MgaPageClass::GC_CANDIDATE)
+        {
+            offerGcCandidate(it->second);
+        }
+        return Status::OK;
+    }
+
+    auto BufferPool::getMgaFrameSnapshotGlobal(GPID gpid,
+                                               MgaFrameSnapshot *snapshot_out,
+                                               ErrorContext *ctx) const -> Status
+    {
+        if (snapshot_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "snapshot_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        *snapshot_out = MgaFrameSnapshot{};
+        snapshot_out->gpid = gpid;
+
+        size_t partition_idx = getPartitionIndex(gpid);
+        auto &partition = page_table_partitions_[partition_idx];
+        std::lock_guard<std::mutex> partition_lock(partition.mutex);
+        auto it = partition.table.find(gpid);
+        if (it == partition.table.end())
+        {
+            return Status::OK;
+        }
+
+        const Frame &frame = frames_[it->second];
+        snapshot_out->resident = true;
+        snapshot_out->pin_count = frame.pin_count.load(std::memory_order_relaxed);
+        snapshot_out->is_dirty = frame.is_dirty.load(std::memory_order_relaxed);
+        snapshot_out->page_class = static_cast<MgaPageClass>(
+            frame.mga_page_class.load(std::memory_order_relaxed));
+        snapshot_out->oldest_interesting_txid =
+            frame.oldest_interesting_txid.load(std::memory_order_relaxed);
+        snapshot_out->prune_safe_horizon_hint =
+            frame.prune_safe_horizon_hint.load(std::memory_order_relaxed);
+        snapshot_out->dead_version_bytes =
+            frame.dead_version_bytes.load(std::memory_order_relaxed);
+        snapshot_out->chain_depth_hint =
+            frame.chain_depth_hint.load(std::memory_order_relaxed);
+        snapshot_out->last_gc_touch_generation =
+            frame.last_gc_touch_generation.load(std::memory_order_relaxed);
+        snapshot_out->scan_probation_generation =
+            frame.scan_probation_generation.load(std::memory_order_relaxed);
+        snapshot_out->commit_fence_member =
+            frame.commit_fence_member.load(std::memory_order_relaxed);
+        return Status::OK;
+    }
+
+    void BufferPool::beginCommitFence()
+    {
+        const uint32_t prior_depth = commit_fence_depth_.fetch_add(1, std::memory_order_acq_rel);
+        if (prior_depth != 0)
+        {
+            return;
+        }
+
+        uint64_t backlog = 0;
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (Frame &frame : frames_)
+        {
+            if (frame.gpid == INVALID_GPID)
+            {
+                continue;
+            }
+
+            const MgaPageClass page_class = static_cast<MgaPageClass>(
+                frame.mga_page_class.load(std::memory_order_relaxed));
+            const bool member = frame.is_dirty.load(std::memory_order_relaxed) ||
+                                page_class == MgaPageClass::TX_STATE;
+            frame.commit_fence_member.store(member, std::memory_order_relaxed);
+            if (member)
+            {
+                ++backlog;
+            }
+        }
+        commit_fence_backlog_.store(backlog, std::memory_order_release);
+    }
+
+    void BufferPool::endCommitFence()
+    {
+        const uint32_t prior_depth = commit_fence_depth_.load(std::memory_order_acquire);
+        if (prior_depth == 0)
+        {
+            return;
+        }
+
+        if (commit_fence_depth_.fetch_sub(1, std::memory_order_acq_rel) != 1)
+        {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (Frame &frame : frames_)
+        {
+            frame.commit_fence_member.store(false, std::memory_order_relaxed);
+        }
+        commit_fence_backlog_.store(0, std::memory_order_release);
+    }
+
     // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call pinPageGlobal
     auto BufferPool::pinPage(uint32_t page_id, void **buffer, ErrorContext *ctx,
                              AccessStrategy strategy) -> Status
@@ -278,6 +606,16 @@ namespace scratchbird::core
                     frames_[i].pin_count.store(0, std::memory_order_relaxed);
                     frames_[i].is_dirty.store(false, std::memory_order_relaxed);
                     frames_[i].usage_count.store(0, std::memory_order_relaxed);
+                    frames_[i].mga_page_class.store(
+                        static_cast<uint8_t>(MgaPageClass::Generic),
+                        std::memory_order_relaxed);
+                    frames_[i].oldest_interesting_txid.store(0, std::memory_order_relaxed);
+                    frames_[i].prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+                    frames_[i].dead_version_bytes.store(0, std::memory_order_relaxed);
+                    frames_[i].chain_depth_hint.store(0, std::memory_order_relaxed);
+                    frames_[i].last_gc_touch_generation.store(0, std::memory_order_relaxed);
+                    frames_[i].scan_probation_generation.store(0, std::memory_order_relaxed);
+                    frames_[i].commit_fence_member.store(false, std::memory_order_relaxed);
                     lru_list_.push_back(i);
                 }
 
@@ -319,6 +657,13 @@ namespace scratchbird::core
                 if (current_usage < Frame::MAX_USAGE_COUNT)
                 {
                     frames_[frame_index].usage_count.fetch_add(1, std::memory_order_relaxed);
+                }
+                applyAutomaticMgaClassification(frame_index, effective_strategy);
+                if (static_cast<MgaPageClass>(
+                        frames_[frame_index].mga_page_class.load(std::memory_order_relaxed)) ==
+                    MgaPageClass::CHAIN_HEAVY)
+                {
+                    stats_.mga_chain_heavy_hits.fetch_add(1, std::memory_order_relaxed);
                 }
 
                 *buffer = frames_[frame_index].data.get();
@@ -368,6 +713,13 @@ namespace scratchbird::core
                 if (current_usage < Frame::MAX_USAGE_COUNT)
                 {
                     frames_[frame_index].usage_count.fetch_add(1, std::memory_order_relaxed);
+                }
+                applyAutomaticMgaClassification(frame_index, effective_strategy);
+                if (static_cast<MgaPageClass>(
+                        frames_[frame_index].mga_page_class.load(std::memory_order_relaxed)) ==
+                    MgaPageClass::CHAIN_HEAVY)
+                {
+                    stats_.mga_chain_heavy_hits.fetch_add(1, std::memory_order_relaxed);
                 }
 
                 *buffer = frames_[frame_index].data.get();
@@ -465,6 +817,14 @@ namespace scratchbird::core
         const uint32_t initial_usage =
             (effective_strategy == AccessStrategy::Normal) ? Frame::MAX_USAGE_COUNT : 1;
         frames_[frame_index].usage_count.store(initial_usage, std::memory_order_relaxed);
+        frames_[frame_index].oldest_interesting_txid.store(0, std::memory_order_relaxed);
+        frames_[frame_index].prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+        frames_[frame_index].dead_version_bytes.store(0, std::memory_order_relaxed);
+        frames_[frame_index].chain_depth_hint.store(0, std::memory_order_relaxed);
+        frames_[frame_index].last_gc_touch_generation.store(0, std::memory_order_relaxed);
+        frames_[frame_index].scan_probation_generation.store(0, std::memory_order_relaxed);
+        frames_[frame_index].commit_fence_member.store(false, std::memory_order_relaxed);
+        applyAutomaticMgaClassification(frame_index, effective_strategy);
 
         // P2-1: Insert into partitioned page table
         {
@@ -888,6 +1248,15 @@ namespace scratchbird::core
             frame.is_dirty.store(false, std::memory_order_relaxed);
             frame.pin_count.store(0, std::memory_order_relaxed);
             frame.usage_count.store(0, std::memory_order_relaxed);
+            frame.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
+                                       std::memory_order_relaxed);
+            frame.oldest_interesting_txid.store(0, std::memory_order_relaxed);
+            frame.prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+            frame.dead_version_bytes.store(0, std::memory_order_relaxed);
+            frame.chain_depth_hint.store(0, std::memory_order_relaxed);
+            frame.last_gc_touch_generation.store(0, std::memory_order_relaxed);
+            frame.scan_probation_generation.store(0, std::memory_order_relaxed);
+            frame.commit_fence_member.store(false, std::memory_order_relaxed);
             return Status::OK;
         }
 
@@ -923,12 +1292,29 @@ namespace scratchbird::core
             stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
         }
 
+        const MgaPageClass page_class = static_cast<MgaPageClass>(
+            frame.mga_page_class.load(std::memory_order_relaxed));
+        if (page_class == MgaPageClass::SCAN_PROBATION)
+        {
+            stats_.mga_scan_probation_churn.fetch_add(1, std::memory_order_relaxed);
+        }
+
         partition.table.erase(page_table_it);
         frame.gpid = INVALID_GPID;
         frame.is_dirty.store(false, std::memory_order_relaxed);
         frame.pin_count.store(0, std::memory_order_relaxed);
         frame.usage_count.store(0, std::memory_order_relaxed);
+        frame.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
+                                   std::memory_order_relaxed);
+        frame.oldest_interesting_txid.store(0, std::memory_order_relaxed);
+        frame.prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+        frame.dead_version_bytes.store(0, std::memory_order_relaxed);
+        frame.chain_depth_hint.store(0, std::memory_order_relaxed);
+        frame.last_gc_touch_generation.store(0, std::memory_order_relaxed);
+        frame.scan_probation_generation.store(0, std::memory_order_relaxed);
+        frame.commit_fence_member.store(false, std::memory_order_relaxed);
         stats_.evictions.fetch_add(1, std::memory_order_relaxed);
+        recordMgaEviction(page_class);
         return Status::OK;
     }
 
@@ -971,6 +1357,9 @@ namespace scratchbird::core
             }
 
             uint32_t candidate_frame = UINT32_MAX;
+            uint32_t candidate_rank = UINT32_MAX;
+            bool candidate_dirty = true;
+            uint32_t protected_candidate_frame = UINT32_MAX;
             uint32_t passes = 0;
             uint32_t scanned_in_pass = 0;
 
@@ -1029,30 +1418,70 @@ namespace scratchbird::core
                     continue;
                 }
 
+                const MgaPageClass page_class = static_cast<MgaPageClass>(
+                    frame.mga_page_class.load(std::memory_order_relaxed));
+                const bool commit_fence_member =
+                    frame.commit_fence_member.load(std::memory_order_relaxed);
+
+                if (commit_fence_member || isHardProtectedClass(page_class))
+                {
+                    if (!commit_fence_member && protected_candidate_frame == UINT32_MAX)
+                    {
+                        protected_candidate_frame = current_hand;
+                    }
+                    if (scanned_in_pass >= config_.pool_size)
+                    {
+                        passes++;
+                        scanned_in_pass = 0;
+                    }
+                    continue;
+                }
+
                 // Check usage count
                 // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
                 uint32_t current_usage_count = frame.usage_count.load(std::memory_order_relaxed);
                 if (current_usage_count == 0)
                 {
-                    // Found victim! This page hasn't been accessed recently
-                    // Prefer clean pages for faster eviction (READ ONLY optimization)
-                    if (!frame.is_dirty.load(std::memory_order_acquire))
+                    if (page_class == MgaPageClass::GC_CANDIDATE)
                     {
-                        // Clean page - evict immediately
-                        candidate_frame = current_hand;
-                        break;
+                        offerGcCandidate(current_hand);
                     }
-                    else if (candidate_frame == UINT32_MAX)
+
+                    const bool is_dirty = frame.is_dirty.load(std::memory_order_acquire);
+                    const uint32_t rank = evictionRankForClass(page_class);
+                    if (candidate_frame == UINT32_MAX ||
+                        rank < candidate_rank ||
+                        (rank == candidate_rank && candidate_dirty && !is_dirty))
                     {
-                        // Dirty page - remember as fallback, but keep looking for clean page
                         candidate_frame = current_hand;
+                        candidate_rank = rank;
+                        candidate_dirty = is_dirty;
+                        if (rank == 0 && !is_dirty)
+                        {
+                            break;
+                        }
                     }
                 }
                 else
                 {
-                    // Give page another chance - decrement usage count
-                    // CRITICAL FIX (CRITICAL-1): Use atomic fetch_sub for thread-safe decrement
-                    frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
+                    if (page_class == MgaPageClass::SCAN_PROBATION)
+                    {
+                        frame.usage_count.store(0, std::memory_order_relaxed);
+                    }
+                    else if (page_class == MgaPageClass::CHAIN_HEAVY ||
+                             page_class == MgaPageClass::INDEX_CHURN)
+                    {
+                        if (current_usage_count > 1)
+                        {
+                            frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
+                        }
+                    }
+                    else
+                    {
+                        // Give page another chance - decrement usage count
+                        // CRITICAL FIX (CRITICAL-1): Use atomic fetch_sub for thread-safe decrement
+                        frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
+                    }
                 }
 
                 // Count scanned frames deterministically. This avoids relying on start-hand
@@ -1089,12 +1518,29 @@ namespace scratchbird::core
 
                     // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
                     // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+                    const MgaPageClass page_class = static_cast<MgaPageClass>(
+                        frames_[frame_index].mga_page_class.load(std::memory_order_relaxed));
                     if (frames_[frame_index].pin_count.load(std::memory_order_relaxed) == 0 &&
-                        frames_[frame_index].gpid != INVALID_GPID)
+                        frames_[frame_index].gpid != INVALID_GPID &&
+                        !frames_[frame_index].commit_fence_member.load(std::memory_order_relaxed) &&
+                        !isHardProtectedClass(page_class))
                     {
                         candidate_frame = frame_index;
                         break;
                     }
+                }
+
+                if (candidate_frame == UINT32_MAX && protected_candidate_frame != UINT32_MAX &&
+                    commit_fence_depth_.load(std::memory_order_acquire) == 0)
+                {
+                    candidate_frame = protected_candidate_frame;
+                    stats_.mga_protected_set_collapse_events.fetch_add(
+                        1, std::memory_order_relaxed);
+                    LOG_WARNING(BUFFER,
+                                "MGA protected-set collapse: evicting protected class %s",
+                                mgaPageClassToString(static_cast<MgaPageClass>(
+                                    frames_[candidate_frame].mga_page_class.load(
+                                        std::memory_order_relaxed))));
                 }
             }
 
@@ -1149,6 +1595,12 @@ namespace scratchbird::core
             }
 
             evicted_frame = candidate_frame;
+            const MgaPageClass evicted_page_class = static_cast<MgaPageClass>(
+                frames_[evicted_frame].mga_page_class.load(std::memory_order_relaxed));
+            if (evicted_page_class == MgaPageClass::GC_CANDIDATE)
+            {
+                offerGcCandidate(evicted_frame);
+            }
 
             // Track whether this is a clean or dirty eviction
             bool was_dirty = frames_[evicted_frame].is_dirty.load(std::memory_order_acquire);
@@ -1174,6 +1626,11 @@ namespace scratchbird::core
                 stats_.evictions_clean.fetch_add(1, std::memory_order_relaxed);
             }
 
+            if (evicted_page_class == MgaPageClass::SCAN_PROBATION)
+            {
+                stats_.mga_scan_probation_churn.fetch_add(1, std::memory_order_relaxed);
+            }
+
             // Remove from page table
             partition.table.erase(page_table_it);
 
@@ -1184,9 +1641,19 @@ namespace scratchbird::core
             frames_[evicted_frame].pin_count.store(0, std::memory_order_relaxed);
             // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
             frames_[evicted_frame].usage_count.store(0, std::memory_order_relaxed); // Reset usage count for next page
+            frames_[evicted_frame].mga_page_class.store(
+                static_cast<uint8_t>(MgaPageClass::Generic), std::memory_order_relaxed);
+            frames_[evicted_frame].oldest_interesting_txid.store(0, std::memory_order_relaxed);
+            frames_[evicted_frame].prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+            frames_[evicted_frame].dead_version_bytes.store(0, std::memory_order_relaxed);
+            frames_[evicted_frame].chain_depth_hint.store(0, std::memory_order_relaxed);
+            frames_[evicted_frame].last_gc_touch_generation.store(0, std::memory_order_relaxed);
+            frames_[evicted_frame].scan_probation_generation.store(0, std::memory_order_relaxed);
+            frames_[evicted_frame].commit_fence_member.store(false, std::memory_order_relaxed);
 
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.evictions.fetch_add(1, std::memory_order_relaxed);
+            recordMgaEviction(evicted_page_class);
             return Status::OK;
         }
 
@@ -1536,12 +2003,13 @@ namespace scratchbird::core
 
         uint32_t pages_written = 0;
         uint32_t pages_to_write = 0;
+        double dirty_ratio = 0.0;
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
             // Calculate current dirty ratio
-            double dirty_ratio = calculateDirtyRatio();
+            dirty_ratio = calculateDirtyRatio();
 
             // Determine how many pages to write based on dirty ratio (adaptive algorithm)
             if (dirty_ratio >= config_.dirty_ratio_checkpoint)
@@ -1613,10 +2081,24 @@ namespace scratchbird::core
                 continue;
             }
 
+            const MgaPageClass page_class = static_cast<MgaPageClass>(
+                frame.mga_page_class.load(std::memory_order_relaxed));
+            if (frame.commit_fence_member.load(std::memory_order_relaxed))
+            {
+                continue;
+            }
+            if (page_class == MgaPageClass::SCAN_PROBATION &&
+                dirty_ratio < config_.dirty_ratio_checkpoint)
+            {
+                continue;
+            }
+
             // Prefer pages with lower usage_count (cold pages)
             // This integrates with Clock Sweep eviction algorithm
             // CRITICAL FIX (CRITICAL-1): Use atomic load for thread-safe read
-            if (frame.usage_count.load(std::memory_order_relaxed) > 2 && pages_written < pages_to_write / 2)
+            if (page_class != MgaPageClass::TX_STATE &&
+                frame.usage_count.load(std::memory_order_relaxed) > 2 &&
+                pages_written < pages_to_write / 2)
             {
                 // Skip hot pages in first half of writes (only flush cold pages)
                 continue;

@@ -624,6 +624,49 @@ namespace scratchbird::core
             // Continue with pruning even if collection failed
         }
 
+        uint16_t chain_depth_hint = 0;
+        uint64_t oldest_interesting_txid = 0;
+        for (uint16_t item_id = 0; item_id < heap_page.getItemCount(); ++item_id)
+        {
+            const uint8_t *tuple_data = nullptr;
+            uint32_t tuple_size = 0;
+            if (heap_page.getTuple(item_id, &tuple_data, &tuple_size, ctx) != Status::OK)
+            {
+                continue;
+            }
+
+            const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+            if (tuple_hdr->hasBackVersion())
+            {
+                ++chain_depth_hint;
+            }
+            if (tuple_hdr->xmin != 0 &&
+                (oldest_interesting_txid == 0 || tuple_hdr->xmin < oldest_interesting_txid))
+            {
+                oldest_interesting_txid = tuple_hdr->xmin;
+            }
+            if (tuple_hdr->xmax != 0 &&
+                (oldest_interesting_txid == 0 || tuple_hdr->xmax < oldest_interesting_txid))
+            {
+                oldest_interesting_txid = tuple_hdr->xmax;
+            }
+        }
+
+        BufferPool::MgaFrameHints page_hints{};
+        page_hints.page_class = !dead_tids.empty()
+                                    ? BufferPool::MgaPageClass::GC_CANDIDATE
+                                    : (chain_depth_hint >= 4
+                                           ? BufferPool::MgaPageClass::CHAIN_HEAVY
+                                           : BufferPool::MgaPageClass::VERSION_ROOT);
+        page_hints.oldest_interesting_txid = oldest_interesting_txid;
+        page_hints.prune_safe_horizon_hint = reclaim_horizon;
+        page_hints.dead_version_bytes =
+            static_cast<uint32_t>(std::min<size_t>(dead_tids.size() * sizeof(TID), UINT32_MAX));
+        page_hints.chain_depth_hint = chain_depth_hint;
+        (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
+                                                             page_hints,
+                                                             nullptr);
+
         // Prune garbage tuples and defragment page
         Status prune_status =
             heap_page.prunePage(reclaim_horizon, &tuples_pruned, &space_reclaimed, ctx);

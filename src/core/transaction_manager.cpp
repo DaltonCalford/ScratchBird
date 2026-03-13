@@ -2357,12 +2357,20 @@ namespace scratchbird::core
 
     auto TransactionManager::flushTransactionState(ErrorContext *ctx) -> Status
     {
-        Status status = buffer_pool_->flushAll(ctx);
-        if (status != Status::OK)
+        if (buffer_pool_ != nullptr)
         {
-            return status;
+            buffer_pool_->beginCommitFence();
         }
-        return db_->sync(ctx);
+        Status status = buffer_pool_->flushAll(ctx);
+        if (status == Status::OK)
+        {
+            status = db_->sync(ctx);
+        }
+        if (buffer_pool_ != nullptr)
+        {
+            buffer_pool_->endCommitFence();
+        }
+        return status;
     }
 
     auto TransactionManager::normalizeStartupTipStates(bool clean_shutdown_marker,

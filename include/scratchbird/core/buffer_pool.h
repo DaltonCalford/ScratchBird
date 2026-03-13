@@ -58,6 +58,45 @@ namespace scratchbird::core
             Tablespace
         };
 
+        enum class MgaPageClass : uint8_t
+        {
+            Generic = 0,
+            TX_STATE = 1,
+            VERSION_ROOT = 2,
+            CHAIN_HEAVY = 3,
+            GC_CANDIDATE = 4,
+            SCAN_PROBATION = 5,
+            INDEX_CHURN = 6
+        };
+
+        struct MgaFrameHints
+        {
+            MgaPageClass page_class = MgaPageClass::Generic;
+            uint64_t oldest_interesting_txid = 0;
+            uint64_t prune_safe_horizon_hint = 0;
+            uint32_t dead_version_bytes = 0;
+            uint16_t chain_depth_hint = 0;
+            uint64_t last_gc_touch_generation = 0;
+            uint64_t scan_probation_generation = 0;
+            bool commit_fence_member = false;
+        };
+
+        struct MgaFrameSnapshot
+        {
+            bool resident = false;
+            GPID gpid = INVALID_GPID;
+            MgaPageClass page_class = MgaPageClass::Generic;
+            uint32_t pin_count = 0;
+            bool is_dirty = false;
+            uint64_t oldest_interesting_txid = 0;
+            uint64_t prune_safe_horizon_hint = 0;
+            uint32_t dead_version_bytes = 0;
+            uint16_t chain_depth_hint = 0;
+            uint64_t last_gc_touch_generation = 0;
+            uint64_t scan_probation_generation = 0;
+            bool commit_fence_member = false;
+        };
+
         // Buffer pool configuration
         struct Config
         {
@@ -251,6 +290,17 @@ namespace scratchbird::core
          */
         auto flushTablespace(uint16_t tablespace_id, ErrorContext *ctx = nullptr) -> Status;
 
+        auto publishMgaFrameHintsGlobal(GPID gpid,
+                                        const MgaFrameHints &hints,
+                                        ErrorContext *ctx = nullptr) -> Status;
+
+        auto getMgaFrameSnapshotGlobal(GPID gpid,
+                                       MgaFrameSnapshot *snapshot_out,
+                                       ErrorContext *ctx = nullptr) const -> Status;
+
+        void beginCommitFence();
+        void endCommitFence();
+
         /**
          * Lock a page for exclusive access (must be pinned first)
          * Caller must call unlockPage() when done
@@ -301,6 +351,26 @@ namespace scratchbird::core
             uint64_t checkpoint_flushes = 0;     // Pages flushed during checkpoints
             double dirty_ratio_current = 0.0;    // Current dirty page ratio (0.0-1.0)
             double dirty_ratio_max = 0.0;        // Maximum dirty ratio since last reset
+
+            uint64_t mga_frames_tx_state = 0;
+            uint64_t mga_frames_version_root = 0;
+            uint64_t mga_frames_chain_heavy = 0;
+            uint64_t mga_frames_gc_candidate = 0;
+            uint64_t mga_frames_scan_probation = 0;
+            uint64_t mga_frames_index_churn = 0;
+
+            uint64_t mga_evictions_tx_state = 0;
+            uint64_t mga_evictions_version_root = 0;
+            uint64_t mga_evictions_chain_heavy = 0;
+            uint64_t mga_evictions_gc_candidate = 0;
+            uint64_t mga_evictions_scan_probation = 0;
+            uint64_t mga_evictions_index_churn = 0;
+
+            uint64_t mga_commit_fence_backlog = 0;
+            uint64_t mga_gc_handoff_offers = 0;
+            uint64_t mga_scan_probation_churn = 0;
+            uint64_t mga_chain_heavy_hits = 0;
+            uint64_t mga_protected_set_collapse_events = 0;
         };
 
         auto getStats() const -> StatsSnapshot
@@ -325,6 +395,63 @@ namespace scratchbird::core
             snapshot.checkpoint_flushes = stats_.checkpoint_flushes.load(std::memory_order_relaxed);
             snapshot.dirty_ratio_current = stats_.dirty_ratio_current;
             snapshot.dirty_ratio_max = stats_.dirty_ratio_max;
+
+            snapshot.mga_evictions_tx_state =
+                stats_.mga_evictions_tx_state.load(std::memory_order_relaxed);
+            snapshot.mga_evictions_version_root =
+                stats_.mga_evictions_version_root.load(std::memory_order_relaxed);
+            snapshot.mga_evictions_chain_heavy =
+                stats_.mga_evictions_chain_heavy.load(std::memory_order_relaxed);
+            snapshot.mga_evictions_gc_candidate =
+                stats_.mga_evictions_gc_candidate.load(std::memory_order_relaxed);
+            snapshot.mga_evictions_scan_probation =
+                stats_.mga_evictions_scan_probation.load(std::memory_order_relaxed);
+            snapshot.mga_evictions_index_churn =
+                stats_.mga_evictions_index_churn.load(std::memory_order_relaxed);
+            snapshot.mga_gc_handoff_offers =
+                stats_.mga_gc_handoff_offers.load(std::memory_order_relaxed);
+            snapshot.mga_scan_probation_churn =
+                stats_.mga_scan_probation_churn.load(std::memory_order_relaxed);
+            snapshot.mga_chain_heavy_hits =
+                stats_.mga_chain_heavy_hits.load(std::memory_order_relaxed);
+            snapshot.mga_protected_set_collapse_events =
+                stats_.mga_protected_set_collapse_events.load(std::memory_order_relaxed);
+            snapshot.mga_commit_fence_backlog =
+                commit_fence_backlog_.load(std::memory_order_relaxed);
+
+            for (const auto &frame : frames_)
+            {
+                if (frame.gpid == INVALID_GPID)
+                {
+                    continue;
+                }
+
+                switch (static_cast<MgaPageClass>(
+                    frame.mga_page_class.load(std::memory_order_relaxed)))
+                {
+                    case MgaPageClass::TX_STATE:
+                        snapshot.mga_frames_tx_state++;
+                        break;
+                    case MgaPageClass::VERSION_ROOT:
+                        snapshot.mga_frames_version_root++;
+                        break;
+                    case MgaPageClass::CHAIN_HEAVY:
+                        snapshot.mga_frames_chain_heavy++;
+                        break;
+                    case MgaPageClass::GC_CANDIDATE:
+                        snapshot.mga_frames_gc_candidate++;
+                        break;
+                    case MgaPageClass::SCAN_PROBATION:
+                        snapshot.mga_frames_scan_probation++;
+                        break;
+                    case MgaPageClass::INDEX_CHURN:
+                        snapshot.mga_frames_index_churn++;
+                        break;
+                    case MgaPageClass::Generic:
+                    default:
+                        break;
+                }
+            }
 
             return snapshot;
         }
@@ -352,6 +479,15 @@ namespace scratchbird::core
             std::atomic<uint32_t> pin_count{0};
             std::atomic<bool> is_dirty{false};
             std::atomic<uint32_t> usage_count{0}; // Clock Sweep algorithm: usage counter for eviction
+            std::atomic<uint8_t> mga_page_class{
+                static_cast<uint8_t>(MgaPageClass::Generic)};
+            std::atomic<uint64_t> oldest_interesting_txid{0};
+            std::atomic<uint64_t> prune_safe_horizon_hint{0};
+            std::atomic<uint32_t> dead_version_bytes{0};
+            std::atomic<uint16_t> chain_depth_hint{0};
+            std::atomic<uint64_t> last_gc_touch_generation{0};
+            std::atomic<uint64_t> scan_probation_generation{0};
+            std::atomic<bool> commit_fence_member{false};
             std::unique_ptr<uint8_t[]> data = nullptr;
             std::unique_ptr<std::mutex>
                 content_mutex; // Protects page content from concurrent modifications
@@ -368,6 +504,20 @@ namespace scratchbird::core
                   pin_count(other.pin_count.load(std::memory_order_relaxed)),
                   is_dirty(other.is_dirty.load(std::memory_order_relaxed)),
                   usage_count(other.usage_count.load(std::memory_order_relaxed)),
+                  mga_page_class(other.mga_page_class.load(std::memory_order_relaxed)),
+                  oldest_interesting_txid(
+                      other.oldest_interesting_txid.load(std::memory_order_relaxed)),
+                  prune_safe_horizon_hint(
+                      other.prune_safe_horizon_hint.load(std::memory_order_relaxed)),
+                  dead_version_bytes(
+                      other.dead_version_bytes.load(std::memory_order_relaxed)),
+                  chain_depth_hint(other.chain_depth_hint.load(std::memory_order_relaxed)),
+                  last_gc_touch_generation(
+                      other.last_gc_touch_generation.load(std::memory_order_relaxed)),
+                  scan_probation_generation(
+                      other.scan_probation_generation.load(std::memory_order_relaxed)),
+                  commit_fence_member(
+                      other.commit_fence_member.load(std::memory_order_relaxed)),
                   data(nullptr),
                   content_mutex(std::make_unique<std::mutex>())
             {
@@ -383,6 +533,29 @@ namespace scratchbird::core
                     is_dirty.store(other.is_dirty.load(std::memory_order_relaxed),
                                    std::memory_order_relaxed);
                     usage_count.store(other.usage_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    mga_page_class.store(other.mga_page_class.load(std::memory_order_relaxed),
+                                         std::memory_order_relaxed);
+                    oldest_interesting_txid.store(
+                        other.oldest_interesting_txid.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    prune_safe_horizon_hint.store(
+                        other.prune_safe_horizon_hint.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    dead_version_bytes.store(
+                        other.dead_version_bytes.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    chain_depth_hint.store(
+                        other.chain_depth_hint.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    last_gc_touch_generation.store(
+                        other.last_gc_touch_generation.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    scan_probation_generation.store(
+                        other.scan_probation_generation.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    commit_fence_member.store(
+                        other.commit_fence_member.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
                     // data and content_mutex remain unchanged (unique per frame)
                 }
                 return *this;
@@ -394,6 +567,20 @@ namespace scratchbird::core
                   pin_count(other.pin_count.load(std::memory_order_relaxed)),
                   is_dirty(other.is_dirty.load(std::memory_order_relaxed)),
                   usage_count(other.usage_count.load(std::memory_order_relaxed)),
+                  mga_page_class(other.mga_page_class.load(std::memory_order_relaxed)),
+                  oldest_interesting_txid(
+                      other.oldest_interesting_txid.load(std::memory_order_relaxed)),
+                  prune_safe_horizon_hint(
+                      other.prune_safe_horizon_hint.load(std::memory_order_relaxed)),
+                  dead_version_bytes(
+                      other.dead_version_bytes.load(std::memory_order_relaxed)),
+                  chain_depth_hint(other.chain_depth_hint.load(std::memory_order_relaxed)),
+                  last_gc_touch_generation(
+                      other.last_gc_touch_generation.load(std::memory_order_relaxed)),
+                  scan_probation_generation(
+                      other.scan_probation_generation.load(std::memory_order_relaxed)),
+                  commit_fence_member(
+                      other.commit_fence_member.load(std::memory_order_relaxed)),
                   data(std::move(other.data)),
                   content_mutex(std::move(other.content_mutex))
             {
@@ -401,6 +588,15 @@ namespace scratchbird::core
                 other.pin_count.store(0, std::memory_order_relaxed);
                 other.is_dirty.store(false, std::memory_order_relaxed);
                 other.usage_count.store(0, std::memory_order_relaxed);
+                other.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
+                                           std::memory_order_relaxed);
+                other.oldest_interesting_txid.store(0, std::memory_order_relaxed);
+                other.prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+                other.dead_version_bytes.store(0, std::memory_order_relaxed);
+                other.chain_depth_hint.store(0, std::memory_order_relaxed);
+                other.last_gc_touch_generation.store(0, std::memory_order_relaxed);
+                other.scan_probation_generation.store(0, std::memory_order_relaxed);
+                other.commit_fence_member.store(false, std::memory_order_relaxed);
             }
 
             // Move assignment operator
@@ -411,6 +607,29 @@ namespace scratchbird::core
                     is_dirty.store(other.is_dirty.load(std::memory_order_relaxed),
                                    std::memory_order_relaxed);
                     usage_count.store(other.usage_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                    mga_page_class.store(other.mga_page_class.load(std::memory_order_relaxed),
+                                         std::memory_order_relaxed);
+                    oldest_interesting_txid.store(
+                        other.oldest_interesting_txid.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    prune_safe_horizon_hint.store(
+                        other.prune_safe_horizon_hint.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    dead_version_bytes.store(
+                        other.dead_version_bytes.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    chain_depth_hint.store(
+                        other.chain_depth_hint.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    last_gc_touch_generation.store(
+                        other.last_gc_touch_generation.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    scan_probation_generation.store(
+                        other.scan_probation_generation.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+                    commit_fence_member.store(
+                        other.commit_fence_member.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
                     data = std::move(other.data);
                     content_mutex = std::move(other.content_mutex);
 
@@ -418,6 +637,15 @@ namespace scratchbird::core
                     other.pin_count.store(0, std::memory_order_relaxed);
                     other.is_dirty.store(false, std::memory_order_relaxed);
                     other.usage_count.store(0, std::memory_order_relaxed);
+                    other.mga_page_class.store(static_cast<uint8_t>(MgaPageClass::Generic),
+                                               std::memory_order_relaxed);
+                    other.oldest_interesting_txid.store(0, std::memory_order_relaxed);
+                    other.prune_safe_horizon_hint.store(0, std::memory_order_relaxed);
+                    other.dead_version_bytes.store(0, std::memory_order_relaxed);
+                    other.chain_depth_hint.store(0, std::memory_order_relaxed);
+                    other.last_gc_touch_generation.store(0, std::memory_order_relaxed);
+                    other.scan_probation_generation.store(0, std::memory_order_relaxed);
+                    other.commit_fence_member.store(false, std::memory_order_relaxed);
                 }
                 return *this;
             }
@@ -449,6 +677,16 @@ namespace scratchbird::core
             std::atomic<uint64_t> bgwriter_pages_written{0}; // Total pages written by background writer
             std::atomic<uint64_t> bgwriter_maxwritten{0};    // Times bgwriter hit max_pages limit
             std::atomic<uint64_t> checkpoint_flushes{0};     // Pages flushed during checkpoints
+            std::atomic<uint64_t> mga_evictions_tx_state{0};
+            std::atomic<uint64_t> mga_evictions_version_root{0};
+            std::atomic<uint64_t> mga_evictions_chain_heavy{0};
+            std::atomic<uint64_t> mga_evictions_gc_candidate{0};
+            std::atomic<uint64_t> mga_evictions_scan_probation{0};
+            std::atomic<uint64_t> mga_evictions_index_churn{0};
+            std::atomic<uint64_t> mga_gc_handoff_offers{0};
+            std::atomic<uint64_t> mga_scan_probation_churn{0};
+            std::atomic<uint64_t> mga_chain_heavy_hits{0};
+            std::atomic<uint64_t> mga_protected_set_collapse_events{0};
 
             // Note: dirty_ratio values are read/written only while holding mutex_, so they don't need atomics
             double dirty_ratio_current = 0.0;    // Current dirty page ratio (0.0-1.0)
@@ -514,6 +752,10 @@ namespace scratchbird::core
         std::condition_variable bgwriter_cv_;               // Condition variable for bgwriter wake-up
         std::mutex bgwriter_mutex_;                         // Mutex for background writer coordination
         ScratchBirdMetrics *metrics_{nullptr};              // Telemetry wiring (optional)
+        std::atomic<uint64_t> mga_scan_generation_{0};
+        std::atomic<uint64_t> mga_gc_touch_generation_{0};
+        std::atomic<uint64_t> commit_fence_backlog_{0};
+        std::atomic<uint32_t> commit_fence_depth_{0};
 
         // Helper methods
         auto evictPage(uint32_t &evicted_frame, ErrorContext *ctx) -> Status;
@@ -526,6 +768,16 @@ namespace scratchbird::core
         void initializeRingBuffers();
         RingBuffer* getRingBuffer(AccessStrategy strategy);
         uint32_t nextRingSlot(RingBuffer &ring);
+        static auto classifyPageType(const uint8_t *buffer,
+                                     uint32_t page_size,
+                                     AccessStrategy strategy) -> MgaPageClass;
+        static auto evictionRankForClass(MgaPageClass page_class) -> uint32_t;
+        static auto isHardProtectedClass(MgaPageClass page_class) -> bool;
+        static auto isIndexLikePageType(uint16_t page_type) -> bool;
+        static auto isVersionRootPageType(uint16_t page_type) -> bool;
+        void applyAutomaticMgaClassification(uint32_t frame_index, AccessStrategy strategy);
+        void recordMgaEviction(MgaPageClass page_class);
+        void offerGcCandidate(uint32_t frame_index);
 
         // Background writer methods (Issue 2.20)
         void backgroundWriterMain();                        // Background writer thread main loop
