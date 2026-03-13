@@ -27,6 +27,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/garbage_collector.h"
+#include "scratchbird/core/gc_manager.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/gpid.h"
@@ -357,6 +358,87 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_NullPointer)
 
     EXPECT_EQ(status, Status::INVALID_ARGUMENT);
     EXPECT_NE(ctx.message.find("cannot be null"), std::string::npos);
+
+    releasePage(page_id, true, &ctx);
+}
+
+TEST_F(HeapIndexGCIntegrationTest, RepairVersionChainMetadataNormalizesTupleSelfTid)
+{
+    ErrorContext ctx;
+
+    uint32_t page_id = 0;
+    uint8_t *page_data = nullptr;
+    Status status = allocatePage(page_id, &page_data, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    HeapPage heap_page(page_data, db_.page_size(), nullptr, &db_, ID{});
+    status = heap_page.initialize(page_id, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    uint8_t payload[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    auto tuple_data = buildTuple(payload, sizeof(payload));
+    uint16_t item_id = 0;
+    status = heap_page.insertTuple(tuple_data.data(),
+                                   static_cast<uint32_t>(tuple_data.size()),
+                                   100,
+                                   &item_id,
+                                   &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    const uint8_t *tuple_bytes = nullptr;
+    uint32_t tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(item_id, &tuple_bytes, &tuple_size, &ctx), Status::OK);
+    auto *tuple_hdr = reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(tuple_bytes));
+    tuple_hdr->ctid_slot = static_cast<uint16_t>(item_id + 9);
+
+    uint32_t repairs = 0;
+    bool cleanup_blocked = false;
+    ASSERT_EQ(heap_page.repairVersionChainMetadata(&repairs, &cleanup_blocked, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(repairs, 1u);
+    EXPECT_FALSE(cleanup_blocked);
+    EXPECT_EQ(tuple_hdr->ctid_slot, item_id);
+
+    releasePage(page_id, true, &ctx);
+}
+
+TEST_F(HeapIndexGCIntegrationTest, RepairVersionChainMetadataBlocksInvalidBackVersionTarget)
+{
+    ErrorContext ctx;
+
+    uint32_t page_id = 0;
+    uint8_t *page_data = nullptr;
+    Status status = allocatePage(page_id, &page_data, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    HeapPage heap_page(page_data, db_.page_size(), nullptr, &db_, ID{});
+    status = heap_page.initialize(page_id, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    uint8_t payload[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    auto tuple_data = buildTuple(payload, sizeof(payload));
+    uint16_t item_id = 0;
+    status = heap_page.insertTuple(tuple_data.data(),
+                                   static_cast<uint32_t>(tuple_data.size()),
+                                   100,
+                                   &item_id,
+                                   &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    const uint8_t *tuple_bytes = nullptr;
+    uint32_t tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(item_id, &tuple_bytes, &tuple_size, &ctx), Status::OK);
+    auto *tuple_hdr = reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(tuple_bytes));
+    tuple_hdr->back_version_gpid =
+        makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
+    tuple_hdr->back_version_slot = static_cast<uint16_t>(item_id + 99);
+
+    uint32_t repairs = 0;
+    bool cleanup_blocked = false;
+    EXPECT_EQ(heap_page.repairVersionChainMetadata(&repairs, &cleanup_blocked, &ctx),
+              Status::DATA_CORRUPTED);
+    EXPECT_TRUE(cleanup_blocked);
+    EXPECT_NE(ctx.message.find("GC_CHAIN_REPAIR_REQUIRED"), std::string::npos);
 
     releasePage(page_id, true, &ctx);
 }

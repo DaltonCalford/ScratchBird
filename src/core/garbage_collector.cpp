@@ -507,8 +507,15 @@ namespace scratchbird::core
     uint64_t GarbageCollector::cleanPage(uint32_t page_id, uint64_t *space_reclaimed_out,
                                          ErrorContext *ctx)
     {
-        // Get current OIT from TransactionManager
-        uint64_t oit = txn_manager_->getOldestXid();
+        uint64_t reclaim_horizon = txn_manager_->getOldestSnapshot();
+        if (reclaim_horizon == 0)
+        {
+            reclaim_horizon = txn_manager_->getCurrentXid();
+        }
+        if (reclaim_horizon == 0)
+        {
+            reclaim_horizon = UINT64_MAX;
+        }
 
         // Pin the page through buffer pool
         void *page_buffer;
@@ -552,8 +559,16 @@ namespace scratchbird::core
             return 0;
         }
 
+        const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+            reinterpret_cast<const uint8_t *>(page_buffer) + page_header->page_size - sizeof(HeapPageSpecial));
+        const ID table_id = (special != nullptr) ? special->table_id : ID{};
+
         // Use HeapPage for garbage collection.
-        HeapPage heap_page(reinterpret_cast<uint8_t *>(page_buffer), page_header->page_size);
+        HeapPage heap_page(reinterpret_cast<uint8_t *>(page_buffer),
+                           page_header->page_size,
+                           nullptr,
+                           db_,
+                           table_id);
 
         // Validate heap page boundaries/item pointers before pruning; skip corrupt/incompatible pages.
         Status validate_status = heap_page.validate(ctx);
@@ -574,27 +589,16 @@ namespace scratchbird::core
             return 0;
         }
 
-        uint32_t tuples_pruned = 0;
-        uint32_t space_reclaimed = 0;
-
-        // PHASE 2 TASK 2.6: Collect dead TIDs before pruning (for index cleanup)
-        // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
-        std::vector<TID> dead_tids;
-        Status collect_status = heap_page.collectDeadTuples(oit, &dead_tids, ctx);
-        if (collect_status != Status::OK)
+        uint32_t repairs = 0;
+        bool cleanup_blocked = false;
+        Status repair_status = heap_page.repairVersionChainMetadata(&repairs, &cleanup_blocked, ctx);
+        if (repair_status != Status::OK || cleanup_blocked)
         {
-            LOG_WARNING(VACUUM, "Failed to collect dead TIDs from page %u: %d", page_id,
-                       static_cast<int>(collect_status));
-            // Continue with pruning even if collection failed
-        }
-
-        // Prune garbage tuples and defragment page
-        Status prune_status = heap_page.prunePage(oit, &tuples_pruned, &space_reclaimed, ctx);
-        if (prune_status != Status::OK)
-        {
-            LOG_WARNING(VACUUM, "Failed to prune page %u during GC: %d", page_id,
-                        static_cast<int>(prune_status));
-            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            LOG_WARNING(VACUUM,
+                        "Skipping page %u for GC because version chain repair is required: %s",
+                        page_id,
+                        (ctx != nullptr) ? ctx->message.c_str() : "unsafe chain metadata");
+            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
             if (space_reclaimed_out != nullptr)
             {
                 *space_reclaimed_out = 0;
@@ -606,18 +610,51 @@ namespace scratchbird::core
             return 0;
         }
 
-        bool page_modified = (tuples_pruned > 0);
+        uint32_t tuples_pruned = 0;
+        uint32_t space_reclaimed = 0;
+
+        // PHASE 2 TASK 2.6: Collect dead TIDs before pruning (for index cleanup)
+        // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
+        std::vector<TID> dead_tids;
+        Status collect_status = heap_page.collectDeadTuples(reclaim_horizon, &dead_tids, ctx);
+        if (collect_status != Status::OK)
+        {
+            LOG_WARNING(VACUUM, "Failed to collect dead TIDs from page %u: %d", page_id,
+                       static_cast<int>(collect_status));
+            // Continue with pruning even if collection failed
+        }
+
+        // Prune garbage tuples and defragment page
+        Status prune_status =
+            heap_page.prunePage(reclaim_horizon, &tuples_pruned, &space_reclaimed, ctx);
+        if (prune_status != Status::OK)
+        {
+            LOG_WARNING(VACUUM, "Failed to prune page %u during GC: %d", page_id,
+                        static_cast<int>(prune_status));
+            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
+            {
+                std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
+                dirty_pages_.erase(page_id);
+            }
+            return 0;
+        }
+
+        bool page_modified = (tuples_pruned > 0) || (repairs != 0);
 
         // Log results if we pruned any tuples
         if (tuples_pruned > 0)
         {
-            LOG_INFO(VACUUM, "Page %u: pruned %u tuples, reclaimed %u bytes (OIT=%lu)", page_id,
-                     tuples_pruned, space_reclaimed, oit);
+            LOG_INFO(VACUUM,
+                     "Page %u: pruned %u tuples, reclaimed %u bytes (safe_horizon=%lu)",
+                     page_id,
+                     tuples_pruned,
+                     space_reclaimed,
+                     reclaim_horizon);
         }
-
-        const auto *special = reinterpret_cast<const HeapPageSpecial *>(
-            reinterpret_cast<const uint8_t *>(page_buffer) + page_header->page_size - sizeof(HeapPageSpecial));
-        ID table_id = special ? special->table_id : ID{};
 
         // Unpin page (mark as dirty if we modified it)
         db_->buffer_pool()->unpinPage(page_id, page_modified, ctx);

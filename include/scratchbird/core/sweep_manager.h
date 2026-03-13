@@ -227,6 +227,18 @@ namespace scratchbird::core
         }
 
     private:
+        struct SweepProgressState
+        {
+            uint64_t generation_id = 0;
+            bool active = false;
+            uint64_t start_horizon = 0;
+            ID last_relation_id{};
+            uint64_t last_page_cursor = 0;
+            uint64_t reclaimed_version_count = 0;
+            uint64_t reclaimed_bytes = 0;
+            uint64_t index_backlog_count = 0;
+        };
+
         Database *db_;
         TransactionManager *txn_manager_;
         BufferPool *buffer_pool_;
@@ -249,7 +261,10 @@ namespace scratchbird::core
 
         // Reclaim space from old tuple versions (foreground sweep only)
         // Removes versions with xmax < new_oit
-        Status reclaimSpace(uint64_t new_oit, ErrorContext *ctx);
+        Status reclaimSpace(uint64_t new_oit, SweepProgressState *progress, ErrorContext *ctx);
+
+        Status loadSweepProgressState(SweepProgressState *state_out, ErrorContext *ctx) const;
+        Status persistSweepProgressState(const SweepProgressState &state, ErrorContext *ctx);
 
         // Update sweep statistics
         void updateStatistics(uint64_t oit_before, uint64_t oit_after, uint64_t duration_ms,

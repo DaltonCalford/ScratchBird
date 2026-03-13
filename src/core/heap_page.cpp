@@ -1740,6 +1740,156 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto HeapPage::repairVersionChainMetadata(uint32_t *repairs_out,
+                                              bool *cleanup_blocked_out,
+                                              ErrorContext *ctx) -> Status
+    {
+        if (repairs_out != nullptr)
+        {
+            *repairs_out = 0;
+        }
+        if (cleanup_blocked_out != nullptr)
+        {
+            *cleanup_blocked_out = false;
+        }
+
+        ItemPointer *items = getItemArray();
+        const uint16_t item_count = getItemCount();
+        const GPID current_gpid =
+            makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
+
+        uint32_t repairs = 0;
+
+        auto blockCleanup = [&](const char *message) -> Status
+        {
+            if (cleanup_blocked_out != nullptr)
+            {
+                *cleanup_blocked_out = true;
+            }
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, message);
+            return Status::DATA_CORRUPTED;
+        };
+
+        for (uint16_t item_id = 0; item_id < item_count; ++item_id)
+        {
+            if (items[item_id].isUnused() || items[item_id].isDeleted())
+            {
+                continue;
+            }
+            if (!items[item_id].isValid(page_size_))
+            {
+                continue;
+            }
+
+            auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[item_id].offset);
+            if (tuple_hdr->ctid_gpid != current_gpid || tuple_hdr->ctid_slot != item_id)
+            {
+                tuple_hdr->setTID(current_gpid, item_id);
+                ++repairs;
+            }
+
+            if (!tuple_hdr->hasBackVersion())
+            {
+                continue;
+            }
+
+            const TID back_tid = tuple_hdr->getBackVersionTID();
+            if (back_tid.gpid == INVALID_GPID)
+            {
+                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: tuple advertises an invalid back-version target");
+            }
+
+            if (back_tid.gpid == current_gpid)
+            {
+                if (back_tid.slot == item_id)
+                {
+                    return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: self-referential version chain");
+                }
+                if (back_tid.slot >= item_count)
+                {
+                    return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: back-version slot is out of bounds");
+                }
+                if (items[back_tid.slot].isUnused() || items[back_tid.slot].isDeleted() ||
+                    !items[back_tid.slot].isValid(page_size_))
+                {
+                    return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: back-version target slot is not reclaim-safe");
+                }
+
+                auto *back_hdr =
+                    reinterpret_cast<TupleHeader *>(page_data_ + items[back_tid.slot].offset);
+                if (back_hdr->ctid_gpid != current_gpid || back_hdr->ctid_slot != back_tid.slot)
+                {
+                    back_hdr->setTID(current_gpid, back_tid.slot);
+                    ++repairs;
+                }
+                continue;
+            }
+
+            if (db_ == nullptr || db_->buffer_pool() == nullptr)
+            {
+                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page chain target cannot be validated");
+            }
+
+            void *target_buffer = nullptr;
+            Status pin_status = db_->buffer_pool()->pinPageGlobal(
+                back_tid.gpid, &target_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
+            if (pin_status != Status::OK)
+            {
+                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page chain target cannot be pinned");
+            }
+
+            bool target_dirty = false;
+            auto unpinTarget = [&]()
+            {
+                db_->buffer_pool()->unpinPageGlobal(back_tid.gpid, target_dirty, ctx);
+            };
+
+            auto *target_page_data = static_cast<uint8_t *>(target_buffer);
+            auto *target_page_hdr = reinterpret_cast<PageHeader *>(target_page_data);
+            if (target_page_hdr->page_type != PAGE_TYPE_HEAP ||
+                target_page_hdr->page_size != db_->page_size())
+            {
+                unpinTarget();
+                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page chain target is not a valid heap page");
+            }
+
+            auto *target_items =
+                reinterpret_cast<ItemPointer *>(target_page_data + sizeof(PageHeader));
+            const uint16_t target_item_count = static_cast<uint16_t>(
+                (pageLower(*target_page_hdr) - sizeof(PageHeader)) / sizeof(ItemPointer));
+            if (back_tid.slot >= target_item_count)
+            {
+                unpinTarget();
+                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page back-version slot is out of bounds");
+            }
+
+            if (target_items[back_tid.slot].isUnused() || target_items[back_tid.slot].isDeleted() ||
+                !target_items[back_tid.slot].isValid(db_->page_size()))
+            {
+                unpinTarget();
+                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page back-version target is not reclaim-safe");
+            }
+
+            auto *target_tuple_hdr = reinterpret_cast<TupleHeader *>(
+                target_page_data + target_items[back_tid.slot].offset);
+            if (target_tuple_hdr->ctid_gpid != back_tid.gpid ||
+                target_tuple_hdr->ctid_slot != back_tid.slot)
+            {
+                target_tuple_hdr->setTID(back_tid.gpid, back_tid.slot);
+                target_dirty = true;
+                ++repairs;
+            }
+
+            unpinTarget();
+        }
+
+        if (repairs_out != nullptr)
+        {
+            *repairs_out = repairs;
+        }
+        return Status::OK;
+    }
+
     auto HeapPage::markTupleUnused(uint16_t item_id, ErrorContext *ctx) -> Status
     {
         if (item_id >= getItemCount())

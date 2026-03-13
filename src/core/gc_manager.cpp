@@ -33,18 +33,33 @@ namespace scratchbird::core
 
     auto GcManager::getGcHorizon(uint64_t *horizon_out, ErrorContext *ctx) -> Status
     {
-        // Get oldest XID that might still see a tuple
-        // This is the minimum of all backend xmin values
-
-        Status status = ProcArrayManager::getGcHorizon(horizon_out, ctx);
-        if (status != Status::OK)
+        if (horizon_out == nullptr)
         {
-            // If ProcArray not available, use a conservative horizon
-            // (no GC - everything is potentially visible)
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "horizon_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        TransactionManager *txn_manager = (db_ != nullptr) ? db_->transaction_manager() : nullptr;
+        if (txn_manager == nullptr)
+        {
             *horizon_out = UINT64_MAX;
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "GC_HORIZON_UNCERTAIN: transaction manager not available");
             return Status::OK;
         }
 
+        uint64_t horizon = txn_manager->getOldestSnapshot();
+        if (horizon == 0)
+        {
+            horizon = txn_manager->getCurrentXid();
+        }
+        if (horizon == 0)
+        {
+            horizon = UINT64_MAX;
+        }
+
+        *horizon_out = horizon;
         return Status::OK;
     }
 
@@ -248,15 +263,84 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        // Prune version chains first
-        status = pruneVersionChains(table_id, page_id, horizon, &stats, ctx);
+        void *page_buffer;
+        status = db_->buffer_pool()->pinPage(
+            page_id, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
         if (status != Status::OK)
         {
+            if (stats_out != nullptr)
+            {
+                *stats_out = stats;
+            }
             return status;
         }
 
-        // Compact page to reclaim space
-        status = compactPage(page_id, &stats, ctx);
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        auto *page_hdr = reinterpret_cast<PageHeader *>(page_data);
+        if (page_hdr->page_type != PAGE_TYPE_HEAP)
+        {
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            if (stats_out != nullptr)
+            {
+                *stats_out = stats;
+            }
+            return Status::OK;
+        }
+
+        const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+            page_data + db_->page_size() - sizeof(HeapPageSpecial));
+        const ID page_table_id = (special != nullptr) ? special->table_id : table_id;
+        HeapPage heap(page_data, db_->page_size(), nullptr, db_, page_table_id);
+        uint32_t repairs = 0;
+        bool cleanup_blocked = false;
+        status = heap.repairVersionChainMetadata(&repairs, &cleanup_blocked, ctx);
+        if (status != Status::OK || cleanup_blocked)
+        {
+            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            if (stats_out != nullptr)
+            {
+                *stats_out = stats;
+            }
+            return (status == Status::OK) ? Status::DATA_CORRUPTED : status;
+        }
+
+        stats.pages_scanned++;
+        std::vector<uint16_t> dead_items;
+        const uint16_t item_count = heap.getItemCount();
+        for (uint16_t item_id = 0; item_id < item_count; ++item_id)
+        {
+            const uint8_t *tuple_data = nullptr;
+            uint32_t tuple_size = 0;
+            Status tuple_status = heap.getTuple(item_id, &tuple_data, &tuple_size, ctx);
+            if (tuple_status != Status::OK)
+            {
+                continue;
+            }
+
+            ++stats.tuples_scanned;
+            if (isTupleDead(tuple_data, horizon))
+            {
+                dead_items.push_back(item_id);
+                ++stats.dead_tuples_found;
+            }
+        }
+
+        db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+
+        if (!dead_items.empty())
+        {
+            status = removeDeadTuplesFromPage(page_table_id, page_id, dead_items, &stats, ctx);
+            if (status != Status::OK)
+            {
+                if (stats_out != nullptr)
+                {
+                    *stats_out = stats;
+                }
+                return status;
+            }
+        }
+
+        status = pruneVersionChains(page_table_id, page_id, horizon, &stats, ctx);
 
         if (stats_out != nullptr)
         {
@@ -323,7 +407,18 @@ namespace scratchbird::core
                 continue;
             }
 
-            HeapPage heap(page_data, db_->page_size());
+            const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+                page_data + db_->page_size() - sizeof(HeapPageSpecial));
+            const ID page_table_id = (special != nullptr) ? special->table_id : table_id;
+            HeapPage heap(page_data, db_->page_size(), nullptr, db_, page_table_id);
+            uint32_t repairs = 0;
+            bool cleanup_blocked = false;
+            Status repair_status = heap.repairVersionChainMetadata(&repairs, &cleanup_blocked, ctx);
+            if (repair_status != Status::OK || cleanup_blocked)
+            {
+                db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+                continue;
+            }
             stats->pages_scanned++;
 
             // Scan all tuples on page
@@ -351,7 +446,7 @@ namespace scratchbird::core
                 }
             }
 
-            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
         }
 
         return Status::OK;
@@ -369,10 +464,20 @@ namespace scratchbird::core
         }
 
         auto *page_data = static_cast<uint8_t *>(page_buffer);
-        HeapPage heap(page_data, db_->page_size());
-        bool page_modified = false;
+        const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+            page_data + db_->page_size() - sizeof(HeapPageSpecial));
+        const ID table_uuid = (special != nullptr) ? special->table_id : table_id;
+        HeapPage heap(page_data, db_->page_size(), nullptr, db_, table_uuid);
+        uint32_t repairs = 0;
+        bool cleanup_blocked = false;
+        Status repair_status = heap.repairVersionChainMetadata(&repairs, &cleanup_blocked, ctx);
+        if (repair_status != Status::OK || cleanup_blocked)
+        {
+            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            return (repair_status == Status::OK) ? Status::DATA_CORRUPTED : repair_status;
+        }
 
-        // Scan all tuples looking for prunable versions
+        // Scan all tuples looking for reclaimable historical versions.
         uint16_t item_count = heap.getItemCount();
         for (uint16_t item_id = 0; item_id < item_count; ++item_id)
         {
@@ -387,27 +492,11 @@ namespace scratchbird::core
             // Check if this version is prunable
             if (isVersionPrunable(tuple_data, horizon))
             {
-                // Mark tuple as deleted (prune it)
-                // This is a simplified version - full implementation would
-                // need to update version chain pointers
-                auto *tuple_hdr =
-                    const_cast<TupleHeader *>(reinterpret_cast<const TupleHeader *>(tuple_data));
-
-                // Set xmax if not already set
-                if (tuple_hdr->xmax == 0)
-                {
-                    tuple_hdr->xmax = horizon;
-                }
-
-                // Mark as prunable
-                tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
-
-                page_modified = true;
                 stats->version_chains_pruned++;
             }
         }
 
-        db_->buffer_pool()->unpinPage(page_id, page_modified, ctx);
+        db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
         return Status::OK;
     }
 
@@ -431,6 +520,7 @@ namespace scratchbird::core
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         HeapPage heap(page_data, db_->page_size());
 
+        const uint64_t removed_before = stats->dead_tuples_removed;
         // Delete each tuple
         for (uint16_t item_id : dead_item_ids)
         {
@@ -443,6 +533,14 @@ namespace scratchbird::core
         }
 
         db_->buffer_pool()->unpinPage(page_id, true, ctx);
+        if (stats->dead_tuples_removed > removed_before)
+        {
+            Status compact_status = compactPage(page_id, stats, ctx);
+            if (compact_status != Status::OK)
+            {
+                return compact_status;
+            }
+        }
         return Status::OK;
     }
 

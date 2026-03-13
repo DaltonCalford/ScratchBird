@@ -384,6 +384,13 @@ namespace scratchbird::core
         auto collectDeadTuples(uint64_t oit, std::vector<TID> *dead_tids_out,
                                ErrorContext *ctx = nullptr) -> Status;
 
+        // Repair canonical tuple identity metadata before destructive cleanup.
+        // Safe repairs normalize tuple self-TID fields to the owning page+slot.
+        // Cleanup is blocked when a version-chain target cannot be validated safely.
+        auto repairVersionChainMetadata(uint32_t *repairs_out,
+                                        bool *cleanup_blocked_out,
+                                        ErrorContext *ctx = nullptr) -> Status;
+
         // Get page header
         auto header() -> PageHeader *
         {

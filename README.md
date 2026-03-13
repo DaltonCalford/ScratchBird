@@ -22,6 +22,17 @@ I incorporated LLVM as a JIT or pre-compiler so that you can specify which funct
 
 So what is scratchbird, it is a way to stop all the headaches I have dealt with over the years. 
 
+**Is this "Vibe" coded?**
+
+It depends what you consider "Vibe Coding" to be.  I have over 35 years of experience in IT.  I have been the poor guy at midnight working on maintenance or upgrades.  I have been the guy refactoring code on legacy systems.  I have been faced with years of data in legacy data systems that everyone believes to be easy to migrate.   So, I have felt the pain that everyone now faces.  I have also been a developer.  
+
+So, over the years I have worked with multiple databases and I created a list of "I Wish" items - as everyone does at 3am while trying to fix something that broke.   I combined all of this into a single goal - can I actually produce my "Dream" database?   I actually did not believe I could.  So, I started by studying all the different open source databases.  This led to my creating a list of best of processes.   The best transaction system, the best index systems, the best replication system.   Needless to say, I had my own bias, which I fought over and over with metrics and test code.   This is where the AI came in, assisting in gathering resources, checking my assumptions, telling me in very polite terms that I am insane and should give up.   But I did not trust the materials the AI produced, but due to the volume, I can't cross check everything, but, heh, I have an AI don't I... well I soon learned that what one AI model would create, another would tear to pieces. I started to due this over and over again, I tested commercial and open source models, finding what each is best for.   
+So, 1,800 pages of specifications, double that in work plans, reference material and white papers, which started as the base.   From there, I had to watch all the thought processes of every AI as it performed the tasks assigned to it.   AI, even with clear specifications and work-plans, will start to do something different.  The AI will always follow its initial training, which when you are creating something new, is totally outside of its training.
+
+Needless to say, what I built is totally new.
+
+So, is it Vibe coding?  I prefer AI assisted development, but, you decide.
+
 ## Docker Development Environment
 
 - Use the unified environment scripts under `scripts/dev-unified/` to bootstrap and run a full Linux SSH container for building and testing all ScratchBird-related repos.

@@ -28,6 +28,8 @@
 #include <sstream>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/garbage_collector.h"
+#include "scratchbird/core/gc_manager.h"
+#include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/storage_engine.h"
@@ -36,6 +38,14 @@
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
+
+namespace
+{
+    constexpr size_t kSweepProgressSlotGeneration = 0;
+    constexpr size_t kSweepProgressSlotActive = 1;
+    constexpr size_t kSweepProgressSlotStartHorizon = 2;
+    constexpr size_t kSweepProgressSlotPageCursor = 5;
+}
 
 class GarbageCollectorTest : public ::testing::Test
 {
@@ -260,6 +270,23 @@ TEST_F(GarbageCollectorTest, PolicyManagement)
 
     gc->setPolicy(GCPolicy::COMBINED);
     EXPECT_EQ(gc->getPolicy(), GCPolicy::COMBINED);
+}
+
+TEST_F(GarbageCollectorTest, GcManagerUsesOldestSnapshotAsSafeReclaimHorizon)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    GcManager gc_mgr(&db);
+    ErrorContext ctx;
+    uint64_t horizon = 0;
+    ASSERT_EQ(gc_mgr.getGcHorizon(&horizon, &ctx), Status::OK) << ctx.message;
+
+    const uint64_t expected =
+        (db.transaction_manager()->getOldestSnapshot() == 0)
+            ? db.transaction_manager()->getCurrentXid()
+            : db.transaction_manager()->getOldestSnapshot();
+    EXPECT_EQ(horizon, expected);
 }
 
 // ========== Dirty Page Tracking Tests ==========
@@ -648,6 +675,40 @@ TEST_F(GarbageCollectorTest, SweepIntegration)
     // Verify GC ran
     auto stats = gc->getStatistics();
     EXPECT_GT(stats.background_runs, 0);
+}
+
+TEST_F(GarbageCollectorTest, SweepResumeStateSurvivesRestartAndReusesGeneration)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    db.close();
+
+    std::vector<uint8_t> raw_page;
+    ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+    auto *state_page = reinterpret_cast<BootstrapSystemStatePage *>(raw_page.data());
+    state_page->reserved[kSweepProgressSlotGeneration] = 7;
+    state_page->reserved[kSweepProgressSlotActive] = 1;
+    state_page->reserved[kSweepProgressSlotStartHorizon] = 1234;
+    state_page->reserved[kSweepProgressSlotPageCursor] = 55;
+    state_page->page_header.checksum = calculatePageChecksum(raw_page.data(), db.page_size());
+    ASSERT_TRUE(writeRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+
+    ErrorContext ctx;
+    ASSERT_EQ(db.open(test_db_->path(), &ctx), Status::OK) << ctx.message;
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+
+    db.close();
+    raw_page.clear();
+    ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+    state_page = reinterpret_cast<BootstrapSystemStatePage *>(raw_page.data());
+    EXPECT_EQ(state_page->reserved[kSweepProgressSlotGeneration], 7u);
+    EXPECT_EQ(state_page->reserved[kSweepProgressSlotActive], 0u);
+    EXPECT_EQ(state_page->reserved[kSweepProgressSlotStartHorizon], 1234u);
+    EXPECT_EQ(state_page->reserved[kSweepProgressSlotPageCursor], 55u);
 }
 
 TEST_F(GarbageCollectorTest, SweepPolicyResolutionDeterministicByScopeChain)

@@ -13,8 +13,10 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/garbage_collector.h"
+#include "scratchbird/core/gc_manager.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/heap_toast_lob_diagnostics.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/config.h"
@@ -27,6 +29,7 @@
 #include <cstdlib>
 #include <thread>
 #include <algorithm>
+#include <cstring>
 
 namespace scratchbird::core
 {
@@ -38,6 +41,15 @@ namespace scratchbird::core
         constexpr const char* kWalAfterLogManifestMagic = "SB_WAL_AFTER_LOG_SEGMENT_v1";
         constexpr const char* kShadowCaptureProfileName = "__sweep_shadow_capture__";
         constexpr const char* kShadowCaptureManifestMagic = "SB_SHADOW_CAPTURE_MANIFEST_v1";
+        constexpr size_t kSweepProgressSlotGeneration = 0;
+        constexpr size_t kSweepProgressSlotActive = 1;
+        constexpr size_t kSweepProgressSlotStartHorizon = 2;
+        constexpr size_t kSweepProgressSlotRelationHi = 3;
+        constexpr size_t kSweepProgressSlotRelationLo = 4;
+        constexpr size_t kSweepProgressSlotPageCursor = 5;
+        constexpr size_t kSweepProgressSlotReclaimedVersions = 6;
+        constexpr size_t kSweepProgressSlotReclaimedBytes = 7;
+        constexpr size_t kSweepProgressSlotIndexBacklog = 8;
 
         bool isZeroIdLocal(const ID& id)
         {
@@ -56,6 +68,20 @@ namespace scratchbird::core
             return std::chrono::duration_cast<std::chrono::microseconds>(
                        std::chrono::system_clock::now().time_since_epoch())
                 .count();
+        }
+
+        void encodeIdToSlots(const ID& id, uint64_t& hi_out, uint64_t& lo_out)
+        {
+            std::memcpy(&hi_out, id.bytes.data(), sizeof(uint64_t));
+            std::memcpy(&lo_out, id.bytes.data() + sizeof(uint64_t), sizeof(uint64_t));
+        }
+
+        ID decodeIdFromSlots(uint64_t hi, uint64_t lo)
+        {
+            ID id{};
+            std::memcpy(id.bytes.data(), &hi, sizeof(uint64_t));
+            std::memcpy(id.bytes.data() + sizeof(uint64_t), &lo, sizeof(uint64_t));
+            return id;
         }
 
         std::string hashBytesToHex(const std::array<uint8_t, 32>& hash)
@@ -1053,6 +1079,97 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    Status SweepManager::loadSweepProgressState(SweepProgressState *state_out,
+                                                ErrorContext *ctx) const
+    {
+        if (state_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "state_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+        *state_out = SweepProgressState{};
+
+        if (buffer_pool_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        void *page_buffer = nullptr;
+        Status status = buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
+        if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE ||
+            state_page->page_header.page_size != db_->page_size())
+        {
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid system state bootstrap page");
+            return Status::PAGE_CORRUPT;
+        }
+
+        state_out->generation_id = state_page->reserved[kSweepProgressSlotGeneration];
+        state_out->active = state_page->reserved[kSweepProgressSlotActive] != 0;
+        state_out->start_horizon = state_page->reserved[kSweepProgressSlotStartHorizon];
+        state_out->last_relation_id = decodeIdFromSlots(
+            state_page->reserved[kSweepProgressSlotRelationHi],
+            state_page->reserved[kSweepProgressSlotRelationLo]);
+        state_out->last_page_cursor = state_page->reserved[kSweepProgressSlotPageCursor];
+        state_out->reclaimed_version_count =
+            state_page->reserved[kSweepProgressSlotReclaimedVersions];
+        state_out->reclaimed_bytes = state_page->reserved[kSweepProgressSlotReclaimedBytes];
+        state_out->index_backlog_count = state_page->reserved[kSweepProgressSlotIndexBacklog];
+
+        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+        return Status::OK;
+    }
+
+    Status SweepManager::persistSweepProgressState(const SweepProgressState &state,
+                                                   ErrorContext *ctx)
+    {
+        if (buffer_pool_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        void *page_buffer = nullptr;
+        Status status = buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
+        if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE ||
+            state_page->page_header.page_size != db_->page_size())
+        {
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid system state bootstrap page");
+            return Status::PAGE_CORRUPT;
+        }
+
+        uint64_t relation_hi = 0;
+        uint64_t relation_lo = 0;
+        encodeIdToSlots(state.last_relation_id, relation_hi, relation_lo);
+        state_page->reserved[kSweepProgressSlotGeneration] = state.generation_id;
+        state_page->reserved[kSweepProgressSlotActive] = state.active ? 1u : 0u;
+        state_page->reserved[kSweepProgressSlotStartHorizon] = state.start_horizon;
+        state_page->reserved[kSweepProgressSlotRelationHi] = relation_hi;
+        state_page->reserved[kSweepProgressSlotRelationLo] = relation_lo;
+        state_page->reserved[kSweepProgressSlotPageCursor] = state.last_page_cursor;
+        state_page->reserved[kSweepProgressSlotReclaimedVersions] =
+            state.reclaimed_version_count;
+        state_page->reserved[kSweepProgressSlotReclaimedBytes] = state.reclaimed_bytes;
+        state_page->reserved[kSweepProgressSlotIndexBacklog] = state.index_backlog_count;
+
+        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
+        return Status::OK;
+    }
+
     Status SweepManager::setPolicyBindings(const std::vector<SweepPolicyBinding>& bindings,
                                            ErrorContext* ctx)
     {
@@ -1470,6 +1587,36 @@ namespace scratchbird::core
 
         auto start_time = std::chrono::steady_clock::now();
         uint64_t oit_before = txn_manager_->getOldestXid();
+        SweepProgressState sweep_progress{};
+        Status s = loadSweepProgressState(&sweep_progress, ctx);
+        if (s != Status::OK)
+        {
+            sweep_in_progress_.store(false, std::memory_order_release);
+            return s;
+        }
+
+        if (!sweep_progress.active)
+        {
+            sweep_progress.generation_id++;
+            sweep_progress.active = true;
+            sweep_progress.start_horizon = txn_manager_->getOldestSnapshot();
+            if (sweep_progress.start_horizon == 0)
+            {
+                sweep_progress.start_horizon = txn_manager_->getCurrentXid();
+            }
+            sweep_progress.last_relation_id = ID{};
+            sweep_progress.last_page_cursor = 0;
+            sweep_progress.reclaimed_version_count = 0;
+            sweep_progress.reclaimed_bytes = 0;
+            sweep_progress.index_backlog_count = 0;
+        }
+
+        s = persistSweepProgressState(sweep_progress, ctx);
+        if (s != Status::OK)
+        {
+            sweep_in_progress_.store(false, std::memory_order_release);
+            return s;
+        }
 
         // 1. Scan TIP pages to find new OIT
         uint64_t new_oit = findFirstUncommittedTransaction(ctx);
@@ -1498,12 +1645,15 @@ namespace scratchbird::core
                              false,
                              false);
 
+            sweep_progress.active = false;
+            (void)persistSweepProgressState(sweep_progress, ctx);
+
             sweep_in_progress_.store(false, std::memory_order_release);
             return Status::OK;
         }
 
         // 2. Update OIT in database header
-        Status s = txn_manager_->setOldestXid(new_oit, ctx);
+        s = txn_manager_->setOldestXid(new_oit, ctx);
         if (s != Status::OK)
         {
             LOG_ERROR(VACUUM, "Failed to update OIT: %d", static_cast<int>(s));
@@ -1651,11 +1801,33 @@ namespace scratchbird::core
         // 7. Optional: Remove old tuple versions (if foreground)
         if (foreground)
         {
-            s = reclaimSpace(new_oit, ctx);
+            s = reclaimSpace(new_oit, &sweep_progress, ctx);
             if (s != Status::OK)
             {
                 LOG_WARNING(VACUUM, "Space reclamation failed: %d", static_cast<int>(s));
-                // Non-fatal - OIT is already advanced
+
+                auto end_time = std::chrono::steady_clock::now();
+                uint64_t duration_ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
+                        .count();
+
+                updateStatistics(oit_before,
+                                 new_oit,
+                                 duration_ms,
+                                 evidence_items_emitted,
+                                 wal_after_segments_emitted,
+                                 wal_after_backlog_depth,
+                                 page_audit_findings_emitted,
+                                 shadow_capture_manifests_emitted,
+                                 prune_blocked,
+                                 evidence_failure,
+                                 page_audit_failure,
+                                 page_audit_mode_downgraded,
+                                 shadow_capture_failure,
+                                 wal_after_failure);
+
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
             }
         }
 
@@ -1681,6 +1853,11 @@ namespace scratchbird::core
 
         LOG_INFO(VACUUM, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums", oit_before,
                  new_oit, duration_ms);
+
+        sweep_progress.active = false;
+        sweep_progress.start_horizon =
+            (sweep_progress.start_horizon == 0) ? new_oit : sweep_progress.start_horizon;
+        (void)persistSweepProgressState(sweep_progress, ctx);
 
         // 9. Notify garbage collector that OIT has advanced and the local evidence gate is clear
         // This allows GC to identify more garbage tuples for removal
@@ -1740,19 +1917,113 @@ namespace scratchbird::core
         return current_xmax;
     }
 
-    Status SweepManager::reclaimSpace(uint64_t new_oit, ErrorContext *ctx)
+    Status SweepManager::reclaimSpace(uint64_t new_oit,
+                                      SweepProgressState *progress,
+                                      ErrorContext *ctx)
     {
-        // Space reclamation (foreground sweep):
-        // 1. Scan all data pages
-        // 2. For each tuple with xmax < new_oit, remove old versions
-        // 3. Update forward pointers
-        // 4. Compact pages if needed
-        // 5. Update indexes
+        if (progress == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "progress cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+        if (db_ == nullptr || db_->page_manager() == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "PageManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
 
-        // Phase 4 Enhancement: Implement space reclamation in future iteration
-        // For now, rely on cooperative/background GC for space reclamation
+        GcManager gc(db_);
+        const uint64_t total_pages = db_->total_pages();
+        uint64_t start_page = 0;
+        if (progress->last_page_cursor != 0 && progress->last_page_cursor < total_pages)
+        {
+            start_page = progress->last_page_cursor + 1;
+        }
 
-        LOG_INFO(VACUUM, "Space reclamation not yet implemented (new_oit=%lu)", new_oit);
+        LOG_INFO(VACUUM,
+                 "Starting foreground reclaim: generation=%lu, start_horizon=%lu, page_cursor=%lu, new_oit=%lu",
+                 progress->generation_id,
+                 progress->start_horizon,
+                 progress->last_page_cursor,
+                 new_oit);
+
+        for (uint64_t page_id = start_page; page_id < total_pages; ++page_id)
+        {
+            if (!db_->page_manager()->isAllocated(static_cast<uint32_t>(page_id)))
+            {
+                progress->last_page_cursor = page_id;
+                Status persist_status = persistSweepProgressState(*progress, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+                continue;
+            }
+
+            void *page_buffer = nullptr;
+            Status pin_status = buffer_pool_->pinPage(static_cast<uint32_t>(page_id),
+                                                      &page_buffer,
+                                                      ctx,
+                                                      BufferPool::AccessStrategy::Vacuum);
+            if (pin_status != Status::OK)
+            {
+                progress->last_page_cursor = page_id;
+                Status persist_status = persistSweepProgressState(*progress, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+                continue;
+            }
+
+            auto *page_header = static_cast<PageHeader *>(page_buffer);
+            if (page_header->page_type != PAGE_TYPE_HEAP)
+            {
+                buffer_pool_->unpinPage(static_cast<uint32_t>(page_id), false, ctx);
+                progress->last_page_cursor = page_id;
+                Status persist_status = persistSweepProgressState(*progress, ctx);
+                if (persist_status != Status::OK)
+                {
+                    return persist_status;
+                }
+                continue;
+            }
+
+            const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+                static_cast<const uint8_t *>(page_buffer) + db_->page_size() - sizeof(HeapPageSpecial));
+            const ID table_id = (special != nullptr) ? special->table_id : ID{};
+            buffer_pool_->unpinPage(static_cast<uint32_t>(page_id), false, ctx);
+
+            GcStats page_stats;
+            ErrorContext page_ctx;
+            Status gc_status = gc.gcPage(table_id, static_cast<uint32_t>(page_id), &page_stats, &page_ctx);
+            if (gc_status == Status::DATA_CORRUPTED || gc_status == Status::PAGE_CORRUPT)
+            {
+                LOG_WARNING(VACUUM,
+                            "Foreground reclaim skipped page %lu because chain repair was required: %s",
+                            page_id,
+                            page_ctx.message.c_str());
+            }
+            else if (gc_status != Status::OK)
+            {
+                return gc_status;
+            }
+            else
+            {
+                progress->last_relation_id = table_id;
+                progress->reclaimed_version_count +=
+                    page_stats.dead_tuples_removed + page_stats.version_chains_pruned;
+                progress->reclaimed_bytes += page_stats.free_space_recovered;
+            }
+
+            progress->last_page_cursor = page_id;
+            Status persist_status = persistSweepProgressState(*progress, ctx);
+            if (persist_status != Status::OK)
+            {
+                return persist_status;
+            }
+        }
+
         return Status::OK;
     }
 
