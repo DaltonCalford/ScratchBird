@@ -229,6 +229,11 @@ namespace scratchbird::core
                     total_stats.version_chains_pruned += table_stats.version_chains_pruned;
                     total_stats.pages_compacted += table_stats.pages_compacted;
                     total_stats.free_space_recovered += table_stats.free_space_recovered;
+                    total_stats.pages_dead_space_warn += table_stats.pages_dead_space_warn;
+                    total_stats.pages_dead_space_compact += table_stats.pages_dead_space_compact;
+                    total_stats.pages_dead_space_rewrite += table_stats.pages_dead_space_rewrite;
+                    total_stats.rewrite_recommendations += table_stats.rewrite_recommendations;
+                    total_stats.slot_stable_compactions += table_stats.slot_stable_compactions;
                 }
                 // Continue with other tables even if one fails
             }
@@ -616,7 +621,7 @@ namespace scratchbird::core
         db_->buffer_pool()->unpinPage(page_id, true, ctx);
         if (stats->dead_tuples_removed > removed_before)
         {
-            Status compact_status = compactPage(page_id, stats, ctx);
+            Status compact_status = compactPage(table_id, page_id, stats, ctx);
             if (compact_status != Status::OK)
             {
                 return compact_status;
@@ -625,7 +630,8 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto GcManager::compactPage(uint32_t page_id, GcStats *stats, ErrorContext *ctx) -> Status
+    auto GcManager::compactPage(const ID &table_id, uint32_t page_id, GcStats *stats,
+                                ErrorContext *ctx) -> Status
     {
         // Pin the page
         void *page_buffer;
@@ -637,87 +643,90 @@ namespace scratchbird::core
         }
 
         auto *page_data = static_cast<uint8_t *>(page_buffer);
-        uint32_t page_size = db_->page_size();
-
-        // Create a temporary buffer for compaction
-        std::vector<uint8_t> temp_buffer(page_size);
-        uint8_t *temp_data = temp_buffer.data();
-
-        // Copy page header
-        auto *old_page_hdr = reinterpret_cast<PageHeader *>(page_data);
-        auto *temp_page_hdr = reinterpret_cast<PageHeader *>(temp_data);
-        std::memcpy(temp_page_hdr, old_page_hdr, sizeof(PageHeader));
-
-        // Get item arrays (starts right after PageHeader)
-        auto *old_items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
-        auto *new_items = reinterpret_cast<ItemPointer *>(temp_data + sizeof(PageHeader));
-
-        uint16_t old_item_count =
-            static_cast<uint16_t>((pageLower(*old_page_hdr) - sizeof(PageHeader)) / sizeof(ItemPointer));
-        uint16_t new_item_count = 0;
-
-        // Calculate starting position for tuple data (from end of page, before special area)
-        uint32_t tuple_data_offset = page_size - sizeof(HeapPageSpecial);
-
-        // Track space reclaimed
-        uint32_t old_free_space = pageUpper(*old_page_hdr) - pageLower(*old_page_hdr);
-
-        // Pass 1: Copy non-deleted tuples and build new item array
-        for (uint16_t i = 0; i < old_item_count; ++i)
+        HeapPage heap(page_data, db_->page_size(), nullptr, db_, table_id);
+        HeapPage::FragmentationMetrics metrics{};
+        status = heap.analyzeFragmentation(&metrics, ctx);
+        if (status != Status::OK)
         {
-            const ItemPointer &old_item = old_items[i];
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            return status;
+        }
 
-            // Skip deleted/unused items
-            if (old_item.isDeleted() || old_item.offset == 0)
+        if (metrics.warn_threshold)
+        {
+            ++stats->pages_dead_space_warn;
+        }
+        if (metrics.compact_threshold)
+        {
+            ++stats->pages_dead_space_compact;
+        }
+        if (metrics.rewrite_threshold)
+        {
+            ++stats->pages_dead_space_rewrite;
+            ++stats->rewrite_recommendations;
+        }
+
+        StorageEngine::FragmentationAdvisory advisory{};
+        advisory.page_id = page_id;
+        advisory.live_tuple_bytes = metrics.live_tuple_bytes;
+        advisory.reclaimable_bytes = metrics.reclaimable_bytes;
+        advisory.free_bytes = metrics.free_bytes;
+        advisory.live_slots = metrics.live_slots;
+        advisory.deleted_slots = metrics.deleted_slots;
+        advisory.unused_slots = metrics.unused_slots;
+        advisory.dead_space_ratio = metrics.dead_space_ratio;
+        advisory.warn_threshold = metrics.warn_threshold;
+        advisory.compact_threshold = metrics.compact_threshold;
+        advisory.rewrite_recommended = metrics.rewrite_threshold;
+
+        auto *storage_engine = db_->storage_engine();
+        if (!metrics.warn_threshold && storage_engine != nullptr)
+        {
+            storage_engine->clearFragmentationAdvisory(table_id, page_id);
+        }
+
+        bool page_dirty = false;
+        if (metrics.compact_threshold)
+        {
+            ItemPointer *items = heap.header() != nullptr
+                                     ? reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader))
+                                     : nullptr;
+            const uint16_t item_count = heap.getItemCount();
+            for (uint16_t item_id = 0; item_id < item_count; ++item_id)
             {
-                continue;
+                if (items[item_id].isDeleted())
+                {
+                    Status mark_status = heap.markTupleUnused(item_id, ctx);
+                    if (mark_status != Status::OK)
+                    {
+                        db_->buffer_pool()->unpinPage(page_id, page_dirty, ctx);
+                        return mark_status;
+                    }
+                    page_dirty = true;
+                }
             }
 
-            // Get tuple data
-            const uint8_t *tuple_src = page_data + old_item.offset;
-            uint32_t tuple_size = old_item.length;
+            uint32_t bytes_reclaimed = 0;
+            status = heap.defragmentPage(&bytes_reclaimed, ctx);
+            if (status != Status::OK)
+            {
+                db_->buffer_pool()->unpinPage(page_id, page_dirty, ctx);
+                return status;
+            }
 
-            // Allocate space from end of page (before special area)
-            tuple_data_offset -= tuple_size;
-
-            // Copy tuple data to new location
-            std::memcpy(temp_data + tuple_data_offset, tuple_src, tuple_size);
-
-            // Create new item pointing to compacted location
-            new_items[new_item_count].offset = tuple_data_offset;
-            new_items[new_item_count].length = tuple_size;
-            new_items[new_item_count].flags = old_item.flags;
-
-            new_item_count++;
+            advisory.compaction_applied = true;
+            ++stats->pages_compacted;
+            ++stats->slot_stable_compactions;
+            stats->free_space_recovered += bytes_reclaimed;
+            page_dirty = true;
         }
 
-        // Update header with new counts and free space
-        pageSetLower(*temp_page_hdr, sizeof(PageHeader) + new_item_count * sizeof(ItemPointer));
-        pageSetUpper(*temp_page_hdr, tuple_data_offset);
-        pageSetSpecial(*temp_page_hdr, page_size - sizeof(HeapPageSpecial));
-
-        // Calculate new free space
-        uint32_t new_free_space = pageUpper(*temp_page_hdr) - pageLower(*temp_page_hdr);
-
-        // Copy special area
-        auto *old_special =
-            reinterpret_cast<HeapPageSpecial *>(page_data + page_size - sizeof(HeapPageSpecial));
-        auto *temp_special =
-            reinterpret_cast<HeapPageSpecial *>(temp_data + page_size - sizeof(HeapPageSpecial));
-        std::memcpy(temp_special, old_special, sizeof(HeapPageSpecial));
-
-        // Update statistics
-        stats->pages_compacted++;
-        if (new_free_space > old_free_space)
+        if (storage_engine != nullptr && metrics.warn_threshold)
         {
-            stats->free_space_recovered += (new_free_space - old_free_space);
+            storage_engine->publishFragmentationAdvisory(table_id, page_id, advisory);
         }
 
-        // Copy compacted page back to original buffer
-        std::memcpy(page_data, temp_data, page_size);
-
-        // Unpin page as dirty
-        db_->buffer_pool()->unpinPage(page_id, true, ctx);
+        db_->buffer_pool()->unpinPage(page_id, page_dirty, ctx);
 
         return Status::OK;
     }

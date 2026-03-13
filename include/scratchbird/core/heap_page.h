@@ -288,6 +288,24 @@ namespace scratchbird::core
     class HeapPage
     {
     public:
+        struct FragmentationMetrics
+        {
+            static constexpr double DEAD_SPACE_WARN_RATIO = 0.15;
+            static constexpr double DEAD_SPACE_COMPACT_RATIO = 0.25;
+            static constexpr double DEAD_SPACE_REWRITE_RATIO = 0.40;
+
+            uint32_t live_tuple_bytes = 0;
+            uint32_t reclaimable_bytes = 0;
+            uint32_t free_bytes = 0;
+            uint16_t live_slots = 0;
+            uint16_t deleted_slots = 0;
+            uint16_t unused_slots = 0;
+            double dead_space_ratio = 0.0;
+            bool warn_threshold = false;
+            bool compact_threshold = false;
+            bool rewrite_threshold = false;
+        };
+
         // Constructor wraps an existing page buffer
         explicit HeapPage(uint8_t *page_data, uint32_t page_size);
 
@@ -370,6 +388,10 @@ namespace scratchbird::core
         // Moves live tuples together, updates item pointers, reclaims holes
         // Returns number of bytes reclaimed
         auto defragmentPage(uint32_t *bytes_reclaimed_out, ErrorContext *ctx = nullptr) -> Status;
+
+        // Inspect reclaimable dead space without mutating slot identity.
+        auto analyzeFragmentation(FragmentationMetrics *metrics_out,
+                                  ErrorContext *ctx = nullptr) const -> Status;
 
         // Prune dead tuples from page (GC helper)
         // Marks garbage tuples as LP_UNUSED based on provided OIT

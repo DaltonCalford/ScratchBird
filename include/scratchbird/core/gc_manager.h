@@ -33,11 +33,18 @@ namespace scratchbird::core
         uint64_t free_space_recovered; // bytes
         uint64_t tuples_frozen;        // tuples frozen to prevent wraparound
         uint64_t gc_time_us;           // microseconds
+        uint64_t pages_dead_space_warn;
+        uint64_t pages_dead_space_compact;
+        uint64_t pages_dead_space_rewrite;
+        uint64_t rewrite_recommendations;
+        uint64_t slot_stable_compactions;
 
         GcStats()
             : pages_scanned(0), tuples_scanned(0), dead_tuples_found(0), dead_tuples_removed(0),
               version_chains_pruned(0), pages_compacted(0), free_space_recovered(0),
-              tuples_frozen(0), gc_time_us(0)
+              tuples_frozen(0), gc_time_us(0), pages_dead_space_warn(0),
+              pages_dead_space_compact(0), pages_dead_space_rewrite(0),
+              rewrite_recommendations(0), slot_stable_compactions(0)
         {
         }
     };
@@ -85,7 +92,8 @@ namespace scratchbird::core
                                         GcStats *stats, ErrorContext *ctx);
 
         // Compact page to reclaim free space
-        Status compactPage(uint32_t page_id, GcStats *stats, ErrorContext *ctx);
+        Status compactPage(const ID &table_id, uint32_t page_id, GcStats *stats,
+                           ErrorContext *ctx);
 
         // Check if tuple is dead (not visible to any transaction)
         bool isTupleDead(const uint8_t *tuple_data, uint64_t horizon) const;

@@ -129,6 +129,22 @@ namespace scratchbird::core
     class StorageEngine
     {
     public:
+        struct FragmentationAdvisory
+        {
+            uint32_t page_id = 0;
+            uint32_t live_tuple_bytes = 0;
+            uint32_t reclaimable_bytes = 0;
+            uint32_t free_bytes = 0;
+            uint16_t live_slots = 0;
+            uint16_t deleted_slots = 0;
+            uint16_t unused_slots = 0;
+            double dead_space_ratio = 0.0;
+            bool warn_threshold = false;
+            bool compact_threshold = false;
+            bool rewrite_recommended = false;
+            bool compaction_applied = false;
+        };
+
         explicit StorageEngine(Database *db);
         ~StorageEngine();
 
@@ -199,6 +215,13 @@ namespace scratchbird::core
                                     uint64_t xid,
                                     ErrorContext *ctx) -> Status;
 
+        void publishFragmentationAdvisory(const ID &table_id, uint32_t page_id,
+                                          const FragmentationAdvisory &advisory);
+        void clearFragmentationAdvisory(const ID &table_id, uint32_t page_id);
+        [[nodiscard]] auto getFragmentationAdvisory(const ID &table_id, uint32_t page_id,
+                                                    FragmentationAdvisory *advisory_out) const
+            -> bool;
+
     private:
         Database *db_;
         BufferPool *buffer_pool_;
@@ -208,6 +231,9 @@ namespace scratchbird::core
         // ToastManager cache (per-table)
         std::unordered_map<ID, std::unique_ptr<ToastManager>> toast_managers_;
         std::mutex toast_mutex_; // Protects toast_managers_ map
+        std::unordered_map<ID, std::unordered_map<uint32_t, FragmentationAdvisory>>
+            fragmentation_advisories_;
+        mutable std::mutex fragmentation_advisory_mutex_;
 
         // Find a page with free space for a tuple
         auto findFreePage(const ID &table_id, uint32_t tuple_size, uint32_t *page_id_out,

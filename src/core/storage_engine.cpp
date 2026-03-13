@@ -138,6 +138,56 @@ namespace scratchbird::core
 
     StorageEngine::~StorageEngine() = default;
 
+    void StorageEngine::publishFragmentationAdvisory(const ID &table_id,
+                                                     uint32_t page_id,
+                                                     const FragmentationAdvisory &advisory)
+    {
+        std::lock_guard<std::mutex> lock(fragmentation_advisory_mutex_);
+        fragmentation_advisories_[table_id][page_id] = advisory;
+    }
+
+    void StorageEngine::clearFragmentationAdvisory(const ID &table_id, uint32_t page_id)
+    {
+        std::lock_guard<std::mutex> lock(fragmentation_advisory_mutex_);
+        auto table_it = fragmentation_advisories_.find(table_id);
+        if (table_it == fragmentation_advisories_.end())
+        {
+            return;
+        }
+
+        table_it->second.erase(page_id);
+        if (table_it->second.empty())
+        {
+            fragmentation_advisories_.erase(table_it);
+        }
+    }
+
+    auto StorageEngine::getFragmentationAdvisory(const ID &table_id,
+                                                 uint32_t page_id,
+                                                 FragmentationAdvisory *advisory_out) const -> bool
+    {
+        if (advisory_out == nullptr)
+        {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(fragmentation_advisory_mutex_);
+        auto table_it = fragmentation_advisories_.find(table_id);
+        if (table_it == fragmentation_advisories_.end())
+        {
+            return false;
+        }
+
+        auto page_it = table_it->second.find(page_id);
+        if (page_it == table_it->second.end())
+        {
+            return false;
+        }
+
+        *advisory_out = page_it->second;
+        return true;
+    }
+
     // LSM Integration Phase 4: Helper method to insert into any index type
     namespace {
         std::vector<uint8_t> encodeLsmValue(const TID &tid)

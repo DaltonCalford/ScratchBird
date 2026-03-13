@@ -1990,6 +1990,88 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto HeapPage::analyzeFragmentation(FragmentationMetrics *metrics_out,
+                                        ErrorContext *ctx) const -> Status
+    {
+        if (metrics_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "metrics_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const auto *hdr = header();
+        if (hdr->page_type != PAGE_TYPE_HEAP)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Not a heap page");
+            return Status::PAGE_CORRUPT;
+        }
+
+        FragmentationMetrics metrics;
+        const ItemPointer *items = getItemArray();
+        const uint16_t item_count = getItemCount();
+
+        for (uint16_t i = 0; i < item_count; ++i)
+        {
+            const ItemPointer &item = items[i];
+            if (item.isUnused())
+            {
+                ++metrics.unused_slots;
+                continue;
+            }
+
+            if (!item.isValid(page_size_))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Fragmentation analysis encountered invalid item pointer");
+                return Status::PAGE_CORRUPT;
+            }
+
+            if (item.isDeleted())
+            {
+                ++metrics.deleted_slots;
+            }
+            else
+            {
+                ++metrics.live_slots;
+                metrics.live_tuple_bytes += item.length;
+            }
+        }
+
+        const uint32_t lower = pageLower(*hdr);
+        const uint32_t upper = pageUpper(*hdr);
+        const uint32_t special = pageSpecial(*hdr);
+        if (lower > upper || upper > special || special > page_size_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "Fragmentation analysis encountered corrupt page bounds");
+            return Status::PAGE_CORRUPT;
+        }
+
+        metrics.free_bytes = upper - lower;
+        const uint32_t tuple_region_bytes = special - upper;
+        if (tuple_region_bytes > metrics.live_tuple_bytes)
+        {
+            metrics.reclaimable_bytes = tuple_region_bytes - metrics.live_tuple_bytes;
+        }
+
+        const uint32_t usable_page_bytes = special - sizeof(PageHeader);
+        if (usable_page_bytes != 0)
+        {
+            metrics.dead_space_ratio = static_cast<double>(metrics.reclaimable_bytes) /
+                                       static_cast<double>(usable_page_bytes);
+        }
+
+        metrics.warn_threshold =
+            metrics.dead_space_ratio >= FragmentationMetrics::DEAD_SPACE_WARN_RATIO;
+        metrics.compact_threshold =
+            metrics.dead_space_ratio >= FragmentationMetrics::DEAD_SPACE_COMPACT_RATIO;
+        metrics.rewrite_threshold =
+            metrics.dead_space_ratio >= FragmentationMetrics::DEAD_SPACE_REWRITE_RATIO;
+
+        *metrics_out = metrics;
+        return Status::OK;
+    }
+
     auto HeapPage::prunePage(uint64_t oit, uint32_t *tuples_pruned_out,
                              uint32_t *space_reclaimed_out, ErrorContext *ctx) -> Status
     {
