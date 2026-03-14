@@ -262,6 +262,152 @@ namespace scratchbird::optimizer
             }
         }
 
+        auto normalizeOrderingExpression(const std::string &text) -> std::string
+        {
+            std::string normalized;
+            normalized.reserve(text.size());
+            for (unsigned char ch : text)
+            {
+                if (std::isspace(ch) == 0)
+                {
+                    normalized.push_back(
+                        static_cast<char>(std::toupper(ch)));
+                }
+            }
+            return normalized;
+        }
+
+        auto makeOrderingKey(const std::string &expression_text,
+                             bool descending = false,
+                             bool nulls_first = false,
+                             std::string comparator_family = "DEFAULT")
+            -> AccessPathDescriptor::OrderingKey
+        {
+            AccessPathDescriptor::OrderingKey key;
+            key.expression_text = expression_text;
+            key.descending = descending;
+            key.nulls_first = nulls_first;
+            key.comparator_family = std::move(comparator_family);
+            return key;
+        }
+
+        auto orderItemNullsFirst(const parser::v3::OrderByItem *item) -> bool
+        {
+            if (item == nullptr)
+            {
+                return false;
+            }
+            if (item->has_nulls_spec)
+            {
+                return item->nulls_first;
+            }
+            return !item->ascending;
+        }
+
+        auto orderingSatisfiesOrderBy(
+            const AccessPathDescriptor &descriptor,
+            const std::vector<parser::v3::OrderByItem *> &order_by_items,
+            const parser::v3::StringPool &pool,
+            std::string *reason_out = nullptr) -> bool
+        {
+            if (!descriptor.order_complete)
+            {
+                if (reason_out != nullptr)
+                {
+                    *reason_out = "input path is not marked order-complete";
+                }
+                return false;
+            }
+            if (descriptor.ordering_keys.size() < order_by_items.size())
+            {
+                if (reason_out != nullptr)
+                {
+                    *reason_out = "input ordered prefix shorter than ORDER BY list";
+                }
+                return false;
+            }
+
+            for (size_t i = 0; i < order_by_items.size(); ++i)
+            {
+                const auto *item = order_by_items[i];
+                if (item == nullptr || item->expr == nullptr)
+                {
+                    if (reason_out != nullptr)
+                    {
+                        *reason_out = "ORDER BY item is missing expression payload";
+                    }
+                    return false;
+                }
+
+                const std::string required_expression =
+                    normalizeOrderingExpression(expressionToString(item->expr, pool));
+                const auto &available = descriptor.ordering_keys[i];
+                if (required_expression.empty() ||
+                    normalizeOrderingExpression(available.expression_text) !=
+                        required_expression)
+                {
+                    if (reason_out != nullptr)
+                    {
+                        *reason_out = "ORDER BY expression mismatch at key " +
+                                      std::to_string(i + 1);
+                    }
+                    return false;
+                }
+                if (available.descending != !item->ascending)
+                {
+                    if (reason_out != nullptr)
+                    {
+                        *reason_out = "ORDER BY direction mismatch at key " +
+                                      std::to_string(i + 1);
+                    }
+                    return false;
+                }
+                if (item->has_nulls_spec &&
+                    available.nulls_first != orderItemNullsFirst(item))
+                {
+                    if (reason_out != nullptr)
+                    {
+                        *reason_out = "ORDER BY null-order mismatch at key " +
+                                      std::to_string(i + 1);
+                    }
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto orderingSatisfiesGrouping(
+            const AccessPathDescriptor &descriptor,
+            const std::vector<parser::v3::Expression *> &grouping_exprs,
+            const parser::v3::StringPool &pool) -> bool
+        {
+            if (!descriptor.order_complete ||
+                descriptor.ordering_keys.size() < grouping_exprs.size())
+            {
+                return false;
+            }
+
+            for (size_t i = 0; i < grouping_exprs.size(); ++i)
+            {
+                const auto *expr = grouping_exprs[i];
+                if (expr == nullptr)
+                {
+                    return false;
+                }
+                const std::string required_expression =
+                    normalizeOrderingExpression(expressionToString(expr, pool));
+                const auto &available = descriptor.ordering_keys[i];
+                if (required_expression.empty() ||
+                    normalizeOrderingExpression(available.expression_text) !=
+                        required_expression ||
+                    available.descending)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         auto isZeroId(const core::ID &id) -> bool
         {
             return id == core::ID{};
@@ -2203,7 +2349,8 @@ namespace scratchbird::optimizer
                 return false;
             }
 
-            if (path->accessDescriptor().ordered_output)
+            if (path->accessDescriptor().order_complete ||
+                path->accessDescriptor().ordered_output)
             {
                 return true;
             }
@@ -3745,6 +3892,9 @@ namespace scratchbird::optimizer
             bool best_exact_key_lookup = false;
             bool best_ordered_output = false;
             uint64_t best_ordered_prefix_length = 0;
+            std::vector<AccessPathDescriptor::OrderingKey> best_ordering_keys;
+            bool best_order_complete = false;
+            double best_interesting_order_score = 0.0;
             std::vector<size_t> best_required_outer_relation_indexes;
             std::vector<std::string> best_required_outer_relation_aliases;
             core::CatalogManager::IndexInfo matched_index{};
@@ -3781,6 +3931,26 @@ namespace scratchbird::optimizer
                         }
                     }
                     return true;
+                };
+
+            auto indexOrderingKeys =
+                [&](const core::CatalogManager::IndexInfo &index)
+                    -> std::vector<AccessPathDescriptor::OrderingKey> {
+                    std::vector<AccessPathDescriptor::OrderingKey> keys;
+                    if (index.index_type != core::CatalogManager::IndexType::BTREE)
+                    {
+                        return keys;
+                    }
+                    for (const auto &column_id : index.column_ids)
+                    {
+                        const std::string column_name = columnNameForId(column_id);
+                        if (column_name.empty())
+                        {
+                            break;
+                        }
+                        keys.push_back(makeOrderingKey(column_name));
+                    }
+                    return keys;
                 };
 
             for (size_t predicate_index = 0; predicate_index < predicates.size(); ++predicate_index)
@@ -3854,6 +4024,15 @@ namespace scratchbird::optimizer
                 }
                 std::vector<std::string> candidate_scan_families;
                 appendUniqueText(candidate_scan_families, scan_kind);
+                const auto candidate_ordering_keys = indexOrderingKeys(index);
+                const bool candidate_order_complete =
+                    !candidate_ordering_keys.empty();
+                const double candidate_interesting_order_score =
+                    candidate_order_complete
+                        ? static_cast<double>(
+                              std::max<uint64_t>(ordered_prefix_length,
+                                                 candidate_ordering_keys.size()))
+                        : 0.0;
                 if (multicolumn_prefix_match)
                 {
                     appendUniqueText(candidate_scan_families,
@@ -3961,8 +4140,12 @@ namespace scratchbird::optimizer
                 best_bitmap_op.clear();
                 best_covering_index = covering_index;
                 best_exact_key_lookup = exact_key_lookup;
-                best_ordered_output = ordered_prefix_length > 0;
+                best_ordered_output =
+                    candidate_order_complete || ordered_prefix_length > 0;
                 best_ordered_prefix_length = ordered_prefix_length;
+                best_ordering_keys = candidate_ordering_keys;
+                best_order_complete = candidate_order_complete;
+                best_interesting_order_score = candidate_interesting_order_score;
                 best_required_outer_relation_indexes.clear();
                 best_required_outer_relation_aliases.clear();
 
@@ -4105,6 +4288,9 @@ namespace scratchbird::optimizer
                 best_exact_key_lookup = false;
                 best_ordered_output = false;
                 best_ordered_prefix_length = 0;
+                best_ordering_keys.clear();
+                best_order_complete = false;
+                best_interesting_order_score = 0.0;
                 best_required_outer_relation_indexes.clear();
                 best_required_outer_relation_aliases.clear();
 
@@ -4243,6 +4429,9 @@ namespace scratchbird::optimizer
                     best_exact_key_lookup = bitmap_exact_lookup;
                     best_ordered_output = false;
                     best_ordered_prefix_length = 0;
+                    best_ordering_keys.clear();
+                    best_order_complete = false;
+                    best_interesting_order_score = 0.0;
                     best_required_outer_relation_indexes.clear();
                     best_required_outer_relation_aliases.clear();
                     matched_index = {};
@@ -4359,9 +4548,13 @@ namespace scratchbird::optimizer
             choice.access_descriptor.ordered_output = best_ordered_output;
             choice.access_descriptor.ordered_prefix_length =
                 best_ordered_prefix_length;
+            choice.access_descriptor.ordering_keys = best_ordering_keys;
+            choice.access_descriptor.order_complete = best_order_complete;
             choice.access_descriptor.parameterized = relation.lateral;
             choice.access_descriptor.required_outer_relation_indexes =
                 best_required_outer_relation_indexes;
+            choice.access_descriptor.interesting_order_score =
+                best_interesting_order_score;
             if (choice.path)
             {
                 choice.path->setAccessDescriptor(choice.access_descriptor);
@@ -5169,6 +5362,47 @@ namespace scratchbird::optimizer
                         nl_cost);
                 }
 
+                if (decision.path)
+                {
+                    AccessPathDescriptor join_descriptor;
+                    join_descriptor.family = decision.runtime_join.method;
+                    join_descriptor.parameterized = parameterized_inner;
+                    if (parameterized_inner)
+                    {
+                        join_descriptor.required_outer_relation_indexes =
+                            left_tree.relation_order;
+                    }
+
+                    if (chosen_method == ChosenJoinMethod::MERGE_JOIN &&
+                        decision.runtime_join.has_merge_keys)
+                    {
+                        join_descriptor.ordered_output = true;
+                        join_descriptor.order_complete = true;
+                        join_descriptor.ordered_prefix_length = 1;
+                        join_descriptor.ordering_keys.push_back(makeOrderingKey(
+                            decision.runtime_join.left_merge_key.column_name));
+                        join_descriptor.interesting_order_score = 1.0;
+                    }
+                    else if (chosen_method != ChosenJoinMethod::HASH_JOIN &&
+                             left_tree.path)
+                    {
+                        const auto &outer_descriptor =
+                            left_tree.path->accessDescriptor();
+                        join_descriptor.ordered_output =
+                            outer_descriptor.ordered_output;
+                        join_descriptor.ordered_prefix_length =
+                            outer_descriptor.ordered_prefix_length;
+                        join_descriptor.ordering_keys =
+                            outer_descriptor.ordering_keys;
+                        join_descriptor.order_complete =
+                            outer_descriptor.order_complete;
+                        join_descriptor.interesting_order_score =
+                            outer_descriptor.interesting_order_score;
+                    }
+
+                    decision.path->setAccessDescriptor(std::move(join_descriptor));
+                }
+
                 if (!decision.runtime_join.has_hash_keys)
                 {
                     decision.runtime_join.left_hash_key.qualifier =
@@ -5748,6 +5982,14 @@ namespace scratchbird::optimizer
             !select_stmt->group_by.empty() ||
             select_stmt->having != nullptr)
         {
+            const AccessPathDescriptor input_descriptor =
+                current_path ? current_path->accessDescriptor()
+                             : AccessPathDescriptor{};
+            const bool aggregate_reuses_group_order =
+                !select_stmt->group_by.empty() && current_path &&
+                orderingSatisfiesGrouping(current_path->accessDescriptor(),
+                                         select_stmt->group_by,
+                                         pool);
             uint64_t estimated_groups = select_stmt->group_by.empty()
                 ? 1
                 : std::max<uint64_t>(1, current_rows / 10);
@@ -5771,6 +6013,39 @@ namespace scratchbird::optimizer
                                                            aggregate_cost,
                                                            select_stmt->grouping_type,
                                                            select_stmt->grouping_sets);
+            if (current_path)
+            {
+                AccessPathDescriptor aggregate_descriptor;
+                aggregate_descriptor.family = "AGGREGATE";
+                aggregate_descriptor.parameterized =
+                    input_descriptor.parameterized;
+                aggregate_descriptor.required_outer_relation_indexes =
+                    input_descriptor.required_outer_relation_indexes;
+                if (aggregate_reuses_group_order)
+                {
+                    aggregate_descriptor.ordered_output = true;
+                    aggregate_descriptor.order_complete = true;
+                    aggregate_descriptor.ordered_prefix_length =
+                        select_stmt->group_by.size();
+                    aggregate_descriptor.interesting_order_score =
+                        static_cast<double>(select_stmt->group_by.size());
+                    for (auto *group_expr : select_stmt->group_by)
+                    {
+                        aggregate_descriptor.ordering_keys.push_back(
+                            makeOrderingKey(expressionToString(group_expr, pool)));
+                    }
+                    appendRuntimeTrace(considered_paths,
+                                       "SORT_AVOIDANCE",
+                                       "query:group_by",
+                                       "GROUP_ORDER_REUSE",
+                                       "CHOSEN",
+                                       "aggregate input already satisfies GROUP BY key order",
+                                       aggregate_cost.startup_cost,
+                                       aggregate_cost.total_cost,
+                                       aggregate_cost.rows);
+                }
+                current_path->setAccessDescriptor(std::move(aggregate_descriptor));
+            }
             auto aggregate_plan = std::make_shared<AggregateNode>(current_plan,
                                                                   select_stmt->group_by,
                                                                   query_aggregates,
@@ -5786,6 +6061,9 @@ namespace scratchbird::optimizer
 
         if (!query_windows.empty())
         {
+            const AccessPathDescriptor input_descriptor =
+                current_path ? current_path->accessDescriptor()
+                             : AccessPathDescriptor{};
             uint64_t partition_keys = 0;
             uint64_t order_keys = 0;
             std::vector<WindowNode::WindowFunction> window_functions;
@@ -5872,6 +6150,12 @@ namespace scratchbird::optimizer
             current_path = std::make_shared<WindowPath>(current_path,
                                                         query_windows,
                                                         window_cost);
+            if (current_path)
+            {
+                AccessPathDescriptor window_descriptor = input_descriptor;
+                window_descriptor.family = "WINDOW";
+                current_path->setAccessDescriptor(std::move(window_descriptor));
+            }
             auto window_plan = std::make_shared<WindowNode>(current_plan, window_functions);
             window_plan->setCost(window_cost.startup_cost,
                                  window_cost.total_cost,
@@ -5899,57 +6183,129 @@ namespace scratchbird::optimizer
 
         if (!select_stmt->order_by.empty())
         {
+            std::string sort_avoidance_reason;
+            const bool order_already_satisfied =
+                current_path &&
+                orderingSatisfiesOrderBy(current_path->accessDescriptor(),
+                                         select_stmt->order_by,
+                                         pool,
+                                         &sort_avoidance_reason);
             const uint64_t top_n_rows =
                 has_limit
                     ? static_cast<uint64_t>(std::max<int64_t>(
                           1,
                           limit_count + std::max<int64_t>(offset_count, 0)))
                     : 0;
-            CostEstimate sort_cost =
-                has_limit
-                    ? active_cost_model.costSort(current_rows,
-                                           row_width,
-                                           select_stmt->order_by.size(),
-                                           top_n_rows,
-                                           ctx)
-                    : active_cost_model.costSort(current_rows,
-                                           row_width,
-                                           select_stmt->order_by.size(),
-                                           ctx);
-            if (spill_policy == PlannerSpillPolicy::DISALLOW &&
-                sort_cost.spill_expected)
-            {
-                SET_ERROR_CONTEXT(ctx,
-                                  core::Status::CONFIGURATION_LIMIT_EXCEEDED,
-                                  "Sort operator exceeds work_mem under spill-disallow policy");
-                return core::Status::CONFIGURATION_LIMIT_EXCEEDED;
-            }
-            if (has_limit)
+            if (order_already_satisfied)
             {
                 appendRuntimeTrace(considered_paths,
-                                   "SORT_STRATEGY",
+                                   "SORT_AVOIDANCE",
                                    "query:order_by",
-                                   "TOP_N_SORT",
+                                   "EXISTING_ORDER",
                                    "CHOSEN",
-                                   "top-N sort for ordered LIMIT/OFFSET",
-                                   sort_cost.startup_cost,
+                                   "input path already satisfies ORDER BY",
+                                   current_path->startupCost(),
+                                   current_path->totalCost(),
+                                   current_path->rows());
+            }
+            else
+            {
+                CostEstimate sort_cost =
+                    has_limit
+                        ? active_cost_model.costSort(current_rows,
+                                               row_width,
+                                               select_stmt->order_by.size(),
+                                               top_n_rows,
+                                               ctx)
+                        : active_cost_model.costSort(current_rows,
+                                               row_width,
+                                               select_stmt->order_by.size(),
+                                               ctx);
+                if (spill_policy == PlannerSpillPolicy::DISALLOW &&
+                    sort_cost.spill_expected)
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      core::Status::CONFIGURATION_LIMIT_EXCEEDED,
+                                      "Sort operator exceeds work_mem under spill-disallow policy");
+                    return core::Status::CONFIGURATION_LIMIT_EXCEEDED;
+                }
+                appendRuntimeTrace(rejected_paths,
+                                   "SORT_AVOIDANCE",
+                                   "query:order_by",
+                                   "EXISTING_ORDER",
+                                   "REJECTED",
+                                   sort_avoidance_reason.empty()
+                                       ? "input path does not satisfy ORDER BY"
+                                       : sort_avoidance_reason,
+                                   current_path ? current_path->startupCost() : 0.0,
+                                   current_path ? current_path->totalCost() : 0.0,
+                                   current_path ? current_path->rows() : 0);
+                if (has_limit)
+                {
+                    appendRuntimeTrace(considered_paths,
+                                       "SORT_STRATEGY",
+                                       "query:order_by",
+                                       "TOP_N_SORT",
+                                       "CHOSEN",
+                                       "top-N sort for ordered LIMIT/OFFSET",
+                                       sort_cost.startup_cost,
+                                       sort_cost.total_cost,
+                                       sort_cost.rows);
+                }
+                else
+                {
+                    appendRuntimeTrace(considered_paths,
+                                       "SORT_STRATEGY",
+                                       "query:order_by",
+                                       "FULL_SORT",
+                                       "CHOSEN",
+                                       "explicit sort required for ORDER BY",
+                                       sort_cost.startup_cost,
+                                       sort_cost.total_cost,
+                                       sort_cost.rows);
+                }
+                current_path = std::make_shared<SortPath>(current_path,
+                                                          select_stmt->order_by,
+                                                          row_width,
+                                                          sort_cost);
+                if (current_path)
+                {
+                    AccessPathDescriptor sort_descriptor;
+                    sort_descriptor.family = "SORT";
+                    sort_descriptor.ordered_output = true;
+                    sort_descriptor.order_complete = true;
+                    sort_descriptor.ordered_prefix_length =
+                        select_stmt->order_by.size();
+                    sort_descriptor.interesting_order_score =
+                        static_cast<double>(select_stmt->order_by.size());
+                    for (auto *order_item : select_stmt->order_by)
+                    {
+                        if (order_item == nullptr || order_item->expr == nullptr)
+                        {
+                            continue;
+                        }
+                        sort_descriptor.ordering_keys.push_back(
+                            makeOrderingKey(expressionToString(order_item->expr, pool),
+                                            !order_item->ascending,
+                                            orderItemNullsFirst(order_item)));
+                    }
+                    current_path->setAccessDescriptor(std::move(sort_descriptor));
+                }
+                auto sort_plan =
+                    std::make_shared<SortNode>(current_plan, select_stmt->order_by);
+                sort_plan->setCost(sort_cost.startup_cost,
                                    sort_cost.total_cost,
                                    sort_cost.rows);
+                current_plan = sort_plan;
+                current_rows = sort_cost.rows;
             }
-            current_path = std::make_shared<SortPath>(current_path,
-                                                      select_stmt->order_by,
-                                                      row_width,
-                                                      sort_cost);
-            auto sort_plan = std::make_shared<SortNode>(current_plan, select_stmt->order_by);
-            sort_plan->setCost(sort_cost.startup_cost,
-                               sort_cost.total_cost,
-                               sort_cost.rows);
-            current_plan = sort_plan;
-            current_rows = sort_cost.rows;
         }
 
         if (has_limit || has_offset)
         {
+            const AccessPathDescriptor input_descriptor =
+                current_path ? current_path->accessDescriptor()
+                             : AccessPathDescriptor{};
             CostEstimate limit_cost = active_cost_model.costLimit(current_rows,
                                                             has_limit ? limit_count : -1,
                                                             has_offset ? offset_count : -1,
@@ -5958,6 +6314,12 @@ namespace scratchbird::optimizer
                                                        has_limit ? limit_count : -1,
                                                        has_offset ? offset_count : -1,
                                                        limit_cost);
+            if (current_path)
+            {
+                AccessPathDescriptor limit_descriptor = input_descriptor;
+                limit_descriptor.family = "LIMIT";
+                current_path->setAccessDescriptor(limit_descriptor);
+            }
             auto limit_plan = std::make_shared<LimitNode>(current_plan,
                                                           has_limit ? limit_count : -1,
                                                           has_offset ? offset_count : -1);

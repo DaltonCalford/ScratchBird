@@ -50,12 +50,23 @@ namespace scratchbird::optimizer
 
     struct AccessPathDescriptor
     {
+        struct OrderingKey
+        {
+            std::string expression_text;
+            bool descending = false;
+            bool nulls_first = false;
+            std::string comparator_family = "DEFAULT";
+        };
+
         std::string family;
         std::vector<std::string> family_tags;
         bool ordered_output = false;
         uint64_t ordered_prefix_length = 0;
+        std::vector<OrderingKey> ordering_keys;
+        bool order_complete = false;
         bool parameterized = false;
         std::vector<size_t> required_outer_relation_indexes;
+        double interesting_order_score = 0.0;
     };
 
     inline auto defaultAccessPathFamily(PathType type) -> std::string
