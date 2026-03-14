@@ -37,6 +37,7 @@
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/proc_array.h"
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
@@ -819,6 +820,51 @@ TEST_F(GarbageCollectorTest, SweepIntegration)
     // Verify GC ran
     auto stats = gc->getStatistics();
     EXPECT_GT(stats.background_runs, 0);
+}
+
+TEST_F(GarbageCollectorTest, SweepAdvancesOitUsingPreparedFrontierFromTipWalk)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    ErrorContext ctx;
+    ASSERT_EQ(db.initializeProcArray(16, &ctx), Status::OK) << ctx.message;
+
+    auto *txn_mgr = db.transaction_manager();
+    auto *sweep_mgr = db.sweep_manager();
+    ASSERT_NE(txn_mgr, nullptr);
+    ASSERT_NE(sweep_mgr, nullptr);
+
+    uint32_t proc_id = 0;
+    ASSERT_EQ(ProcArrayManager::registerBackend(&proc_id, &ctx), Status::OK) << ctx.message;
+
+    uint64_t xid = 0;
+    ASSERT_EQ(txn_mgr->beginTransaction(proc_id, xid, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(txn_mgr->commitTransaction(proc_id, xid, &ctx), Status::OK) << ctx.message;
+
+    ASSERT_EQ(txn_mgr->beginTransaction(proc_id, xid, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(txn_mgr->rollbackTransaction(proc_id, xid, &ctx), Status::OK) << ctx.message;
+
+    uint64_t prepared_xid = 0;
+    ASSERT_EQ(txn_mgr->beginTransaction(proc_id, prepared_xid, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(txn_mgr->prepareTransaction(proc_id,
+                                          prepared_xid,
+                                          "gc_sweep_tip_walk_prepared",
+                                          generateUuidV7(),
+                                          &ctx),
+              Status::OK)
+        << ctx.message;
+
+    uint64_t later_committed_xid = 0;
+    ASSERT_EQ(txn_mgr->beginTransaction(proc_id, later_committed_xid, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(txn_mgr->commitTransaction(proc_id, later_committed_xid, &ctx), Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(txn_mgr->getOldestXid(), prepared_xid);
+
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
 }
 
 TEST_F(GarbageCollectorTest, SweepResumeStateSurvivesRestartAndReusesGeneration)

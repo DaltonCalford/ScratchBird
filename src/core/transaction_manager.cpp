@@ -1441,6 +1441,153 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto TransactionManager::findOldestInterestingXidFromInventory(uint64_t &xid_out,
+                                                                   ErrorContext *ctx) const
+        -> Status
+    {
+        (void)ctx;
+
+        uint64_t start_xid = 0;
+        uint64_t end_xid_exclusive = 0;
+        uint32_t tip_root_page = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            start_xid = oldest_xid_;
+            end_xid_exclusive = next_xid_.load(std::memory_order_acquire);
+            tip_root_page = tip_root_page_;
+        }
+
+        if (start_xid <= FROZEN_XID)
+        {
+            start_xid = FROZEN_XID + 1;
+        }
+
+        if (end_xid_exclusive <= start_xid)
+        {
+            xid_out = end_xid_exclusive;
+            return Status::OK;
+        }
+
+        uint64_t expected_xid = start_xid;
+        uint32_t current_page = tip_root_page;
+
+        while (current_page != 0 && expected_xid < end_xid_exclusive)
+        {
+            void *page_buffer = nullptr;
+            ErrorContext local_ctx;
+            Status status = buffer_pool_->pinPage(current_page, &page_buffer, &local_ctx);
+            if (status != Status::OK)
+            {
+                LOG_WARNING(
+                    TRANSACTION,
+                    "TIP horizon walk could not pin page %u while resolving xid=%lu; holding OIT conservatively (%s)",
+                    current_page,
+                    expected_xid,
+                    local_ctx.message.c_str());
+                xid_out = expected_xid;
+                return Status::OK;
+            }
+
+            auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
+            if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
+            {
+                buffer_pool_->unpinPage(current_page, false, nullptr);
+                LOG_WARNING(TRANSACTION,
+                            "TIP horizon walk encountered non-TIP page %u while resolving xid=%lu; holding OIT conservatively",
+                            current_page,
+                            expected_xid);
+                xid_out = expected_xid;
+                return Status::OK;
+            }
+
+            const uint32_t next_page = tip_header->next_tip_page;
+            auto *entries = reinterpret_cast<TIPEntry *>(reinterpret_cast<uint8_t *>(page_buffer) +
+                                                         sizeof(TIPPageHeader));
+
+            if (tip_header->num_transactions == 0)
+            {
+                buffer_pool_->unpinPage(current_page, false, nullptr);
+                current_page = next_page;
+                continue;
+            }
+
+            if (tip_header->max_xid < expected_xid)
+            {
+                buffer_pool_->unpinPage(current_page, false, nullptr);
+                current_page = next_page;
+                continue;
+            }
+
+            if (tip_header->min_xid != 0 && expected_xid < tip_header->min_xid)
+            {
+                buffer_pool_->unpinPage(current_page, false, nullptr);
+                LOG_WARNING(TRANSACTION,
+                            "TIP horizon walk found uncovered XID gap before page %u (expected=%lu min=%lu); holding OIT conservatively",
+                            current_page,
+                            expected_xid,
+                            tip_header->min_xid);
+                xid_out = expected_xid;
+                return Status::OK;
+            }
+
+            for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
+            {
+                const uint64_t entry_xid = entries[i].xid;
+                if (entry_xid < expected_xid)
+                {
+                    continue;
+                }
+
+                if (entry_xid >= end_xid_exclusive)
+                {
+                    buffer_pool_->unpinPage(current_page, false, nullptr);
+                    xid_out = end_xid_exclusive;
+                    return Status::OK;
+                }
+
+                if (entry_xid > expected_xid)
+                {
+                    buffer_pool_->unpinPage(current_page, false, nullptr);
+                    LOG_WARNING(TRANSACTION,
+                                "TIP horizon walk found missing inventory coverage at xid=%lu before page %u entry xid=%lu; holding OIT conservatively",
+                                expected_xid,
+                                current_page,
+                                entry_xid);
+                    xid_out = expected_xid;
+                    return Status::OK;
+                }
+
+                TransactionState tip_state = TransactionState::ACTIVE;
+                if (!decodeTipState(entries[i].state, tip_state))
+                {
+                    buffer_pool_->unpinPage(current_page, false, nullptr);
+                    LOG_WARNING(TRANSACTION,
+                                "TIP horizon walk found invalid state byte for xid=%lu on page %u; holding OIT conservatively",
+                                entry_xid,
+                                current_page);
+                    xid_out = expected_xid;
+                    return Status::OK;
+                }
+
+                if (tip_state != TransactionState::COMMITTED &&
+                    tip_state != TransactionState::ABORTED)
+                {
+                    buffer_pool_->unpinPage(current_page, false, nullptr);
+                    xid_out = entry_xid;
+                    return Status::OK;
+                }
+
+                expected_xid = entry_xid + 1;
+            }
+
+            buffer_pool_->unpinPage(current_page, false, nullptr);
+            current_page = next_page;
+        }
+
+        xid_out = (expected_xid < end_xid_exclusive) ? expected_xid : end_xid_exclusive;
+        return Status::OK;
+    }
+
     auto TransactionManager::checkXIDWraparound(ErrorContext *ctx) -> Status
     {
         // P1-2: Age-based XID wraparound prevention (Firebird MGA style)

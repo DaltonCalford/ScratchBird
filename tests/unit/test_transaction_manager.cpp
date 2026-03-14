@@ -281,3 +281,67 @@ TEST_F(TransactionManagerTest, TIPPageValidation)
 
     ProcArrayManager::unregisterBackend(proc_id, &ctx);
 }
+
+TEST_F(TransactionManagerTest, InventoryWalkAdvancesPastAllTerminalTransactions)
+{
+    ErrorContext ctx;
+    uint32_t proc_id = 0;
+    ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
+
+    for (int i = 0; i < 6; ++i)
+    {
+        uint64_t xid = 0;
+        ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, xid, &ctx)) << ctx.message;
+        if ((i % 2) == 0)
+        {
+            ASSERT_EQ(Status::OK, tm_->commitTransaction(proc_id, xid, &ctx)) << ctx.message;
+        }
+        else
+        {
+            ASSERT_EQ(Status::OK, tm_->rollbackTransaction(proc_id, xid, &ctx)) << ctx.message;
+        }
+    }
+
+    uint64_t oldest_interesting = 0;
+    ASSERT_EQ(Status::OK, tm_->findOldestInterestingXidFromInventory(oldest_interesting, &ctx))
+        << ctx.message;
+    EXPECT_EQ(oldest_interesting, tm_->getCurrentXid() + 1);
+
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
+}
+
+TEST_F(TransactionManagerTest, InventoryWalkStopsAtPreparedTransaction)
+{
+    ErrorContext ctx;
+    uint32_t proc_id = 0;
+    ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
+
+    uint64_t committed_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, committed_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, tm_->commitTransaction(proc_id, committed_xid, &ctx)) << ctx.message;
+
+    uint64_t aborted_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, aborted_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, tm_->rollbackTransaction(proc_id, aborted_xid, &ctx)) << ctx.message;
+
+    uint64_t prepared_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, prepared_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK,
+              tm_->prepareTransaction(proc_id,
+                                      prepared_xid,
+                                      "tm_inventory_walk_prepared",
+                                      generateUuidV7(),
+                                      &ctx))
+        << ctx.message;
+
+    uint64_t later_committed_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, later_committed_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, tm_->commitTransaction(proc_id, later_committed_xid, &ctx)) << ctx.message;
+
+    uint64_t oldest_interesting = 0;
+    ASSERT_EQ(Status::OK, tm_->findOldestInterestingXidFromInventory(oldest_interesting, &ctx))
+        << ctx.message;
+    EXPECT_EQ(oldest_interesting, prepared_xid);
+
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
+}

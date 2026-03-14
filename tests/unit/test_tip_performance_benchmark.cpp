@@ -186,6 +186,60 @@ TEST_F(TIPPerformanceBenchmark, TIPLookupSpeed)
         << "TIP lookup excessively slow (> 5000ns)!";
 }
 
+TEST_F(TIPPerformanceBenchmark, InventoryHorizonWalkSpeed)
+{
+    ErrorContext ctx;
+    const int NUM_TERMINAL_TRANSACTIONS = 128;
+    const int NUM_WALKS = 20;
+
+    for (int i = 0; i < NUM_TERMINAL_TRANSACTIONS; ++i)
+    {
+        uint64_t xid = beginTxn(&ctx);
+        if ((i % 2) == 0)
+        {
+            commitTxn(xid, &ctx);
+        }
+        else
+        {
+            rollbackTxn(xid, &ctx);
+        }
+    }
+
+    uint64_t prepared_xid = beginTxn(&ctx);
+    ASSERT_EQ(tm_->prepareTransaction(proc_id_,
+                                      prepared_xid,
+                                      "tip_horizon_walk_speed",
+                                      generateUuidV7(),
+                                      &ctx),
+              Status::OK)
+        << ctx.message;
+
+    uint64_t oldest_interesting = 0;
+    auto start = high_resolution_clock::now();
+    for (int i = 0; i < NUM_WALKS; ++i)
+    {
+        ASSERT_EQ(tm_->findOldestInterestingXidFromInventory(oldest_interesting, &ctx), Status::OK)
+            << ctx.message;
+    }
+    auto end = high_resolution_clock::now();
+
+    ASSERT_EQ(oldest_interesting, prepared_xid);
+
+    auto duration = duration_cast<microseconds>(end - start);
+    const double avg_walk_us = duration.count() / static_cast<double>(NUM_WALKS);
+
+    std::cout << "\n=== Inventory Horizon Walk Performance ===" << std::endl;
+    std::cout << "Terminal transactions: " << NUM_TERMINAL_TRANSACTIONS << std::endl;
+    std::cout << "Prepared frontier xid: " << prepared_xid << std::endl;
+    std::cout << "Walks: " << NUM_WALKS << std::endl;
+    std::cout << "Total time: " << duration.count() << " us" << std::endl;
+    std::cout << "Average per walk: " << avg_walk_us << " us" << std::endl;
+
+    constexpr double MAX_AVG_WALK_US_UNDER_FULL_LOAD = 5000.0;
+    EXPECT_LT(avg_walk_us, MAX_AVG_WALK_US_UNDER_FULL_LOAD)
+        << "Inventory horizon walk too slow (> 5000us)!";
+}
+
 TEST_F(TIPPerformanceBenchmark, BTreeSearchWithTIPVisibility)
 {
     ErrorContext ctx;

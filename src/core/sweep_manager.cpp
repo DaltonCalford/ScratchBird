@@ -1887,48 +1887,22 @@ namespace scratchbird::core
     uint64_t SweepManager::findFirstUncommittedTransaction(ErrorContext *ctx) const
     {
         uint64_t current_oit = txn_manager_->getOldestXid();
-        uint64_t current_xmax = txn_manager_->getCurrentXid();
-
-        LOG_DEBUG(VACUUM, "Scanning transactions: oit=%lu, xmax=%lu, range=%lu", current_oit,
-                  current_xmax, current_xmax - current_oit);
-
-        // Scan from current OIT to current XMAX
-        // This is a simplified implementation that uses the transaction manager's
-        // getTransactionState() method. A production implementation should scan
-        // TIP pages directly for better performance.
-
-        for (uint64_t xid = current_oit; xid < current_xmax; xid++)
+        uint64_t new_oit = current_oit;
+        Status status = txn_manager_->findOldestInterestingXidFromInventory(new_oit, ctx);
+        if (status != Status::OK)
         {
-            // Skip special XIDs (INVALID_XID=0, BOOTSTRAP_XID=1, FROZEN_XID=2)
-            constexpr uint64_t FROZEN_XID = 2;
-            if (xid <= FROZEN_XID)
-            {
-                continue;
-            }
-
-            TransactionState state;
-            Status s = txn_manager_->getTransactionState(xid, state, ctx);
-            if (s != Status::OK)
-            {
-                // If we can't read state, assume it's still active (conservative)
-                LOG_DEBUG(VACUUM, "Failed to read transaction state for xid=%lu, assuming active",
-                          xid);
-                return xid;
-            }
-
-            // First transaction that's not committed/aborted is new OIT
-            if (state != TransactionState::COMMITTED && state != TransactionState::ABORTED)
-            {
-                LOG_DEBUG(VACUUM, "Found first uncommitted transaction: xid=%lu, state=%d", xid,
-                          static_cast<int>(state));
-                return xid;
-            }
+            LOG_WARNING(VACUUM,
+                        "TIP horizon walk failed while resolving new OIT; keeping conservative frontier at %lu",
+                        current_oit);
+            return current_oit;
         }
 
-        // All transactions are committed/aborted - OIT can advance to XMAX
-        LOG_DEBUG(VACUUM, "All transactions committed/aborted, advancing OIT to XMAX=%lu",
-                  current_xmax);
-        return current_xmax;
+        LOG_DEBUG(VACUUM,
+                  "Resolved new OIT from TIP walk: old_oit=%lu, new_oit=%lu, delta=%ld",
+                  current_oit,
+                  new_oit,
+                  static_cast<long>(new_oit - current_oit));
+        return new_oit;
     }
 
     Status SweepManager::reclaimSpace(uint64_t new_oit,

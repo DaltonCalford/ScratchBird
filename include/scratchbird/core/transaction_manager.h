@@ -374,6 +374,13 @@ namespace scratchbird::core
             return oldest_snapshot_serial_;
         }
 
+        // Walk the authoritative TIP/inventory chain directly to find the
+        // oldest transaction that is not yet terminal. This is used by sweep
+        // and other horizon discovery paths that must not probe each XID
+        // through repeated state lookups.
+        auto findOldestInterestingXidFromInventory(uint64_t &xid_out,
+                                                   ErrorContext *ctx = nullptr) const -> Status;
+
         // Update oldest XID after GC/sweep completes
         // LOCKING: Thread-safe. Acquires mutex_ internally.
         auto setOldestXid(uint64_t xid, ErrorContext *ctx = nullptr) -> Status;
