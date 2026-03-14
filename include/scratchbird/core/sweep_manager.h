@@ -73,6 +73,16 @@ namespace scratchbird::core
         OBJECT_FAMILY = 3
     };
 
+    enum class SweepProgressStage : uint8_t
+    {
+        NONE = 0,
+        LOCAL_EVIDENCE_PENDING = 1,
+        PAGE_AUDIT_PENDING = 2,
+        SHADOW_CAPTURE_PENDING = 3,
+        WAL_AFTER_PENDING = 4,
+        RECLAIM_PENDING = 5
+    };
+
     struct SweepPolicyScope
     {
         SweepScopeKind scope_kind = SweepScopeKind::DATABASE;
@@ -232,11 +242,15 @@ namespace scratchbird::core
             uint64_t generation_id = 0;
             bool active = false;
             uint64_t start_horizon = 0;
+            uint64_t resume_oit_before = 0;
+            uint16_t resume_lane_mask = 0;
+            bool resume_strict_audit = true;
             ID last_relation_id{};
             uint64_t last_page_cursor = 0;
             uint64_t reclaimed_version_count = 0;
             uint64_t reclaimed_bytes = 0;
             uint64_t index_backlog_count = 0;
+            SweepProgressStage stage = SweepProgressStage::NONE;
         };
 
         Database *db_;
@@ -281,17 +295,23 @@ namespace scratchbird::core
                               bool wal_after_failure);
 
         Status emitLocalEvidenceForSweep(uint64_t oit_before, uint64_t oit_after,
+                                         uint16_t lane_mask,
+                                         bool strict_audit,
                                          uint64_t* evidence_items_emitted,
                                          bool* prune_blocked_out,
                                          ErrorContext* ctx);
         Status emitPageSpotAuditFindings(bool foreground,
+                                         uint16_t lane_mask,
                                          uint64_t* findings_emitted,
                                          bool* mode_downgraded,
                                          ErrorContext* ctx);
         Status emitShadowCaptureManifests(uint64_t* manifests_emitted,
+                                          uint16_t lane_mask,
+                                          bool strict_audit,
                                           ErrorContext* ctx);
         Status emitDerivativeWalAfterLog(uint64_t* segments_emitted,
                                          uint64_t* backlog_depth,
+                                         uint16_t lane_mask,
                                          ErrorContext* ctx);
     };
 

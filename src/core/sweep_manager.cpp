@@ -51,6 +51,13 @@ namespace scratchbird::core
         constexpr size_t kSweepProgressSlotReclaimedVersions = 6;
         constexpr size_t kSweepProgressSlotReclaimedBytes = 7;
         constexpr size_t kSweepProgressSlotIndexBacklog = 8;
+        constexpr size_t kSweepProgressSlotResumeMeta = 9;
+        constexpr uint64_t kSweepProgressStageShift = 60;
+        constexpr uint64_t kSweepProgressLaneShift = 52;
+        constexpr uint64_t kSweepProgressStrictShift = 51;
+        constexpr uint64_t kSweepProgressLaneMask = 0xFFULL;
+        constexpr uint64_t kSweepProgressResumeOitMask =
+            (uint64_t{1} << kSweepProgressStrictShift) - 1;
 
         bool isZeroIdLocal(const ID& id)
         {
@@ -69,6 +76,103 @@ namespace scratchbird::core
             return std::chrono::duration_cast<std::chrono::microseconds>(
                        std::chrono::system_clock::now().time_since_epoch())
                 .count();
+        }
+
+        auto decodeSweepProgressStage(uint64_t raw_stage) -> SweepProgressStage
+        {
+            switch (raw_stage)
+            {
+            case static_cast<uint64_t>(SweepProgressStage::NONE):
+                return SweepProgressStage::NONE;
+            case static_cast<uint64_t>(SweepProgressStage::LOCAL_EVIDENCE_PENDING):
+                return SweepProgressStage::LOCAL_EVIDENCE_PENDING;
+            case static_cast<uint64_t>(SweepProgressStage::PAGE_AUDIT_PENDING):
+                return SweepProgressStage::PAGE_AUDIT_PENDING;
+            case static_cast<uint64_t>(SweepProgressStage::SHADOW_CAPTURE_PENDING):
+                return SweepProgressStage::SHADOW_CAPTURE_PENDING;
+            case static_cast<uint64_t>(SweepProgressStage::WAL_AFTER_PENDING):
+                return SweepProgressStage::WAL_AFTER_PENDING;
+            case static_cast<uint64_t>(SweepProgressStage::RECLAIM_PENDING):
+                return SweepProgressStage::RECLAIM_PENDING;
+            default:
+                return SweepProgressStage::NONE;
+            }
+        }
+
+        auto encodeSweepPolicyLaneMask(const std::vector<SweepPolicyLane>& lanes) -> uint16_t
+        {
+            uint16_t mask = 0;
+            for (SweepPolicyLane lane : lanes)
+            {
+                const uint8_t bit = static_cast<uint8_t>(lane);
+                if (bit < 16)
+                {
+                    mask |= static_cast<uint16_t>(uint16_t{1} << bit);
+                }
+            }
+            return mask;
+        }
+
+        auto hasSweepPolicyLaneInMask(uint16_t mask, SweepPolicyLane lane) -> bool
+        {
+            const uint8_t bit = static_cast<uint8_t>(lane);
+            return bit < 16 && (mask & static_cast<uint16_t>(uint16_t{1} << bit)) != 0;
+        }
+
+        auto decodeSweepPolicyLaneMask(uint16_t mask) -> std::vector<SweepPolicyLane>
+        {
+            std::vector<SweepPolicyLane> lanes;
+            for (uint8_t bit = 0; bit < 8; ++bit)
+            {
+                if ((mask & static_cast<uint16_t>(uint16_t{1} << bit)) != 0)
+                {
+                    lanes.push_back(static_cast<SweepPolicyLane>(bit));
+                }
+            }
+            if (lanes.empty())
+            {
+                lanes.push_back(SweepPolicyLane::NORMAL);
+            }
+            return lanes;
+        }
+
+        auto packSweepProgressResumeMeta(SweepProgressStage stage,
+                                         uint16_t lane_mask,
+                                         bool strict_audit,
+                                         uint64_t resume_oit_before)
+            -> uint64_t
+        {
+            return (static_cast<uint64_t>(stage) << kSweepProgressStageShift) |
+                   ((static_cast<uint64_t>(lane_mask) & kSweepProgressLaneMask)
+                    << kSweepProgressLaneShift) |
+                   ((strict_audit ? 1ULL : 0ULL) << kSweepProgressStrictShift) |
+                   (resume_oit_before & kSweepProgressResumeOitMask);
+        }
+
+        void unpackSweepProgressResumeMeta(uint64_t packed,
+                                           SweepProgressStage* stage_out,
+                                           uint16_t* lane_mask_out,
+                                           bool* strict_audit_out,
+                                           uint64_t* resume_oit_before_out)
+        {
+            if (stage_out != nullptr)
+            {
+                *stage_out =
+                    decodeSweepProgressStage((packed >> kSweepProgressStageShift) & 0x0FULL);
+            }
+            if (lane_mask_out != nullptr)
+            {
+                *lane_mask_out = static_cast<uint16_t>((packed >> kSweepProgressLaneShift) &
+                                                       kSweepProgressLaneMask);
+            }
+            if (strict_audit_out != nullptr)
+            {
+                *strict_audit_out = ((packed >> kSweepProgressStrictShift) & 0x1ULL) != 0;
+            }
+            if (resume_oit_before_out != nullptr)
+            {
+                *resume_oit_before_out = packed & kSweepProgressResumeOitMask;
+            }
         }
 
         void encodeIdToSlots(const ID& id, uint64_t& hi_out, uint64_t& lo_out)
@@ -1123,8 +1227,49 @@ namespace scratchbird::core
             state_page->reserved[kSweepProgressSlotReclaimedVersions];
         state_out->reclaimed_bytes = state_page->reserved[kSweepProgressSlotReclaimedBytes];
         state_out->index_backlog_count = state_page->reserved[kSweepProgressSlotIndexBacklog];
+        unpackSweepProgressResumeMeta(state_page->reserved[kSweepProgressSlotResumeMeta],
+                                      &state_out->stage,
+                                      &state_out->resume_lane_mask,
+                                      &state_out->resume_strict_audit,
+                                      &state_out->resume_oit_before);
 
         buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+
+        if (state_out->active)
+        {
+            if (state_out->stage == SweepProgressStage::NONE)
+            {
+                if (state_out->last_page_cursor != 0 || state_out->reclaimed_version_count != 0 ||
+                    state_out->reclaimed_bytes != 0 || state_out->index_backlog_count != 0 ||
+                    !isZeroIdLocal(state_out->last_relation_id))
+                {
+                    state_out->stage = SweepProgressStage::RECLAIM_PENDING;
+                }
+                else
+                {
+                    state_out->stage = SweepProgressStage::LOCAL_EVIDENCE_PENDING;
+                }
+            }
+
+            if (state_out->resume_oit_before == 0 && txn_manager_ != nullptr)
+            {
+                state_out->resume_oit_before = txn_manager_->getOldestXid();
+            }
+            if (state_out->resume_lane_mask == 0)
+            {
+                state_out->resume_lane_mask =
+                    static_cast<uint16_t>(uint16_t{1}
+                                          << static_cast<uint8_t>(SweepPolicyLane::NORMAL));
+            }
+        }
+        else
+        {
+            state_out->stage = SweepProgressStage::NONE;
+            state_out->resume_lane_mask = 0;
+            state_out->resume_strict_audit = true;
+            state_out->resume_oit_before = 0;
+        }
+
         return Status::OK;
     }
 
@@ -1134,6 +1279,14 @@ namespace scratchbird::core
         if (buffer_pool_ == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if ((state.resume_oit_before & ~kSweepProgressResumeOitMask) != 0)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "Sweep resume OIT exceeds checkpoint encoding capacity");
             return Status::INVALID_ARGUMENT;
         }
 
@@ -1166,6 +1319,11 @@ namespace scratchbird::core
             state.reclaimed_version_count;
         state_page->reserved[kSweepProgressSlotReclaimedBytes] = state.reclaimed_bytes;
         state_page->reserved[kSweepProgressSlotIndexBacklog] = state.index_backlog_count;
+        state_page->reserved[kSweepProgressSlotResumeMeta] =
+            packSweepProgressResumeMeta(state.stage,
+                                        state.resume_lane_mask,
+                                        state.resume_strict_audit,
+                                        state.resume_oit_before);
 
         if (db_ != nullptr && db_->mga_failpoint_manager() != nullptr)
         {
@@ -1618,7 +1776,15 @@ namespace scratchbird::core
             return horizon_status;
         }
 
-        uint64_t oit_before = horizons.oldest_interesting_xid;
+        SweepPolicyBinding active_binding{};
+        Status binding_status = resolvePolicyBinding(
+            {SweepPolicyScope{SweepScopeKind::DATABASE, db_->uuid()}}, active_binding, ctx);
+        if (binding_status != Status::OK)
+        {
+            sweep_in_progress_.store(false, std::memory_order_release);
+            return binding_status;
+        }
+
         SweepProgressState sweep_progress{};
         Status s = loadSweepProgressState(&sweep_progress, ctx);
         if (s != Status::OK)
@@ -1627,7 +1793,8 @@ namespace scratchbird::core
             return s;
         }
 
-        if (!sweep_progress.active)
+        const bool resuming_incomplete = sweep_progress.active;
+        if (!resuming_incomplete)
         {
             sweep_progress.generation_id++;
             sweep_progress.active = true;
@@ -1636,34 +1803,54 @@ namespace scratchbird::core
             {
                 sweep_progress.start_horizon = horizons.current_xid;
             }
+            sweep_progress.resume_oit_before = horizons.oldest_interesting_xid;
+            sweep_progress.resume_lane_mask = encodeSweepPolicyLaneMask(active_binding.lanes);
+            sweep_progress.resume_strict_audit = active_binding.strict_audit;
             sweep_progress.last_relation_id = ID{};
             sweep_progress.last_page_cursor = 0;
             sweep_progress.reclaimed_version_count = 0;
             sweep_progress.reclaimed_bytes = 0;
             sweep_progress.index_backlog_count = 0;
+            sweep_progress.stage = SweepProgressStage::LOCAL_EVIDENCE_PENDING;
+        }
+        else if (sweep_progress.resume_oit_before == 0)
+        {
+            sweep_progress.resume_oit_before = horizons.oldest_interesting_xid;
         }
 
-        s = persistSweepProgressState(sweep_progress, ctx);
+        if (sweep_progress.resume_lane_mask == 0)
+        {
+            sweep_progress.resume_lane_mask = encodeSweepPolicyLaneMask(active_binding.lanes);
+        }
+
+        auto persistCheckpoint = [&]() -> Status { return persistSweepProgressState(sweep_progress, ctx); };
+
+        s = persistCheckpoint();
         if (s != Status::OK)
         {
             sweep_in_progress_.store(false, std::memory_order_release);
             return s;
         }
 
-        // 1. Scan TIP pages to find new OIT
+        const uint64_t sweep_oit_before = sweep_progress.resume_oit_before;
         uint64_t new_oit = findFirstUncommittedTransaction(ctx);
+        uint64_t sweep_oit_after = new_oit;
+        if (sweep_oit_after == 0 && resuming_incomplete)
+        {
+            sweep_oit_after = horizons.oldest_interesting_xid;
+        }
 
-        if (new_oit == 0 || new_oit == oit_before)
+        if (!resuming_incomplete && (sweep_oit_after == 0 || sweep_oit_after == sweep_oit_before))
         {
             // No change needed, but still update statistics
-            LOG_INFO(VACUUM, "Sweep completed: OIT unchanged (oit=%lu)", oit_before);
+            LOG_INFO(VACUUM, "Sweep completed: OIT unchanged (oit=%lu)", sweep_oit_before);
 
             auto end_time = std::chrono::steady_clock::now();
             uint64_t duration_ms =
                 std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
                     .count();
-            updateStatistics(oit_before,
-                             oit_before,
+            updateStatistics(sweep_oit_before,
+                             sweep_oit_before,
                              duration_ms,
                              0,
                              0,
@@ -1678,19 +1865,31 @@ namespace scratchbird::core
                              false);
 
             sweep_progress.active = false;
-            (void)persistSweepProgressState(sweep_progress, ctx);
+            sweep_progress.resume_oit_before = 0;
+            sweep_progress.stage = SweepProgressStage::NONE;
+            (void)persistCheckpoint();
 
             sweep_in_progress_.store(false, std::memory_order_release);
             return Status::OK;
         }
 
-        // 2. Update OIT in database header
-        s = txn_manager_->setOldestXid(new_oit, ctx);
-        if (s != Status::OK)
+        if (sweep_oit_after == 0)
         {
-            LOG_ERROR(VACUUM, "Failed to update OIT: %d", static_cast<int>(s));
-            sweep_in_progress_.store(false, std::memory_order_release);
-            return s;
+            sweep_oit_after = horizons.oldest_interesting_xid;
+        }
+
+        // 2. Update OIT in database header for a newly-started pass. Resumed
+        // passes keep the already-advanced frontier and continue the
+        // evidence/reclaim handoff from the persisted stage.
+        if (!resuming_incomplete)
+        {
+            s = txn_manager_->setOldestXid(sweep_oit_after, ctx);
+            if (s != Status::OK)
+            {
+                LOG_ERROR(VACUUM, "Failed to update OIT: %d", static_cast<int>(s));
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
+            }
         }
 
         uint64_t evidence_items_emitted = 0;
@@ -1705,121 +1904,174 @@ namespace scratchbird::core
         bool shadow_capture_failure = false;
         bool wal_after_failure = false;
 
-        // 3. Mandatory local evidence spool for non-normal lanes before prune handoff
-        s = emitLocalEvidenceForSweep(
-            oit_before, new_oit, &evidence_items_emitted, &prune_blocked, ctx);
-        if (s != Status::OK)
+        if (sweep_progress.stage == SweepProgressStage::LOCAL_EVIDENCE_PENDING)
         {
-            evidence_failure = true;
-            prune_blocked = true;
-
-            auto end_time = std::chrono::steady_clock::now();
-            uint64_t duration_ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
-                    .count();
-            updateStatistics(oit_before,
-                             new_oit,
-                             duration_ms,
-                             evidence_items_emitted,
-                             0,
-                             0,
-                             0,
-                             0,
-                             true,
-                             true,
-                             false,
-                             false,
-                             false,
-                             false);
-
-            if (db_->garbage_collector() != nullptr)
+            // 3. Mandatory local evidence spool for non-normal lanes before prune handoff.
+            s = emitLocalEvidenceForSweep(
+                sweep_oit_before,
+                sweep_oit_after,
+                sweep_progress.resume_lane_mask,
+                sweep_progress.resume_strict_audit,
+                &evidence_items_emitted,
+                &prune_blocked,
+                ctx);
+            if (s != Status::OK)
             {
-                db_->garbage_collector()->notifySweepEvidenceBlocked(oit_before, new_oit);
+                evidence_failure = true;
+                prune_blocked = true;
+
+                auto end_time = std::chrono::steady_clock::now();
+                uint64_t duration_ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
+                        .count();
+                updateStatistics(sweep_oit_before,
+                                 sweep_oit_after,
+                                 duration_ms,
+                                 evidence_items_emitted,
+                                 0,
+                                 0,
+                                 0,
+                                 0,
+                                 true,
+                                 true,
+                                 false,
+                                 false,
+                                 false,
+                                 false);
+
+                if (db_->garbage_collector() != nullptr)
+                {
+                    db_->garbage_collector()->notifySweepEvidenceBlocked(sweep_oit_before,
+                                                                         sweep_oit_after);
+                }
+
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
             }
 
-            sweep_in_progress_.store(false, std::memory_order_release);
-            return s;
+            sweep_progress.stage = SweepProgressStage::PAGE_AUDIT_PENDING;
+            s = persistCheckpoint();
+            if (s != Status::OK)
+            {
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
+            }
         }
 
-        // 4. Page spot audit is read-only but its findings are mandatory local
-        // evidence for the PAGE_SPOT_AUDIT lane.
-        s = emitPageSpotAuditFindings(
-            foreground, &page_audit_findings_emitted, &page_audit_mode_downgraded, ctx);
-        if (s != Status::OK)
+        if (sweep_progress.stage == SweepProgressStage::PAGE_AUDIT_PENDING)
         {
-            page_audit_failure = true;
-            prune_blocked = true;
-
-            auto end_time = std::chrono::steady_clock::now();
-            uint64_t duration_ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
-                    .count();
-            updateStatistics(oit_before,
-                             new_oit,
-                             duration_ms,
-                             evidence_items_emitted,
-                             0,
-                             0,
-                             page_audit_findings_emitted,
-                             0,
-                             true,
-                             evidence_failure,
-                             true,
-                             page_audit_mode_downgraded,
-                             false,
-                             false);
-
-            if (db_->garbage_collector() != nullptr)
+            // 4. Page spot audit is read-only but its findings are mandatory local
+            // evidence for the PAGE_SPOT_AUDIT lane.
+            s = emitPageSpotAuditFindings(
+                foreground,
+                sweep_progress.resume_lane_mask,
+                &page_audit_findings_emitted,
+                &page_audit_mode_downgraded,
+                ctx);
+            if (s != Status::OK)
             {
-                db_->garbage_collector()->notifySweepEvidenceBlocked(oit_before, new_oit);
+                page_audit_failure = true;
+                prune_blocked = true;
+
+                auto end_time = std::chrono::steady_clock::now();
+                uint64_t duration_ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
+                        .count();
+                updateStatistics(sweep_oit_before,
+                                 sweep_oit_after,
+                                 duration_ms,
+                                 evidence_items_emitted,
+                                 0,
+                                 0,
+                                 page_audit_findings_emitted,
+                                 0,
+                                 true,
+                                 evidence_failure,
+                                 true,
+                                 page_audit_mode_downgraded,
+                                 false,
+                                 false);
+
+                if (db_->garbage_collector() != nullptr)
+                {
+                    db_->garbage_collector()->notifySweepEvidenceBlocked(sweep_oit_before,
+                                                                         sweep_oit_after);
+                }
+
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
             }
 
-            sweep_in_progress_.store(false, std::memory_order_release);
-            return s;
+            sweep_progress.stage = SweepProgressStage::SHADOW_CAPTURE_PENDING;
+            s = persistCheckpoint();
+            if (s != Status::OK)
+            {
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
+            }
         }
 
-        // 5. Logical shadow capture is a separate local evidence lane and
-        // blocks prune when persistence fails.
-        s = emitShadowCaptureManifests(&shadow_capture_manifests_emitted, ctx);
-        if (s != Status::OK)
+        if (sweep_progress.stage == SweepProgressStage::SHADOW_CAPTURE_PENDING)
         {
-            shadow_capture_failure = true;
-            prune_blocked = true;
-
-            auto end_time = std::chrono::steady_clock::now();
-            uint64_t duration_ms =
-                std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
-                    .count();
-            updateStatistics(oit_before,
-                             new_oit,
-                             duration_ms,
-                             evidence_items_emitted,
-                             0,
-                             0,
-                             page_audit_findings_emitted,
-                             shadow_capture_manifests_emitted,
-                             true,
-                             evidence_failure,
-                             page_audit_failure,
-                             page_audit_mode_downgraded,
-                             true,
-                             false);
-
-            if (db_->garbage_collector() != nullptr)
+            // 5. Logical shadow capture is a separate local evidence lane and
+            // blocks prune when persistence fails.
+            s = emitShadowCaptureManifests(&shadow_capture_manifests_emitted,
+                                           sweep_progress.resume_lane_mask,
+                                           sweep_progress.resume_strict_audit,
+                                           ctx);
+            if (s != Status::OK)
             {
-                db_->garbage_collector()->notifySweepEvidenceBlocked(oit_before, new_oit);
+                shadow_capture_failure = true;
+                prune_blocked = true;
+
+                auto end_time = std::chrono::steady_clock::now();
+                uint64_t duration_ms =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
+                        .count();
+                updateStatistics(sweep_oit_before,
+                                 sweep_oit_after,
+                                 duration_ms,
+                                 evidence_items_emitted,
+                                 0,
+                                 0,
+                                 page_audit_findings_emitted,
+                                 shadow_capture_manifests_emitted,
+                                 true,
+                                 evidence_failure,
+                                 page_audit_failure,
+                                 page_audit_mode_downgraded,
+                                 true,
+                                 false);
+
+                if (db_->garbage_collector() != nullptr)
+                {
+                    db_->garbage_collector()->notifySweepEvidenceBlocked(sweep_oit_before,
+                                                                         sweep_oit_after);
+                }
+
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
             }
 
-            sweep_in_progress_.store(false, std::memory_order_release);
-            return s;
+            sweep_progress.stage = SweepProgressStage::WAL_AFTER_PENDING;
+            s = persistCheckpoint();
+            if (s != Status::OK)
+            {
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
+            }
         }
 
-        // 6. Derivative wal_after_log export is downstream of local immutable
-        // evidence and never becomes prune or recovery truth.
+        if (sweep_progress.stage == SweepProgressStage::WAL_AFTER_PENDING)
         {
+            // 6. Derivative wal_after_log export is downstream of local immutable
+            // evidence and never becomes prune or recovery truth.
             ErrorContext wal_ctx;
             Status wal_status = emitDerivativeWalAfterLog(
-                &wal_after_segments_emitted, &wal_after_backlog_depth, &wal_ctx);
+                &wal_after_segments_emitted,
+                &wal_after_backlog_depth,
+                sweep_progress.resume_lane_mask,
+                &wal_ctx);
             if (wal_status != Status::OK && wal_status != Status::NOT_FOUND)
             {
                 wal_after_failure = true;
@@ -1828,12 +2080,20 @@ namespace scratchbird::core
                             static_cast<int>(wal_status),
                             wal_ctx.message.c_str());
             }
+
+            sweep_progress.stage = SweepProgressStage::RECLAIM_PENDING;
+            s = persistCheckpoint();
+            if (s != Status::OK)
+            {
+                sweep_in_progress_.store(false, std::memory_order_release);
+                return s;
+            }
         }
 
-        // 7. Optional: Remove old tuple versions (if foreground)
-        if (foreground)
+        if (sweep_progress.stage == SweepProgressStage::RECLAIM_PENDING && foreground)
         {
-            s = reclaimSpace(new_oit, &sweep_progress, ctx);
+            // 7. Optional: Remove old tuple versions (if foreground).
+            s = reclaimSpace(sweep_oit_after, &sweep_progress, ctx);
             if (s != Status::OK)
             {
                 LOG_WARNING(VACUUM, "Space reclamation failed: %d", static_cast<int>(s));
@@ -1843,8 +2103,8 @@ namespace scratchbird::core
                     std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time)
                         .count();
 
-                updateStatistics(oit_before,
-                                 new_oit,
+                updateStatistics(sweep_oit_before,
+                                 sweep_oit_after,
                                  duration_ms,
                                  evidence_items_emitted,
                                  wal_after_segments_emitted,
@@ -1868,8 +2128,8 @@ namespace scratchbird::core
         uint64_t duration_ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
 
-        updateStatistics(oit_before,
-                         new_oit,
+        updateStatistics(sweep_oit_before,
+                         sweep_oit_after,
                          duration_ms,
                          evidence_items_emitted,
                          wal_after_segments_emitted,
@@ -1883,19 +2143,26 @@ namespace scratchbird::core
                          shadow_capture_failure,
                          wal_after_failure);
 
-        LOG_INFO(VACUUM, "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums", oit_before,
-                 new_oit, duration_ms);
+        LOG_INFO(VACUUM,
+                 "Sweep completed: old_oit=%lu, new_oit=%lu, duration=%lums",
+                 sweep_oit_before,
+                 sweep_oit_after,
+                 duration_ms);
 
         sweep_progress.active = false;
         sweep_progress.start_horizon =
-            (sweep_progress.start_horizon == 0) ? new_oit : sweep_progress.start_horizon;
-        (void)persistSweepProgressState(sweep_progress, ctx);
+            (sweep_progress.start_horizon == 0) ? sweep_oit_after : sweep_progress.start_horizon;
+        sweep_progress.resume_oit_before = 0;
+        sweep_progress.resume_lane_mask = 0;
+        sweep_progress.resume_strict_audit = true;
+        sweep_progress.stage = SweepProgressStage::NONE;
+        (void)persistCheckpoint();
 
         // 9. Notify garbage collector that OIT has advanced and the local evidence gate is clear
         // This allows GC to identify more garbage tuples for removal
         if (db_->garbage_collector() != nullptr)
         {
-            db_->garbage_collector()->notifySweepComplete(oit_before, new_oit);
+            db_->garbage_collector()->notifySweepComplete(sweep_oit_before, sweep_oit_after);
         }
 
         sweep_in_progress_.store(false, std::memory_order_release);
@@ -2033,7 +2300,10 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    Status SweepManager::emitLocalEvidenceForSweep(uint64_t oit_before, uint64_t oit_after,
+    Status SweepManager::emitLocalEvidenceForSweep(uint64_t oit_before,
+                                                   uint64_t oit_after,
+                                                   uint16_t lane_mask,
+                                                   bool strict_audit,
                                                    uint64_t* evidence_items_emitted,
                                                    bool* prune_blocked_out,
                                                    ErrorContext* ctx)
@@ -2052,23 +2322,14 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        SweepPolicyBinding binding{};
-        Status status = resolvePolicyBinding(
-            {SweepPolicyScope{SweepScopeKind::DATABASE, db_->uuid()}}, binding, ctx);
-        if (status != Status::OK)
-        {
-            if (prune_blocked_out)
-            {
-                *prune_blocked_out = true;
-            }
-            return status;
-        }
-        if (!lanesRequireLocalEvidence(binding.lanes))
+        const std::vector<SweepPolicyLane> lanes = decodeSweepPolicyLaneMask(lane_mask);
+        if (!lanesRequireLocalEvidence(lanes))
         {
             return Status::OK;
         }
 
-        ID sink_profile_id = binding.sink_profile_id;
+        Status status = Status::OK;
+        ID sink_profile_id{};
         if (isZeroIdLocal(sink_profile_id))
         {
             std::vector<CatalogManager::AuditSinkProfileCatalogInfo> profiles;
@@ -2098,10 +2359,10 @@ namespace scratchbird::core
                 profile.profile_name = kSweepEvidenceProfileName;
                 profile.sink_type = "LOCAL_APPEND_ONLY";
             }
-            profile.failure_policy = binding.strict_audit ? "STRICT_AUDIT" : "BEST_EFFORT";
+            profile.failure_policy = strict_audit ? "STRICT_AUDIT" : "BEST_EFFORT";
             profile.is_enabled = true;
 
-            const std::string lanes_csv = encodeSweepPolicyLanes(binding.lanes);
+            const std::string lanes_csv = encodeSweepPolicyLanes(lanes);
             const auto spool_root = buildSweepSpoolRoot(db_);
             profile.config_json =
                 "{\"profile_kind\":\"SWEEP_LOCAL_EVIDENCE\",\"queue_root\":\"" +
@@ -2214,13 +2475,20 @@ namespace scratchbird::core
 
             const ID work_item_id = generateUuidV7();
             const std::string delivery_state =
-                lanesRequireDownstreamQueue(binding.lanes) ? "REMOTE_PENDING" : "LOCAL_COMMITTED";
+                lanesRequireDownstreamQueue(lanes) ? "REMOTE_PENDING" : "LOCAL_COMMITTED";
             const uint64_t created_time = currentSystemMicros();
             const std::filesystem::path spool_path =
                 spool_root / (std::to_string(group.txid) + "-" + tx_uuid_text + ".sbspool");
-            const std::string manifest = buildSweepManifest(
-                db_, group, binding.lanes, sink_profile_id, oit_before, oit_after, work_item_id,
-                spool_path, delivery_state, created_time);
+            const std::string manifest = buildSweepManifest(db_,
+                                                            group,
+                                                            lanes,
+                                                            sink_profile_id,
+                                                            oit_before,
+                                                            oit_after,
+                                                            work_item_id,
+                                                            spool_path,
+                                                            delivery_state,
+                                                            created_time);
 
             status = writeDurableTextFile(spool_path, manifest, ctx);
             if (status != Status::OK)
@@ -2235,7 +2503,7 @@ namespace scratchbird::core
             CatalogManager::AuditExportSegmentCatalogInfo segment{};
             segment.audit_export_segment_id = work_item_id;
             segment.audit_sink_profile_id = sink_profile_id;
-            segment.evidence_class = chooseEvidenceClass(binding.lanes);
+            segment.evidence_class = chooseEvidenceClass(lanes);
             segment.segment_seq = next_segment_seq++;
             segment.range_start_time = group.first_time;
             segment.range_end_time = group.last_time;
@@ -2269,6 +2537,7 @@ namespace scratchbird::core
     }
 
     Status SweepManager::emitPageSpotAuditFindings(bool foreground,
+                                                   uint16_t lane_mask,
                                                    uint64_t* findings_emitted,
                                                    bool* mode_downgraded,
                                                    ErrorContext* ctx)
@@ -2287,17 +2556,12 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        SweepPolicyBinding binding{};
-        Status status = resolvePolicyBinding(
-            {SweepPolicyScope{SweepScopeKind::DATABASE, db_->uuid()}}, binding, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-        if (!hasSweepPolicyLane(binding.lanes, SweepPolicyLane::PAGE_SPOT_AUDIT))
+        if (!hasSweepPolicyLaneInMask(lane_mask, SweepPolicyLane::PAGE_SPOT_AUDIT))
         {
             return Status::OK;
         }
+
+        Status status = Status::OK;
 
         const std::string scan_mode = foreground ? "LIGHT" : "DIAGNOSTIC";
         const std::string trigger_source = foreground ? "SWEEP_FOREGROUND" : "SWEEP_BACKGROUND";
@@ -2583,6 +2847,8 @@ namespace scratchbird::core
     }
 
     Status SweepManager::emitShadowCaptureManifests(uint64_t* manifests_emitted,
+                                                    uint16_t lane_mask,
+                                                    bool strict_audit,
                                                     ErrorContext* ctx)
     {
         if (manifests_emitted)
@@ -2595,17 +2861,12 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        SweepPolicyBinding binding{};
-        Status status = resolvePolicyBinding(
-            {SweepPolicyScope{SweepScopeKind::DATABASE, db_->uuid()}}, binding, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-        if (!hasSweepPolicyLane(binding.lanes, SweepPolicyLane::SHADOW_CAPTURE))
+        if (!hasSweepPolicyLaneInMask(lane_mask, SweepPolicyLane::SHADOW_CAPTURE))
         {
             return Status::OK;
         }
+
+        Status status = Status::OK;
 
         std::filesystem::path shadow_root;
         status = ensureShadowCaptureRoot(db_, shadow_root, ctx);
@@ -2636,7 +2897,7 @@ namespace scratchbird::core
             shadow_profile.profile_name = kShadowCaptureProfileName;
             shadow_profile.sink_type = "LOCAL_APPEND_ONLY";
         }
-        shadow_profile.failure_policy = binding.strict_audit ? "STRICT_AUDIT" : "BEST_EFFORT";
+        shadow_profile.failure_policy = strict_audit ? "STRICT_AUDIT" : "BEST_EFFORT";
         shadow_profile.is_enabled = true;
         shadow_profile.config_json =
             "{\"profile_kind\":\"SWEEP_SHADOW_CAPTURE\",\"queue_root\":\"" +
@@ -2772,6 +3033,7 @@ namespace scratchbird::core
 
     Status SweepManager::emitDerivativeWalAfterLog(uint64_t* segments_emitted,
                                                    uint64_t* backlog_depth,
+                                                   uint16_t lane_mask,
                                                    ErrorContext* ctx)
     {
         if (segments_emitted)
@@ -2788,17 +3050,12 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        SweepPolicyBinding binding{};
-        Status status = resolvePolicyBinding(
-            {SweepPolicyScope{SweepScopeKind::DATABASE, db_->uuid()}}, binding, ctx);
-        if (status != Status::OK)
-        {
-            return status;
-        }
-        if (!hasSweepPolicyLane(binding.lanes, SweepPolicyLane::WAL_AFTER_EXPORT))
+        if (!hasSweepPolicyLaneInMask(lane_mask, SweepPolicyLane::WAL_AFTER_EXPORT))
         {
             return Status::OK;
         }
+
+        Status status = Status::OK;
 
         std::filesystem::path wal_root = buildWalAfterLogRoot(db_);
 
