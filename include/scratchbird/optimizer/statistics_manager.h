@@ -168,6 +168,16 @@ namespace scratchbird::optimizer
         }
 
     private:
+        struct AnalyzeLifecycleDecision
+        {
+            bool automatic = false;
+            bool triggered = false;
+            bool never_analyzed = false;
+            uint64_t live_rows = 0;
+            uint64_t modified_rows_since_analyze = 0;
+            uint64_t threshold = 0;
+        };
+
         Database *db_;
         CatalogManager *catalog_;
         uint32_t statistics_page_id_;
@@ -341,7 +351,19 @@ namespace scratchbird::optimizer
                                       ColumnCorrelationStatistics &stats_out,
                                       ErrorContext *ctx = nullptr) -> Status;
 
-        auto maybeAutoAnalyze(const ID &table_id, ErrorContext *ctx = nullptr) -> Status;
+        auto maybeAutoAnalyze(const ID &table_id,
+                              AnalyzeLifecycleDecision *decision_out = nullptr,
+                              ErrorContext *ctx = nullptr) -> Status;
+
+        auto applyFreshnessMetadata(const ID &table_id,
+                                    bool auto_analyze_applied,
+                                    uint64_t auto_analyze_threshold,
+                                    ColumnStatistics &stats) -> void;
+
+        auto applyFreshnessMetadata(const ID &table_id,
+                                    bool auto_analyze_applied,
+                                    uint64_t auto_analyze_threshold,
+                                    TableStatistics &stats) -> void;
 
         /**
          * extractColumnValues - Extract values for a specific column from sample rows

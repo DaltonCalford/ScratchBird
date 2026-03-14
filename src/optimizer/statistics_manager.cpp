@@ -26,6 +26,7 @@
 #include <cstring>
 #include <ctime>
 #include <chrono>
+#include <limits>
 #include <unordered_set>
 
 // SECURITY FIX (LOW-8): Use OpenSSL for cryptographically secure random numbers
@@ -381,6 +382,115 @@ namespace scratchbird::optimizer
         stats.type_scale = column.type_scale;
     }
 
+    auto effectiveSampleRatio(uint64_t total_rows,
+                              uint64_t sample_size,
+                              float sample_rate) -> double
+    {
+        if (sample_rate > 0.0f)
+        {
+            return std::max(0.0, std::min(1.0, static_cast<double>(sample_rate)));
+        }
+        if (total_rows == 0)
+        {
+            return 0.0;
+        }
+        return std::max(0.0,
+                        std::min(1.0,
+                                 static_cast<double>(sample_size) /
+                                     static_cast<double>(total_rows)));
+    }
+
+    auto mixStatsSnapshot(uint64_t hash, uint64_t value) -> uint64_t
+    {
+        hash ^= value + 0x9e3779b97f4a7c15ULL + (hash << 6) + (hash >> 2);
+        return hash;
+    }
+
+    auto computeStatsSnapshotId(const ID &table_id,
+                                const ID &column_id,
+                                uint64_t last_analyzed_time,
+                                uint64_t sample_size,
+                                double sample_ratio,
+                                uint64_t modified_rows_since_analyze) -> uint64_t
+    {
+        uint64_t hash = 0xcbf29ce484222325ULL;
+        uint64_t table_prefix = 0;
+        uint64_t column_prefix = 0;
+        std::memcpy(&table_prefix, table_id.bytes.data(), sizeof(table_prefix));
+        std::memcpy(&column_prefix, column_id.bytes.data(), sizeof(column_prefix));
+        hash = mixStatsSnapshot(hash, table_prefix);
+        hash = mixStatsSnapshot(hash, column_prefix);
+        hash = mixStatsSnapshot(hash, last_analyzed_time);
+        hash = mixStatsSnapshot(hash, sample_size);
+        hash = mixStatsSnapshot(
+            hash,
+            static_cast<uint64_t>(std::llround(sample_ratio * 1000000.0)));
+        hash = mixStatsSnapshot(hash, modified_rows_since_analyze);
+        return hash;
+    }
+
+    auto classifyStaleness(uint64_t last_analyzed_time,
+                           uint64_t total_rows,
+                           uint64_t modified_rows_since_analyze)
+        -> StatisticsStalenessClass
+    {
+        if (last_analyzed_time == 0)
+        {
+            return StatisticsStalenessClass::EXPIRED;
+        }
+
+        const uint64_t now =
+            static_cast<uint64_t>(std::time(nullptr));
+        const uint64_t age_seconds =
+            now > last_analyzed_time ? (now - last_analyzed_time) : 0;
+        const double row_basis = static_cast<double>(
+            std::max<uint64_t>(1, total_rows));
+        const double modification_ratio =
+            static_cast<double>(modified_rows_since_analyze) / row_basis;
+
+        if (age_seconds >= 86400 || modification_ratio >= 0.50)
+        {
+            return StatisticsStalenessClass::EXPIRED;
+        }
+        if (age_seconds >= 3600 || modification_ratio >= 0.20)
+        {
+            return StatisticsStalenessClass::STALE;
+        }
+        if (age_seconds >= 300 || modification_ratio >= 0.05)
+        {
+            return StatisticsStalenessClass::WARM;
+        }
+        return StatisticsStalenessClass::FRESH;
+    }
+
+    auto classifyConfidence(uint64_t sample_size,
+                            double sample_ratio,
+                            StatisticsStalenessClass staleness)
+        -> StatisticsConfidenceClass
+    {
+        StatisticsConfidenceClass confidence = StatisticsConfidenceClass::LOW;
+        if (sample_ratio >= 0.50 || sample_size >= 30000)
+        {
+            confidence = StatisticsConfidenceClass::HIGH;
+        }
+        else if (sample_ratio >= 0.10 || sample_size >= 5000)
+        {
+            confidence = StatisticsConfidenceClass::MEDIUM;
+        }
+
+        if (staleness == StatisticsStalenessClass::WARM &&
+            confidence == StatisticsConfidenceClass::HIGH)
+        {
+            confidence = StatisticsConfidenceClass::MEDIUM;
+        }
+        else if (staleness == StatisticsStalenessClass::STALE ||
+                 staleness == StatisticsStalenessClass::EXPIRED)
+        {
+            confidence = StatisticsConfidenceClass::LOW;
+        }
+        return confidence;
+    }
+
     auto buildStatsMetadataJson(const ColumnStatistics &stats) -> nlohmann::json
     {
         return nlohmann::json{
@@ -625,17 +735,77 @@ namespace scratchbird::optimizer
             return status;
         }
 
+        core::CatalogManager::TableInfo table_info;
+        status = catalog_->getTable(table_id, table_info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to get table metadata");
+            return status;
+        }
+
         if (columns.empty())
         {
             DEBUG_LOG_DB("Table has no columns, skipping analysis");
             return Status::OK;
         }
 
-        uint64_t sample_size = 30000;
+        core::TableStatsSnapshot table_snapshot;
+        const bool have_table_snapshot =
+            db_ != nullptr &&
+            db_->table_stats_manager() != nullptr &&
+            db_->table_stats_manager()->snapshotForTable(table_id, table_snapshot);
+
+        uint64_t table_row_estimate = table_info.row_count;
+        if (table_row_estimate == 0 && have_table_snapshot &&
+            table_snapshot.live_rows_estimate > 0)
+        {
+            table_row_estimate =
+                static_cast<uint64_t>(table_snapshot.live_rows_estimate);
+        }
+        if (table_row_estimate == 0 && have_table_snapshot)
+        {
+            table_row_estimate = table_snapshot.rows_inserted +
+                                 table_snapshot.rows_updated +
+                                 table_snapshot.rows_deleted;
+        }
+
+        uint64_t sample_size = 0;
         if (sample_rate > 0.0f && sample_rate <= 1.0f)
         {
-            sample_size = 30000;
+            if (table_row_estimate == 0)
+            {
+                if (sample_rate >= 0.999f)
+                {
+                    sample_size = std::numeric_limits<uint64_t>::max();
+                }
+                else
+                {
+                    constexpr uint64_t k_unknown_row_estimate_basis = 30000;
+                    sample_size = static_cast<uint64_t>(
+                        std::ceil(static_cast<double>(k_unknown_row_estimate_basis) *
+                                  static_cast<double>(sample_rate)));
+                }
+            }
+            else
+            {
+                sample_size = static_cast<uint64_t>(
+                    std::ceil(static_cast<double>(table_row_estimate) *
+                              static_cast<double>(sample_rate)));
+            }
         }
+        else
+        {
+            const uint64_t auto_row_basis = std::max<uint64_t>(1, table_row_estimate);
+            sample_size = std::max<uint64_t>(64, auto_row_basis / 10);
+            sample_size = std::min<uint64_t>(30000, sample_size);
+            sample_rate = 0.0f;
+        }
+
+        if (table_row_estimate > 0)
+        {
+            sample_size = std::min<uint64_t>(sample_size, table_row_estimate);
+        }
+        sample_size = std::max<uint64_t>(1, sample_size);
 
         std::vector<std::vector<uint8_t>> sample_rows;
         status = sampleTable(table_id, sample_size, sample_rows, ctx);
@@ -656,6 +826,10 @@ namespace scratchbird::optimizer
         }
 
         const uint64_t analyzed_time = static_cast<uint64_t>(std::time(nullptr));
+        const double actual_sample_ratio =
+            effectiveSampleRatio(table_row_estimate,
+                                 sample_rows.size(),
+                                 sample_rate);
         DEBUG_LOG_DB("Sampled " + std::to_string(sample_rows.size()) + " rows");
 
         for (const auto &column_info : columns)
@@ -676,6 +850,7 @@ namespace scratchbird::optimizer
             col_stats.column_id = column_info.column_id;
             col_stats.column_name = column_info.column_name;
             col_stats.data_type = static_cast<core::DataType>(column_info.data_type);
+            applyColumnMetadata(column_info, col_stats);
 
             uint64_t null_count = 0;
             uint64_t total_width = 0;
@@ -691,7 +866,8 @@ namespace scratchbird::optimizer
                 }
             }
 
-            col_stats.num_rows = column_values.size();
+            col_stats.num_rows = std::max<uint64_t>(table_row_estimate,
+                                                    column_values.size());
             col_stats.num_nulls = null_count;
             col_stats.null_fraction =
                 static_cast<float>(null_count) / static_cast<float>(column_values.size());
@@ -701,10 +877,10 @@ namespace scratchbird::optimizer
                 ? static_cast<float>(total_width) / static_cast<float>(non_null_count)
                 : 0.0f;
             col_stats.num_distinct =
-                estimateNDistinct(column_values, col_stats.num_rows, column_values.size());
+                estimateNDistinct(column_values, col_stats.num_rows, sample_rows.size());
             col_stats.last_analyzed_time = analyzed_time;
             col_stats.sample_size = sample_rows.size();
-            col_stats.sample_rate = sample_rate;
+            col_stats.sample_rate = static_cast<float>(actual_sample_ratio);
 
             status = generateHistogram(column_values,
                                        100,
@@ -788,8 +964,64 @@ namespace scratchbird::optimizer
             return Status::NOT_FOUND;
         }
 
+        core::CatalogManager::TableInfo table_info;
+        status = catalog_->getTable(table_id, table_info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to get table metadata");
+            return status;
+        }
+
+        core::TableStatsSnapshot table_snapshot;
+        const bool have_table_snapshot =
+            db_ != nullptr &&
+            db_->table_stats_manager() != nullptr &&
+            db_->table_stats_manager()->snapshotForTable(table_id, table_snapshot);
+        uint64_t table_row_estimate = table_info.row_count;
+        if (table_row_estimate == 0 && have_table_snapshot &&
+            table_snapshot.live_rows_estimate > 0)
+        {
+            table_row_estimate =
+                static_cast<uint64_t>(table_snapshot.live_rows_estimate);
+        }
+
         // Step 3: Sample the table
-        uint64_t sample_size = 30000; // Default sample size (PostgreSQL-style)
+        uint64_t sample_size = 0;
+        if (sample_rate > 0.0f && sample_rate <= 1.0f)
+        {
+            if (table_row_estimate == 0)
+            {
+                if (sample_rate >= 0.999f)
+                {
+                    sample_size = std::numeric_limits<uint64_t>::max();
+                }
+                else
+                {
+                    constexpr uint64_t k_unknown_row_estimate_basis = 30000;
+                    sample_size = static_cast<uint64_t>(
+                        std::ceil(static_cast<double>(k_unknown_row_estimate_basis) *
+                                  static_cast<double>(sample_rate)));
+                }
+            }
+            else
+            {
+                sample_size = static_cast<uint64_t>(
+                    std::ceil(static_cast<double>(table_row_estimate) *
+                              static_cast<double>(sample_rate)));
+            }
+        }
+        else
+        {
+            const uint64_t auto_row_basis = std::max<uint64_t>(1, table_row_estimate);
+            sample_size = std::max<uint64_t>(64, auto_row_basis / 10);
+            sample_size = std::min<uint64_t>(30000, sample_size);
+            sample_rate = 0.0f;
+        }
+        if (table_row_estimate > 0)
+        {
+            sample_size = std::min<uint64_t>(sample_size, table_row_estimate);
+        }
+        sample_size = std::max<uint64_t>(1, sample_size);
         std::vector<std::vector<uint8_t>> sample_rows;
 
         status = sampleTable(table_id, sample_size, sample_rows, ctx);
@@ -809,6 +1041,11 @@ namespace scratchbird::optimizer
             SET_ERROR_CONTEXT(ctx, status, "Failed to compute column statistics");
             return status;
         }
+
+        col_stats.num_rows = std::max<uint64_t>(table_row_estimate, sample_rows.size());
+        col_stats.sample_size = sample_rows.size();
+        col_stats.sample_rate = static_cast<float>(
+            effectiveSampleRatio(table_row_estimate, sample_rows.size(), sample_rate));
 
         // Step 5: Store statistics in cache
         {
@@ -835,6 +1072,7 @@ namespace scratchbird::optimizer
                                                  ColumnStatistics &stats,
                                                  ErrorContext *ctx) -> Status
     {
+        AnalyzeLifecycleDecision analyze_decision;
         auto load_column_statistics = [&]() -> Status {
             {
                 std::lock_guard<std::mutex> lock(cache_mutex_);
@@ -844,6 +1082,10 @@ namespace scratchbird::optimizer
                 {
                     stats = it->second;
                     applyDerivedMetadata(stats);
+                    applyFreshnessMetadata(table_id,
+                                           analyze_decision.triggered,
+                                           analyze_decision.threshold,
+                                           stats);
                     return Status::OK;
                 }
             }
@@ -852,13 +1094,17 @@ namespace scratchbird::optimizer
             if (status == Status::OK)
             {
                 applyDerivedMetadata(stats);
+                applyFreshnessMetadata(table_id,
+                                       analyze_decision.triggered,
+                                       analyze_decision.threshold,
+                                       stats);
                 std::lock_guard<std::mutex> lock(cache_mutex_);
                 column_stats_cache_[getCacheKey(table_id, column_id)] = stats;
             }
             return status;
         };
 
-        Status auto_status = maybeAutoAnalyze(table_id, ctx);
+        Status auto_status = maybeAutoAnalyze(table_id, &analyze_decision, ctx);
         if (auto_status != Status::OK)
         {
             return auto_status;
@@ -880,13 +1126,15 @@ namespace scratchbird::optimizer
             }
             return status;
         }
+        analyze_decision.triggered = true;
         return load_column_statistics();
     }
 
     auto StatisticsManager::getTableStatistics(const ID &table_id, TableStatistics &stats,
                                                 ErrorContext *ctx) -> Status
     {
-        Status auto_status = maybeAutoAnalyze(table_id, ctx);
+        AnalyzeLifecycleDecision analyze_decision;
+        Status auto_status = maybeAutoAnalyze(table_id, &analyze_decision, ctx);
         if (auto_status != Status::OK)
         {
             return auto_status;
@@ -902,6 +1150,10 @@ namespace scratchbird::optimizer
         if (it != table_stats_cache_.end())
         {
             stats = it->second;
+            applyFreshnessMetadata(table_id,
+                                   analyze_decision.triggered,
+                                   analyze_decision.threshold,
+                                   stats);
             return Status::OK;
         }
 
@@ -1009,8 +1261,24 @@ namespace scratchbird::optimizer
             stats.num_pages = 0;
         }
 
-        // Set last analyzed time (use current time as approximation)
-        stats.last_analyzed_time = static_cast<uint64_t>(std::time(nullptr));
+        core::TableStatsSnapshot snapshot;
+        if (db_ != nullptr && db_->table_stats_manager() != nullptr &&
+            db_->table_stats_manager()->snapshotForTable(table_id, snapshot))
+        {
+            const int64_t latest_analyze =
+                std::max(snapshot.last_analyze_at, snapshot.last_autoanalyze_at);
+            stats.last_analyzed_time = latest_analyze > 0
+                ? static_cast<uint64_t>(latest_analyze / 1000000)
+                : 0;
+        }
+        else
+        {
+            stats.last_analyzed_time = 0;
+        }
+        applyFreshnessMetadata(table_id,
+                               analyze_decision.triggered,
+                               analyze_decision.threshold,
+                               stats);
 
         // Cache for future use
         table_stats_cache_[cache_key] = stats;
@@ -1028,7 +1296,8 @@ namespace scratchbird::optimizer
                                                  ErrorContext *ctx) -> Status
     {
         const auto key = getCorrelationCacheKey(table_id, left_column_id, right_column_id);
-        Status auto_status = maybeAutoAnalyze(table_id, ctx);
+        AnalyzeLifecycleDecision analyze_decision;
+        Status auto_status = maybeAutoAnalyze(table_id, &analyze_decision, ctx);
         if (auto_status != Status::OK)
         {
             return auto_status;
@@ -1067,6 +1336,7 @@ namespace scratchbird::optimizer
             }
             return status;
         }
+        analyze_decision.triggered = true;
 
         status =
             loadCorrelationStatistic(table_id, left_column_id, right_column_id, stats_out, ctx);
@@ -1084,7 +1354,8 @@ namespace scratchbird::optimizer
                                                     ErrorContext *ctx) -> Status
     {
         const auto key = getExpressionCacheKey(table_id, expression_key);
-        Status auto_status = maybeAutoAnalyze(table_id, ctx);
+        AnalyzeLifecycleDecision analyze_decision;
+        Status auto_status = maybeAutoAnalyze(table_id, &analyze_decision, ctx);
         if (auto_status != Status::OK)
         {
             return auto_status;
@@ -1116,6 +1387,7 @@ namespace scratchbird::optimizer
                 }
                 return status;
             }
+            analyze_decision.triggered = true;
             status = loadColumnStatistics(table_id, synthetic_column_id, stored_stats, ctx);
         }
         if (status != Status::OK)
@@ -1126,6 +1398,10 @@ namespace scratchbird::optimizer
         stats_out.table_id = table_id;
         stats_out.expression_key = key;
         stored_stats.column_name = key;
+        applyFreshnessMetadata(table_id,
+                               analyze_decision.triggered,
+                               analyze_decision.threshold,
+                               stored_stats);
         stats_out.stats = std::move(stored_stats);
         {
             std::lock_guard<std::mutex> lock(cache_mutex_);
@@ -2502,8 +2778,16 @@ namespace scratchbird::optimizer
         }
     }
 
-    auto StatisticsManager::maybeAutoAnalyze(const ID &table_id, ErrorContext *ctx) -> Status
+    auto StatisticsManager::maybeAutoAnalyze(const ID &table_id,
+                                             AnalyzeLifecycleDecision *decision_out,
+                                             ErrorContext *ctx) -> Status
     {
+        if (decision_out != nullptr)
+        {
+            *decision_out = AnalyzeLifecycleDecision{};
+            decision_out->automatic = true;
+        }
+
         if (db_ == nullptr || db_->table_stats_manager() == nullptr || isZeroId(table_id))
         {
             return Status::OK;
@@ -2512,6 +2796,11 @@ namespace scratchbird::optimizer
         core::TableStatsSnapshot snapshot;
         if (!db_->table_stats_manager()->snapshotForTable(table_id, snapshot))
         {
+            if (decision_out != nullptr)
+            {
+                decision_out->never_analyzed = true;
+                decision_out->threshold = 64;
+            }
             ErrorContext auto_ctx;
             Status status = analyzeTableInternal(table_id, 0.10f, true, &auto_ctx);
             if (status != Status::OK)
@@ -2521,6 +2810,11 @@ namespace scratchbird::optimizer
                     ctx->message = auto_ctx.message;
                 }
                 return status;
+            }
+            if (decision_out != nullptr)
+            {
+                decision_out->triggered = true;
+                decision_out->modified_rows_since_analyze = 0;
             }
             return Status::OK;
         }
@@ -2535,6 +2829,13 @@ namespace scratchbird::optimizer
             live_rows = 1000;
         }
         const uint64_t threshold = std::max<uint64_t>(64, live_rows / 5);
+        if (decision_out != nullptr)
+        {
+            decision_out->never_analyzed = never_analyzed;
+            decision_out->live_rows = live_rows;
+            decision_out->modified_rows_since_analyze = snapshot.mod_since_analyze;
+            decision_out->threshold = threshold;
+        }
         if (!never_analyzed && snapshot.mod_since_analyze < threshold)
         {
             return Status::OK;
@@ -2550,7 +2851,132 @@ namespace scratchbird::optimizer
             }
             return status;
         }
+        if (decision_out != nullptr)
+        {
+            decision_out->triggered = true;
+            decision_out->modified_rows_since_analyze = 0;
+        }
         return Status::OK;
+    }
+
+    auto StatisticsManager::applyFreshnessMetadata(const ID &table_id,
+                                                   bool auto_analyze_applied,
+                                                   uint64_t auto_analyze_threshold,
+                                                   ColumnStatistics &stats) -> void
+    {
+        uint64_t modified_rows_since_analyze = 0;
+        uint64_t live_rows = stats.num_rows;
+        bool have_runtime_snapshot = false;
+        if (db_ != nullptr && db_->table_stats_manager() != nullptr && !isZeroId(table_id))
+        {
+            core::TableStatsSnapshot snapshot;
+            if (db_->table_stats_manager()->snapshotForTable(table_id, snapshot))
+            {
+                have_runtime_snapshot = true;
+                modified_rows_since_analyze = snapshot.mod_since_analyze;
+                if (snapshot.live_rows_estimate > 0)
+                {
+                    live_rows = static_cast<uint64_t>(snapshot.live_rows_estimate);
+                }
+                else if (live_rows == 0)
+                {
+                    live_rows = snapshot.rows_inserted + snapshot.rows_updated +
+                                snapshot.rows_deleted;
+                }
+            }
+        }
+        if (!have_runtime_snapshot && !isZeroId(table_id))
+        {
+            if (!catalog_ && db_ != nullptr)
+            {
+                catalog_ = db_->catalog_manager();
+            }
+            if (catalog_ != nullptr)
+            {
+                core::CatalogManager::TableInfo table_info;
+                core::ErrorContext local_ctx;
+                if (catalog_->getTable(table_id, table_info, &local_ctx) == core::Status::OK &&
+                    table_info.row_count > 0)
+                {
+                    live_rows = table_info.row_count;
+                    if (stats.num_rows > 0)
+                    {
+                        modified_rows_since_analyze =
+                            table_info.row_count > stats.num_rows
+                                ? (table_info.row_count - stats.num_rows)
+                                : (stats.num_rows - table_info.row_count);
+                    }
+                }
+            }
+        }
+
+        const double sample_ratio =
+            effectiveSampleRatio(std::max<uint64_t>(live_rows, stats.num_rows),
+                                 stats.sample_size,
+                                 stats.sample_rate);
+        stats.sample_rate = static_cast<float>(sample_ratio);
+        stats.modified_rows_since_analyze = modified_rows_since_analyze;
+        stats.staleness_class = classifyStaleness(stats.last_analyzed_time,
+                                                  std::max<uint64_t>(1, std::max(live_rows, stats.num_rows)),
+                                                  modified_rows_since_analyze);
+        stats.confidence_class = classifyConfidence(stats.sample_size,
+                                                    sample_ratio,
+                                                    stats.staleness_class);
+        stats.auto_analyze_applied = auto_analyze_applied;
+        stats.auto_analyze_threshold =
+            auto_analyze_threshold > 0
+                ? auto_analyze_threshold
+                : std::max<uint64_t>(64, std::max<uint64_t>(1, live_rows) / 5);
+        stats.stats_snapshot_id = computeStatsSnapshotId(table_id,
+                                                         stats.column_id,
+                                                         stats.last_analyzed_time,
+                                                         stats.sample_size,
+                                                         sample_ratio,
+                                                         modified_rows_since_analyze);
+    }
+
+    auto StatisticsManager::applyFreshnessMetadata(const ID &table_id,
+                                                   bool auto_analyze_applied,
+                                                   uint64_t auto_analyze_threshold,
+                                                   TableStatistics &stats) -> void
+    {
+        uint64_t modified_rows_since_analyze = 0;
+        uint64_t live_rows = stats.num_rows;
+        if (db_ != nullptr && db_->table_stats_manager() != nullptr && !isZeroId(table_id))
+        {
+            core::TableStatsSnapshot snapshot;
+            if (db_->table_stats_manager()->snapshotForTable(table_id, snapshot))
+            {
+                modified_rows_since_analyze = snapshot.mod_since_analyze;
+                if (snapshot.live_rows_estimate > 0)
+                {
+                    live_rows = static_cast<uint64_t>(snapshot.live_rows_estimate);
+                }
+            }
+        }
+
+        stats.modified_rows_since_analyze = modified_rows_since_analyze;
+        stats.staleness_class = classifyStaleness(stats.last_analyzed_time,
+                                                  std::max<uint64_t>(1, live_rows),
+                                                  modified_rows_since_analyze);
+        stats.confidence_class = stats.last_analyzed_time == 0
+            ? StatisticsConfidenceClass::LOW
+            : (stats.staleness_class == StatisticsStalenessClass::FRESH
+                   ? StatisticsConfidenceClass::HIGH
+                   : (stats.staleness_class == StatisticsStalenessClass::WARM
+                          ? StatisticsConfidenceClass::MEDIUM
+                          : StatisticsConfidenceClass::LOW));
+        stats.auto_analyze_applied = auto_analyze_applied;
+        stats.auto_analyze_threshold =
+            auto_analyze_threshold > 0
+                ? auto_analyze_threshold
+                : std::max<uint64_t>(64, std::max<uint64_t>(1, live_rows) / 5);
+        stats.stats_snapshot_id = computeStatsSnapshotId(table_id,
+                                                         ID{},
+                                                         stats.last_analyzed_time,
+                                                         live_rows,
+                                                         1.0,
+                                                         modified_rows_since_analyze);
     }
 
     auto StatisticsManager::getCacheKey(const ID &table_id, const ID &column_id) -> uint64_t

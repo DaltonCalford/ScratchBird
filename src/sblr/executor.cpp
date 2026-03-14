@@ -65470,6 +65470,45 @@ namespace scratchbird
                                 {
                                     line << " detail=" << entry.detail;
                                 }
+                                if (entry.stats_snapshot_id != 0)
+                                {
+                                    line << " stats_snapshot_id="
+                                         << entry.stats_snapshot_id;
+                                }
+                                if (entry.last_analyzed_time != 0)
+                                {
+                                    line << " last_analyzed_time="
+                                         << entry.last_analyzed_time;
+                                }
+                                if (entry.sample_ratio > 0.0)
+                                {
+                                    line << " sample_ratio="
+                                         << entry.sample_ratio;
+                                }
+                                if (entry.modified_rows_since_analyze > 0)
+                                {
+                                    line << " modified_rows_since_analyze="
+                                         << entry.modified_rows_since_analyze;
+                                }
+                                if (!entry.staleness_class.empty())
+                                {
+                                    line << " staleness_class="
+                                         << entry.staleness_class;
+                                }
+                                if (!entry.confidence_class.empty())
+                                {
+                                    line << " confidence_class="
+                                         << entry.confidence_class;
+                                }
+                                if (entry.auto_analyze_applied)
+                                {
+                                    line << " auto_analyze_applied=true";
+                                }
+                                if (entry.auto_analyze_threshold > 0)
+                                {
+                                    line << " auto_analyze_threshold="
+                                         << entry.auto_analyze_threshold;
+                                }
                                 return line.str();
                             };
 
@@ -65788,6 +65827,22 @@ namespace scratchbird
                                         << "\"subject\":\"" << escape_json(entry.subject) << "\""
                                         << ",\"source\":\"" << escape_json(entry.source) << "\""
                                         << ",\"detail\":\"" << escape_json(entry.detail) << "\""
+                                        << ",\"stats_snapshot_id\":"
+                                        << entry.stats_snapshot_id
+                                        << ",\"last_analyzed_time\":"
+                                        << entry.last_analyzed_time
+                                        << ",\"sample_ratio\":"
+                                        << entry.sample_ratio
+                                        << ",\"modified_rows_since_analyze\":"
+                                        << entry.modified_rows_since_analyze
+                                        << ",\"staleness_class\":\""
+                                        << escape_json(entry.staleness_class) << "\""
+                                        << ",\"confidence_class\":\""
+                                        << escape_json(entry.confidence_class) << "\""
+                                        << ",\"auto_analyze_applied\":"
+                                        << (entry.auto_analyze_applied ? "true" : "false")
+                                        << ",\"auto_analyze_threshold\":"
+                                        << entry.auto_analyze_threshold
                                         << "}";
                                 }
                                 out << "]";
@@ -66202,7 +66257,21 @@ namespace scratchbird
                                 for (const auto& entry : entries)
                                 {
                                     out << "<entry subject=\"" << escape_xml(entry.subject)
-                                        << "\" source=\"" << escape_xml(entry.source) << "\">"
+                                        << "\" source=\"" << escape_xml(entry.source)
+                                        << "\" stats_snapshot_id=\"" << entry.stats_snapshot_id
+                                        << "\" last_analyzed_time=\""
+                                        << entry.last_analyzed_time
+                                        << "\" sample_ratio=\"" << entry.sample_ratio
+                                        << "\" modified_rows_since_analyze=\""
+                                        << entry.modified_rows_since_analyze
+                                        << "\" staleness_class=\""
+                                        << escape_xml(entry.staleness_class)
+                                        << "\" confidence_class=\""
+                                        << escape_xml(entry.confidence_class)
+                                        << "\" auto_analyze_applied=\""
+                                        << (entry.auto_analyze_applied ? "true" : "false")
+                                        << "\" auto_analyze_threshold=\""
+                                        << entry.auto_analyze_threshold << "\">"
                                         << escape_xml(entry.detail)
                                         << "</entry>";
                                 }
@@ -66281,7 +66350,20 @@ namespace scratchbird
                                 {
                                     out << "  - subject: \"" << escape_json(entry.subject) << "\"\n"
                                         << "    source: \"" << escape_json(entry.source) << "\"\n"
-                                        << "    detail: \"" << escape_json(entry.detail) << "\"\n";
+                                        << "    detail: \"" << escape_json(entry.detail) << "\"\n"
+                                        << "    stats_snapshot_id: " << entry.stats_snapshot_id << "\n"
+                                        << "    last_analyzed_time: " << entry.last_analyzed_time << "\n"
+                                        << "    sample_ratio: " << entry.sample_ratio << "\n"
+                                        << "    modified_rows_since_analyze: "
+                                        << entry.modified_rows_since_analyze << "\n"
+                                        << "    staleness_class: \""
+                                        << escape_json(entry.staleness_class) << "\"\n"
+                                        << "    confidence_class: \""
+                                        << escape_json(entry.confidence_class) << "\"\n"
+                                        << "    auto_analyze_applied: "
+                                        << (entry.auto_analyze_applied ? "true" : "false") << "\n"
+                                        << "    auto_analyze_threshold: "
+                                        << entry.auto_analyze_threshold << "\n";
                                 }
                             };
 

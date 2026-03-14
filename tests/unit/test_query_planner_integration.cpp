@@ -1245,6 +1245,119 @@ TEST_F(QueryPlannerIntegrationTest,
     EXPECT_TRUE(step.residual_predicates.empty());
 }
 
+TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesStatsHealthAndStalePenalty)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE TABLE planner_stats_users (id INTEGER, age INTEGER)").success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON planner_stats_users TO PUBLIC").success());
+
+    for (int i = 1; i <= 1000; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO planner_stats_users (id, age) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(20 + (i % 10)) + ")")
+                        .success());
+    }
+    ErrorContext commit_ctx;
+    ASSERT_EQ(connection_ctx_->commit(&commit_ctx), Status::OK)
+        << commit_ctx.message;
+    ASSERT_TRUE(executeSQL("ANALYZE planner_stats_users").success());
+    ErrorContext analyze_commit_ctx;
+    ASSERT_EQ(connection_ctx_->commit(&analyze_commit_ctx), Status::OK)
+        << analyze_commit_ctx.message;
+
+    auto fresh_bytecode =
+        compileSQL("SELECT id FROM planner_stats_users WHERE age = 25");
+    ASSERT_FALSE(fresh_bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan fresh_plan;
+    ASSERT_TRUE(decodeRuntimePlan(fresh_bytecode, fresh_plan));
+    auto initial_freshness_trace = std::find_if(
+        fresh_plan.considered_paths.begin(),
+        fresh_plan.considered_paths.end(),
+        [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+            return entry.phase == "STATS_FRESHNESS";
+        });
+    EXPECT_EQ(initial_freshness_trace, fresh_plan.considered_paths.end());
+
+    for (int i = 1001; i <= 1100; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO planner_stats_users (id, age) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(20 + (i % 10)) + ")")
+                        .success());
+    }
+    ErrorContext stale_commit_ctx;
+    ASSERT_EQ(connection_ctx_->commit(&stale_commit_ctx), Status::OK)
+        << stale_commit_ctx.message;
+
+    auto stale_bytecode =
+        compileSQL("SELECT id FROM planner_stats_users WHERE age = 26");
+    ASSERT_FALSE(stale_bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan stale_plan;
+    ASSERT_TRUE(decodeRuntimePlan(stale_bytecode, stale_plan));
+
+    auto relation_stats_it = std::find_if(
+        stale_plan.statistics_provenance.begin(),
+        stale_plan.statistics_provenance.end(),
+        [](const scratchbird::optimizer::RuntimePlanStatisticsProvenance &entry) {
+            const bool source_is_column_stats =
+                entry.source.find("MCV") != std::string::npos ||
+                entry.source.find("NDISTINCT") != std::string::npos ||
+                entry.source.find("COLUMN_STATS") != std::string::npos;
+            return entry.subject == "relation:planner_stats_users" &&
+                   source_is_column_stats &&
+                   entry.detail.find("age") != std::string::npos;
+        });
+    ASSERT_NE(relation_stats_it, stale_plan.statistics_provenance.end());
+    EXPECT_GT(relation_stats_it->stats_snapshot_id, 0u);
+    EXPECT_GT(relation_stats_it->last_analyzed_time, 0u);
+    EXPECT_GT(relation_stats_it->sample_ratio, 0.0);
+    EXPECT_FALSE(relation_stats_it->staleness_class.empty());
+    EXPECT_FALSE(relation_stats_it->confidence_class.empty());
+    EXPECT_GT(relation_stats_it->auto_analyze_threshold, 0u);
+
+    auto explain_result = executeSQL(
+        "EXPLAIN (FORMAT JSON) SELECT id FROM planner_stats_users WHERE age = 26");
+    ASSERT_TRUE(explain_result.success()) << explain_result.error();
+    ASSERT_TRUE(explain_result.hasResultSet());
+
+    const auto explain_lines = resultStrings(explain_result);
+    ASSERT_EQ(explain_lines.size(), 1u);
+    const auto parsed = nlohmann::json::parse(explain_lines.front());
+    ASSERT_TRUE(parsed.contains("optimizer_trace"));
+    const auto &stats_array = parsed["optimizer_trace"]["statistics_provenance"];
+    auto explain_stats_it = std::find_if(
+        stats_array.begin(),
+        stats_array.end(),
+        [](const nlohmann::json &entry) {
+            const std::string source = entry.value("source", std::string());
+            const bool source_is_column_stats =
+                source.find("MCV") != std::string::npos ||
+                source.find("NDISTINCT") != std::string::npos ||
+                source.find("COLUMN_STATS") != std::string::npos;
+            return entry.value("subject", std::string()) ==
+                       "relation:planner_stats_users" &&
+                   source_is_column_stats &&
+                   entry.value("detail", std::string()).find("age") != std::string::npos;
+        });
+    ASSERT_NE(explain_stats_it, stats_array.end());
+    EXPECT_EQ(explain_stats_it->value("stats_snapshot_id", 0ULL),
+              relation_stats_it->stats_snapshot_id);
+    EXPECT_EQ(explain_stats_it->value("last_analyzed_time", 0ULL),
+              relation_stats_it->last_analyzed_time);
+    EXPECT_DOUBLE_EQ(explain_stats_it->value("sample_ratio", 0.0),
+                     relation_stats_it->sample_ratio);
+    EXPECT_EQ(explain_stats_it->value("modified_rows_since_analyze", 0ULL),
+              relation_stats_it->modified_rows_since_analyze);
+    EXPECT_EQ(explain_stats_it->value("staleness_class", std::string()),
+              relation_stats_it->staleness_class);
+    EXPECT_EQ(explain_stats_it->value("confidence_class", std::string()),
+              relation_stats_it->confidence_class);
+    EXPECT_EQ(explain_stats_it->value("auto_analyze_threshold", 0ULL),
+              relation_stats_it->auto_analyze_threshold);
+}
+
 TEST_F(QueryPlannerIntegrationTest, LeftJoinCarriesFormalLegalityMetadata)
 {
     ASSERT_TRUE(createDatabase());

@@ -61,6 +61,23 @@ namespace scratchbird::optimizer
         UUID_BYTES = 3
     };
 
+    enum class StatisticsStalenessClass : uint32_t
+    {
+        UNKNOWN = 0,
+        FRESH = 1,
+        WARM = 2,
+        STALE = 3,
+        EXPIRED = 4
+    };
+
+    enum class StatisticsConfidenceClass : uint32_t
+    {
+        UNKNOWN = 0,
+        LOW = 1,
+        MEDIUM = 2,
+        HIGH = 3
+    };
+
     /**
      * Most Common Values (MCV) Entry
      *
@@ -134,9 +151,15 @@ namespace scratchbird::optimizer
         std::vector<HistogramBucket> histogram_buckets;
 
         // Metadata
+        uint64_t stats_snapshot_id = 0;
         uint64_t last_analyzed_time;  // Timestamp of last ANALYZE
         uint64_t sample_size;         // Number of rows sampled for statistics
         float sample_rate;            // Fraction of table sampled
+        uint64_t modified_rows_since_analyze;
+        StatisticsStalenessClass staleness_class;
+        StatisticsConfidenceClass confidence_class;
+        bool auto_analyze_applied;
+        uint64_t auto_analyze_threshold;
 
         ColumnStatistics()
             : data_type(core::DataType::UNKNOWN),
@@ -154,7 +177,12 @@ namespace scratchbird::optimizer
               histogram_bucket_count(0),
               last_analyzed_time(0),
               sample_size(0),
-              sample_rate(0.0f)
+              sample_rate(0.0f),
+              modified_rows_since_analyze(0),
+              staleness_class(StatisticsStalenessClass::UNKNOWN),
+              confidence_class(StatisticsConfidenceClass::UNKNOWN),
+              auto_analyze_applied(false),
+              auto_analyze_threshold(0)
         {
         }
     };
@@ -172,7 +200,13 @@ namespace scratchbird::optimizer
         uint64_t num_rows;           // Total number of rows
         uint64_t num_pages;          // Number of heap pages
         float avg_row_size;          // Average row size in bytes
+        uint64_t stats_snapshot_id = 0;
         uint64_t last_analyzed_time; // Timestamp of last ANALYZE
+        uint64_t modified_rows_since_analyze = 0;
+        StatisticsStalenessClass staleness_class = StatisticsStalenessClass::UNKNOWN;
+        StatisticsConfidenceClass confidence_class = StatisticsConfidenceClass::UNKNOWN;
+        bool auto_analyze_applied = false;
+        uint64_t auto_analyze_threshold = 0;
 
         TableStatistics()
             : num_rows(0),
@@ -201,5 +235,41 @@ namespace scratchbird::optimizer
         std::string expression_key;
         ColumnStatistics stats;
     };
+
+    inline auto statisticsStalenessClassName(StatisticsStalenessClass value)
+        -> const char *
+    {
+        switch (value)
+        {
+            case StatisticsStalenessClass::FRESH:
+                return "FRESH";
+            case StatisticsStalenessClass::WARM:
+                return "WARM";
+            case StatisticsStalenessClass::STALE:
+                return "STALE";
+            case StatisticsStalenessClass::EXPIRED:
+                return "EXPIRED";
+            case StatisticsStalenessClass::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    inline auto statisticsConfidenceClassName(StatisticsConfidenceClass value)
+        -> const char *
+    {
+        switch (value)
+        {
+            case StatisticsConfidenceClass::LOW:
+                return "LOW";
+            case StatisticsConfidenceClass::MEDIUM:
+                return "MEDIUM";
+            case StatisticsConfidenceClass::HIGH:
+                return "HIGH";
+            case StatisticsConfidenceClass::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
 
 } // namespace scratchbird::optimizer

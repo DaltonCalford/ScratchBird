@@ -741,6 +741,15 @@ namespace scratchbird::optimizer
             out["subject"] = entry.subject;
             out["source"] = entry.source;
             out["detail"] = entry.detail;
+            out["stats_snapshot_id"] = entry.stats_snapshot_id;
+            out["last_analyzed_time"] = entry.last_analyzed_time;
+            out["sample_ratio"] = entry.sample_ratio;
+            out["modified_rows_since_analyze"] =
+                entry.modified_rows_since_analyze;
+            out["staleness_class"] = entry.staleness_class;
+            out["confidence_class"] = entry.confidence_class;
+            out["auto_analyze_applied"] = entry.auto_analyze_applied;
+            out["auto_analyze_threshold"] = entry.auto_analyze_threshold;
             return out;
         }
 
@@ -757,6 +766,21 @@ namespace scratchbird::optimizer
             entry_out.subject = json_in.value("subject", std::string());
             entry_out.source = json_in.value("source", std::string());
             entry_out.detail = json_in.value("detail", std::string());
+            entry_out.stats_snapshot_id =
+                json_in.value("stats_snapshot_id", uint64_t{0});
+            entry_out.last_analyzed_time =
+                json_in.value("last_analyzed_time", uint64_t{0});
+            entry_out.sample_ratio = json_in.value("sample_ratio", 0.0);
+            entry_out.modified_rows_since_analyze =
+                json_in.value("modified_rows_since_analyze", uint64_t{0});
+            entry_out.staleness_class =
+                json_in.value("staleness_class", std::string());
+            entry_out.confidence_class =
+                json_in.value("confidence_class", std::string());
+            entry_out.auto_analyze_applied =
+                json_in.value("auto_analyze_applied", false);
+            entry_out.auto_analyze_threshold =
+                json_in.value("auto_analyze_threshold", uint64_t{0});
             return true;
         }
 

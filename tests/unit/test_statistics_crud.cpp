@@ -58,9 +58,15 @@ TEST_F(StatisticsCRUDTest, ColumnStatisticsDefaults) {
     EXPECT_EQ(stats.histogram_type, HistogramType::NONE);
     EXPECT_EQ(stats.histogram_bucket_count, 0);
     EXPECT_TRUE(stats.histogram_buckets.empty());
+    EXPECT_EQ(stats.stats_snapshot_id, 0u);
     EXPECT_EQ(stats.last_analyzed_time, 0);
     EXPECT_EQ(stats.sample_size, 0);
     EXPECT_FLOAT_EQ(stats.sample_rate, 0.0f);
+    EXPECT_EQ(stats.modified_rows_since_analyze, 0u);
+    EXPECT_EQ(stats.staleness_class, StatisticsStalenessClass::UNKNOWN);
+    EXPECT_EQ(stats.confidence_class, StatisticsConfidenceClass::UNKNOWN);
+    EXPECT_FALSE(stats.auto_analyze_applied);
+    EXPECT_EQ(stats.auto_analyze_threshold, 0u);
 }
 
 // Test TableStatistics structure defaults
@@ -72,7 +78,13 @@ TEST_F(StatisticsCRUDTest, TableStatisticsDefaults) {
     EXPECT_EQ(stats.num_rows, 0);
     EXPECT_EQ(stats.num_pages, 0);
     EXPECT_FLOAT_EQ(stats.avg_row_size, 0.0f);
+    EXPECT_EQ(stats.stats_snapshot_id, 0u);
     EXPECT_EQ(stats.last_analyzed_time, 0);
+    EXPECT_EQ(stats.modified_rows_since_analyze, 0u);
+    EXPECT_EQ(stats.staleness_class, StatisticsStalenessClass::UNKNOWN);
+    EXPECT_EQ(stats.confidence_class, StatisticsConfidenceClass::UNKNOWN);
+    EXPECT_FALSE(stats.auto_analyze_applied);
+    EXPECT_EQ(stats.auto_analyze_threshold, 0u);
 }
 
 // Test HistogramType enum

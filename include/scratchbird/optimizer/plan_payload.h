@@ -8,8 +8,8 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 3;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v3";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 4;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v4";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -182,6 +182,14 @@ namespace scratchbird::optimizer
         std::string subject;
         std::string source;
         std::string detail;
+        uint64_t stats_snapshot_id = 0;
+        uint64_t last_analyzed_time = 0;
+        double sample_ratio = 0.0;
+        uint64_t modified_rows_since_analyze = 0;
+        std::string staleness_class;
+        std::string confidence_class;
+        bool auto_analyze_applied = false;
+        uint64_t auto_analyze_threshold = 0;
     };
 
     struct RuntimePlanAdaptiveFeedback

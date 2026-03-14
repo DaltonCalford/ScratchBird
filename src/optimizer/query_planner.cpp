@@ -2864,6 +2864,138 @@ namespace scratchbird::optimizer
             entries.push_back(std::move(entry));
         }
 
+        auto appendColumnStatsProvenance =
+            [](std::vector<RuntimePlanStatisticsProvenance> &entries,
+               const std::string &subject,
+               const std::string &source,
+               const std::string &detail,
+               const ColumnStatistics &stats) -> void {
+                RuntimePlanStatisticsProvenance entry;
+                entry.subject = subject;
+                entry.source = source;
+                entry.detail = detail;
+                entry.stats_snapshot_id = stats.stats_snapshot_id;
+                entry.last_analyzed_time = stats.last_analyzed_time;
+                entry.sample_ratio = static_cast<double>(stats.sample_rate);
+                entry.modified_rows_since_analyze =
+                    stats.modified_rows_since_analyze;
+                entry.staleness_class =
+                    statisticsStalenessClassName(stats.staleness_class);
+                entry.confidence_class =
+                    statisticsConfidenceClassName(stats.confidence_class);
+                entry.auto_analyze_applied = stats.auto_analyze_applied;
+                entry.auto_analyze_threshold = stats.auto_analyze_threshold;
+                auto already_present = std::find_if(
+                    entries.begin(),
+                    entries.end(),
+                    [&](const RuntimePlanStatisticsProvenance &existing) {
+                        return existing.subject == entry.subject &&
+                               existing.source == entry.source &&
+                               existing.detail == entry.detail;
+                    });
+                if (already_present != entries.end())
+                {
+                    *already_present = entry;
+                    return;
+                }
+                entries.push_back(std::move(entry));
+            };
+
+        auto appendTableStatsProvenance =
+            [](std::vector<RuntimePlanStatisticsProvenance> &entries,
+               const std::string &subject,
+               const std::string &source,
+               const std::string &detail,
+               const TableStatistics &stats) -> void {
+                RuntimePlanStatisticsProvenance entry;
+                entry.subject = subject;
+                entry.source = source;
+                entry.detail = detail;
+                entry.stats_snapshot_id = stats.stats_snapshot_id;
+                entry.last_analyzed_time = stats.last_analyzed_time;
+                entry.sample_ratio = 1.0;
+                entry.modified_rows_since_analyze =
+                    stats.modified_rows_since_analyze;
+                entry.staleness_class =
+                    statisticsStalenessClassName(stats.staleness_class);
+                entry.confidence_class =
+                    statisticsConfidenceClassName(stats.confidence_class);
+                entry.auto_analyze_applied = stats.auto_analyze_applied;
+                entry.auto_analyze_threshold = stats.auto_analyze_threshold;
+                auto already_present = std::find_if(
+                    entries.begin(),
+                    entries.end(),
+                    [&](const RuntimePlanStatisticsProvenance &existing) {
+                        return existing.subject == entry.subject &&
+                               existing.source == entry.source &&
+                               existing.detail == entry.detail;
+                    });
+                if (already_present != entries.end())
+                {
+                    *already_present = entry;
+                    return;
+                }
+                entries.push_back(std::move(entry));
+            };
+
+        auto statsPenaltyMultiplier = [](StatisticsStalenessClass staleness,
+                                         StatisticsConfidenceClass confidence) -> double {
+            double penalty = 1.0;
+            switch (staleness)
+            {
+                case StatisticsStalenessClass::WARM:
+                    penalty = 1.05;
+                    break;
+                case StatisticsStalenessClass::STALE:
+                    penalty = 1.20;
+                    break;
+                case StatisticsStalenessClass::EXPIRED:
+                    penalty = 1.40;
+                    break;
+                case StatisticsStalenessClass::FRESH:
+                case StatisticsStalenessClass::UNKNOWN:
+                default:
+                    penalty = 1.0;
+                    break;
+            }
+            if (confidence == StatisticsConfidenceClass::LOW)
+            {
+                penalty = std::max(penalty, 1.15);
+            }
+            else if (confidence == StatisticsConfidenceClass::MEDIUM)
+            {
+                penalty = std::max(penalty, 1.03);
+            }
+            return penalty;
+        };
+
+        auto statsPenaltyReason = [](const ColumnStatistics &stats,
+                                     double penalty) -> std::string {
+            std::ostringstream out;
+            out << "staleness="
+                << statisticsStalenessClassName(stats.staleness_class)
+                << " confidence="
+                << statisticsConfidenceClassName(stats.confidence_class)
+                << " modified_rows_since_analyze="
+                << stats.modified_rows_since_analyze
+                << " sample_ratio=" << stats.sample_rate
+                << " penalty=" << penalty;
+            return out.str();
+        };
+
+        auto statsPenaltyReasonForTable = [](const TableStatistics &stats,
+                                             double penalty) -> std::string {
+            std::ostringstream out;
+            out << "staleness="
+                << statisticsStalenessClassName(stats.staleness_class)
+                << " confidence="
+                << statisticsConfidenceClassName(stats.confidence_class)
+                << " modified_rows_since_analyze="
+                << stats.modified_rows_since_analyze
+                << " penalty=" << penalty;
+            return out.str();
+        };
+
         auto joinTraceSubject(const ResolvedSelectQuery &resolved,
                               const ResolvedJoin &join) -> std::string
         {
@@ -2892,7 +3024,9 @@ namespace scratchbird::optimizer
 
         auto predicateStatsSource(const ResolvedRelation &relation,
                                   const ResolvedScanPredicate &predicate,
-                                  StatisticsManager *stats_manager) -> std::string
+                                  StatisticsManager *stats_manager,
+                                  const ColumnStatistics *loaded_stats = nullptr)
+            -> std::string
         {
             if (!relation.resolved || stats_manager == nullptr ||
                 isZeroId(relation.table_info.table_id) ||
@@ -2902,11 +3036,22 @@ namespace scratchbird::optimizer
             }
 
             ColumnStatistics column_stats;
-            core::ErrorContext local_ctx;
-            if (stats_manager->getColumnStatistics(relation.table_info.table_id,
-                                                   predicate.column_id,
-                                                   column_stats,
-                                                   &local_ctx) != core::Status::OK)
+            if (loaded_stats != nullptr)
+            {
+                column_stats = *loaded_stats;
+            }
+            else
+            {
+                core::ErrorContext local_ctx;
+                if (stats_manager->getColumnStatistics(relation.table_info.table_id,
+                                                       predicate.column_id,
+                                                       column_stats,
+                                                       &local_ctx) != core::Status::OK)
+                {
+                    return "HEURISTIC_DEFAULT";
+                }
+            }
+            if (column_stats.last_analyzed_time == 0)
             {
                 return "HEURISTIC_DEFAULT";
             }
@@ -4189,6 +4334,37 @@ namespace scratchbird::optimizer
             const std::string relation_subject = "relation:" + relation_name;
             const MgaRelationCostSignal *mga_relation_signal =
                 lookupMgaRelationCostSignal(mga_costing_snapshot, relation);
+            core::ErrorContext stats_ctx;
+            TableStatistics relation_table_stats;
+            const bool have_relation_table_stats =
+                relation.resolved && stats_manager_ != nullptr &&
+                !isZeroId(relation.table_info.table_id) &&
+                stats_manager_->getTableStatistics(relation.table_info.table_id,
+                                                   relation_table_stats,
+                                                   &stats_ctx) == core::Status::OK;
+            double relation_stats_penalty = 1.0;
+            std::string relation_stats_penalty_reason;
+            auto updateRelationStatsPenalty =
+                [&](double candidate_penalty, const std::string &reason) {
+                    if (candidate_penalty > relation_stats_penalty)
+                    {
+                        relation_stats_penalty = candidate_penalty;
+                        relation_stats_penalty_reason = reason;
+                    }
+                };
+            if (have_relation_table_stats)
+            {
+                if (relation_table_stats.last_analyzed_time > 0 ||
+                    relation_table_stats.modified_rows_since_analyze > 0)
+                {
+                    const double table_penalty = statsPenaltyMultiplier(
+                        relation_table_stats.staleness_class,
+                        relation_table_stats.confidence_class);
+                    updateRelationStatsPenalty(
+                        table_penalty,
+                        statsPenaltyReasonForTable(relation_table_stats, table_penalty));
+                }
+            }
             double qual_cost = 0.0;
             const bool predicate_or =
                 core::IdentifierUtils::toUpper(relation.predicate_combination) == "OR";
@@ -4234,15 +4410,31 @@ namespace scratchbird::optimizer
                                       describeMgaCostSignal(*mga_relation_signal,
                                                             mga_costing_snapshot.commit_fence_backlog));
             }
-            appendStatsProvenance(
-                statistics_provenance,
-                relation_subject,
-                pruning.pruned ? "PARTITION_PRUNED_STATS"
-                               : relation.estimated_rows == 0
-                                     ? "CARDINALITY_FALLBACK"
-                                     : "CATALOG_TABLE_STATS",
-                "base_rows=" + std::to_string(base_rows) +
-                    ", pages=" + std::to_string(base_pages));
+            if (have_relation_table_stats)
+            {
+                appendTableStatsProvenance(
+                    statistics_provenance,
+                    relation_subject,
+                    pruning.pruned ? "PARTITION_PRUNED_STATS"
+                                   : relation.estimated_rows == 0
+                                         ? "CARDINALITY_FALLBACK"
+                                         : "CATALOG_TABLE_STATS",
+                    "base_rows=" + std::to_string(base_rows) +
+                        ", pages=" + std::to_string(base_pages),
+                    relation_table_stats);
+            }
+            else
+            {
+                appendStatsProvenance(
+                    statistics_provenance,
+                    relation_subject,
+                    pruning.pruned ? "PARTITION_PRUNED_STATS"
+                                   : relation.estimated_rows == 0
+                                         ? "CARDINALITY_FALLBACK"
+                                         : "CATALOG_TABLE_STATS",
+                    "base_rows=" + std::to_string(base_rows) +
+                        ", pages=" + std::to_string(base_pages));
+            }
             if (pruning.available)
             {
                 appendStatsProvenance(
@@ -4270,12 +4462,43 @@ namespace scratchbird::optimizer
             }
             for (const auto &predicate : predicates)
             {
-                appendStatsProvenance(statistics_provenance,
-                                      relation_subject,
-                                      predicateStatsSource(relation,
-                                                           predicate,
-                                                           stats_manager_),
-                                      predicate.predicate_text);
+                ColumnStatistics predicate_stats;
+                const bool have_predicate_stats =
+                    relation.resolved && stats_manager_ != nullptr &&
+                    !isZeroId(relation.table_info.table_id) &&
+                    !isZeroId(predicate.column_id) &&
+                    stats_manager_->getColumnStatistics(relation.table_info.table_id,
+                                                       predicate.column_id,
+                                                       predicate_stats,
+                                                       &stats_ctx) == core::Status::OK;
+                const std::string predicate_source =
+                    have_predicate_stats
+                        ? predicateStatsSource(relation,
+                                               predicate,
+                                               stats_manager_,
+                                               &predicate_stats)
+                        : predicateStatsSource(relation, predicate, stats_manager_);
+                if (have_predicate_stats)
+                {
+                    const double predicate_penalty = statsPenaltyMultiplier(
+                        predicate_stats.staleness_class,
+                        predicate_stats.confidence_class);
+                    updateRelationStatsPenalty(
+                        predicate_penalty,
+                        statsPenaltyReason(predicate_stats, predicate_penalty));
+                    appendColumnStatsProvenance(statistics_provenance,
+                                                relation_subject,
+                                                predicate_source,
+                                                predicate.predicate_text,
+                                                predicate_stats);
+                }
+                else
+                {
+                    appendStatsProvenance(statistics_provenance,
+                                          relation_subject,
+                                          predicate_source,
+                                          predicate.predicate_text);
+                }
                 if (!predicate.has_index_match && !relation.indexes.empty())
                 {
                     appendRuntimeTrace(rejected_paths,
@@ -4292,6 +4515,20 @@ namespace scratchbird::optimizer
             }
             CostEstimate best_cost =
                 active_cost_model.costSeqScan(base_pages, seq_rows, qual_cost, ctx);
+            if (relation_stats_penalty > 1.0)
+            {
+                best_cost.startup_cost *= relation_stats_penalty;
+                best_cost.total_cost *= relation_stats_penalty;
+                appendRuntimeTrace(considered_paths,
+                                   "STATS_FRESHNESS",
+                                   relation_subject,
+                                   "SEQ_SCAN",
+                                   "ADJUSTED",
+                                   relation_stats_penalty_reason,
+                                   best_cost.startup_cost,
+                                   best_cost.total_cost,
+                                   best_cost.rows);
+            }
             const double seq_mga_penalty = applyMgaCostPenalty(best_cost,
                                                                mga_relation_signal,
                                                                mga_costing_snapshot.commit_fence_backlog,
@@ -4480,6 +4717,22 @@ namespace scratchbird::optimizer
                                                                qual_cost,
                                                                correlation,
                                                                ctx);
+                }
+                if (relation_stats_penalty > 1.0)
+                {
+                    candidate_cost.startup_cost *= relation_stats_penalty;
+                    candidate_cost.total_cost *= relation_stats_penalty;
+                    appendRuntimeTrace(considered_paths,
+                                       "STATS_FRESHNESS",
+                                       relation_subject,
+                                       accessTraceCandidateLabel(scan_kind,
+                                                                index.index_name,
+                                                                std::string()),
+                                       "ADJUSTED",
+                                       relation_stats_penalty_reason,
+                                       candidate_cost.startup_cost,
+                                       candidate_cost.total_cost,
+                                       candidate_cost.rows);
                 }
                 std::vector<std::string> candidate_scan_families;
                 appendUniqueText(candidate_scan_families, scan_kind);
@@ -4707,6 +4960,22 @@ namespace scratchbird::optimizer
                                                     ctx);
                 skip_cost.startup_cost *= 1.20;
                 skip_cost.total_cost *= 1.20;
+                if (relation_stats_penalty > 1.0)
+                {
+                    skip_cost.startup_cost *= relation_stats_penalty;
+                    skip_cost.total_cost *= relation_stats_penalty;
+                    appendRuntimeTrace(rejected_paths,
+                                       "STATS_FRESHNESS",
+                                       relation_subject,
+                                       accessTraceCandidateLabel("SKIP_SCAN",
+                                                                index.index_name,
+                                                                std::string()),
+                                       "ADJUSTED",
+                                       relation_stats_penalty_reason,
+                                       skip_cost.startup_cost,
+                                       skip_cost.total_cost,
+                                       skip_cost.rows);
+                }
                 appendUniqueText(choice.candidate_scan_families, "SKIP_SCAN");
                 appendRuntimeTrace(considered_paths,
                                    "ACCESS_PATH",
@@ -4831,6 +5100,24 @@ namespace scratchbird::optimizer
                                                qual_cost,
                                                predicate_or ? "OR" : "AND",
                                                ctx);
+                if (relation_stats_penalty > 1.0)
+                {
+                    bitmap_cost.startup_cost *= relation_stats_penalty;
+                    bitmap_cost.total_cost *= relation_stats_penalty;
+                    appendRuntimeTrace(considered_paths,
+                                       "STATS_FRESHNESS",
+                                       relation_subject,
+                                       accessTraceCandidateLabel("BITMAP_INDEX_SCAN",
+                                                                bitmap_index_names.empty()
+                                                                    ? std::string()
+                                                                    : bitmap_index_names.front(),
+                                                                predicate_or ? "OR" : "AND"),
+                                       "ADJUSTED",
+                                       relation_stats_penalty_reason,
+                                       bitmap_cost.startup_cost,
+                                       bitmap_cost.total_cost,
+                                       bitmap_cost.rows);
+                }
                 const double bitmap_mga_penalty = applyMgaCostPenalty(
                     bitmap_cost,
                     mga_relation_signal,
