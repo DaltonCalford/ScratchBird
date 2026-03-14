@@ -34,6 +34,7 @@
 #include "scratchbird/core/columnstore.h"
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/toast.h" // Phase 4: TOAST GC
+#include "scratchbird/core/toast_visibility.h"
 #include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/gpid.h"
 #include <chrono>
@@ -45,6 +46,36 @@
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        auto computeToastReclaimHorizon(TransactionManager* txn_manager) -> uint64_t
+        {
+            if (txn_manager == nullptr)
+            {
+                return UINT64_MAX;
+            }
+
+            const uint64_t oat = txn_manager->getOldestActiveXid();
+            const uint64_t ost = txn_manager->getOldestSnapshot();
+
+            if (oat != 0 && ost != 0)
+            {
+                return std::min(oat, ost);
+            }
+            if (oat != 0)
+            {
+                return oat;
+            }
+            if (ost != 0)
+            {
+                return ost;
+            }
+
+            const uint64_t current_xid = txn_manager->getCurrentXid();
+            return current_xid != 0 ? current_xid : UINT64_MAX;
+        }
+    }
+
     namespace
     {
         bool parseUuidFromString(const std::string& text, ID& out)
@@ -1415,25 +1446,6 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        // Step 1: Collect referenced TOAST value IDs from heap tuples
-        std::unordered_set<ID, IDHash> referenced_value_ids;
-
-        // Scan parent table's heap pages
-        auto* storage = db_->storage_engine();
-        if (!storage)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Storage engine not available");
-            return Status::INVALID_ARGUMENT;
-        }
-
-        // Create heap scan iterator
-        auto scan_iter = storage->createScan(parent_table_id, ctx);
-        if (!scan_iter)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to create scan iterator");
-            return Status::INVALID_ARGUMENT;
-        }
-
         // Get column information to parse tuples
         std::vector<CatalogManager::ColumnInfo> columns;
         status = catalog->getColumns(parent_table_id, columns, ctx);
@@ -1442,20 +1454,31 @@ namespace scratchbird::core
             return status;
         }
 
-        // Scan all tuples in parent table
-        Tuple tuple;
-        while (scan_iter->next(&tuple, ctx) == Status::OK)
+        std::unordered_set<ID, IDHash> referenced_value_ids;
+        auto collectToastPointers = [&](const uint8_t* tuple_data,
+                                        uint32_t tuple_size) -> void
         {
-            // Parse tuple data looking for TOAST pointers
-            const uint8_t* tuple_data = tuple.data;
-            uint32_t tuple_size = tuple.data_size;
-
             if (tuple_size < sizeof(TupleHeader))
             {
-                continue;
+                return;
             }
 
             const auto* header = reinterpret_cast<const TupleHeader*>(tuple_data);
+            const uint8_t* payload = tuple_data + sizeof(TupleHeader);
+            const size_t payload_size = tuple_size - sizeof(TupleHeader);
+
+            // Storage-level heap versions can legitimately store a raw canonical
+            // TOAST pointer instead of a logical column-encoded payload. Detect
+            // that shape first so back versions created by low-level update paths
+            // are not misclassified as TOAST orphans.
+            if (payload_size == sizeof(ToastPointer) &&
+                (header->hasRecordFlag(TupleHeader::RHD_TOAST_PTR) ||
+                 ToastManager::isToastPointer(payload, payload_size)))
+            {
+                const auto* toast_ptr = reinterpret_cast<const ToastPointer*>(payload);
+                referenced_value_ids.insert(toast_ptr->lob_uuid);
+                return;
+            }
 
             // Check for null bitmap
             const uint8_t* null_bitmap = nullptr;
@@ -1572,10 +1595,71 @@ namespace scratchbird::core
                     break;
                 }
             }
+        };
+
+        uint64_t reclaim_horizon = computeToastReclaimHorizon(txn_manager_);
+
+        std::vector<GPID> parent_pages;
+        status = catalog->enumerateTablePages(parent_table_id, parent_pages, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (GPID gpid : parent_pages)
+        {
+            void* page_buffer = nullptr;
+            Status pin_status = db_->buffer_pool()->pinPageGlobal(
+                gpid, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
+            if (pin_status != Status::OK)
+            {
+                continue;
+            }
+
+            auto* page_header = static_cast<PageHeader*>(page_buffer);
+            if (page_header->page_type != PAGE_TYPE_HEAP)
+            {
+                db_->buffer_pool()->unpinPageGlobal(gpid, false, ctx);
+                continue;
+            }
+
+            auto* page_data = static_cast<uint8_t*>(page_buffer);
+            HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, parent_table_id);
+            ErrorContext validate_ctx;
+            if (heap_page.validate(&validate_ctx) != Status::OK)
+            {
+                db_->buffer_pool()->unpinPageGlobal(gpid, false, ctx);
+                continue;
+            }
+
+            for (uint16_t item_id = 0; item_id < heap_page.getItemCount(); ++item_id)
+            {
+                const uint8_t* tuple_data = nullptr;
+                uint32_t tuple_size = 0;
+                Status tuple_status = heap_page.getTuple(item_id, &tuple_data, &tuple_size, nullptr);
+                if (tuple_status != Status::OK || tuple_data == nullptr)
+                {
+                    continue;
+                }
+
+                // Keep TOAST values pinned until the owning heap version is physically
+                // removed. Eligibility for heap prune alone is not enough to treat the
+                // chunk as orphaned because TOAST GC must not outrun version-chain GC.
+                collectToastPointers(tuple_data, tuple_size);
+            }
+
+            db_->buffer_pool()->unpinPageGlobal(gpid, false, ctx);
         }
 
         // Step 2: Scan TOAST table for all value IDs
         std::unordered_set<ID, IDHash> toast_value_ids;
+
+        auto* storage = db_->storage_engine();
+        if (!storage)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Storage engine not available");
+            return Status::INVALID_ARGUMENT;
+        }
 
         auto toast_scan = storage->createScanAll(toast_table_id, ctx);
         if (!toast_scan)
@@ -1698,7 +1782,7 @@ namespace scratchbird::core
             }
 
             auto* page_data = static_cast<uint8_t*>(page_buffer);
-            HeapPage heap_page(page_data, db_->page_size());
+            HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, toast_table_id);
             Status delete_status = heap_page.deleteTuple(tid.slot, UINT64_MAX, ctx);
 
             db_->buffer_pool()->unpinPageGlobal(tid.gpid, delete_status == Status::OK, ctx);
@@ -1751,151 +1835,109 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        auto* storage = db_->storage_engine();
-        if (!storage)
+        auto* catalog = db_->catalog_manager();
+        if (!catalog)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Storage engine not available");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Catalog manager not available");
             return Status::INVALID_ARGUMENT;
         }
 
-        // Scan TOAST table
-        auto toast_scan = storage->createScanAll(toast_table_id, ctx);
-        if (!toast_scan)
+        const uint64_t reclaim_horizon = computeToastReclaimHorizon(txn_manager_);
+
+        uint64_t visibility_xid = txn_manager_->getCurrentXid();
+        if (visibility_xid == 0)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to create TOAST scan iterator");
-            return Status::INVALID_ARGUMENT;
+            visibility_xid = (reclaim_horizon == UINT64_MAX) ? 1 : reclaim_horizon;
         }
 
-        std::vector<TID> chunks_to_delete;
-        std::vector<TID> chunks_to_clear_xmax;
-
-        Tuple toast_tuple;
-        while (toast_scan->next(&toast_tuple, ctx) == Status::OK)
+        std::vector<GPID> toast_pages;
+        Status page_status = catalog->enumerateTablePages(toast_table_id, toast_pages, ctx);
+        if (page_status != Status::OK)
         {
-            // Parse ToastChunk to get xmin and xmax
-            const uint8_t* chunk_data = toast_tuple.data;
-            uint32_t chunk_size = toast_tuple.data_size;
+            return page_status;
+        }
 
-            if (chunk_size < sizeof(TupleHeader))
+        uint64_t xmax_cleared = 0;
+        for (GPID gpid : toast_pages)
+        {
+            void* page_buffer = nullptr;
+            Status pin_status = db_->buffer_pool()->pinPageGlobal(
+                gpid, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
+            if (pin_status != Status::OK)
             {
                 continue;
             }
 
-            const auto* tuple_hdr = reinterpret_cast<const TupleHeader*>(chunk_data);
-            uint64_t chunk_xmin = tuple_hdr->xmin;
-            uint64_t chunk_xmax = tuple_hdr->xmax;
-
-            // If chunk has xmax set
-            if (chunk_xmax != 0)
-            {
-                // Check TIP state of xmax transaction
-                // Use TransactionManager::isTransactionVisible() which checks TIP
-                uint64_t current_xid = txn_manager_->getCurrentXid();
-
-                TransactionState xmax_state = TransactionState::ACTIVE;
-                Status state_status = txn_manager_->getTransactionState(chunk_xmax, xmax_state, nullptr);
-                if (state_status == Status::OK)
-                {
-                    if (xmax_state == TransactionState::COMMITTED)
-                    {
-                        chunks_to_delete.push_back(toast_tuple.tid);
-                    }
-                    else if (xmax_state == TransactionState::ABORTED)
-                    {
-                        chunks_to_clear_xmax.push_back(toast_tuple.tid);
-                    }
-                }
-                else if (!txn_manager_->isXidInRange(chunk_xmax))
-                {
-                    // Out-of-range XMAX cannot be a live transaction; clear marker.
-                    chunks_to_clear_xmax.push_back(toast_tuple.tid);
-                }
-            }
-        }
-
-        auto forceDeleteChunk = [&](const TID& tid) -> Status {
-            void* page_buffer = nullptr;
-            Status pin_status = db_->buffer_pool()->pinPageGlobal(
-                tid.gpid, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
-            if (pin_status != Status::OK)
-            {
-                return pin_status;
-            }
-
-            auto* page_data = static_cast<uint8_t*>(page_buffer);
-            HeapPage heap_page(page_data, db_->page_size());
-            Status delete_status = heap_page.deleteTuple(tid.slot, UINT64_MAX, ctx);
-
-            db_->buffer_pool()->unpinPageGlobal(tid.gpid, delete_status == Status::OK, ctx);
-            return delete_status;
-        };
-
-        auto clearChunkXmax = [&](const TID& tid) -> Status {
-            void* page_buffer = nullptr;
-            Status pin_status = db_->buffer_pool()->pinPageGlobal(
-                tid.gpid, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
-            if (pin_status != Status::OK)
-            {
-                return pin_status;
-            }
-
             bool dirty = false;
+            auto* page_header = static_cast<PageHeader*>(page_buffer);
+            if (page_header->page_type != PAGE_TYPE_HEAP)
+            {
+                db_->buffer_pool()->unpinPageGlobal(gpid, false, ctx);
+                continue;
+            }
+
             auto* page_data = static_cast<uint8_t*>(page_buffer);
-            HeapPage heap_page(page_data, db_->page_size());
-            const uint8_t* tuple_data = nullptr;
-            uint32_t tuple_size = 0;
-            Status tuple_status = heap_page.getTuple(tid.slot, &tuple_data, &tuple_size, ctx);
-            if (tuple_status == Status::OK)
+            HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, toast_table_id);
+            ErrorContext validate_ctx;
+            if (heap_page.validate(&validate_ctx) != Status::OK)
             {
-                if (tuple_size >= sizeof(TupleHeader))
+                db_->buffer_pool()->unpinPageGlobal(gpid, false, ctx);
+                continue;
+            }
+
+            for (uint16_t item_id = 0; item_id < heap_page.getItemCount(); ++item_id)
+            {
+                const uint8_t* tuple_data = nullptr;
+                uint32_t tuple_size = 0;
+                Status tuple_status = heap_page.getTuple(item_id, &tuple_data, &tuple_size, nullptr);
+                if (tuple_status != Status::OK || tuple_data == nullptr ||
+                    tuple_size < sizeof(TupleHeader))
                 {
-                    auto* tuple_hdr =
-                        const_cast<TupleHeader*>(reinterpret_cast<const TupleHeader*>(tuple_data));
-                    tuple_hdr->xmax = 0;
-                    tuple_hdr->infomask &= static_cast<uint16_t>(
-                        ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
-                    tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
-                    dirty = true;
+                    continue;
                 }
-                else
+
+                auto* tuple_hdr =
+                    const_cast<TupleHeader*>(reinterpret_cast<const TupleHeader*>(tuple_data));
+                if (tuple_hdr->xmax == 0)
                 {
-                    tuple_status = Status::PAGE_CORRUPT;
+                    continue;
                 }
-            }
 
-            db_->buffer_pool()->unpinPageGlobal(tid.gpid, dirty, ctx);
-            return tuple_status;
-        };
+                ToastChunkLifecycleDecision lifecycle =
+                    ToastVisibility::evaluateChunkLifecycle(tuple_hdr->xmin,
+                                                            tuple_hdr->xmax,
+                                                            visibility_xid,
+                                                            reclaim_horizon,
+                                                            txn_manager_);
+                if (!lifecycle.clear_delete_marker)
+                {
+                    continue;
+                }
 
-        // Physically delete chunks with committed xmax
-        for (const auto& tid : chunks_to_delete)
-        {
-            Status delete_status = forceDeleteChunk(tid);
-            if (delete_status == Status::OK)
-            {
-                (*chunks_deleted)++;
-            }
-            else
-            {
-                LOG_WARNING(VACUUM, "Failed to delete TOAST chunk with committed xmax: gpid=%lu, item=%u",
-                           static_cast<unsigned long>(tid.gpid), tid.slot);
-            }
-        }
-
-        uint64_t xmax_cleared = 0;
-        for (const auto& tid : chunks_to_clear_xmax)
-        {
-            Status clear_status = clearChunkXmax(tid);
-            if (clear_status == Status::OK)
-            {
+                tuple_hdr->xmax = 0;
+                tuple_hdr->infomask &= static_cast<uint16_t>(
+                    ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
+                tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
+                dirty = true;
                 ++xmax_cleared;
             }
-            else
+
+            uint32_t tuples_pruned = 0;
+            uint32_t space_reclaimed = 0;
+            Status prune_status =
+                heap_page.prunePage(reclaim_horizon, &tuples_pruned, &space_reclaimed, ctx);
+            if (prune_status != Status::OK)
             {
-                LOG_WARNING(VACUUM,
-                            "Failed to clear aborted TOAST xmax marker: gpid=%lu, item=%u",
-                            static_cast<unsigned long>(tid.gpid), tid.slot);
+                db_->buffer_pool()->unpinPageGlobal(gpid, dirty, ctx);
+                return prune_status;
             }
+            if (tuples_pruned != 0)
+            {
+                dirty = true;
+                *chunks_deleted += tuples_pruned;
+            }
+
+            db_->buffer_pool()->unpinPageGlobal(gpid, dirty, ctx);
         }
 
         LOG_INFO(VACUUM,

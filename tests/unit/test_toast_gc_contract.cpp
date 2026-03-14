@@ -189,6 +189,18 @@ TEST_F(ToastGCContractTest, TipGcDeletesChunksWithCommittedDeleteTransaction)
     ASSERT_EQ(db_->garbage_collector()->cleanToastChunksByTIP(
                   toast_mgr.toastTableId(), &chunks_deleted, &ctx),
               Status::OK) << ctx.message;
+    EXPECT_EQ(chunks_deleted, 0u);
+
+    // ScratchBird is always in a transaction. Both live connections auto-start
+    // new transactions after commit, so the committed delete must remain pinned
+    // until every pre-delete transaction boundary has advanced past the delete XID.
+    commitTxn(conn_ctx_.get(), &ctx);
+    commitTxn(deleter.get(), &ctx);
+
+    chunks_deleted = 0;
+    ASSERT_EQ(db_->garbage_collector()->cleanToastChunksByTIP(
+                  toast_mgr.toastTableId(), &chunks_deleted, &ctx),
+              Status::OK) << ctx.message;
     EXPECT_GT(chunks_deleted, 0u);
 }
 
@@ -245,3 +257,55 @@ TEST_F(ToastGCContractTest, TipGcClearsXmaxForAbortedDeleteTransaction)
     rollbackTxn(reader.get(), &ctx);
 }
 
+TEST_F(ToastGCContractTest, TipGcLeavesChunksWithActiveDeleteTransaction)
+{
+    ErrorContext ctx;
+    ToastManager toast_mgr(db_.get(), table_id_);
+    ASSERT_EQ(toast_mgr.createToastTable(&ctx), Status::OK) << ctx.message;
+
+    uint64_t creator_xid = beginTxn(conn_ctx_.get());
+    ASSERT_NE(creator_xid, 0u);
+
+    std::string payload = "toast_gc_contract_active_delete";
+    std::vector<uint8_t> bytes(payload.begin(), payload.end());
+    ToastPointer ptr{};
+    {
+        ScopedCurrentConnection scope(conn_ctx_.get());
+        ASSERT_EQ(toast_mgr.toastValue(bytes.data(), static_cast<uint32_t>(bytes.size()),
+                                       ToastStrategy::EXTERNAL, creator_xid, &ptr, &ctx),
+                  Status::OK) << ctx.message;
+    }
+    commitTxn(conn_ctx_.get(), &ctx);
+
+    auto deleter = createConnection(&ctx);
+    uint64_t deleter_xid = beginTxn(deleter.get());
+    ASSERT_NE(deleter_xid, 0u);
+    {
+        ScopedCurrentConnection scope(deleter.get());
+        ASSERT_EQ(toast_mgr.deleteToastValue(ptr.lob_uuid, deleter_xid, &ctx), Status::OK)
+            << ctx.message;
+    }
+
+    uint64_t chunks_deleted = 0;
+    ASSERT_EQ(db_->garbage_collector()->cleanToastChunksByTIP(
+                  toast_mgr.toastTableId(), &chunks_deleted, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(chunks_deleted, 0u);
+
+    uint64_t chunk_xmax = 0;
+    ASSERT_EQ(readAnyToastChunkXmax(toast_mgr.toastTableId(), &chunk_xmax, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(chunk_xmax, deleter_xid);
+
+    auto reader = createConnection(&ctx);
+    uint64_t reader_xid = beginTxn(reader.get());
+    ASSERT_NE(reader_xid, 0u);
+    std::vector<uint8_t> detoasted;
+    {
+        ScopedCurrentConnection scope(reader.get());
+        ASSERT_EQ(toast_mgr.detoastValue(&ptr, &detoasted, reader_xid, &ctx), Status::OK)
+            << ctx.message;
+    }
+    rollbackTxn(reader.get(), &ctx);
+    rollbackTxn(deleter.get(), &ctx);
+}

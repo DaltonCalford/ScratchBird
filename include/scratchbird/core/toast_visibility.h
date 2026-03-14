@@ -15,6 +15,28 @@
 namespace scratchbird::core
 {
 
+    enum class ToastChunkLifecycleState : uint8_t
+    {
+        INVALID = 0,
+        LIVE_VISIBLE,
+        CREATE_INVISIBLE,
+        DELETE_PENDING,
+        RECLAIMABLE_DELETED,
+        CLEAR_DELETE_MARKER,
+        RECLAIMABLE_ABORTED_CREATE,
+    };
+
+    struct ToastChunkLifecycleDecision
+    {
+        RecordVisibilityDecision visibility{};
+        TransactionVisibilityDecision create_horizon{};
+        TransactionVisibilityDecision delete_horizon{};
+        ToastChunkLifecycleState state = ToastChunkLifecycleState::INVALID;
+        bool visible = false;
+        bool reclaimable = false;
+        bool clear_delete_marker = false;
+    };
+
     /**
      * ToastVisibility - TIP-based visibility helper for TOAST chunks
      *
@@ -29,6 +51,11 @@ namespace scratchbird::core
     class ToastVisibility
     {
     public:
+        static auto evaluateChunkLifecycle(uint64_t chunk_xmin, uint64_t chunk_xmax,
+                                           uint64_t current_xid, uint64_t reclaim_horizon,
+                                           TransactionManager *tm)
+            -> ToastChunkLifecycleDecision;
+
         /**
          * Check if TOAST chunk is visible to current transaction
          *

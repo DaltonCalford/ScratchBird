@@ -916,7 +916,12 @@ namespace scratchbird::core
             if (xmin != 0)
             {
                 TransactionManager *tm = db_->transaction_manager();
-                if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+                if (!ToastVisibility::evaluateChunkLifecycle(chunk_xmin,
+                                                             chunk_xmax,
+                                                             xmin,
+                                                             0,
+                                                             tm)
+                         .visible)
                 {
                     continue; // Skip invisible chunk
                 }
@@ -952,7 +957,12 @@ namespace scratchbird::core
                 // Phase 2: TIP-based visibility check (Firebird MGA)
                 // Check if this chunk is visible to the current transaction
                 TransactionManager *tm = db_->transaction_manager();
-                if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+                if (!ToastVisibility::evaluateChunkLifecycle(chunk_xmin,
+                                                             chunk_xmax,
+                                                             xmin,
+                                                             0,
+                                                             tm)
+                         .visible)
                 {
                     continue; // Skip invisible chunk
                 }
@@ -1079,7 +1089,12 @@ namespace scratchbird::core
                 if (xmin != 0)
                 {
                     TransactionManager *tm = db_->transaction_manager();
-                    if (!ToastVisibility::isChunkVisible(chunk_xmin, chunk_xmax, xmin, tm))
+                    if (!ToastVisibility::evaluateChunkLifecycle(chunk_xmin,
+                                                                 chunk_xmax,
+                                                                 xmin,
+                                                                 0,
+                                                                 tm)
+                             .visible)
                     {
                         continue;
                     }
@@ -1255,13 +1270,13 @@ namespace scratchbird::core
             return Status::PAGE_CORRUPT;
         }
 
-        // Update xmax field directly in the page buffer (bytes 8-15 of TupleHeader)
-        // SAFETY: We have exclusive access via pin, and we're writing to a valid buffer
+        // Update xmax directly but keep the delete pending until transaction
+        // visibility marks it committed.
         auto *tuple_hdr = const_cast<TupleHeader *>(reinterpret_cast<const TupleHeader *>(tuple_data));
         tuple_hdr->xmax = xmax;
-
-        // Set hint bit to indicate xmax is set (but NOT the deleted flag on item pointer)
-        tuple_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+        tuple_hdr->infomask &= static_cast<uint16_t>(
+            ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
+        tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
 
         // Mark page as dirty so changes are persisted
         buffer_pool->markDirty(page_id);

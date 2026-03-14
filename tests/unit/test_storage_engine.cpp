@@ -2,6 +2,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include "scratchbird/core/catalog_manager.h"
@@ -230,6 +231,39 @@ protected:
         db_->buffer_pool()->unpinPage(page_id, false, &ctx);
         EXPECT_EQ(status, Status::OK) << ctx.message;
         return tuple;
+    }
+
+    ID readRawToastValueId(const ID &table_id, uint32_t page_id, uint16_t item_id)
+    {
+        ErrorContext ctx;
+        void *page_buffer = nullptr;
+        EXPECT_EQ(db_->buffer_pool()->pinPage(page_id, &page_buffer, &ctx), Status::OK)
+            << ctx.message;
+
+        ToastManager toast_mgr(db_.get(), table_id);
+        EXPECT_EQ(toast_mgr.initialize(&ctx), Status::OK) << ctx.message;
+
+        HeapPage heap_page(static_cast<uint8_t *>(page_buffer), kPageSize, &toast_mgr, db_.get(),
+                           table_id);
+        const uint8_t *tuple_data = nullptr;
+        uint32_t tuple_size = 0;
+        EXPECT_EQ(heap_page.getTuple(item_id, &tuple_data, &tuple_size, &ctx), Status::OK)
+            << ctx.message;
+
+        ID value_id{};
+        if (tuple_data != nullptr && tuple_size >= sizeof(TupleHeader) + sizeof(ToastPointer))
+        {
+            const auto *toast_ptr =
+                reinterpret_cast<const ToastPointer *>(tuple_data + sizeof(TupleHeader));
+            if (ToastManager::isToastPointer(reinterpret_cast<const uint8_t *>(toast_ptr),
+                                            sizeof(ToastPointer)))
+            {
+                value_id = toast_ptr->lob_uuid;
+            }
+        }
+
+        db_->buffer_pool()->unpinPage(page_id, false, &ctx);
+        return value_id;
     }
 
     void fillPageAlmostFull(uint32_t page_id, size_t payload_size = 64)
@@ -981,6 +1015,54 @@ TEST_F(StorageEngineTest, CooperativeGcPreservesRowAfterSavepointRollback)
 
     std::vector<uint8_t> restored = readTupleDetoasted(table_id, page_id, item_id);
     expectTuplePayloadEquals(restored, original_tuple);
+}
+
+TEST_F(StorageEngineTest, ToastOrphanDetectionKeepsBackVersionReference)
+{
+    ID table_id = createTestTable("toast_orphan_back_version");
+
+    auto original_tuple = buildLargeRowTuple(9, 'M');
+    auto updated_tuple = buildLargeRowTuple(9, 'N');
+
+    ErrorContext ctx;
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    ID original_toast_value = readRawToastValueId(table_id, page_id, item_id);
+    ASSERT_NE(original_toast_value, ID{});
+
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    uint32_t new_page_id = 0;
+    uint16_t new_item_id = 0;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   &new_page_id,
+                                   &new_item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    ToastManager toast_mgr(db_.get(), table_id);
+    ASSERT_EQ(toast_mgr.initialize(&ctx), Status::OK) << ctx.message;
+    ASSERT_NE(toast_mgr.toastTableId(), ID{});
+
+    std::unordered_set<ID, IDHash> orphaned_value_ids;
+    ASSERT_EQ(db_->garbage_collector()->detectOrphanedToastChunks(toast_mgr.toastTableId(),
+                                                                  &orphaned_value_ids,
+                                                                  &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(orphaned_value_ids.count(original_toast_value), 0u);
 }
 
 TEST_F(StorageEngineTest, CrossPageSavepointRollbackRestoresOriginalTuple)
