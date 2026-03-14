@@ -28,6 +28,11 @@
 #include <vector>
 #include <functional>
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 
 using namespace scratchbird;
 using namespace scratchbird::core;
@@ -41,6 +46,163 @@ namespace
     {
         return std::all_of(id.bytes.begin(), id.bytes.end(),
                            [](uint8_t byte) { return byte == 0; });
+    }
+
+    auto normalizedMisestimateRatio(uint64_t estimated_rows,
+                                    uint64_t actual_rows) -> double
+    {
+        const double estimated =
+            static_cast<double>(std::max<uint64_t>(estimated_rows, 1));
+        const double actual =
+            static_cast<double>(std::max<uint64_t>(actual_rows, 1));
+        return std::max(estimated, actual) / std::min(estimated, actual);
+    }
+
+    auto normalizedExplainSnapshot(const nlohmann::json& explain_json)
+        -> nlohmann::json
+    {
+        nlohmann::json snapshot;
+        snapshot["runtime_plan_contract"] =
+            explain_json.value("runtime_plan_contract", "");
+
+        const auto join_graph_it = explain_json.find("join_graph");
+        if (join_graph_it != explain_json.end() && join_graph_it->is_object())
+        {
+            snapshot["join_graph"]["contract"] =
+                join_graph_it->value("contract", "");
+            snapshot["join_graph"]["relations"] = nlohmann::json::array();
+            const auto relations_it = join_graph_it->find("relations");
+            if (relations_it != join_graph_it->end() && relations_it->is_array())
+            {
+                for (const auto& relation : *relations_it)
+                {
+                    nlohmann::json normalized_relation;
+                    normalized_relation["alias"] = relation.value("alias", "");
+                    normalized_relation["table_path"] =
+                        relation.value("table_path", "");
+                    normalized_relation["scan_kind"] =
+                        relation.value("scan_kind", "");
+                    normalized_relation["index_name"] =
+                        relation.value("index_name", "");
+                    normalized_relation["covering_index"] =
+                        relation.value("covering_index", false);
+                    normalized_relation["parameterized"] =
+                        relation.value("parameterized", false);
+                    normalized_relation["partition_pruned"] =
+                        relation.value("partition_pruned", false);
+                    snapshot["join_graph"]["relations"].push_back(
+                        std::move(normalized_relation));
+                }
+            }
+
+            snapshot["join_graph"]["join_steps"] = nlohmann::json::array();
+            const auto steps_it = join_graph_it->find("join_steps");
+            if (steps_it != join_graph_it->end() && steps_it->is_array())
+            {
+                for (const auto& step : *steps_it)
+                {
+                    nlohmann::json normalized_step;
+                    normalized_step["join_type"] = step.value("join_type", "");
+                    normalized_step["method"] = step.value("method", "");
+                    normalized_step["join_edge_left_alias"] =
+                        step.value("join_edge_left_alias", "");
+                    normalized_step["join_edge_right_alias"] =
+                        step.value("join_edge_right_alias", "");
+                    normalized_step["disconnected_component"] =
+                        step.value("disconnected_component", false);
+                    normalized_step["legality_class"] =
+                        step.value("legality_class", "");
+                    normalized_step["reorderable"] =
+                        step.value("reorderable", true);
+                    normalized_step["outer_reorder_barrier"] =
+                        step.value("outer_reorder_barrier", false);
+                    normalized_step["semi_reorder_barrier"] =
+                        step.value("semi_reorder_barrier", false);
+                    normalized_step["anti_reorder_barrier"] =
+                        step.value("anti_reorder_barrier", false);
+                    normalized_step["using_reorder_barrier"] =
+                        step.value("using_reorder_barrier", false);
+                    normalized_step["natural_reorder_barrier"] =
+                        step.value("natural_reorder_barrier", false);
+                    normalized_step["lateral_reorder_barrier"] =
+                        step.value("lateral_reorder_barrier", false);
+                    snapshot["join_graph"]["join_steps"].push_back(
+                        std::move(normalized_step));
+                }
+            }
+        }
+
+        const auto trace_it = explain_json.find("optimizer_trace");
+        if (trace_it != explain_json.end() && trace_it->is_object())
+        {
+            snapshot["optimizer_trace"]["diagnostics_contract"] =
+                trace_it->value("diagnostics_contract", "");
+            snapshot["optimizer_trace"]["search_summary"] =
+                trace_it->value("search_summary", nlohmann::json::object());
+            const auto considered_it = trace_it->find("considered_paths");
+            if (considered_it != trace_it->end() && considered_it->is_array())
+            {
+                snapshot["optimizer_trace"]["considered_path_count"] =
+                    considered_it->size();
+            }
+            const auto rejected_it = trace_it->find("rejected_paths");
+            if (rejected_it != trace_it->end() && rejected_it->is_array())
+            {
+                snapshot["optimizer_trace"]["rejected_path_count"] =
+                    rejected_it->size();
+            }
+            const auto provenance_it = trace_it->find("statistics_provenance");
+            if (provenance_it != trace_it->end() && provenance_it->is_array())
+            {
+                snapshot["optimizer_trace"]["statistics_provenance_count"] =
+                    provenance_it->size();
+            }
+        }
+
+        const auto plan_root_it = explain_json.find("plan_root");
+        if (plan_root_it != explain_json.end() && plan_root_it->is_object())
+        {
+            snapshot["plan_root"]["node_type"] =
+                plan_root_it->value("node_type", "");
+            snapshot["plan_root"]["join_type"] =
+                plan_root_it->value("join_type", "");
+            snapshot["plan_root"]["estimated_rows"] =
+                plan_root_it->value("estimated_rows", 0u);
+            snapshot["plan_root"]["spill_expected"] =
+                plan_root_it->value("spill_expected", false);
+        }
+
+        const auto analyze_it = explain_json.find("analyze");
+        if (analyze_it != explain_json.end() && analyze_it->is_object())
+        {
+            snapshot["analyze"]["rows"] = analyze_it->value("rows", 0u);
+        }
+
+        return snapshot;
+    }
+
+    auto normalizedRuntimeJoinStep(
+        const scratchbird::optimizer::RuntimePlanJoinStep& step)
+        -> nlohmann::json
+    {
+        return nlohmann::json{
+            {"join_type", step.join_type},
+            {"method", step.method},
+            {"join_edge_left_alias", step.join_edge_left_alias},
+            {"join_edge_right_alias", step.join_edge_right_alias},
+            {"disconnected_component", step.disconnected_component},
+            {"legality_class", step.legality_class},
+            {"reorderable", step.reorderable},
+            {"outer_reorder_barrier", step.outer_reorder_barrier},
+            {"semi_reorder_barrier", step.semi_reorder_barrier},
+            {"anti_reorder_barrier", step.anti_reorder_barrier},
+            {"using_reorder_barrier", step.using_reorder_barrier},
+            {"natural_reorder_barrier", step.natural_reorder_barrier},
+            {"lateral_reorder_barrier", step.lateral_reorder_barrier},
+            {"parameterized_dependency", step.parameterized_dependency},
+            {"estimated_rows", step.estimated_rows},
+            {"selectivity", step.selectivity},
+        };
     }
 }
 
@@ -568,6 +730,38 @@ protected:
         return lines;
     }
 
+    size_t resultRowCount(const ExecutionResult& result)
+    {
+        if (!result.success() || !result.hasResultSet() || result.resultSet() == nullptr)
+        {
+            return 0;
+        }
+        return result.resultSet()->rowCount();
+    }
+
+    double meanDurationMs(size_t iterations,
+                          const std::function<bool()>& fn)
+    {
+        if (iterations == 0)
+        {
+            return 0.0;
+        }
+
+        using clock = std::chrono::steady_clock;
+        double total_ms = 0.0;
+        for (size_t i = 0; i < iterations; ++i)
+        {
+            const auto start = clock::now();
+            if (!fn())
+            {
+                return -1.0;
+            }
+            const auto end = clock::now();
+            total_ms += std::chrono::duration<double, std::milli>(end - start).count();
+        }
+        return total_ms / static_cast<double>(iterations);
+    }
+
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<Database> db_;
     std::unique_ptr<QueryCompilerV3> compiler_;
@@ -960,6 +1154,48 @@ TEST_F(QueryPlannerIntegrationTest, FullOuterJoinFailsClosedToNestedLoop)
     EXPECT_FALSE(plan.join_steps.front().has_hash_keys);
 }
 
+TEST_F(QueryPlannerIntegrationTest,
+       RuntimePlanCarriesVersionedJoinGraphAndSearchSummaryContracts)
+{
+    ASSERT_TRUE(createDatabase());
+
+    auto bytecode =
+        compileSQL("SELECT users.id FROM users LEFT JOIN products ON users.id = products.id");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    EXPECT_EQ(plan.version, scratchbird::optimizer::kRuntimePlanPayloadVersion);
+    EXPECT_EQ(plan.contract_id, scratchbird::optimizer::kRuntimePlanContractId);
+    EXPECT_EQ(plan.join_graph_contract_id,
+              scratchbird::optimizer::kJoinGraphContractId);
+    EXPECT_EQ(plan.diagnostics_contract_id,
+              scratchbird::optimizer::kOptimizerDiagnosticsContractId);
+    EXPECT_FALSE(plan.search_summary.requested_strategy.empty());
+    EXPECT_FALSE(plan.search_summary.selected_strategy.empty());
+    EXPECT_GE(plan.search_summary.considered_state_count, 1u);
+    EXPECT_EQ(plan.search_summary.rejected_candidate_count,
+              plan.rejected_paths.size());
+
+    ASSERT_EQ(plan.join_steps.size(), 1u);
+    const auto& step = plan.join_steps.front();
+    EXPECT_EQ(step.join_edge_left_relation_index, 0u);
+    EXPECT_EQ(step.join_edge_right_relation_index, 1u);
+    EXPECT_EQ(step.join_edge_left_alias, "users");
+    EXPECT_EQ(step.join_edge_right_alias, "products");
+    EXPECT_FALSE(step.join_edge_left_id_text.empty());
+    EXPECT_FALSE(step.join_edge_right_id_text.empty());
+    EXPECT_TRUE(step.outer_reorder_barrier);
+    EXPECT_FALSE(step.using_reorder_barrier);
+    EXPECT_FALSE(step.natural_reorder_barrier);
+    EXPECT_FALSE(step.lateral_reorder_barrier);
+    EXPECT_FALSE(step.parameterized_dependency);
+    ASSERT_EQ(step.equijoin_keys.size(), 1u);
+    EXPECT_EQ(step.equijoin_keys.front().left_column_name, "id");
+    EXPECT_EQ(step.equijoin_keys.front().right_column_name, "id");
+    EXPECT_TRUE(step.residual_predicates.empty());
+}
+
 TEST_F(QueryPlannerIntegrationTest, LeftJoinCarriesFormalLegalityMetadata)
 {
     ASSERT_TRUE(createDatabase());
@@ -979,6 +1215,85 @@ TEST_F(QueryPlannerIntegrationTest, LeftJoinCarriesFormalLegalityMetadata)
     EXPECT_FALSE(plan.join_steps.front().null_introduces_left);
     EXPECT_TRUE(plan.join_steps.front().null_introduces_right);
     EXPECT_TRUE(plan.join_steps.front().requires_original_order);
+    EXPECT_TRUE(plan.join_steps.front().outer_reorder_barrier);
+    EXPECT_FALSE(plan.join_steps.front().using_reorder_barrier);
+    EXPECT_FALSE(plan.join_steps.front().natural_reorder_barrier);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       CanonicalJoinBackendOwnsMultiRelationSearchStrategy)
+{
+    ASSERT_TRUE(createDatabase());
+
+    auto bytecode = compileSQL(
+        "SELECT users.id "
+        "FROM users "
+        "JOIN products ON users.id = products.id "
+        "JOIN test ON test.id = products.id");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.join_steps.size(), 2u);
+    EXPECT_EQ(plan.search_summary.requested_strategy, "AUTO");
+    EXPECT_EQ(plan.search_summary.selected_strategy, "EXHAUSTIVE_DP");
+    EXPECT_TRUE(plan.search_summary.fallback_reason.empty());
+    EXPECT_GE(plan.search_summary.considered_state_count, 2u);
+}
+
+TEST_F(QueryPlannerIntegrationTest, AutoMediumJoinGraphSelectsBoundedDp)
+{
+    ASSERT_TRUE(createDatabase());
+
+    connection_ctx_->setSessionVariable("OPTIMIZER.EXHAUSTIVE_JOIN_LIMIT", "2");
+    connection_ctx_->setSessionVariable("OPTIMIZER.BOUNDED_DP_JOIN_LIMIT", "3");
+    connection_ctx_->setSessionVariable("OPTIMIZER.MAX_STATES_CONSIDERED", "32");
+    connection_ctx_->setSessionVariable("OPTIMIZER.SEARCH_DEPTH", "32");
+
+    auto bytecode = compileSQL(
+        "SELECT users.id "
+        "FROM users "
+        "JOIN products ON users.id = products.id "
+        "JOIN test ON test.id = products.id");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    EXPECT_EQ(plan.search_summary.requested_strategy, "AUTO");
+    EXPECT_EQ(plan.search_summary.selected_strategy, "BOUNDED_DP");
+    EXPECT_EQ(plan.search_summary.exhaustive_join_limit, 2u);
+    EXPECT_EQ(plan.search_summary.bounded_dp_join_limit, 3u);
+    EXPECT_EQ(plan.search_summary.max_states_considered, 32u);
+    EXPECT_EQ(plan.search_summary.max_pair_evaluations, 32u);
+    EXPECT_TRUE(plan.search_summary.fallback_reason.empty());
+}
+
+TEST_F(QueryPlannerIntegrationTest, SearchBudgetFallbackTelemetryPublishesThreshold)
+{
+    ASSERT_TRUE(createDatabase());
+
+    connection_ctx_->setSessionVariable("OPTIMIZER.JOIN_SEARCH", "BOUNDED_DP");
+    connection_ctx_->setSessionVariable("OPTIMIZER.EXHAUSTIVE_JOIN_LIMIT", "2");
+    connection_ctx_->setSessionVariable("OPTIMIZER.BOUNDED_DP_JOIN_LIMIT", "4");
+    connection_ctx_->setSessionVariable("OPTIMIZER.MAX_STATES_CONSIDERED", "1");
+    connection_ctx_->setSessionVariable("OPTIMIZER.FALLBACK_PRUNE_LEVEL", "2");
+
+    auto bytecode = compileSQL(
+        "SELECT users.id "
+        "FROM users "
+        "JOIN products ON users.id = products.id "
+        "JOIN test ON test.id = products.id");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    EXPECT_EQ(plan.search_summary.requested_strategy, "BOUNDED_DP");
+    EXPECT_EQ(plan.search_summary.selected_strategy, "HEURISTIC_GREEDY");
+    EXPECT_EQ(plan.search_summary.fallback_reason, "MAX_STATES_CONSIDERED");
+    EXPECT_EQ(plan.search_summary.fallback_threshold_name,
+              "MAX_STATES_CONSIDERED");
+    EXPECT_EQ(plan.search_summary.fallback_threshold_value, 1u);
+    EXPECT_EQ(plan.search_summary.max_states_considered, 1u);
 }
 
 TEST_F(QueryPlannerIntegrationTest, UsingJoinMarksReorderBarrierAndFailsClosedToNestedLoop)
@@ -998,6 +1313,8 @@ TEST_F(QueryPlannerIntegrationTest, UsingJoinMarksReorderBarrierAndFailsClosedTo
     EXPECT_TRUE(plan.join_steps.front().requires_original_order);
     EXPECT_EQ(plan.join_steps.front().method, "NESTED_LOOP");
     EXPECT_FALSE(plan.join_steps.front().has_hash_keys);
+    EXPECT_TRUE(plan.join_steps.front().using_reorder_barrier);
+    EXPECT_FALSE(plan.join_steps.front().outer_reorder_barrier);
 }
 
 TEST_F(QueryPlannerIntegrationTest, MixedOuterAndInnerJoinKeepsSyntacticRelationOrder)
@@ -1020,6 +1337,8 @@ TEST_F(QueryPlannerIntegrationTest, MixedOuterAndInnerJoinKeepsSyntacticRelation
     EXPECT_EQ(plan.join_steps[0].legality_class, "LEFT_OUTER_BARRIER");
     EXPECT_FALSE(plan.join_steps[0].reorderable);
     EXPECT_EQ(plan.join_steps[1].join_type, "INNER");
+    EXPECT_EQ(plan.search_summary.selected_strategy, "INPUT_ORDER_ONLY");
+    EXPECT_EQ(plan.search_summary.fallback_reason, "JOIN_REORDER_BARRIER");
 }
 
 TEST_F(QueryPlannerIntegrationTest, DisconnectedJoinGraphKeepsExplicitCrossJoinStep)
@@ -1034,13 +1353,17 @@ TEST_F(QueryPlannerIntegrationTest, DisconnectedJoinGraphKeepsExplicitCrossJoinS
     ASSERT_TRUE(executeSQL("INSERT INTO test (id) VALUES (20)").success());
 
     const std::string sql =
-        "SELECT users.id FROM users JOIN products ON users.id = products.id, test";
+        "SELECT users.id "
+        "FROM users "
+        "JOIN products ON users.id = products.id "
+        "CROSS JOIN test";
     auto bytecode = compileSQL(sql);
     ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
 
     scratchbird::optimizer::RuntimePlan plan;
     ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
     ASSERT_EQ(plan.join_steps.size(), 2u);
+    EXPECT_EQ(plan.search_summary.selected_strategy, "EXHAUSTIVE_DP");
 
     auto cross_it = std::find_if(plan.join_steps.begin(),
                                  plan.join_steps.end(),
@@ -1049,15 +1372,10 @@ TEST_F(QueryPlannerIntegrationTest, DisconnectedJoinGraphKeepsExplicitCrossJoinS
                                  });
     ASSERT_NE(cross_it, plan.join_steps.end());
     EXPECT_EQ(cross_it->method, "NESTED_LOOP");
-
-    auto result = executeSQL(sql);
-    ASSERT_TRUE(result.success()) << result.error();
-    ASSERT_TRUE(result.hasResultSet());
-
-    auto rows = resultStrings(result);
-    ASSERT_EQ(rows.size(), 2u);
-    EXPECT_EQ(rows[0], "1");
-    EXPECT_EQ(rows[1], "1");
+    EXPECT_TRUE(cross_it->disconnected_component);
+    EXPECT_EQ(cross_it->join_type, "CROSS");
+    EXPECT_EQ(cross_it->legality_class, "CROSS_REORDERABLE");
+    EXPECT_TRUE(cross_it->residual_predicates.empty());
 }
 
 TEST_F(QueryPlannerIntegrationTest, MgaCanonicalTelemetryFeedsPlannerCostingAndRuntimePlanProvenance)
@@ -1375,12 +1693,61 @@ TEST_F(QueryPlannerIntegrationTest, ExplainJsonFormatsRuntimePlan)
     EXPECT_NE(lines.front().find("\"node_type\":\""), std::string::npos);
     EXPECT_NE(lines.front().find("\"cache_mode\":\"GENERIC\""), std::string::npos);
     EXPECT_NE(lines.front().find("\"plan_profile_signature\":\""), std::string::npos);
+    EXPECT_NE(lines.front().find("\"runtime_plan_contract\":\""), std::string::npos);
+    EXPECT_NE(lines.front().find("\"join_graph\":"), std::string::npos);
     EXPECT_NE(lines.front().find("\"optimizer_trace\":"), std::string::npos);
+    EXPECT_NE(lines.front().find("\"diagnostics_contract\":\""), std::string::npos);
+    EXPECT_NE(lines.front().find("\"search_summary\":"), std::string::npos);
     EXPECT_NE(lines.front().find("\"considered_paths\":"), std::string::npos);
     EXPECT_NE(lines.front().find("\"rejected_paths\":"), std::string::npos);
     EXPECT_NE(lines.front().find("\"statistics_provenance\":"), std::string::npos);
     EXPECT_NE(lines.front().find("\"adaptive_feedback\":"), std::string::npos);
     EXPECT_NE(lines.front().find("\"analyze\":{\"rows\":"), std::string::npos);
+}
+
+TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesJoinGraphContractFields)
+{
+    ASSERT_TRUE(createDatabase());
+
+    auto result = executeSQL("EXPLAIN (FORMAT JSON) "
+                             "SELECT users.id FROM users LEFT JOIN products ON users.id = products.id");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    const auto lines = resultStrings(result);
+    ASSERT_EQ(lines.size(), 1u);
+
+    const auto parsed = nlohmann::json::parse(lines.front());
+    EXPECT_EQ(parsed.at("runtime_plan_contract").get<std::string>(),
+              scratchbird::optimizer::kRuntimePlanContractId);
+
+    const auto& join_graph = parsed.at("join_graph");
+    EXPECT_EQ(join_graph.at("contract").get<std::string>(),
+              scratchbird::optimizer::kJoinGraphContractId);
+    ASSERT_TRUE(join_graph.at("relations").is_array());
+    ASSERT_TRUE(join_graph.at("join_steps").is_array());
+    ASSERT_EQ(join_graph.at("relations").size(), 2u);
+    ASSERT_EQ(join_graph.at("join_steps").size(), 1u);
+    EXPECT_EQ(join_graph.at("join_steps")[0].at("join_edge_left_alias").get<std::string>(),
+              "users");
+    EXPECT_EQ(join_graph.at("join_steps")[0].at("join_edge_right_alias").get<std::string>(),
+              "products");
+    EXPECT_TRUE(join_graph.at("join_steps")[0].at("outer_reorder_barrier").get<bool>());
+
+    const auto& optimizer_trace = parsed.at("optimizer_trace");
+    EXPECT_EQ(optimizer_trace.at("diagnostics_contract").get<std::string>(),
+              scratchbird::optimizer::kOptimizerDiagnosticsContractId);
+    const auto& search_summary = optimizer_trace.at("search_summary");
+    EXPECT_TRUE(search_summary.contains("requested_strategy"));
+    EXPECT_TRUE(search_summary.contains("selected_strategy"));
+    EXPECT_TRUE(search_summary.contains("considered_state_count"));
+    EXPECT_TRUE(search_summary.contains("pruned_state_count"));
+    EXPECT_TRUE(search_summary.contains("pair_evaluation_count"));
+    EXPECT_TRUE(search_summary.contains("rejected_candidate_count"));
+    EXPECT_TRUE(search_summary.contains("max_pair_evaluations"));
+    EXPECT_TRUE(search_summary.contains("max_states_considered"));
+    EXPECT_TRUE(search_summary.contains("fallback_threshold_name"));
+    EXPECT_TRUE(search_summary.contains("fallback_threshold_value"));
 }
 
 TEST_F(QueryPlannerIntegrationTest, ExplainJsonIncludesOperatorMemoryAndSpillMetadata)
@@ -1462,6 +1829,189 @@ TEST_F(QueryPlannerIntegrationTest, ReorderedJoinPayloadKeepsOriginalRelationInd
     const auto rows = resultStrings(result);
     ASSERT_EQ(rows.size(), 1u);
     EXPECT_EQ(rows.front(), "42");
+}
+
+TEST_F(QueryPlannerIntegrationTest, OptimizerParityBaselineCorpusCapturesStableSummary)
+{
+    ASSERT_TRUE(createDatabase());
+
+    const std::vector<std::string> setup_sql = {
+        "INSERT INTO users (id, name, email, age) VALUES (1, 'alice', 'a@example.com', 30)",
+        "INSERT INTO users (id, name, email, age) VALUES (2, 'bob', 'b@example.com', 31)",
+        "INSERT INTO users (id, name, email, age) VALUES (3, 'carol', 'c@example.com', 32)",
+        "INSERT INTO products (id, name, price) VALUES (1, 'p1', 10.5)",
+        "INSERT INTO products (id, name, price) VALUES (2, 'p2', 11.5)",
+        "INSERT INTO orders (id, user_id, amount) VALUES (1, 1, 12.0)",
+        "INSERT INTO orders (id, user_id, amount) VALUES (2, 1, 24.0)",
+        "INSERT INTO orders (id, user_id, amount) VALUES (3, 2, 36.0)",
+        "INSERT INTO test (id) VALUES (10)",
+        "INSERT INTO test (id) VALUES (20)",
+        "CREATE INDEX idx_users_id ON users (id)",
+        "CREATE INDEX idx_products_id ON products (id)",
+        "CREATE INDEX idx_orders_user_id ON orders (user_id)"
+    };
+
+    for (const auto& sql : setup_sql)
+    {
+        ASSERT_TRUE(executeSQL(sql).success()) << sql;
+    }
+
+    struct BaselineQuery
+    {
+        std::string id;
+        std::string sql;
+    };
+
+    const std::vector<BaselineQuery> corpus = {
+        {"single_relation_filter",
+         "SELECT id FROM users WHERE id = 1"},
+        {"left_join_barrier",
+         "SELECT users.id FROM users LEFT JOIN products ON users.id = products.id"},
+        {"disconnected_cross_bridge",
+         "SELECT users.id FROM users JOIN products ON users.id = products.id, test"},
+        {"ordered_inner_join",
+         "SELECT users.id FROM users JOIN products ON users.id = products.id ORDER BY users.id"},
+        {"grouped_aggregate",
+         "SELECT user_id FROM orders GROUP BY user_id ORDER BY user_id"},
+    };
+
+    nlohmann::json baseline;
+    baseline["schema"] = "scratchbird.optimizer_parity.baseline.v1";
+    baseline["query_count"] = corpus.size();
+    baseline["queries"] = nlohmann::json::array();
+
+    for (const auto& entry : corpus)
+    {
+        optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
+        optimizer::QueryProfiler::getInstance().clearProfiles();
+
+        auto bytecode = compileSQL(entry.sql);
+        ASSERT_FALSE(bytecode.empty()) << entry.id << ": " << last_compile_errors_;
+
+        scratchbird::optimizer::RuntimePlan plan;
+        ASSERT_TRUE(decodeRuntimePlan(bytecode, plan)) << entry.id;
+
+        auto explain_result =
+            executeSQL("EXPLAIN (FORMAT JSON, ANALYZE, VERBOSE) " + entry.sql);
+        ASSERT_TRUE(explain_result.success()) << entry.id << ": "
+                                              << explain_result.error();
+        ASSERT_TRUE(explain_result.hasResultSet()) << entry.id;
+        const auto explain_lines = resultStrings(explain_result);
+        ASSERT_EQ(explain_lines.size(), 1u) << entry.id;
+
+        const auto explain_json = nlohmann::json::parse(explain_lines.front());
+
+        optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
+        optimizer::QueryProfiler::getInstance().clearProfiles();
+        auto count_result =
+            executeSQL("SELECT COUNT(*) FROM (" + entry.sql + ") AS baseline_count");
+        ASSERT_TRUE(count_result.success()) << entry.id << ": "
+                                            << count_result.error();
+        ASSERT_TRUE(count_result.hasResultSet()) << entry.id;
+        const auto count_rows = resultStrings(count_result);
+        ASSERT_EQ(count_rows.size(), 1u) << entry.id;
+
+        uint64_t actual_rows = 0;
+        try
+        {
+            actual_rows = static_cast<uint64_t>(std::stoull(count_rows.front()));
+        }
+        catch (const std::exception&)
+        {
+            FAIL() << entry.id << ": invalid row-count payload '" << count_rows.front()
+                   << "'";
+        }
+        const double compile_mean_ms =
+            meanDurationMs(3, [&]() {
+                optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
+                optimizer::QueryProfiler::getInstance().clearProfiles();
+                return !compileSQL(entry.sql).empty();
+            });
+        ASSERT_GE(compile_mean_ms, 0.0) << entry.id;
+
+        const double explain_mean_ms =
+            meanDurationMs(3, [&]() {
+                optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
+                optimizer::QueryProfiler::getInstance().clearProfiles();
+                auto result =
+                    executeSQL("EXPLAIN (FORMAT JSON, ANALYZE, VERBOSE) " + entry.sql);
+                return result.success() && result.hasResultSet();
+            });
+        ASSERT_GE(explain_mean_ms, 0.0) << entry.id;
+
+        const double execute_mean_ms =
+            meanDurationMs(3, [&]() {
+                optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
+                optimizer::QueryProfiler::getInstance().clearProfiles();
+                auto result = executeSQL(entry.sql);
+                return result.success();
+            });
+        ASSERT_GE(execute_mean_ms, 0.0) << entry.id;
+
+        nlohmann::json join_steps = nlohmann::json::array();
+        for (const auto& join_step : plan.join_steps)
+        {
+            join_steps.push_back(normalizedRuntimeJoinStep(join_step));
+        }
+
+        nlohmann::json query_summary;
+        query_summary["id"] = entry.id;
+        query_summary["sql"] = entry.sql;
+        query_summary["runtime_plan_contract"] = plan.contract_id;
+        query_summary["join_graph_contract"] = plan.join_graph_contract_id;
+        query_summary["diagnostics_contract"] = plan.diagnostics_contract_id;
+        query_summary["cache_mode"] = plan.cache_mode;
+        query_summary["plan_profile_signature"] = plan.plan_profile_signature;
+        query_summary["selected_strategy"] = plan.search_summary.selected_strategy;
+        query_summary["requested_strategy"] = plan.search_summary.requested_strategy;
+        query_summary["search_budget"] = plan.search_summary.search_budget;
+        query_summary["considered_state_count"] =
+            plan.search_summary.considered_state_count;
+        query_summary["pruned_state_count"] =
+            plan.search_summary.pruned_state_count;
+        query_summary["rejected_candidate_count"] =
+            plan.search_summary.rejected_candidate_count;
+        query_summary["relation_count"] = plan.relations.size();
+        query_summary["join_count"] = plan.join_steps.size();
+        query_summary["root_node_type"] = plan.root.node_type;
+        query_summary["estimated_root_rows"] = plan.root.estimated_rows;
+        query_summary["actual_rows"] = actual_rows;
+        query_summary["misestimate_ratio"] =
+            normalizedMisestimateRatio(plan.root.estimated_rows, actual_rows);
+        query_summary["compile_mean_ms"] = compile_mean_ms;
+        query_summary["explain_mean_ms"] = explain_mean_ms;
+        query_summary["execute_mean_ms"] = execute_mean_ms;
+        query_summary["runtime_join_steps"] = std::move(join_steps);
+        query_summary["explain_snapshot"] =
+            normalizedExplainSnapshot(explain_json);
+        baseline["queries"].push_back(std::move(query_summary));
+    }
+
+    const char* output_path = std::getenv("SB_OPTIMIZER_PARITY_BASELINE_JSON");
+    if (output_path != nullptr && *output_path != '\0')
+    {
+        const std::filesystem::path path(output_path);
+        if (path.has_parent_path())
+        {
+            std::filesystem::create_directories(path.parent_path());
+        }
+        std::ofstream out(path);
+        ASSERT_TRUE(out.is_open()) << path.string();
+        out << baseline.dump(2) << '\n';
+    }
+
+    ASSERT_TRUE(baseline["queries"].is_array());
+    ASSERT_EQ(baseline["queries"].size(), corpus.size());
+    for (const auto& query : baseline["queries"])
+    {
+        EXPECT_EQ(query.at("runtime_plan_contract").get<std::string>(),
+                  scratchbird::optimizer::kRuntimePlanContractId);
+        EXPECT_EQ(query.at("join_graph_contract").get<std::string>(),
+                  scratchbird::optimizer::kJoinGraphContractId);
+        EXPECT_EQ(query.at("diagnostics_contract").get<std::string>(),
+                  scratchbird::optimizer::kOptimizerDiagnosticsContractId);
+        EXPECT_TRUE(query.at("misestimate_ratio").get<double>() >= 1.0);
+    }
 }
 
 TEST_F(QueryPlannerIntegrationTest, CoveringIndexPlanUsesIndexOnlyScan)

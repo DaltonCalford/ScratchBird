@@ -27,6 +27,7 @@
 #include "scratchbird/optimizer/path.h"
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/optimizer/selectivity_estimator.h"
+#include "scratchbird/optimizer/join_legality.h"
 #include "scratchbird/parser/shared_types.h"      // For JoinType (shared parser enums)
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
@@ -69,13 +70,19 @@ struct JoinEdge
     parser::JoinType join_type;
     parser::v3::Expression* join_condition;
     double selectivity;
+    size_t source_join_index = std::numeric_limits<size_t>::max();
+    JoinLegalityClass legality_class = JoinLegalityClass::INNER_REORDERABLE;
+    bool reorderable = true;
+    bool requires_original_order = false;
 };
 
 enum class JoinSearchStrategy
 {
     AUTO,
     EXHAUSTIVE_DP,
+    BOUNDED_DP,
     HYPERGRAPH_GREEDY,
+    HEURISTIC_GREEDY,
     INPUT_ORDER
 };
 
@@ -83,7 +90,27 @@ struct JoinPlanningControls
 {
     JoinSearchStrategy strategy = JoinSearchStrategy::AUTO;
     size_t max_exhaustive_relations = 8;
+    size_t max_bounded_dp_relations = 12;
     size_t max_pair_evaluations = 64;
+    size_t max_states_considered = 256;
+    size_t fallback_prune_level = 1;
+};
+
+struct JoinPlanningTelemetry
+{
+    JoinSearchStrategy requested_strategy = JoinSearchStrategy::AUTO;
+    JoinSearchStrategy selected_strategy = JoinSearchStrategy::AUTO;
+    size_t exhaustive_join_limit = 0;
+    size_t bounded_dp_join_limit = 0;
+    size_t max_pair_evaluations = 0;
+    size_t max_states_considered = 0;
+    size_t fallback_prune_level = 0;
+    size_t considered_state_count = 0;
+    size_t pruned_state_count = 0;
+    size_t pair_evaluation_count = 0;
+    std::string fallback_reason;
+    std::string fallback_threshold_name;
+    size_t fallback_threshold_value = 0;
 };
 
 /**
@@ -106,9 +133,15 @@ public:
                       const std::string& alias,
                       std::shared_ptr<Path> best_path);
 
-    void addJoinEdge(size_t left_idx, size_t right_idx,
-                    parser::JoinType join_type,
-                    parser::v3::Expression* join_condition);
+    size_t addJoinEdge(size_t left_idx, size_t right_idx,
+                       parser::JoinType join_type,
+                       parser::v3::Expression* join_condition,
+                       size_t source_join_index =
+                           std::numeric_limits<size_t>::max(),
+                       JoinLegalityClass legality_class =
+                           JoinLegalityClass::INNER_REORDERABLE,
+                       bool reorderable = true,
+                       bool requires_original_order = false);
 
     void setJoinSelectivity(size_t edge_idx, double selectivity);
 
@@ -125,6 +158,7 @@ public:
     }
     const JoinPlanningControls& planningControls() const { return controls_; }
     JoinSearchStrategy lastStrategyUsed() const { return last_strategy_used_; }
+    const JoinPlanningTelemetry& lastTelemetry() const { return telemetry_; }
 
     void clear();
 
@@ -147,7 +181,13 @@ private:
                      bool preserve_orientation = false);
     DPEntry costCrossJoin(const DPEntry& left_entry, const DPEntry& right_entry,
                           core::ErrorContext* ctx);
+    std::shared_ptr<Path> optimizeBoundedDP(core::ErrorContext* ctx);
     std::shared_ptr<Path> optimizePreservingInputOrder(core::ErrorContext* ctx);
+    JoinSearchStrategy chooseHeuristicStrategy() const;
+    void resetTelemetry();
+    void recordFallback(const std::string& reason,
+                        const std::string& threshold_name,
+                        size_t threshold_value);
     std::vector<size_t> findConnectingEdges(RelationSet left_set, RelationSet right_set) const;
     bool hasJoinReorderBarrier() const;
     bool isConnected(RelationSet set) const;
@@ -164,6 +204,7 @@ private:
     SelectivityEstimator& selectivity_estimator_;
     JoinPlanningControls controls_;
     JoinSearchStrategy last_strategy_used_ = JoinSearchStrategy::AUTO;
+    JoinPlanningTelemetry telemetry_;
     std::vector<RelationInfo> relations_;
     std::vector<JoinEdge> join_edges_;
     std::unordered_map<RelationSet, DPEntry> dp_table_;

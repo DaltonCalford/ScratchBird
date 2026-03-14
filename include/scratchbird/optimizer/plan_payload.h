@@ -8,6 +8,12 @@
 namespace scratchbird::optimizer
 {
 
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 2;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v2";
+    inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
+    inline constexpr const char *kOptimizerDiagnosticsContractId =
+        "sb_optimizer_diagnostics/v1";
+
     struct RuntimePlanIndexPredicate
     {
         bool valid = false;
@@ -64,10 +70,43 @@ namespace scratchbird::optimizer
         std::string column_name;
     };
 
+    struct RuntimePlanJoinKeyPair
+    {
+        std::string left_qualifier;
+        std::string left_column_name;
+        std::string right_qualifier;
+        std::string right_column_name;
+    };
+
+    struct RuntimePlanSearchSummary
+    {
+        std::string requested_strategy;
+        std::string selected_strategy;
+        uint64_t search_budget = 0;
+        uint64_t considered_state_count = 0;
+        uint64_t pruned_state_count = 0;
+        uint64_t pair_evaluation_count = 0;
+        uint64_t rejected_candidate_count = 0;
+        uint64_t max_pair_evaluations = 0;
+        uint64_t max_states_considered = 0;
+        uint64_t exhaustive_join_limit = 0;
+        uint64_t bounded_dp_join_limit = 0;
+        uint64_t fallback_prune_level = 0;
+        std::string fallback_reason;
+        std::string fallback_threshold_name;
+        uint64_t fallback_threshold_value = 0;
+    };
+
     struct RuntimePlanJoinStep
     {
         size_t source_join_index = 0;
         size_t right_relation_index = 0;
+        size_t join_edge_left_relation_index = 0;
+        size_t join_edge_right_relation_index = 0;
+        std::string join_edge_left_alias;
+        std::string join_edge_right_alias;
+        std::string join_edge_left_id_text;
+        std::string join_edge_right_id_text;
         std::string join_type;
         std::string method;
         bool disconnected_component = false;
@@ -76,11 +115,22 @@ namespace scratchbird::optimizer
         bool natural = false;
         std::vector<std::string> using_columns;
         std::string condition_text;
+        std::vector<RuntimePlanJoinKeyPair> equijoin_keys;
+        std::vector<std::string> residual_predicates;
         bool preserves_left_rows = false;
         bool preserves_right_rows = false;
         bool null_introduces_left = false;
         bool null_introduces_right = false;
         bool requires_original_order = false;
+        bool outer_reorder_barrier = false;
+        bool semi_reorder_barrier = false;
+        bool anti_reorder_barrier = false;
+        bool using_reorder_barrier = false;
+        bool natural_reorder_barrier = false;
+        bool lateral_reorder_barrier = false;
+        bool parameterized_dependency = false;
+        std::vector<size_t> parameter_dependency_relation_indexes;
+        std::vector<std::string> parameter_dependency_relation_aliases;
         bool has_hash_keys = false;
         RuntimePlanHashKey left_hash_key;
         RuntimePlanHashKey right_hash_key;
@@ -166,7 +216,10 @@ namespace scratchbird::optimizer
 
     struct RuntimePlan
     {
-        uint32_t version = 1;
+        uint32_t version = kRuntimePlanPayloadVersion;
+        std::string contract_id = kRuntimePlanContractId;
+        std::string join_graph_contract_id = kJoinGraphContractId;
+        std::string diagnostics_contract_id = kOptimizerDiagnosticsContractId;
         std::string plan_hash;
         std::string explain_text;
         std::string cache_mode;
@@ -174,6 +227,7 @@ namespace scratchbird::optimizer
         std::string selectivity_bucket_signature;
         std::string query_feedback_key;
         bool parameter_sensitive = false;
+        RuntimePlanSearchSummary search_summary;
         RuntimePlanNode root;
         std::vector<RuntimePlanRelation> relations;
         std::vector<RuntimePlanJoinStep> join_steps;

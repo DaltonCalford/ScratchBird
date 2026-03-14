@@ -13,12 +13,13 @@
  * V3 implementation:
  * - Resolves SELECT statements against catalog metadata
  * - Chooses base access paths using statistics and cost model estimates
- * - Builds left-deep join plans with deterministic join-method selection
- * - Preserves outer/natural join order and fails closed to nested loops there
- * - Bridges disconnected join graphs with explicit cross-join steps
+ * - Delegates multi-relation join search to the canonical join backend
+ * - Materializes deterministic join methods on the backend-selected join tree
+ * - Preserves outer/natural join order and bridges disconnected graphs explicitly
  */
 
 #include "scratchbird/optimizer/query_planner.h"
+#include "scratchbird/optimizer/join_ordering.h"
 
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/observability_contract.h"
@@ -26,6 +27,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <functional>
 #include <limits>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -141,6 +143,20 @@ namespace scratchbird::optimizer
                 case parser::JoinType::NATURAL_FULL: return "NATURAL_FULL";
             }
             return "INNER";
+        }
+
+        auto isNaturalJoinType(parser::JoinType join_type) -> bool
+        {
+            switch (join_type)
+            {
+                case parser::JoinType::NATURAL:
+                case parser::JoinType::NATURAL_LEFT:
+                case parser::JoinType::NATURAL_RIGHT:
+                case parser::JoinType::NATURAL_FULL:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         auto displayRelationName(const ResolvedRelation &relation) -> std::string
@@ -1195,8 +1211,11 @@ namespace scratchbird::optimizer
         enum class PlannerJoinSearchMode : uint8_t
         {
             AUTO = 0,
-            GREEDY = 1,
-            INPUT_ORDER = 2
+            EXHAUSTIVE_DP = 1,
+            BOUNDED_DP = 2,
+            HYPERGRAPH_GREEDY = 3,
+            HEURISTIC_GREEDY = 4,
+            INPUT_ORDER = 5
         };
 
         enum class PlannerJoinMethodControl : uint8_t
@@ -1213,6 +1232,10 @@ namespace scratchbird::optimizer
             PlannerSpillPolicy spill_policy = PlannerSpillPolicy::ALLOW;
             PlannerJoinSearchMode join_search = PlannerJoinSearchMode::AUTO;
             size_t search_depth = 0;
+            size_t exhaustive_join_limit = 8;
+            size_t bounded_dp_join_limit = 12;
+            size_t max_states_considered = 256;
+            size_t fallback_prune_level = 1;
             PlannerJoinMethodControl join_method =
                 PlannerJoinMethodControl::AUTO;
             std::vector<RuntimePlanControlEntry> runtime_controls;
@@ -1227,8 +1250,13 @@ namespace scratchbird::optimizer
         {
             switch (mode)
             {
-                case PlannerJoinSearchMode::GREEDY: return "GREEDY";
-                case PlannerJoinSearchMode::INPUT_ORDER: return "INPUT_ORDER";
+                case PlannerJoinSearchMode::EXHAUSTIVE_DP: return "EXHAUSTIVE_DP";
+                case PlannerJoinSearchMode::BOUNDED_DP: return "BOUNDED_DP";
+                case PlannerJoinSearchMode::HYPERGRAPH_GREEDY:
+                    return "HYPERGRAPH_GREEDY";
+                case PlannerJoinSearchMode::HEURISTIC_GREEDY:
+                    return "HEURISTIC_GREEDY";
+                case PlannerJoinSearchMode::INPUT_ORDER: return "INPUT_ORDER_ONLY";
                 case PlannerJoinSearchMode::AUTO:
                 default: return "AUTO";
             }
@@ -1378,12 +1406,30 @@ namespace scratchbird::optimizer
                 mode_out = PlannerJoinSearchMode::AUTO;
                 return true;
             }
-            if (upper == "GREEDY" || upper == "LEFT_DEEP")
+            if (upper == "EXHAUSTIVE" || upper == "EXHAUSTIVE_DP" ||
+                upper == "DP")
             {
-                mode_out = PlannerJoinSearchMode::GREEDY;
+                mode_out = PlannerJoinSearchMode::EXHAUSTIVE_DP;
                 return true;
             }
-            if (upper == "INPUT_ORDER" || upper == "PRESERVE")
+            if (upper == "BOUNDED" || upper == "BOUNDED_DP")
+            {
+                mode_out = PlannerJoinSearchMode::BOUNDED_DP;
+                return true;
+            }
+            if (upper == "HYPERGRAPH" || upper == "HYPERGRAPH_GREEDY")
+            {
+                mode_out = PlannerJoinSearchMode::HYPERGRAPH_GREEDY;
+                return true;
+            }
+            if (upper == "GREEDY" || upper == "LEFT_DEEP" ||
+                upper == "HEURISTIC" || upper == "HEURISTIC_GREEDY")
+            {
+                mode_out = PlannerJoinSearchMode::HEURISTIC_GREEDY;
+                return true;
+            }
+            if (upper == "INPUT_ORDER" || upper == "INPUT_ORDER_ONLY" ||
+                upper == "PRESERVE")
             {
                 mode_out = PlannerJoinSearchMode::INPUT_ORDER;
                 return true;
@@ -1572,6 +1618,93 @@ namespace scratchbird::optimizer
 
             if (readPlannerSessionSetting(conn_ctx,
                                           value,
+                                          {"OPTIMIZER.EXHAUSTIVE_JOIN_LIMIT",
+                                           "OPTIMIZER_EXHAUSTIVE_JOIN_LIMIT",
+                                           "EXHAUSTIVE_JOIN_LIMIT"}))
+            {
+                if (!parsePlannerSearchDepth(value,
+                                             controls_out.exhaustive_join_limit))
+                {
+                    error_out =
+                        "Invalid optimizer exhaustive join limit: " + value;
+                    return false;
+                }
+                controls_out.exhaustive_join_limit =
+                    std::max<size_t>(1, controls_out.exhaustive_join_limit);
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "EXHAUSTIVE_JOIN_LIMIT",
+                                     std::to_string(
+                                         controls_out.exhaustive_join_limit),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"OPTIMIZER.BOUNDED_DP_JOIN_LIMIT",
+                                           "OPTIMIZER_BOUNDED_DP_JOIN_LIMIT",
+                                           "BOUNDED_DP_JOIN_LIMIT"}))
+            {
+                if (!parsePlannerSearchDepth(value,
+                                             controls_out.bounded_dp_join_limit))
+                {
+                    error_out =
+                        "Invalid optimizer bounded DP join limit: " + value;
+                    return false;
+                }
+                controls_out.bounded_dp_join_limit = std::max<size_t>(
+                    controls_out.exhaustive_join_limit,
+                    std::max<size_t>(1, controls_out.bounded_dp_join_limit));
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "BOUNDED_DP_JOIN_LIMIT",
+                                     std::to_string(
+                                         controls_out.bounded_dp_join_limit),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"OPTIMIZER.MAX_STATES_CONSIDERED",
+                                           "OPTIMIZER_MAX_STATES_CONSIDERED",
+                                           "MAX_STATES_CONSIDERED"}))
+            {
+                if (!parsePlannerSearchDepth(value,
+                                             controls_out.max_states_considered))
+                {
+                    error_out =
+                        "Invalid optimizer max states considered: " + value;
+                    return false;
+                }
+                controls_out.max_states_considered =
+                    std::max<size_t>(1, controls_out.max_states_considered);
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "MAX_STATES_CONSIDERED",
+                                     std::to_string(
+                                         controls_out.max_states_considered),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"OPTIMIZER.FALLBACK_PRUNE_LEVEL",
+                                           "OPTIMIZER_FALLBACK_PRUNE_LEVEL",
+                                           "FALLBACK_PRUNE_LEVEL"}))
+            {
+                if (!parsePlannerSearchDepth(value,
+                                             controls_out.fallback_prune_level))
+                {
+                    error_out =
+                        "Invalid optimizer fallback prune level: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "FALLBACK_PRUNE_LEVEL",
+                                     std::to_string(
+                                         controls_out.fallback_prune_level),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
                                           {"OPTIMIZER.JOIN_METHOD",
                                            "OPTIMIZER_JOIN_METHOD",
                                            "JOIN_METHOD"}))
@@ -1678,6 +1811,79 @@ namespace scratchbird::optimizer
                                              std::to_string(controls_out.search_depth),
                                              "DIRECTIVE");
                     }
+                    else if (key == "EXHAUSTIVE_JOIN_LIMIT")
+                    {
+                        if (!parsePlannerSearchDepth(
+                                raw_value, controls_out.exhaustive_join_limit))
+                        {
+                            error_out =
+                                "Invalid optimizer directive EXHAUSTIVE_JOIN_LIMIT: " +
+                                raw_value;
+                            return false;
+                        }
+                        controls_out.exhaustive_join_limit = std::max<size_t>(
+                            1, controls_out.exhaustive_join_limit);
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "EXHAUSTIVE_JOIN_LIMIT",
+                                             std::to_string(
+                                                 controls_out.exhaustive_join_limit),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "BOUNDED_DP_JOIN_LIMIT")
+                    {
+                        if (!parsePlannerSearchDepth(
+                                raw_value, controls_out.bounded_dp_join_limit))
+                        {
+                            error_out =
+                                "Invalid optimizer directive BOUNDED_DP_JOIN_LIMIT: " +
+                                raw_value;
+                            return false;
+                        }
+                        controls_out.bounded_dp_join_limit = std::max<size_t>(
+                            controls_out.exhaustive_join_limit,
+                            std::max<size_t>(1,
+                                             controls_out.bounded_dp_join_limit));
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "BOUNDED_DP_JOIN_LIMIT",
+                                             std::to_string(
+                                                 controls_out.bounded_dp_join_limit),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "MAX_STATES_CONSIDERED")
+                    {
+                        if (!parsePlannerSearchDepth(
+                                raw_value, controls_out.max_states_considered))
+                        {
+                            error_out =
+                                "Invalid optimizer directive MAX_STATES_CONSIDERED: " +
+                                raw_value;
+                            return false;
+                        }
+                        controls_out.max_states_considered =
+                            std::max<size_t>(1,
+                                             controls_out.max_states_considered);
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "MAX_STATES_CONSIDERED",
+                                             std::to_string(
+                                                 controls_out.max_states_considered),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "FALLBACK_PRUNE_LEVEL")
+                    {
+                        if (!parsePlannerSearchDepth(
+                                raw_value, controls_out.fallback_prune_level))
+                        {
+                            error_out =
+                                "Invalid optimizer directive FALLBACK_PRUNE_LEVEL: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "FALLBACK_PRUNE_LEVEL",
+                                             std::to_string(
+                                                 controls_out.fallback_prune_level),
+                                             "DIRECTIVE");
+                    }
                     else if (key == "JOIN_METHOD")
                     {
                         if (!parsePlannerJoinMethodControl(raw_value,
@@ -1701,6 +1907,14 @@ namespace scratchbird::optimizer
                 }
             }
 
+            controls_out.exhaustive_join_limit =
+                std::max<size_t>(1, controls_out.exhaustive_join_limit);
+            controls_out.bounded_dp_join_limit = std::max<size_t>(
+                controls_out.exhaustive_join_limit,
+                std::max<size_t>(1, controls_out.bounded_dp_join_limit));
+            controls_out.max_states_considered =
+                std::max<size_t>(1, controls_out.max_states_considered);
+
             ensurePlannerControlDefault(controls_out.runtime_controls,
                                         "WORK_MEM",
                                         std::to_string(controls_out.work_mem_bytes));
@@ -1715,6 +1929,22 @@ namespace scratchbird::optimizer
             ensurePlannerControlDefault(controls_out.runtime_controls,
                                         "SEARCH_DEPTH",
                                         std::to_string(controls_out.search_depth));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "EXHAUSTIVE_JOIN_LIMIT",
+                                        std::to_string(
+                                            controls_out.exhaustive_join_limit));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "BOUNDED_DP_JOIN_LIMIT",
+                                        std::to_string(
+                                            controls_out.bounded_dp_join_limit));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "MAX_STATES_CONSIDERED",
+                                        std::to_string(
+                                            controls_out.max_states_considered));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "FALLBACK_PRUNE_LEVEL",
+                                        std::to_string(
+                                            controls_out.fallback_prune_level));
             ensurePlannerControlDefault(controls_out.runtime_controls,
                                         "JOIN_METHOD",
                                         plannerJoinMethodName(
@@ -2427,22 +2657,6 @@ namespace scratchbird::optimizer
             {
                 applyResourceMetadata(node, resource_cost, spill_policy_text);
             }
-        }
-
-        auto isJoinReorderSafe(const ResolvedSelectQuery &resolved) -> bool
-        {
-            if (resolved.has_join_reorder_barrier)
-            {
-                return false;
-            }
-            for (const auto &join : resolved.joins)
-            {
-                if (!join.reorderable)
-                {
-                    return false;
-                }
-            }
-            return true;
         }
 
         auto makeScanPredicateLiteralBytes(const ResolvedScanPredicate &predicate,
@@ -3649,18 +3863,28 @@ namespace scratchbird::optimizer
                     ctx);
             };
 
-        auto buildJoinDecision =
-            [&](const std::shared_ptr<Path> &current_path,
-                const std::shared_ptr<PlanNode> &current_plan,
-                uint64_t current_rows,
-                size_t candidate_relation_index,
+        struct MaterializedJoinTree
+        {
+            std::shared_ptr<Path> path;
+            std::shared_ptr<PlanNode> plan;
+            uint64_t rows = 0;
+            std::vector<size_t> relation_order;
+            std::vector<RuntimePlanRelation> runtime_relations;
+            std::vector<RuntimePlanJoinStep> runtime_joins;
+        };
+
+        auto buildSubtreeJoinDecision =
+            [&](const MaterializedJoinTree &left_tree,
+                const MaterializedJoinTree &right_tree,
                 const ResolvedJoin &join,
-                bool candidate_is_right_relation,
+                bool join_right_relation_in_right_tree,
                 bool disconnected_component_cross_join = false) -> JoinDecision {
                 JoinDecision decision;
                 decision.valid = true;
                 decision.join_index = join.source_join_index;
-                decision.candidate_relation_index = candidate_relation_index;
+                decision.candidate_relation_index =
+                    join_right_relation_in_right_tree ? join.right_relation_index
+                                                      : join.left_relation_index;
                 decision.selectivity =
                     join.join_type == parser::JoinType::CROSS ? 1.0
                                                               : estimateJoinSelectivityFor(join);
@@ -3669,14 +3893,34 @@ namespace scratchbird::optimizer
                     decision.selectivity = 0.01;
                 }
 
-                const auto &candidate_access = access_choices[candidate_relation_index];
                 const auto &candidate_relation =
-                    planned_out.resolved_query.relations[candidate_relation_index];
+                    planned_out.resolved_query
+                        .relations[decision.candidate_relation_index];
+                const auto &left_relation =
+                    planned_out.resolved_query.relations[join.left_relation_index];
+                const auto &right_relation =
+                    planned_out.resolved_query.relations[join.right_relation_index];
+                const auto &left_endpoint_relation =
+                    planned_out.resolved_query.relations[
+                        join_right_relation_in_right_tree ? join.left_relation_index
+                                                          : join.right_relation_index];
+                const auto &right_endpoint_relation =
+                    planned_out.resolved_query.relations[
+                        join_right_relation_in_right_tree ? join.right_relation_index
+                                                          : join.left_relation_index];
                 const std::string join_subject =
                     "join:" + joinTraceSubject(planned_out.resolved_query, join);
                 const bool parameterized_inner =
-                    candidate_access.runtime_relation.parameterized ||
-                    candidate_relation.lateral;
+                    std::any_of(right_tree.relation_order.begin(),
+                                right_tree.relation_order.end(),
+                                [&](size_t relation_index) {
+                                    return relation_index < access_choices.size() &&
+                                           (access_choices[relation_index]
+                                                .runtime_relation.parameterized ||
+                                            planned_out.resolved_query
+                                                .relations[relation_index]
+                                                .lateral);
+                                });
                 appendStatsProvenance(statistics_provenance,
                                       join_subject,
                                       joinStatsSource(planned_out.resolved_query,
@@ -3686,6 +3930,10 @@ namespace scratchbird::optimizer
                                           ? planJoinTypeToString(join.join_type)
                                           : join.condition_text);
                 const auto join_type = join.join_type;
+                const bool force_nested_loop_barrier =
+                    join.join_type == parser::JoinType::RIGHT ||
+                    join.join_type == parser::JoinType::FULL || join.natural ||
+                    !join.using_columns.empty();
                 auto rejectForcedJoinMethod =
                     [&](const char *requested_method,
                         const std::string &reason) -> JoinDecision {
@@ -3708,11 +3956,10 @@ namespace scratchbird::optimizer
                 if (allow_nested_loop)
                 {
                     nl_cost = active_cost_model.costNestedLoopJoin(
-                        current_path ? current_path->cost() : CostEstimate{},
-                        candidate_access.path ? candidate_access.path->cost()
-                                              : CostEstimate{},
-                        current_rows,
-                        candidate_access.path ? candidate_access.path->rows() : 0,
+                        left_tree.path ? left_tree.path->cost() : CostEstimate{},
+                        right_tree.path ? right_tree.path->cost() : CostEstimate{},
+                        left_tree.rows,
+                        right_tree.rows,
                         decision.selectivity,
                         join_type,
                         ctx);
@@ -3743,8 +3990,10 @@ namespace scratchbird::optimizer
                 }
 
                 bool allow_hash =
-                    (join_type == parser::JoinType::INNER || join_type == parser::JoinType::LEFT) &&
+                    (join_type == parser::JoinType::INNER ||
+                     join_type == parser::JoinType::LEFT) &&
                     join.equi_join &&
+                    !force_nested_loop_barrier &&
                     !parameterized_inner &&
                     planner_controls.join_method !=
                         PlannerJoinMethodControl::NESTED_LOOP_ONLY &&
@@ -3754,10 +4003,10 @@ namespace scratchbird::optimizer
                 if (allow_hash)
                 {
                     hash_cost = active_cost_model.costHashJoin(
-                        current_path ? current_path->cost() : CostEstimate{},
-                        candidate_access.path ? candidate_access.path->cost() : CostEstimate{},
-                        current_rows,
-                        candidate_access.path ? candidate_access.path->rows() : 0,
+                        left_tree.path ? left_tree.path->cost() : CostEstimate{},
+                        right_tree.path ? right_tree.path->cost() : CostEstimate{},
+                        left_tree.rows,
+                        right_tree.rows,
                         decision.selectivity,
                         join_type,
                         ctx);
@@ -3810,8 +4059,8 @@ namespace scratchbird::optimizer
                         reject_reason = parameterized_inner
                             ? "parameterized inner path requires nested loop"
                             : join.equi_join
-                            ? "join type does not admit hash join"
-                            : "hash join requires equi-join keys";
+                                  ? "join type does not admit hash join"
+                                  : "hash join requires equi-join keys";
                     }
                     appendRuntimeTrace(rejected_paths,
                                        "JOIN_METHOD",
@@ -3823,17 +4072,21 @@ namespace scratchbird::optimizer
                                        0.0,
                                        0);
                     if (planner_controls.join_method ==
-                            PlannerJoinMethodControl::HASH_ONLY)
+                        PlannerJoinMethodControl::HASH_ONLY)
                     {
                         return rejectForcedJoinMethod("HASH_JOIN", reject_reason);
                     }
                 }
 
-                const bool outer_presorted = pathLikelyProvidesJoinOrder(current_path);
-                const bool inner_presorted = pathLikelyProvidesJoinOrder(candidate_access.path);
+                const bool outer_presorted =
+                    pathLikelyProvidesJoinOrder(left_tree.path);
+                const bool inner_presorted =
+                    pathLikelyProvidesJoinOrder(right_tree.path);
                 bool allow_merge =
-                    (join_type == parser::JoinType::INNER || join_type == parser::JoinType::LEFT) &&
+                    (join_type == parser::JoinType::INNER ||
+                     join_type == parser::JoinType::LEFT) &&
                     join.equi_join &&
+                    !force_nested_loop_barrier &&
                     (outer_presorted || inner_presorted) &&
                     !parameterized_inner &&
                     planner_controls.join_method !=
@@ -3844,10 +4097,10 @@ namespace scratchbird::optimizer
                 if (allow_merge)
                 {
                     merge_cost = active_cost_model.costMergeJoin(
-                        current_path ? current_path->cost() : CostEstimate{},
-                        candidate_access.path ? candidate_access.path->cost() : CostEstimate{},
-                        current_rows,
-                        candidate_access.path ? candidate_access.path->rows() : 0,
+                        left_tree.path ? left_tree.path->cost() : CostEstimate{},
+                        right_tree.path ? right_tree.path->cost() : CostEstimate{},
+                        left_tree.rows,
+                        right_tree.rows,
                         decision.selectivity,
                         outer_presorted,
                         inner_presorted,
@@ -3902,8 +4155,8 @@ namespace scratchbird::optimizer
                         reject_reason = parameterized_inner
                             ? "parameterized inner path requires nested loop"
                             : !join.equi_join
-                            ? "merge join requires equi-join keys"
-                            : "merge join requires presorted input";
+                                  ? "merge join requires equi-join keys"
+                                  : "merge join requires presorted input";
                     }
                     appendRuntimeTrace(rejected_paths,
                                        "JOIN_METHOD",
@@ -3915,7 +4168,7 @@ namespace scratchbird::optimizer
                                        0.0,
                                        0);
                     if (planner_controls.join_method ==
-                            PlannerJoinMethodControl::MERGE_ONLY)
+                        PlannerJoinMethodControl::MERGE_ONLY)
                     {
                         return rejectForcedJoinMethod("MERGE_JOIN", reject_reason);
                     }
@@ -3997,10 +4250,30 @@ namespace scratchbird::optimizer
                                        merge_cost.rows);
                 }
                 decision.runtime_join.source_join_index = join.source_join_index;
-                decision.runtime_join.right_relation_index = candidate_relation_index;
+                decision.runtime_join.right_relation_index =
+                    decision.candidate_relation_index;
+                decision.runtime_join.join_edge_left_relation_index =
+                    join.left_relation_index;
+                decision.runtime_join.join_edge_right_relation_index =
+                    join.right_relation_index;
+                decision.runtime_join.join_edge_left_alias =
+                    relationLookupName(left_relation);
+                decision.runtime_join.join_edge_right_alias =
+                    relationLookupName(right_relation);
+                decision.runtime_join.join_edge_left_id_text =
+                    left_relation.resolved
+                        ? left_relation.table_info.table_id.toString()
+                        : std::string();
+                decision.runtime_join.join_edge_right_id_text =
+                    right_relation.resolved
+                        ? right_relation.table_info.table_id.toString()
+                        : std::string();
                 decision.runtime_join.join_type = planJoinTypeToString(join_type);
                 decision.runtime_join.disconnected_component =
-                    disconnected_component_cross_join;
+                    disconnected_component_cross_join ||
+                    (join_type == parser::JoinType::CROSS &&
+                     join.condition == nullptr &&
+                     join.condition_text.empty());
                 decision.runtime_join.legality_class =
                     std::string(joinLegalityClassName(join.legality_class));
                 decision.runtime_join.reorderable = join.reorderable;
@@ -4015,6 +4288,58 @@ namespace scratchbird::optimizer
                     join.null_introduces_right;
                 decision.runtime_join.requires_original_order =
                     join.requires_original_order;
+                decision.runtime_join.outer_reorder_barrier =
+                    join.legality_class == JoinLegalityClass::LEFT_OUTER_BARRIER ||
+                    join.legality_class == JoinLegalityClass::RIGHT_OUTER_BARRIER ||
+                    join.legality_class == JoinLegalityClass::FULL_OUTER_BARRIER;
+                decision.runtime_join.semi_reorder_barrier =
+                    join.legality_class == JoinLegalityClass::SEMI_BARRIER;
+                decision.runtime_join.anti_reorder_barrier =
+                    join.legality_class == JoinLegalityClass::ANTI_BARRIER;
+                decision.runtime_join.using_reorder_barrier =
+                    !join.using_columns.empty();
+                decision.runtime_join.natural_reorder_barrier =
+                    join.natural || isNaturalJoinType(join.join_type);
+                decision.runtime_join.lateral_reorder_barrier =
+                    parameterized_inner;
+                decision.runtime_join.parameterized_dependency =
+                    parameterized_inner;
+                decision.runtime_join.parameter_dependency_relation_indexes.clear();
+                decision.runtime_join.parameter_dependency_relation_aliases.clear();
+                if (parameterized_inner)
+                {
+                    decision.runtime_join.parameter_dependency_relation_indexes =
+                        left_tree.relation_order;
+                    for (size_t relation_index : left_tree.relation_order)
+                    {
+                        if (relation_index <
+                            planned_out.resolved_query.relations.size())
+                        {
+                            decision.runtime_join
+                                .parameter_dependency_relation_aliases.push_back(
+                                    relationLookupName(
+                                        planned_out.resolved_query
+                                            .relations[relation_index]));
+                        }
+                    }
+                }
+                decision.runtime_join.equijoin_keys.clear();
+                if (join.equi_join)
+                {
+                    RuntimePlanJoinKeyPair key_pair;
+                    key_pair.left_qualifier = join.left_hash_qualifier;
+                    key_pair.left_column_name = join.left_hash_column;
+                    key_pair.right_qualifier = join.right_hash_qualifier;
+                    key_pair.right_column_name = join.right_hash_column;
+                    decision.runtime_join.equijoin_keys.push_back(
+                        std::move(key_pair));
+                }
+                decision.runtime_join.residual_predicates.clear();
+                if (!join.condition_text.empty() && !join.equi_join)
+                {
+                    decision.runtime_join.residual_predicates.push_back(
+                        join.condition_text);
+                }
                 if (decision.runtime_join.disconnected_component &&
                     decision.runtime_join.condition_text.empty())
                 {
@@ -4075,13 +4400,13 @@ namespace scratchbird::optimizer
                                    decision.runtime_join.total_cost,
                                    decision.runtime_join.estimated_rows);
 
-                if (join.equi_join)
+                if (join.equi_join && !force_nested_loop_barrier)
                 {
                     decision.runtime_join.has_hash_keys = true;
                     decision.runtime_join.has_merge_keys = true;
                     decision.runtime_join.merge_outer_presorted = outer_presorted;
                     decision.runtime_join.merge_inner_presorted = inner_presorted;
-                    if (candidate_is_right_relation)
+                    if (join_right_relation_in_right_tree)
                     {
                         decision.runtime_join.left_hash_key.qualifier =
                             join.left_hash_qualifier;
@@ -4125,13 +4450,13 @@ namespace scratchbird::optimizer
                 {
                     std::vector<parser::v3::Expression *> hash_keys_outer;
                     std::vector<parser::v3::Expression *> hash_keys_inner;
-                    auto hash_plan = std::make_shared<HashJoinNode>(join_type,
-                                                                   current_plan,
-                                                                   candidate_access.plan,
-                                                                   const_cast<parser::v3::Expression *>(
-                                                                       join.condition),
-                                                                   hash_keys_outer,
-                                                                   hash_keys_inner);
+                    auto hash_plan = std::make_shared<HashJoinNode>(
+                        join_type,
+                        left_tree.plan,
+                        right_tree.plan,
+                        const_cast<parser::v3::Expression *>(join.condition),
+                        hash_keys_outer,
+                        hash_keys_inner);
                     hash_plan->setJoinCondString(decision.runtime_join.condition_text);
                     hash_plan->setCost(hash_cost.startup_cost,
                                        hash_cost.total_cost,
@@ -4139,8 +4464,8 @@ namespace scratchbird::optimizer
                     decision.plan = hash_plan;
                     decision.path = std::make_shared<HashJoinPath>(
                         join_type,
-                        current_path,
-                        candidate_access.path,
+                        left_tree.path,
+                        right_tree.path,
                         const_cast<parser::v3::Expression *>(join.condition),
                         hash_keys_outer,
                         hash_keys_inner,
@@ -4153,8 +4478,8 @@ namespace scratchbird::optimizer
                     std::vector<parser::v3::Expression *> merge_keys_inner;
                     auto merge_plan = std::make_shared<MergeJoinNode>(
                         join_type,
-                        current_plan,
-                        candidate_access.plan,
+                        left_tree.plan,
+                        right_tree.plan,
                         const_cast<parser::v3::Expression *>(join.condition),
                         merge_keys_outer,
                         merge_keys_inner,
@@ -4167,8 +4492,8 @@ namespace scratchbird::optimizer
                     decision.plan = merge_plan;
                     decision.path = std::make_shared<MergeJoinPath>(
                         join_type,
-                        current_path,
-                        candidate_access.path,
+                        left_tree.path,
+                        right_tree.path,
                         const_cast<parser::v3::Expression *>(join.condition),
                         merge_keys_outer,
                         merge_keys_inner,
@@ -4181,8 +4506,8 @@ namespace scratchbird::optimizer
                 {
                     auto nested_plan = std::make_shared<NestedLoopJoinNode>(
                         join_type,
-                        current_plan,
-                        candidate_access.plan,
+                        left_tree.plan,
+                        right_tree.plan,
                         const_cast<parser::v3::Expression *>(join.condition));
                     nested_plan->setJoinCondString(decision.runtime_join.condition_text);
                     nested_plan->setCost(nl_cost.startup_cost,
@@ -4191,8 +4516,8 @@ namespace scratchbird::optimizer
                     decision.plan = nested_plan;
                     decision.path = std::make_shared<NestedLoopJoinPath>(
                         join_type,
-                        current_path,
-                        candidate_access.path,
+                        left_tree.path,
+                        right_tree.path,
                         const_cast<parser::v3::Expression *>(join.condition),
                         decision.selectivity,
                         nl_cost);
@@ -4200,13 +4525,15 @@ namespace scratchbird::optimizer
 
                 if (!decision.runtime_join.has_hash_keys)
                 {
-                    decision.runtime_join.left_hash_key.qualifier = relationLookupName(
-                        planned_out.resolved_query.relations[join.left_relation_index]);
-                    decision.runtime_join.right_hash_key.qualifier = relationLookupName(
-                        candidate_relation);
+                    decision.runtime_join.left_hash_key.qualifier =
+                        relationLookupName(left_endpoint_relation);
+                    decision.runtime_join.right_hash_key.qualifier =
+                        relationLookupName(right_endpoint_relation);
                 }
 
-                if (candidate_is_right_relation &&
+                if (join_right_relation_in_right_tree &&
+                    right_tree.relation_order.size() == 1 &&
+                    right_tree.relation_order.front() == join.right_relation_index &&
                     join.equi_join &&
                     !parameterized_inner &&
                     !isZeroId(join.right_hash_column_id))
@@ -4238,8 +4565,8 @@ namespace scratchbird::optimizer
                                            "join-key filter on right relation",
                                            0.0,
                                            0.0,
-                                           candidate_access.path
-                                               ? candidate_access.path->rows()
+                                           right_tree.path
+                                               ? right_tree.path->rows()
                                                : 0);
                     }
                     else
@@ -4252,8 +4579,8 @@ namespace scratchbird::optimizer
                                            "no leading btree index on join key",
                                            0.0,
                                            0.0,
-                                           candidate_access.path
-                                               ? candidate_access.path->rows()
+                                           right_tree.path
+                                               ? right_tree.path->rows()
                                                : 0);
                     }
                 }
@@ -4261,87 +4588,283 @@ namespace scratchbird::optimizer
                 return decision;
             };
 
-        auto chooseStartRelation = [&]() -> size_t {
-            size_t start_relation = 0;
-            double best_start_cost = std::numeric_limits<double>::max();
-            for (size_t relation_index = 0;
-                 relation_index < access_choices.size();
-                 ++relation_index)
-            {
-                if (!access_choices[relation_index].path)
+        RuntimePlanSearchSummary search_summary;
+        search_summary.requested_strategy =
+            plannerJoinSearchName(planner_controls.join_search);
+        search_summary.search_budget = planner_controls.search_depth;
+        auto joinSearchStrategyName =
+            [](JoinSearchStrategy strategy) -> const char * {
+                switch (strategy)
                 {
-                    continue;
+                    case JoinSearchStrategy::EXHAUSTIVE_DP:
+                        return "EXHAUSTIVE_DP";
+                    case JoinSearchStrategy::BOUNDED_DP:
+                        return "BOUNDED_DP";
+                    case JoinSearchStrategy::HYPERGRAPH_GREEDY:
+                        return "HYPERGRAPH_GREEDY";
+                    case JoinSearchStrategy::HEURISTIC_GREEDY:
+                        return "HEURISTIC_GREEDY";
+                    case JoinSearchStrategy::INPUT_ORDER:
+                        return "INPUT_ORDER_ONLY";
+                    case JoinSearchStrategy::AUTO:
+                    default:
+                        return "AUTO";
                 }
-                if (access_choices[relation_index].path->totalCost() < best_start_cost)
-                {
-                    best_start_cost = access_choices[relation_index].path->totalCost();
-                    start_relation = relation_index;
-                }
-            }
-            return start_relation;
-        };
-
-        auto runtimeRelationForDecision =
-            [&](const JoinDecision &decision) -> RuntimePlanRelation {
-                RuntimePlanRelation relation =
-                    access_choices[decision.candidate_relation_index].runtime_relation;
-                if (decision.runtime_filter_enabled)
-                {
-                    relation.runtime_filter_enabled = true;
-                    relation.runtime_filter_column = decision.runtime_filter_column;
-                    relation.runtime_filter_index_name =
-                        decision.runtime_filter_index_name;
-                    relation.runtime_filter_index_id_text =
-                        decision.runtime_filter_index_id_text;
-                }
-                return relation;
             };
 
-        auto chooseDisconnectedComponentCrossJoin =
-            [&](const std::vector<bool> &joined,
-                const std::shared_ptr<Path> &current_path,
-                const std::shared_ptr<PlanNode> &current_plan,
-                uint64_t current_rows,
-                size_t left_relation_index) -> JoinDecision {
-                JoinDecision best_join;
-                for (size_t candidate = 0; candidate < joined.size(); ++candidate)
+        auto relationIndexForLeafPath =
+            [&](const std::shared_ptr<Path> &path) -> std::optional<size_t> {
+                for (size_t relation_index = 0;
+                     relation_index < access_choices.size();
+                     ++relation_index)
                 {
-                    if (joined[candidate])
+                    if (access_choices[relation_index].path == path)
+                    {
+                        return relation_index;
+                    }
+                }
+                return std::nullopt;
+            };
+
+        auto relationOrderContains =
+            [](const std::vector<size_t> &relation_order,
+               size_t relation_index) -> bool {
+                return std::find(relation_order.begin(),
+                                 relation_order.end(),
+                                 relation_index) != relation_order.end();
+            };
+
+        std::function<core::Status(const std::shared_ptr<Path> &,
+                                   MaterializedJoinTree &)>
+            materializeBackendPlan;
+        materializeBackendPlan =
+            [&](const std::shared_ptr<Path> &backend_path,
+                MaterializedJoinTree &materialized_out) -> core::Status {
+                if (!backend_path)
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      core::Status::INTERNAL_ERROR,
+                                      "Join backend returned null path");
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                if (const auto relation_index = relationIndexForLeafPath(backend_path);
+                    relation_index.has_value())
+                {
+                    materialized_out.path = backend_path;
+                    materialized_out.plan =
+                        access_choices[*relation_index].plan;
+                    materialized_out.rows =
+                        backend_path ? backend_path->rows() : 0;
+                    materialized_out.relation_order = {*relation_index};
+                    materialized_out.runtime_relations = {
+                        access_choices[*relation_index].runtime_relation};
+                    return core::Status::OK;
+                }
+
+                std::shared_ptr<Path> left_backend_path;
+                std::shared_ptr<Path> right_backend_path;
+                parser::JoinType backend_join_type = parser::JoinType::INNER;
+                parser::v3::Expression *backend_join_condition = nullptr;
+                if (auto nested =
+                        std::dynamic_pointer_cast<NestedLoopJoinPath>(backend_path))
+                {
+                    left_backend_path = nested->outerPath();
+                    right_backend_path = nested->innerPath();
+                    backend_join_type = nested->joinType();
+                    backend_join_condition = nested->joinCondition();
+                }
+                else if (auto hash =
+                             std::dynamic_pointer_cast<HashJoinPath>(backend_path))
+                {
+                    left_backend_path = hash->outerPath();
+                    right_backend_path = hash->innerPath();
+                    backend_join_type = hash->joinType();
+                    backend_join_condition = hash->joinCondition();
+                }
+                else if (auto merge =
+                             std::dynamic_pointer_cast<MergeJoinPath>(backend_path))
+                {
+                    left_backend_path = merge->outerPath();
+                    right_backend_path = merge->innerPath();
+                    backend_join_type = merge->joinType();
+                    backend_join_condition = merge->joinCondition();
+                }
+                else
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      core::Status::INTERNAL_ERROR,
+                                      "Join backend returned unrecognized composite path");
+                    return core::Status::INTERNAL_ERROR;
+                }
+
+                MaterializedJoinTree left_tree;
+                MaterializedJoinTree right_tree;
+                auto status = materializeBackendPlan(left_backend_path, left_tree);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+                status = materializeBackendPlan(right_backend_path, right_tree);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+
+                JoinDecision best_join;
+                size_t matching_candidates = 0;
+                for (const auto &join : planned_out.resolved_query.joins)
+                {
+                    const bool left_relation_in_left_tree =
+                        relationOrderContains(left_tree.relation_order,
+                                              join.left_relation_index);
+                    const bool left_relation_in_right_tree =
+                        relationOrderContains(right_tree.relation_order,
+                                              join.left_relation_index);
+                    const bool right_relation_in_left_tree =
+                        relationOrderContains(left_tree.relation_order,
+                                              join.right_relation_index);
+                    const bool right_relation_in_right_tree =
+                        relationOrderContains(right_tree.relation_order,
+                                              join.right_relation_index);
+                    const bool split_across_subtrees =
+                        (left_relation_in_left_tree &&
+                         right_relation_in_right_tree) ||
+                        (left_relation_in_right_tree &&
+                         right_relation_in_left_tree);
+                    if (!split_across_subtrees)
+                    {
+                        continue;
+                    }
+                    if (join.join_type != backend_join_type)
+                    {
+                        continue;
+                    }
+                    if (const_cast<parser::v3::Expression *>(join.condition) !=
+                        backend_join_condition)
                     {
                         continue;
                     }
 
+                    const bool join_right_relation_in_right_tree =
+                        right_relation_in_right_tree;
+                    auto candidate = buildSubtreeJoinDecision(
+                        left_tree,
+                        right_tree,
+                        join,
+                        join_right_relation_in_right_tree);
+                    if (!candidate.valid)
+                    {
+                        if (ctx != nullptr && ctx->code != core::Status::OK)
+                        {
+                            return ctx->code;
+                        }
+                        continue;
+                    }
+                    ++matching_candidates;
+                    if (!best_join.valid ||
+                        candidate.total_cost < best_join.total_cost)
+                    {
+                        best_join = std::move(candidate);
+                    }
+                }
+
+                if (!best_join.valid)
+                {
+                    if (backend_join_type != parser::JoinType::CROSS ||
+                        backend_join_condition != nullptr)
+                    {
+                        SET_ERROR_CONTEXT(
+                            ctx,
+                            core::Status::INTERNAL_ERROR,
+                            "Canonical join backend produced a composite join with no matching frozen join edge");
+                        return core::Status::INTERNAL_ERROR;
+                    }
+
                     ResolvedJoin cross_join;
-                    cross_join.source_join_index = std::numeric_limits<size_t>::max();
-                    cross_join.left_relation_index = left_relation_index;
-                    cross_join.right_relation_index = candidate;
+                    cross_join.source_join_index =
+                        std::numeric_limits<size_t>::max();
+                    cross_join.left_relation_index =
+                        left_tree.relation_order.empty()
+                            ? 0
+                            : left_tree.relation_order.front();
+                    cross_join.right_relation_index =
+                        right_tree.relation_order.empty()
+                            ? 0
+                            : right_tree.relation_order.front();
                     cross_join.join_type = parser::JoinType::CROSS;
                     cross_join.condition = nullptr;
                     cross_join.condition_text.clear();
-                    const auto legality = classifyJoinLegality(cross_join.join_type,
-                                                               false,
-                                                               false);
+                    const auto legality =
+                        classifyJoinLegality(cross_join.join_type, false, false);
                     cross_join.legality_class = legality.legality_class;
                     cross_join.reorderable = legality.reorderable;
-                    cross_join.preserves_left_rows = legality.preserves_left_rows;
-                    cross_join.preserves_right_rows = legality.preserves_right_rows;
-                    cross_join.null_introduces_left = legality.null_introduces_left;
-                    cross_join.null_introduces_right = legality.null_introduces_right;
+                    cross_join.preserves_left_rows =
+                        legality.preserves_left_rows;
+                    cross_join.preserves_right_rows =
+                        legality.preserves_right_rows;
+                    cross_join.null_introduces_left =
+                        legality.null_introduces_left;
+                    cross_join.null_introduces_right =
+                        legality.null_introduces_right;
                     cross_join.requires_original_order =
                         legality.requires_original_order;
-                    auto decision = buildJoinDecision(current_path,
-                                                      current_plan,
-                                                      current_rows,
-                                                      candidate,
-                                                      cross_join,
-                                                      true,
-                                                      true);
-                    if (!best_join.valid || decision.total_cost < best_join.total_cost)
+                    best_join = buildSubtreeJoinDecision(left_tree,
+                                                         right_tree,
+                                                         cross_join,
+                                                         true,
+                                                         true);
+                    if (!best_join.valid)
                     {
-                        best_join = std::move(decision);
+                        if (ctx != nullptr && ctx->code != core::Status::OK)
+                        {
+                            return ctx->code;
+                        }
+                        return core::Status::INTERNAL_ERROR;
                     }
                 }
-                return best_join;
+
+                materialized_out.path = best_join.path;
+                materialized_out.plan = best_join.plan;
+                materialized_out.rows = best_join.rows;
+                materialized_out.relation_order = left_tree.relation_order;
+                materialized_out.relation_order.insert(
+                    materialized_out.relation_order.end(),
+                    right_tree.relation_order.begin(),
+                    right_tree.relation_order.end());
+                materialized_out.runtime_relations = left_tree.runtime_relations;
+                materialized_out.runtime_relations.insert(
+                    materialized_out.runtime_relations.end(),
+                    right_tree.runtime_relations.begin(),
+                    right_tree.runtime_relations.end());
+                if (best_join.runtime_filter_enabled)
+                {
+                    auto runtime_relation_it = std::find_if(
+                        materialized_out.runtime_relations.begin(),
+                        materialized_out.runtime_relations.end(),
+                        [&](RuntimePlanRelation &relation) {
+                            return relation.source_relation_index ==
+                                   best_join.candidate_relation_index;
+                        });
+                    if (runtime_relation_it !=
+                        materialized_out.runtime_relations.end())
+                    {
+                        runtime_relation_it->runtime_filter_enabled = true;
+                        runtime_relation_it->runtime_filter_column =
+                            best_join.runtime_filter_column;
+                        runtime_relation_it->runtime_filter_index_name =
+                            best_join.runtime_filter_index_name;
+                        runtime_relation_it->runtime_filter_index_id_text =
+                            best_join.runtime_filter_index_id_text;
+                    }
+                }
+                materialized_out.runtime_joins = left_tree.runtime_joins;
+                materialized_out.runtime_joins.insert(
+                    materialized_out.runtime_joins.end(),
+                    right_tree.runtime_joins.begin(),
+                    right_tree.runtime_joins.end());
+                materialized_out.runtime_joins.push_back(best_join.runtime_join);
+                return core::Status::OK;
             };
 
         std::vector<size_t> relation_order;
@@ -4351,172 +4874,161 @@ namespace scratchbird::optimizer
         std::shared_ptr<PlanNode> current_plan;
         uint64_t current_rows = 0;
 
-        if (planned_out.resolved_query.joins.empty())
+        if (planned_out.resolved_query.relations.size() <= 1)
         {
-            const size_t start_relation = chooseStartRelation();
-            std::vector<bool> joined(planned_out.resolved_query.relations.size(), false);
-            joined[start_relation] = true;
-            relation_order.push_back(start_relation);
-            runtime_relations.push_back(access_choices[start_relation].runtime_relation);
-            current_path = access_choices[start_relation].path;
-            current_plan = access_choices[start_relation].plan;
-            current_rows = current_path ? current_path->rows() : 0;
-
-            while (relation_order.size() < planned_out.resolved_query.relations.size())
+            search_summary.selected_strategy = "SINGLE_RELATION";
+            if (!access_choices.empty())
             {
-                auto decision = chooseDisconnectedComponentCrossJoin(joined,
-                                                                    current_path,
-                                                                    current_plan,
-                                                                    current_rows,
-                                                                    relation_order.back());
-                if (!decision.valid)
-                {
-                    if (ctx != nullptr && ctx->code != core::Status::OK)
-                    {
-                        return ctx->code;
-                    }
-                    return core::Status::INTERNAL_ERROR;
-                }
-                planned_out.disconnected_join_graph = true;
-                joined[decision.candidate_relation_index] = true;
-                relation_order.push_back(decision.candidate_relation_index);
-                runtime_relations.push_back(runtimeRelationForDecision(decision));
-                runtime_joins.push_back(decision.runtime_join);
-                current_path = decision.path;
-                current_plan = decision.plan;
-                current_rows = decision.rows;
-            }
-        }
-        else if (planner_controls.join_search != PlannerJoinSearchMode::INPUT_ORDER &&
-                 isJoinReorderSafe(planned_out.resolved_query))
-        {
-            planned_out.reordered_relations = true;
-            std::vector<bool> joined(planned_out.resolved_query.relations.size(), false);
-            const size_t start_relation = chooseStartRelation();
-
-            joined[start_relation] = true;
-            relation_order.push_back(start_relation);
-            runtime_relations.push_back(access_choices[start_relation].runtime_relation);
-            current_path = access_choices[start_relation].path;
-            current_plan = access_choices[start_relation].plan;
-            current_rows = current_path ? current_path->rows() : 0;
-
-            while (relation_order.size() < planned_out.resolved_query.relations.size())
-            {
-                JoinDecision best_join;
-                size_t candidate_joins_considered = 0;
-                for (const auto &join : planned_out.resolved_query.joins)
-                {
-                    const bool left_joined = joined[join.left_relation_index];
-                    const bool right_joined = joined[join.right_relation_index];
-                    if (left_joined == right_joined)
-                    {
-                        continue;
-                    }
-
-                    const bool candidate_is_right = !right_joined;
-                    const size_t candidate_relation_index =
-                        candidate_is_right ? join.right_relation_index : join.left_relation_index;
-                    auto decision = buildJoinDecision(current_path,
-                                                      current_plan,
-                                                      current_rows,
-                                                      candidate_relation_index,
-                                                      join,
-                                                      candidate_is_right);
-                    if (!decision.valid)
-                    {
-                        if (ctx != nullptr && ctx->code != core::Status::OK)
-                        {
-                            return ctx->code;
-                        }
-                        continue;
-                    }
-                    ++candidate_joins_considered;
-                    if (!best_join.valid || decision.total_cost < best_join.total_cost)
-                    {
-                        best_join = std::move(decision);
-                    }
-                    if (planner_controls.search_depth > 0 &&
-                        candidate_joins_considered >= planner_controls.search_depth)
-                    {
-                        break;
-                    }
-                }
-
-                if (!best_join.valid)
-                {
-                    if (ctx != nullptr && ctx->code != core::Status::OK)
-                    {
-                        return ctx->code;
-                    }
-                    best_join = chooseDisconnectedComponentCrossJoin(joined,
-                                                                     current_path,
-                                                                     current_plan,
-                                                                     current_rows,
-                                                                     relation_order.back());
-                    if (!best_join.valid)
-                    {
-                        if (ctx != nullptr && ctx->code != core::Status::OK)
-                        {
-                            return ctx->code;
-                        }
-                        break;
-                    }
-                    planned_out.disconnected_join_graph = true;
-                }
-
-                joined[best_join.candidate_relation_index] = true;
-                relation_order.push_back(best_join.candidate_relation_index);
-                runtime_relations.push_back(runtimeRelationForDecision(best_join));
-                runtime_joins.push_back(best_join.runtime_join);
-                current_path = best_join.path;
-                current_plan = best_join.plan;
-                current_rows = best_join.rows;
+                relation_order.push_back(0);
+                runtime_relations.push_back(access_choices[0].runtime_relation);
+                current_path = access_choices[0].path;
+                current_plan = access_choices[0].plan;
+                current_rows = current_path ? current_path->rows() : 0;
             }
         }
         else
         {
-            relation_order.push_back(0);
-            runtime_relations.push_back(access_choices[0].runtime_relation);
-            current_path = access_choices[0].path;
-            current_plan = access_choices[0].plan;
-            current_rows = current_path ? current_path->rows() : 0;
+            JoinOrderingOptimizer join_optimizer(active_cost_model,
+                                                 selectivity_estimator_);
+            JoinPlanningControls join_controls;
+            switch (planner_controls.join_search)
+            {
+                case PlannerJoinSearchMode::EXHAUSTIVE_DP:
+                    join_controls.strategy = JoinSearchStrategy::EXHAUSTIVE_DP;
+                    break;
+                case PlannerJoinSearchMode::BOUNDED_DP:
+                    join_controls.strategy = JoinSearchStrategy::BOUNDED_DP;
+                    break;
+                case PlannerJoinSearchMode::HYPERGRAPH_GREEDY:
+                    join_controls.strategy = JoinSearchStrategy::HYPERGRAPH_GREEDY;
+                    break;
+                case PlannerJoinSearchMode::HEURISTIC_GREEDY:
+                    join_controls.strategy = JoinSearchStrategy::HEURISTIC_GREEDY;
+                    break;
+                case PlannerJoinSearchMode::INPUT_ORDER:
+                    join_controls.strategy = JoinSearchStrategy::INPUT_ORDER;
+                    break;
+                case PlannerJoinSearchMode::AUTO:
+                default:
+                    join_controls.strategy = JoinSearchStrategy::AUTO;
+                    break;
+            }
+            join_controls.max_exhaustive_relations =
+                planner_controls.exhaustive_join_limit;
+            join_controls.max_bounded_dp_relations =
+                planner_controls.bounded_dp_join_limit;
+            join_controls.max_states_considered =
+                planner_controls.max_states_considered;
+            join_controls.fallback_prune_level =
+                planner_controls.fallback_prune_level;
+            if (planner_controls.search_depth > 0)
+            {
+                join_controls.max_pair_evaluations =
+                    planner_controls.search_depth;
+            }
+            join_optimizer.setPlanningControls(join_controls);
+
+            for (const auto &choice : access_choices)
+            {
+                const auto &relation =
+                    planned_out.resolved_query.relations[choice.relation_index];
+                join_optimizer.addRelation(
+                    relation.resolved ? relation.table_info.table_id : core::ID{},
+                    displayRelationName(relation),
+                    relationLookupName(relation),
+                    choice.path);
+            }
 
             for (const auto &join : planned_out.resolved_query.joins)
             {
-                const size_t candidate_relation_index = join.right_relation_index;
-                auto decision = buildJoinDecision(current_path,
-                                                  current_plan,
-                                                  current_rows,
-                                                  candidate_relation_index,
-                                                  join,
-                                                  true);
-                if (!decision.valid)
-                {
-                    if (ctx != nullptr && ctx->code != core::Status::OK)
-                    {
-                        return ctx->code;
-                    }
-                    return core::Status::INTERNAL_ERROR;
-                }
-                if (join.join_type == parser::JoinType::RIGHT ||
-                    join.join_type == parser::JoinType::FULL ||
-                    join.natural ||
-                    !join.using_columns.empty())
-                {
-                    decision.runtime_join.method = "NESTED_LOOP";
-                    decision.runtime_join.has_hash_keys = false;
-                    decision.runtime_join.has_merge_keys = false;
-                    decision.runtime_join.merge_outer_presorted = false;
-                    decision.runtime_join.merge_inner_presorted = false;
-                }
-                relation_order.push_back(candidate_relation_index);
-                runtime_relations.push_back(runtimeRelationForDecision(decision));
-                runtime_joins.push_back(decision.runtime_join);
-                current_path = decision.path;
-                current_plan = decision.plan;
-                current_rows = decision.rows;
+                const size_t edge_index = join_optimizer.addJoinEdge(
+                    join.left_relation_index,
+                    join.right_relation_index,
+                    join.join_type,
+                    const_cast<parser::v3::Expression *>(join.condition),
+                    join.source_join_index,
+                    join.legality_class,
+                    join.reorderable,
+                    join.requires_original_order);
+                join_optimizer.setJoinSelectivity(
+                    edge_index,
+                    join.join_type == parser::JoinType::CROSS
+                        ? 1.0
+                        : estimateJoinSelectivityFor(join));
             }
+
+            auto backend_path = join_optimizer.optimize(ctx);
+            if (!backend_path)
+            {
+                if (ctx != nullptr && ctx->code != core::Status::OK)
+                {
+                    return ctx->code;
+                }
+                SET_ERROR_CONTEXT(ctx,
+                                  core::Status::INTERNAL_ERROR,
+                                  "Canonical join backend failed to produce a multi-relation plan");
+                return core::Status::INTERNAL_ERROR;
+            }
+
+            const auto &join_telemetry = join_optimizer.lastTelemetry();
+            search_summary.requested_strategy =
+                joinSearchStrategyName(join_telemetry.requested_strategy);
+            search_summary.selected_strategy =
+                joinSearchStrategyName(join_telemetry.selected_strategy);
+            search_summary.search_budget =
+                join_telemetry.max_pair_evaluations;
+            search_summary.considered_state_count =
+                join_telemetry.considered_state_count;
+            search_summary.pruned_state_count =
+                join_telemetry.pruned_state_count;
+            search_summary.pair_evaluation_count =
+                join_telemetry.pair_evaluation_count;
+            search_summary.max_pair_evaluations =
+                join_telemetry.max_pair_evaluations;
+            search_summary.max_states_considered =
+                join_telemetry.max_states_considered;
+            search_summary.exhaustive_join_limit =
+                join_telemetry.exhaustive_join_limit;
+            search_summary.bounded_dp_join_limit =
+                join_telemetry.bounded_dp_join_limit;
+            search_summary.fallback_prune_level =
+                join_telemetry.fallback_prune_level;
+            search_summary.fallback_reason = join_telemetry.fallback_reason;
+            search_summary.fallback_threshold_name =
+                join_telemetry.fallback_threshold_name;
+            search_summary.fallback_threshold_value =
+                join_telemetry.fallback_threshold_value;
+
+            MaterializedJoinTree materialized_root;
+            const auto materialize_status =
+                materializeBackendPlan(backend_path, materialized_root);
+            if (materialize_status != core::Status::OK)
+            {
+                return materialize_status;
+            }
+
+            relation_order = std::move(materialized_root.relation_order);
+            runtime_relations = std::move(materialized_root.runtime_relations);
+            runtime_joins = std::move(materialized_root.runtime_joins);
+            current_path = materialized_root.path;
+            current_plan = materialized_root.plan;
+            current_rows = materialized_root.rows;
+            planned_out.disconnected_join_graph =
+                std::any_of(runtime_joins.begin(),
+                            runtime_joins.end(),
+                            [](const RuntimePlanJoinStep &step) {
+                                return step.disconnected_component;
+                            });
+            planned_out.reordered_relations =
+                join_optimizer.lastStrategyUsed() !=
+                    JoinSearchStrategy::INPUT_ORDER &&
+                !relation_order.empty() &&
+                std::any_of(
+                    relation_order.begin(),
+                    relation_order.end(),
+                    [index = size_t{0}](size_t relation_index) mutable {
+                        return relation_index != index++;
+                    });
         }
 
         auto estimateRowWidth = [&](const std::vector<size_t> &relations) -> uint64_t {
@@ -4764,7 +5276,13 @@ namespace scratchbird::optimizer
         }
 
         planned_out.root_plan = current_plan;
-        planned_out.runtime_plan.version = 1;
+        search_summary.rejected_candidate_count = rejected_paths.size();
+        planned_out.runtime_plan.version = kRuntimePlanPayloadVersion;
+        planned_out.runtime_plan.contract_id = kRuntimePlanContractId;
+        planned_out.runtime_plan.join_graph_contract_id = kJoinGraphContractId;
+        planned_out.runtime_plan.diagnostics_contract_id =
+            kOptimizerDiagnosticsContractId;
+        planned_out.runtime_plan.search_summary = std::move(search_summary);
         planned_out.runtime_plan.relations = std::move(runtime_relations);
         planned_out.runtime_plan.join_steps = std::move(runtime_joins);
         planned_out.runtime_plan.considered_paths = std::move(considered_paths);
@@ -4789,7 +5307,27 @@ namespace scratchbird::optimizer
             current_plan ? current_plan->toString() : std::string("Result");
 
         std::ostringstream hash_seed;
-        hash_seed << planned_out.runtime_plan.explain_text << '|'
+        hash_seed << planned_out.runtime_plan.contract_id << '|'
+                  << planned_out.runtime_plan.join_graph_contract_id << '|'
+                  << planned_out.runtime_plan.diagnostics_contract_id << '|'
+                  << planned_out.runtime_plan.search_summary.requested_strategy << '|'
+                  << planned_out.runtime_plan.search_summary.selected_strategy << '|'
+                  << planned_out.runtime_plan.search_summary.search_budget << '|'
+                  << planned_out.runtime_plan.search_summary.considered_state_count << '|'
+                  << planned_out.runtime_plan.search_summary.pruned_state_count << '|'
+                  << planned_out.runtime_plan.search_summary.pair_evaluation_count << '|'
+                  << planned_out.runtime_plan.search_summary.rejected_candidate_count << '|'
+                  << planned_out.runtime_plan.search_summary.max_pair_evaluations << '|'
+                  << planned_out.runtime_plan.search_summary.max_states_considered << '|'
+                  << planned_out.runtime_plan.search_summary.exhaustive_join_limit << '|'
+                  << planned_out.runtime_plan.search_summary.bounded_dp_join_limit << '|'
+                  << planned_out.runtime_plan.search_summary.fallback_prune_level << '|'
+                  << planned_out.runtime_plan.search_summary.fallback_reason << '|'
+                  << planned_out.runtime_plan.search_summary.fallback_threshold_name
+                  << '|'
+                  << planned_out.runtime_plan.search_summary.fallback_threshold_value
+                  << '|'
+                  << planned_out.runtime_plan.explain_text << '|'
                   << planner_params.work_mem_bytes << '|'
                   << spill_policy_text << '|';
         for (const auto &control : planned_out.runtime_plan.optimizer_controls)
@@ -4815,9 +5353,18 @@ namespace scratchbird::optimizer
         for (const auto &join : planned_out.runtime_plan.join_steps)
         {
             hash_seed << join.source_join_index << ':'
+                      << join.join_edge_left_relation_index << ':'
+                      << join.join_edge_right_relation_index << ':'
+                      << join.join_edge_left_id_text << ':'
+                      << join.join_edge_right_id_text << ':'
                       << (join.disconnected_component ? 1 : 0) << ':'
                       << join.legality_class << ':'
                       << (join.reorderable ? 1 : 0) << ':'
+                      << (join.outer_reorder_barrier ? 1 : 0) << ':'
+                      << (join.using_reorder_barrier ? 1 : 0) << ':'
+                      << (join.natural_reorder_barrier ? 1 : 0) << ':'
+                      << (join.lateral_reorder_barrier ? 1 : 0) << ':'
+                      << (join.parameterized_dependency ? 1 : 0) << ':'
                       << join.method << ':'
                       << (join.has_merge_keys ? 1 : 0) << ':'
                       << (join.merge_outer_presorted ? 1 : 0) << ':'
@@ -4826,7 +5373,20 @@ namespace scratchbird::optimizer
                       << join.estimated_memory_bytes << ':'
                       << (join.spill_expected ? 1 : 0) << ':'
                       << join.spill_passes << ':'
-                      << join.total_cost << '|';
+                      << join.total_cost << ':';
+            for (const auto &key_pair : join.equijoin_keys)
+            {
+                hash_seed << key_pair.left_qualifier << '.'
+                          << key_pair.left_column_name << '='
+                          << key_pair.right_qualifier << '.'
+                          << key_pair.right_column_name << ';';
+            }
+            hash_seed << ':';
+            for (const auto &predicate : join.residual_predicates)
+            {
+                hash_seed << predicate << ';';
+            }
+            hash_seed << '|';
         }
         planned_out.runtime_plan.plan_hash = stablePlanHash(hash_seed.str());
         return core::Status::OK;

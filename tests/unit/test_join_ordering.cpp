@@ -219,6 +219,7 @@ TEST(JoinOrderingOptimizerTest, ExhaustiveCapCanForceHeuristicSearch)
     JoinPlanningControls controls;
     controls.strategy = JoinSearchStrategy::AUTO;
     controls.max_exhaustive_relations = 2;
+    controls.max_bounded_dp_relations = 2;
     controls.max_pair_evaluations = 16;
     optimizer.setPlanningControls(controls);
 
@@ -231,6 +232,62 @@ TEST(JoinOrderingOptimizerTest, ExhaustiveCapCanForceHeuristicSearch)
     auto plan = optimizer.optimize();
     ASSERT_NE(plan, nullptr);
     EXPECT_EQ(optimizer.lastStrategyUsed(), JoinSearchStrategy::HYPERGRAPH_GREEDY);
+}
+
+TEST(JoinOrderingOptimizerTest, AutoUsesBoundedDpBetweenExhaustiveAndHeuristicThresholds)
+{
+    CostModel cost_model;
+    SelectivityEstimator selectivity_estimator(nullptr, nullptr);
+    JoinOrderingOptimizer optimizer(cost_model, selectivity_estimator);
+
+    JoinPlanningControls controls;
+    controls.strategy = JoinSearchStrategy::AUTO;
+    controls.max_exhaustive_relations = 2;
+    controls.max_bounded_dp_relations = 3;
+    controls.max_pair_evaluations = 32;
+    controls.max_states_considered = 32;
+    optimizer.setPlanningControls(controls);
+
+    optimizer.addRelation(core::ID{}, "r1", "r1", makeSeqScanPath("r1", 100, 10.0));
+    optimizer.addRelation(core::ID{}, "r2", "r2", makeSeqScanPath("r2", 50, 5.0));
+    optimizer.addRelation(core::ID{}, "r3", "r3", makeSeqScanPath("r3", 25, 2.5));
+    optimizer.addJoinEdge(0, 1, parser::JoinType::INNER, nullptr);
+    optimizer.addJoinEdge(1, 2, parser::JoinType::INNER, nullptr);
+
+    auto plan = optimizer.optimize();
+    ASSERT_NE(plan, nullptr);
+    EXPECT_EQ(optimizer.lastStrategyUsed(), JoinSearchStrategy::BOUNDED_DP);
+    EXPECT_TRUE(optimizer.lastTelemetry().fallback_reason.empty());
+}
+
+TEST(JoinOrderingOptimizerTest, BoundedDpBudgetFallbackPublishesThreshold)
+{
+    CostModel cost_model;
+    SelectivityEstimator selectivity_estimator(nullptr, nullptr);
+    JoinOrderingOptimizer optimizer(cost_model, selectivity_estimator);
+
+    JoinPlanningControls controls;
+    controls.strategy = JoinSearchStrategy::BOUNDED_DP;
+    controls.max_exhaustive_relations = 2;
+    controls.max_bounded_dp_relations = 4;
+    controls.max_states_considered = 1;
+    controls.max_pair_evaluations = 8;
+    controls.fallback_prune_level = 2;
+    optimizer.setPlanningControls(controls);
+
+    optimizer.addRelation(core::ID{}, "r1", "r1", makeSeqScanPath("r1", 100, 10.0));
+    optimizer.addRelation(core::ID{}, "r2", "r2", makeSeqScanPath("r2", 50, 5.0));
+    optimizer.addRelation(core::ID{}, "r3", "r3", makeSeqScanPath("r3", 25, 2.5));
+    optimizer.addJoinEdge(0, 1, parser::JoinType::INNER, nullptr);
+    optimizer.addJoinEdge(1, 2, parser::JoinType::INNER, nullptr);
+
+    auto plan = optimizer.optimize();
+    ASSERT_NE(plan, nullptr);
+    EXPECT_EQ(optimizer.lastStrategyUsed(), JoinSearchStrategy::HEURISTIC_GREEDY);
+    EXPECT_EQ(optimizer.lastTelemetry().fallback_reason, "MAX_STATES_CONSIDERED");
+    EXPECT_EQ(optimizer.lastTelemetry().fallback_threshold_name,
+              "MAX_STATES_CONSIDERED");
+    EXPECT_EQ(optimizer.lastTelemetry().fallback_threshold_value, 1u);
 }
 
 TEST(JoinOrderingOptimizerTest, InputOrderControlOverridesReordering)
@@ -247,6 +304,31 @@ TEST(JoinOrderingOptimizerTest, InputOrderControlOverridesReordering)
     optimizer.addRelation(core::ID{}, "r2", "r2", makeSeqScanPath("r2", 5, 1.0));
     optimizer.addRelation(core::ID{}, "r3", "r3", makeSeqScanPath("r3", 10, 2.0));
     optimizer.addJoinEdge(0, 1, parser::JoinType::INNER, nullptr);
+    optimizer.addJoinEdge(1, 2, parser::JoinType::INNER, nullptr);
+
+    auto plan = optimizer.optimize();
+    ASSERT_NE(plan, nullptr);
+    EXPECT_EQ(optimizer.lastStrategyUsed(), JoinSearchStrategy::INPUT_ORDER);
+    EXPECT_EQ(leftmostLeafTable(plan), "r1");
+}
+
+TEST(JoinOrderingOptimizerTest, NonReorderableInnerBarrierForcesInputOrderPath)
+{
+    CostModel cost_model;
+    SelectivityEstimator selectivity_estimator(nullptr, nullptr);
+    JoinOrderingOptimizer optimizer(cost_model, selectivity_estimator);
+
+    optimizer.addRelation(core::ID{}, "r1", "r1", makeSeqScanPath("r1", 500, 50.0));
+    optimizer.addRelation(core::ID{}, "r2", "r2", makeSeqScanPath("r2", 5, 1.0));
+    optimizer.addRelation(core::ID{}, "r3", "r3", makeSeqScanPath("r3", 10, 2.0));
+    optimizer.addJoinEdge(0,
+                          1,
+                          parser::JoinType::INNER,
+                          nullptr,
+                          0,
+                          JoinLegalityClass::USING_BARRIER,
+                          false,
+                          true);
     optimizer.addJoinEdge(1, 2, parser::JoinType::INNER, nullptr);
 
     auto plan = optimizer.optimize();

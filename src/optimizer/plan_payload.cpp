@@ -166,6 +166,14 @@ namespace scratchbird::optimizer
             nlohmann::json out;
             out["source_join_index"] = join_step.source_join_index;
             out["right_relation_index"] = join_step.right_relation_index;
+            out["join_edge_left_relation_index"] =
+                join_step.join_edge_left_relation_index;
+            out["join_edge_right_relation_index"] =
+                join_step.join_edge_right_relation_index;
+            out["join_edge_left_alias"] = join_step.join_edge_left_alias;
+            out["join_edge_right_alias"] = join_step.join_edge_right_alias;
+            out["join_edge_left_id_text"] = join_step.join_edge_left_id_text;
+            out["join_edge_right_id_text"] = join_step.join_edge_right_id_text;
             out["join_type"] = join_step.join_type;
             out["method"] = join_step.method;
             out["disconnected_component"] = join_step.disconnected_component;
@@ -174,11 +182,33 @@ namespace scratchbird::optimizer
             out["natural"] = join_step.natural;
             out["using_columns"] = join_step.using_columns;
             out["condition_text"] = join_step.condition_text;
+            out["equijoin_keys"] = nlohmann::json::array();
+            for (const auto &entry : join_step.equijoin_keys)
+            {
+                nlohmann::json key;
+                key["left_qualifier"] = entry.left_qualifier;
+                key["left_column_name"] = entry.left_column_name;
+                key["right_qualifier"] = entry.right_qualifier;
+                key["right_column_name"] = entry.right_column_name;
+                out["equijoin_keys"].push_back(std::move(key));
+            }
+            out["residual_predicates"] = join_step.residual_predicates;
             out["preserves_left_rows"] = join_step.preserves_left_rows;
             out["preserves_right_rows"] = join_step.preserves_right_rows;
             out["null_introduces_left"] = join_step.null_introduces_left;
             out["null_introduces_right"] = join_step.null_introduces_right;
             out["requires_original_order"] = join_step.requires_original_order;
+            out["outer_reorder_barrier"] = join_step.outer_reorder_barrier;
+            out["semi_reorder_barrier"] = join_step.semi_reorder_barrier;
+            out["anti_reorder_barrier"] = join_step.anti_reorder_barrier;
+            out["using_reorder_barrier"] = join_step.using_reorder_barrier;
+            out["natural_reorder_barrier"] = join_step.natural_reorder_barrier;
+            out["lateral_reorder_barrier"] = join_step.lateral_reorder_barrier;
+            out["parameterized_dependency"] = join_step.parameterized_dependency;
+            out["parameter_dependency_relation_indexes"] =
+                join_step.parameter_dependency_relation_indexes;
+            out["parameter_dependency_relation_aliases"] =
+                join_step.parameter_dependency_relation_aliases;
             out["has_hash_keys"] = join_step.has_hash_keys;
             out["has_merge_keys"] = join_step.has_merge_keys;
             out["merge_outer_presorted"] = join_step.merge_outer_presorted;
@@ -228,6 +258,18 @@ namespace scratchbird::optimizer
 
             join_step_out.source_join_index = json_in.value("source_join_index", 0U);
             join_step_out.right_relation_index = json_in.value("right_relation_index", 0U);
+            join_step_out.join_edge_left_relation_index =
+                json_in.value("join_edge_left_relation_index", 0U);
+            join_step_out.join_edge_right_relation_index =
+                json_in.value("join_edge_right_relation_index", 0U);
+            join_step_out.join_edge_left_alias =
+                json_in.value("join_edge_left_alias", std::string());
+            join_step_out.join_edge_right_alias =
+                json_in.value("join_edge_right_alias", std::string());
+            join_step_out.join_edge_left_id_text =
+                json_in.value("join_edge_left_id_text", std::string());
+            join_step_out.join_edge_right_id_text =
+                json_in.value("join_edge_right_id_text", std::string());
             join_step_out.join_type = json_in.value("join_type", std::string());
             join_step_out.method = json_in.value("method", std::string());
             join_step_out.disconnected_component =
@@ -237,6 +279,41 @@ namespace scratchbird::optimizer
             join_step_out.reorderable = json_in.value("reorderable", true);
             join_step_out.natural = json_in.value("natural", false);
             join_step_out.condition_text = json_in.value("condition_text", std::string());
+            join_step_out.equijoin_keys.clear();
+            const auto equijoin_it = json_in.find("equijoin_keys");
+            if (equijoin_it != json_in.end() && equijoin_it->is_array())
+            {
+                for (const auto &entry : *equijoin_it)
+                {
+                    if (!entry.is_object())
+                    {
+                        continue;
+                    }
+                    RuntimePlanJoinKeyPair key_pair;
+                    key_pair.left_qualifier =
+                        entry.value("left_qualifier", std::string());
+                    key_pair.left_column_name =
+                        entry.value("left_column_name", std::string());
+                    key_pair.right_qualifier =
+                        entry.value("right_qualifier", std::string());
+                    key_pair.right_column_name =
+                        entry.value("right_column_name", std::string());
+                    join_step_out.equijoin_keys.push_back(std::move(key_pair));
+                }
+            }
+            join_step_out.residual_predicates.clear();
+            const auto residuals_it = json_in.find("residual_predicates");
+            if (residuals_it != json_in.end() && residuals_it->is_array())
+            {
+                for (const auto &entry : *residuals_it)
+                {
+                    if (entry.is_string())
+                    {
+                        join_step_out.residual_predicates.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
             join_step_out.preserves_left_rows =
                 json_in.value("preserves_left_rows", false);
             join_step_out.preserves_right_rows =
@@ -247,6 +324,50 @@ namespace scratchbird::optimizer
                 json_in.value("null_introduces_right", false);
             join_step_out.requires_original_order =
                 json_in.value("requires_original_order", false);
+            join_step_out.outer_reorder_barrier =
+                json_in.value("outer_reorder_barrier", false);
+            join_step_out.semi_reorder_barrier =
+                json_in.value("semi_reorder_barrier", false);
+            join_step_out.anti_reorder_barrier =
+                json_in.value("anti_reorder_barrier", false);
+            join_step_out.using_reorder_barrier =
+                json_in.value("using_reorder_barrier", false);
+            join_step_out.natural_reorder_barrier =
+                json_in.value("natural_reorder_barrier", false);
+            join_step_out.lateral_reorder_barrier =
+                json_in.value("lateral_reorder_barrier", false);
+            join_step_out.parameterized_dependency =
+                json_in.value("parameterized_dependency", false);
+            join_step_out.parameter_dependency_relation_indexes.clear();
+            const auto dependency_indexes_it =
+                json_in.find("parameter_dependency_relation_indexes");
+            if (dependency_indexes_it != json_in.end() &&
+                dependency_indexes_it->is_array())
+            {
+                for (const auto &entry : *dependency_indexes_it)
+                {
+                    if (entry.is_number_unsigned())
+                    {
+                        join_step_out.parameter_dependency_relation_indexes.push_back(
+                            entry.get<size_t>());
+                    }
+                }
+            }
+            join_step_out.parameter_dependency_relation_aliases.clear();
+            const auto dependency_aliases_it =
+                json_in.find("parameter_dependency_relation_aliases");
+            if (dependency_aliases_it != json_in.end() &&
+                dependency_aliases_it->is_array())
+            {
+                for (const auto &entry : *dependency_aliases_it)
+                {
+                    if (entry.is_string())
+                    {
+                        join_step_out.parameter_dependency_relation_aliases.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
             join_step_out.has_hash_keys = json_in.value("has_hash_keys", false);
             join_step_out.has_merge_keys = json_in.value("has_merge_keys", false);
             join_step_out.merge_outer_presorted =
@@ -530,6 +651,70 @@ namespace scratchbird::optimizer
             entry_out.enforced = json_in.value("enforced", true);
             return true;
         }
+
+        auto searchSummaryToJson(const RuntimePlanSearchSummary &summary)
+            -> nlohmann::json
+        {
+            nlohmann::json out;
+            out["requested_strategy"] = summary.requested_strategy;
+            out["selected_strategy"] = summary.selected_strategy;
+            out["search_budget"] = summary.search_budget;
+            out["considered_state_count"] = summary.considered_state_count;
+            out["pruned_state_count"] = summary.pruned_state_count;
+            out["pair_evaluation_count"] = summary.pair_evaluation_count;
+            out["rejected_candidate_count"] = summary.rejected_candidate_count;
+            out["max_pair_evaluations"] = summary.max_pair_evaluations;
+            out["max_states_considered"] = summary.max_states_considered;
+            out["exhaustive_join_limit"] = summary.exhaustive_join_limit;
+            out["bounded_dp_join_limit"] = summary.bounded_dp_join_limit;
+            out["fallback_prune_level"] = summary.fallback_prune_level;
+            out["fallback_reason"] = summary.fallback_reason;
+            out["fallback_threshold_name"] = summary.fallback_threshold_name;
+            out["fallback_threshold_value"] = summary.fallback_threshold_value;
+            return out;
+        }
+
+        auto searchSummaryFromJson(const nlohmann::json &json_in,
+                                   RuntimePlanSearchSummary &summary_out,
+                                   std::string &error_out) -> bool
+        {
+            if (!json_in.is_object())
+            {
+                error_out = "runtime plan search summary entry must be an object";
+                return false;
+            }
+
+            summary_out.requested_strategy =
+                json_in.value("requested_strategy", std::string());
+            summary_out.selected_strategy =
+                json_in.value("selected_strategy", std::string());
+            summary_out.search_budget = json_in.value("search_budget", 0ULL);
+            summary_out.considered_state_count =
+                json_in.value("considered_state_count", 0ULL);
+            summary_out.pruned_state_count =
+                json_in.value("pruned_state_count", 0ULL);
+            summary_out.pair_evaluation_count =
+                json_in.value("pair_evaluation_count", 0ULL);
+            summary_out.rejected_candidate_count =
+                json_in.value("rejected_candidate_count", 0ULL);
+            summary_out.max_pair_evaluations =
+                json_in.value("max_pair_evaluations", 0ULL);
+            summary_out.max_states_considered =
+                json_in.value("max_states_considered", 0ULL);
+            summary_out.exhaustive_join_limit =
+                json_in.value("exhaustive_join_limit", 0ULL);
+            summary_out.bounded_dp_join_limit =
+                json_in.value("bounded_dp_join_limit", 0ULL);
+            summary_out.fallback_prune_level =
+                json_in.value("fallback_prune_level", 0ULL);
+            summary_out.fallback_reason =
+                json_in.value("fallback_reason", std::string());
+            summary_out.fallback_threshold_name =
+                json_in.value("fallback_threshold_name", std::string());
+            summary_out.fallback_threshold_value =
+                json_in.value("fallback_threshold_value", 0ULL);
+            return true;
+        }
     } // namespace
 
     auto encodeRuntimePlan(const RuntimePlan &plan,
@@ -540,6 +725,9 @@ namespace scratchbird::optimizer
         {
             nlohmann::json root;
             root["version"] = plan.version;
+            root["contract_id"] = plan.contract_id;
+            root["join_graph_contract_id"] = plan.join_graph_contract_id;
+            root["diagnostics_contract_id"] = plan.diagnostics_contract_id;
             root["plan_hash"] = plan.plan_hash;
             root["explain_text"] = plan.explain_text;
             root["cache_mode"] = plan.cache_mode;
@@ -548,6 +736,7 @@ namespace scratchbird::optimizer
                 plan.selectivity_bucket_signature;
             root["query_feedback_key"] = plan.query_feedback_key;
             root["parameter_sensitive"] = plan.parameter_sensitive;
+            root["search_summary"] = searchSummaryToJson(plan.search_summary);
             root["root"] = nodeToJson(plan.root);
             root["relations"] = nlohmann::json::array();
             for (const auto &relation : plan.relations)
@@ -609,6 +798,14 @@ namespace scratchbird::optimizer
             }
 
             plan_out.version = root.value("version", 1U);
+            plan_out.contract_id =
+                root.value("contract_id", std::string(kRuntimePlanContractId));
+            plan_out.join_graph_contract_id =
+                root.value("join_graph_contract_id",
+                           std::string(kJoinGraphContractId));
+            plan_out.diagnostics_contract_id =
+                root.value("diagnostics_contract_id",
+                           std::string(kOptimizerDiagnosticsContractId));
             plan_out.plan_hash = root.value("plan_hash", std::string());
             plan_out.explain_text = root.value("explain_text", std::string());
             plan_out.cache_mode = root.value("cache_mode", std::string());
@@ -620,6 +817,20 @@ namespace scratchbird::optimizer
                 root.value("query_feedback_key", std::string());
             plan_out.parameter_sensitive =
                 root.value("parameter_sensitive", false);
+            const auto search_summary_it = root.find("search_summary");
+            if (search_summary_it != root.end())
+            {
+                if (!searchSummaryFromJson(*search_summary_it,
+                                           plan_out.search_summary,
+                                           error_out))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                plan_out.search_summary = RuntimePlanSearchSummary{};
+            }
 
             const auto root_node_it = root.find("root");
             if (root_node_it != root.end())
