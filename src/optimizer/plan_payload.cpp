@@ -178,6 +178,8 @@ namespace scratchbird::optimizer
             out["method"] = join_step.method;
             out["disconnected_component"] = join_step.disconnected_component;
             out["legality_class"] = join_step.legality_class;
+            out["legal_method_families"] = join_step.legal_method_families;
+            out["method_enablers"] = join_step.method_enablers;
             out["reorderable"] = join_step.reorderable;
             out["natural"] = join_step.natural;
             out["using_columns"] = join_step.using_columns;
@@ -276,6 +278,32 @@ namespace scratchbird::optimizer
                 json_in.value("disconnected_component", false);
             join_step_out.legality_class =
                 json_in.value("legality_class", std::string());
+            join_step_out.legal_method_families.clear();
+            const auto legal_families_it = json_in.find("legal_method_families");
+            if (legal_families_it != json_in.end() && legal_families_it->is_array())
+            {
+                for (const auto &entry : *legal_families_it)
+                {
+                    if (entry.is_string())
+                    {
+                        join_step_out.legal_method_families.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
+            join_step_out.method_enablers.clear();
+            const auto method_enablers_it = json_in.find("method_enablers");
+            if (method_enablers_it != json_in.end() && method_enablers_it->is_array())
+            {
+                for (const auto &entry : *method_enablers_it)
+                {
+                    if (entry.is_string())
+                    {
+                        join_step_out.method_enablers.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
             join_step_out.reorderable = json_in.value("reorderable", true);
             join_step_out.natural = json_in.value("natural", false);
             join_step_out.condition_text = json_in.value("condition_text", std::string());

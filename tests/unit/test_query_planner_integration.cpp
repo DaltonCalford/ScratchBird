@@ -112,6 +112,11 @@ namespace
                         step.value("disconnected_component", false);
                     normalized_step["legality_class"] =
                         step.value("legality_class", "");
+                    normalized_step["legal_method_families"] =
+                        step.value("legal_method_families",
+                                   nlohmann::json::array());
+                    normalized_step["method_enablers"] =
+                        step.value("method_enablers", nlohmann::json::array());
                     normalized_step["reorderable"] =
                         step.value("reorderable", true);
                     normalized_step["outer_reorder_barrier"] =
@@ -192,6 +197,8 @@ namespace
             {"join_edge_right_alias", step.join_edge_right_alias},
             {"disconnected_component", step.disconnected_component},
             {"legality_class", step.legality_class},
+            {"legal_method_families", step.legal_method_families},
+            {"method_enablers", step.method_enablers},
             {"reorderable", step.reorderable},
             {"outer_reorder_barrier", step.outer_reorder_barrier},
             {"semi_reorder_barrier", step.semi_reorder_barrier},
@@ -1185,6 +1192,7 @@ TEST_F(QueryPlannerIntegrationTest,
     EXPECT_EQ(step.join_edge_right_alias, "products");
     EXPECT_FALSE(step.join_edge_left_id_text.empty());
     EXPECT_FALSE(step.join_edge_right_id_text.empty());
+    EXPECT_FALSE(step.legal_method_families.empty());
     EXPECT_TRUE(step.outer_reorder_barrier);
     EXPECT_FALSE(step.using_reorder_barrier);
     EXPECT_FALSE(step.natural_reorder_barrier);
@@ -1209,6 +1217,11 @@ TEST_F(QueryPlannerIntegrationTest, LeftJoinCarriesFormalLegalityMetadata)
     ASSERT_EQ(plan.join_steps.size(), 1u);
     EXPECT_EQ(plan.join_steps.front().join_type, "LEFT");
     EXPECT_EQ(plan.join_steps.front().legality_class, "LEFT_OUTER_BARRIER");
+    EXPECT_EQ(plan.join_steps.front().legal_method_families.size(), 3u);
+    EXPECT_EQ(plan.join_steps.front().legal_method_families.front(),
+              "NESTED_LOOP");
+    EXPECT_EQ(plan.join_steps.front().legal_method_families[1], "HASH_JOIN");
+    EXPECT_EQ(plan.join_steps.front().legal_method_families[2], "MERGE_JOIN");
     EXPECT_FALSE(plan.join_steps.front().reorderable);
     EXPECT_TRUE(plan.join_steps.front().preserves_left_rows);
     EXPECT_FALSE(plan.join_steps.front().preserves_right_rows);
@@ -1674,6 +1687,53 @@ TEST_F(QueryPlannerIntegrationTest, MergeJoinPlanExecutesAndPreservesRuntimeMeta
     EXPECT_EQ(rows.front(), "2");
 }
 
+TEST_F(QueryPlannerIntegrationTest, ForcedMergeJoinUsesExplicitSortToMergeCandidate)
+{
+    ASSERT_TRUE(createDatabase());
+
+    for (int i = 1; i <= 4; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" + std::to_string(i) +
+                               "', 'u" + std::to_string(i) +
+                               "@example.com', " + std::to_string(20 + i) + ")")
+                        .success());
+        ASSERT_TRUE(executeSQL("INSERT INTO products (id, name, price) VALUES (" +
+                               std::to_string(i) + ", 'p" + std::to_string(i) +
+                               "', " + std::to_string(10 + i) + ".0)")
+                        .success());
+    }
+
+    connection_ctx_->setSessionVariable("OPTIMIZER.JOIN_METHOD", "MERGE_JOIN");
+
+    auto bytecode =
+        compileSQL("SELECT users.id FROM users JOIN products ON users.id = products.id");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.join_steps.size(), 1u);
+    EXPECT_EQ(plan.join_steps.front().method, "MERGE_JOIN");
+    EXPECT_TRUE(plan.join_steps.front().has_merge_keys);
+    EXPECT_FALSE(plan.join_steps.front().merge_outer_presorted);
+    EXPECT_FALSE(plan.join_steps.front().merge_inner_presorted);
+    ASSERT_EQ(plan.join_steps.front().method_enablers.size(), 2u);
+    EXPECT_EQ(plan.join_steps.front().method_enablers[0], "SORT_OUTER");
+    EXPECT_EQ(plan.join_steps.front().method_enablers[1], "SORT_INNER");
+}
+
+TEST_F(QueryPlannerIntegrationTest, ForcedHashJoinFailsClosedOnNonEquiJoin)
+{
+    ASSERT_TRUE(createDatabase());
+
+    connection_ctx_->setSessionVariable("OPTIMIZER.JOIN_METHOD", "HASH_JOIN");
+
+    auto bytecode =
+        compileSQL("SELECT users.id FROM users JOIN products ON users.id > products.id");
+    EXPECT_TRUE(bytecode.empty());
+    EXPECT_NE(last_compile_errors_.find("JOIN_METHOD_NON_EQUI"), std::string::npos);
+}
+
 TEST_F(QueryPlannerIntegrationTest, ExplainJsonFormatsRuntimePlan)
 {
     ASSERT_TRUE(createDatabase());
@@ -1732,6 +1792,8 @@ TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesJoinGraphContractFields)
               "users");
     EXPECT_EQ(join_graph.at("join_steps")[0].at("join_edge_right_alias").get<std::string>(),
               "products");
+    EXPECT_TRUE(join_graph.at("join_steps")[0].contains("legal_method_families"));
+    EXPECT_TRUE(join_graph.at("join_steps")[0].contains("method_enablers"));
     EXPECT_TRUE(join_graph.at("join_steps")[0].at("outer_reorder_barrier").get<bool>());
 
     const auto& optimizer_trace = parsed.at("optimizer_trace");
@@ -2154,7 +2216,14 @@ TEST_F(QueryPlannerIntegrationTest, LateralJoinUsesParameterizedNestedLoopPath)
     EXPECT_TRUE(plan.relations[1].lateral);
     EXPECT_TRUE(plan.relations[1].parameterized);
     ASSERT_EQ(plan.join_steps.size(), 1u);
-    EXPECT_EQ(plan.join_steps[0].method, "NESTED_LOOP");
+    EXPECT_EQ(plan.join_steps[0].method, "PARAMETERIZED_NESTED_LOOP");
+    EXPECT_TRUE(plan.join_steps[0].parameterized_dependency);
+    ASSERT_EQ(plan.join_steps[0].legal_method_families.size(), 1u);
+    EXPECT_EQ(plan.join_steps[0].legal_method_families[0],
+              "PARAMETERIZED_NESTED_LOOP");
+    ASSERT_EQ(plan.join_steps[0].method_enablers.size(), 1u);
+    EXPECT_EQ(plan.join_steps[0].method_enablers[0],
+              "OUTER_PARAMETER_BINDING");
 
     auto result = executeSQL(sql);
     ASSERT_TRUE(result.success()) << result.error();

@@ -111,6 +111,8 @@ namespace scratchbird::optimizer
         std::string method;
         bool disconnected_component = false;
         std::string legality_class;
+        std::vector<std::string> legal_method_families;
+        std::vector<std::string> method_enablers;
         bool reorderable = true;
         bool natural = false;
         std::vector<std::string> using_columns;

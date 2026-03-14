@@ -349,3 +349,65 @@ TEST(JoinLegalityClassificationTest, SemiAndAntiDescriptorsFailClosedForReorderi
     EXPECT_FALSE(anti.reorderable);
     EXPECT_TRUE(anti.requires_original_order);
 }
+
+TEST(JoinMethodLegalityTest, HashAndMergeRequireResolvedJoinKeyMetadata)
+{
+    auto descriptor = classifyJoinLegality(parser::JoinType::INNER, false, false);
+
+    const auto hash_legality = evaluateHashJoinLegality(descriptor,
+                                                        parser::JoinType::INNER,
+                                                        true,
+                                                        false,
+                                                        false);
+    EXPECT_FALSE(hash_legality.legal);
+    EXPECT_EQ(hash_legality.reject_code,
+              JoinMethodRejectCode::MISSING_KEY_METADATA);
+
+    const auto merge_legality = evaluateMergeJoinLegality(descriptor,
+                                                          parser::JoinType::INNER,
+                                                          true,
+                                                          false,
+                                                          false,
+                                                          false,
+                                                          false);
+    EXPECT_FALSE(merge_legality.legal);
+    EXPECT_EQ(merge_legality.reject_code,
+              JoinMethodRejectCode::MISSING_KEY_METADATA);
+}
+
+TEST(JoinMethodLegalityTest, MergeJoinCanBeEnabledByExplicitSorts)
+{
+    auto descriptor = classifyJoinLegality(parser::JoinType::INNER, false, false);
+
+    const auto merge_legality = evaluateMergeJoinLegality(descriptor,
+                                                          parser::JoinType::INNER,
+                                                          true,
+                                                          true,
+                                                          false,
+                                                          false,
+                                                          false);
+    EXPECT_TRUE(merge_legality.legal);
+    EXPECT_TRUE(merge_legality.requires_sort_outer);
+    EXPECT_TRUE(merge_legality.requires_sort_inner);
+}
+
+TEST(JoinMethodLegalityTest, ParameterizedInnerPublishesDedicatedNestedLoopFamily)
+{
+    auto descriptor = classifyJoinLegality(parser::JoinType::LEFT, false, false);
+    descriptor.lateral_dependency = true;
+
+    const auto nested_legality =
+        evaluateNestedLoopLegality(descriptor, true);
+    EXPECT_TRUE(nested_legality.legal);
+    EXPECT_EQ(nested_legality.family,
+              JoinMethodFamily::PARAMETERIZED_NESTED_LOOP);
+
+    const auto hash_legality = evaluateHashJoinLegality(descriptor,
+                                                        parser::JoinType::LEFT,
+                                                        true,
+                                                        true,
+                                                        true);
+    EXPECT_FALSE(hash_legality.legal);
+    EXPECT_EQ(hash_legality.reject_code,
+              JoinMethodRejectCode::PARAMETERIZED_INNER_REQUIRES_NESTED_LOOP);
+}

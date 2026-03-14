@@ -65050,6 +65050,32 @@ namespace scratchbird
                                      << " type=" << step.join_type
                                      << " method=" << step.method
                                      << " legality=" << step.legality_class;
+                                if (!step.legal_method_families.empty())
+                                {
+                                    line << " legal_families=";
+                                    for (size_t i = 0;
+                                         i < step.legal_method_families.size();
+                                         ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            line << ",";
+                                        }
+                                        line << step.legal_method_families[i];
+                                    }
+                                }
+                                if (!step.method_enablers.empty())
+                                {
+                                    line << " enablers=";
+                                    for (size_t i = 0; i < step.method_enablers.size(); ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            line << ",";
+                                        }
+                                        line << step.method_enablers[i];
+                                    }
+                                }
                                 if (step.disconnected_component)
                                 {
                                     line << " disconnected_component=true";
@@ -65277,6 +65303,31 @@ namespace scratchbird
                                         << escape_json(entry.method) << "\""
                                         << ",\"legality_class\":\""
                                         << escape_json(entry.legality_class) << "\""
+                                        << ",\"legal_method_families\":[";
+                                    for (size_t j = 0;
+                                         j < entry.legal_method_families.size();
+                                         ++j)
+                                    {
+                                        if (j > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(entry.legal_method_families[j])
+                                            << "\"";
+                                    }
+                                    out << "],\"method_enablers\":[";
+                                    for (size_t j = 0; j < entry.method_enablers.size(); ++j)
+                                    {
+                                        if (j > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(entry.method_enablers[j])
+                                            << "\"";
+                                    }
+                                    out << "]"
                                         << ",\"disconnected_component\":"
                                         << (entry.disconnected_component ? "true" : "false")
                                         << ",\"reorderable\":"

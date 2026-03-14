@@ -110,6 +110,16 @@ size_t JoinOrderingOptimizer::addJoinEdge(size_t left_idx, size_t right_idx,
                                           bool reorderable,
                                           bool requires_original_order)
 {
+    if (legality_class == JoinLegalityClass::INNER_REORDERABLE &&
+        reorderable &&
+        !requires_original_order)
+    {
+        const auto derived = classifyJoinLegality(join_type, false, false);
+        legality_class = derived.legality_class;
+        reorderable = derived.reorderable;
+        requires_original_order = derived.requires_original_order;
+    }
+
     JoinEdge edge;
     edge.left_rel_idx = left_idx;
     edge.right_rel_idx = right_idx;

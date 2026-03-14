@@ -3930,10 +3930,28 @@ namespace scratchbird::optimizer
                                           ? planJoinTypeToString(join.join_type)
                                           : join.condition_text);
                 const auto join_type = join.join_type;
-                const bool force_nested_loop_barrier =
-                    join.join_type == parser::JoinType::RIGHT ||
-                    join.join_type == parser::JoinType::FULL || join.natural ||
-                    !join.using_columns.empty();
+                const bool has_resolved_join_key_metadata =
+                    join.equi_join && !join.left_hash_qualifier.empty() &&
+                    !join.left_hash_column.empty() &&
+                    !join.right_hash_qualifier.empty() &&
+                    !join.right_hash_column.empty();
+                JoinLegalityDescriptor method_legality;
+                method_legality.legality_class = join.legality_class;
+                method_legality.reorderable = join.reorderable;
+                method_legality.preserves_left_rows = join.preserves_left_rows;
+                method_legality.preserves_right_rows = join.preserves_right_rows;
+                method_legality.null_introduces_left = join.null_introduces_left;
+                method_legality.null_introduces_right = join.null_introduces_right;
+                method_legality.requires_original_order =
+                    join.requires_original_order;
+                method_legality.natural_barrier =
+                    join.natural || isNaturalJoinType(join.join_type);
+                method_legality.using_barrier = !join.using_columns.empty();
+                method_legality.semi_duplicate_semantics =
+                    join.legality_class == JoinLegalityClass::SEMI_BARRIER;
+                method_legality.anti_duplicate_semantics =
+                    join.legality_class == JoinLegalityClass::ANTI_BARRIER;
+                method_legality.lateral_dependency = parameterized_inner;
                 auto rejectForcedJoinMethod =
                     [&](const char *requested_method,
                         const std::string &reason) -> JoinDecision {
@@ -3946,8 +3964,33 @@ namespace scratchbird::optimizer
                         decision.valid = false;
                         return decision;
                     };
+                const char *nested_loop_candidate_name =
+                    parameterized_inner ? "PARAMETERIZED_NESTED_LOOP"
+                                        : "NESTED_LOOP";
+                const auto nested_legality =
+                    evaluateNestedLoopLegality(method_legality,
+                                               parameterized_inner);
+                const bool outer_presorted =
+                    pathLikelyProvidesJoinOrder(left_tree.path);
+                const bool inner_presorted =
+                    pathLikelyProvidesJoinOrder(right_tree.path);
+                const auto hash_legality =
+                    evaluateHashJoinLegality(method_legality,
+                                             join_type,
+                                             join.equi_join,
+                                             has_resolved_join_key_metadata,
+                                             parameterized_inner);
+                const auto merge_legality =
+                    evaluateMergeJoinLegality(method_legality,
+                                              join_type,
+                                              join.equi_join,
+                                              has_resolved_join_key_metadata,
+                                              parameterized_inner,
+                                              outer_presorted,
+                                              inner_presorted);
 
                 const bool allow_nested_loop =
+                    nested_legality.legal &&
                     planner_controls.join_method !=
                         PlannerJoinMethodControl::HASH_ONLY &&
                     planner_controls.join_method !=
@@ -3966,9 +4009,11 @@ namespace scratchbird::optimizer
                     appendRuntimeTrace(considered_paths,
                                        "JOIN_METHOD",
                                        join_subject,
-                                       "NESTED_LOOP",
+                                       nested_loop_candidate_name,
                                        "CONSIDERED",
-                                       "join candidate",
+                                       parameterized_inner
+                                           ? "parameterized nested-loop candidate"
+                                           : "nested-loop candidate",
                                        nl_cost.startup_cost,
                                        nl_cost.total_cost,
                                        nl_cost.rows);
@@ -3979,7 +4024,7 @@ namespace scratchbird::optimizer
                     appendRuntimeTrace(rejected_paths,
                                        "JOIN_METHOD",
                                        join_subject,
-                                       "NESTED_LOOP",
+                                       nested_loop_candidate_name,
                                        "REJECTED",
                                        std::string("optimizer control forces ") +
                                            plannerJoinMethodName(
@@ -3990,11 +4035,7 @@ namespace scratchbird::optimizer
                 }
 
                 bool allow_hash =
-                    (join_type == parser::JoinType::INNER ||
-                     join_type == parser::JoinType::LEFT) &&
-                    join.equi_join &&
-                    !force_nested_loop_barrier &&
-                    !parameterized_inner &&
+                    hash_legality.legal &&
                     planner_controls.join_method !=
                         PlannerJoinMethodControl::NESTED_LOOP_ONLY &&
                     planner_controls.join_method !=
@@ -4015,7 +4056,7 @@ namespace scratchbird::optimizer
                                        join_subject,
                                        "HASH_JOIN",
                                        "CONSIDERED",
-                                       "equi-join hash candidate",
+                                       "hash-join candidate",
                                        hash_cost.startup_cost,
                                        hash_cost.total_cost,
                                        hash_cost.rows);
@@ -4056,11 +4097,9 @@ namespace scratchbird::optimizer
                     }
                     else
                     {
-                        reject_reason = parameterized_inner
-                            ? "parameterized inner path requires nested loop"
-                            : join.equi_join
-                                  ? "join type does not admit hash join"
-                                  : "hash join requires equi-join keys";
+                        reject_reason = joinMethodRejectReason(
+                            JoinMethodFamily::HASH_JOIN,
+                            hash_legality.reject_code);
                     }
                     appendRuntimeTrace(rejected_paths,
                                        "JOIN_METHOD",
@@ -4078,17 +4117,8 @@ namespace scratchbird::optimizer
                     }
                 }
 
-                const bool outer_presorted =
-                    pathLikelyProvidesJoinOrder(left_tree.path);
-                const bool inner_presorted =
-                    pathLikelyProvidesJoinOrder(right_tree.path);
                 bool allow_merge =
-                    (join_type == parser::JoinType::INNER ||
-                     join_type == parser::JoinType::LEFT) &&
-                    join.equi_join &&
-                    !force_nested_loop_barrier &&
-                    (outer_presorted || inner_presorted) &&
-                    !parameterized_inner &&
+                    merge_legality.legal &&
                     planner_controls.join_method !=
                         PlannerJoinMethodControl::NESTED_LOOP_ONLY &&
                     planner_controls.join_method !=
@@ -4109,9 +4139,15 @@ namespace scratchbird::optimizer
                     appendRuntimeTrace(considered_paths,
                                        "JOIN_METHOD",
                                        join_subject,
-                                       "MERGE_JOIN",
+                                       merge_legality.requires_sort_outer ||
+                                               merge_legality.requires_sort_inner
+                                           ? "MERGE_JOIN[SORT_TO_MERGE]"
+                                           : "MERGE_JOIN",
                                        "CONSIDERED",
-                                       "ordered equi-join candidate",
+                                       merge_legality.requires_sort_outer ||
+                                               merge_legality.requires_sort_inner
+                                           ? "explicit sort-to-merge candidate"
+                                           : "ordered equi-join candidate",
                                        merge_cost.startup_cost,
                                        merge_cost.total_cost,
                                        merge_cost.rows);
@@ -4152,11 +4188,9 @@ namespace scratchbird::optimizer
                     }
                     else
                     {
-                        reject_reason = parameterized_inner
-                            ? "parameterized inner path requires nested loop"
-                            : !join.equi_join
-                                  ? "merge join requires equi-join keys"
-                                  : "merge join requires presorted input";
+                        reject_reason = joinMethodRejectReason(
+                            JoinMethodFamily::MERGE_JOIN,
+                            merge_legality.reject_code);
                     }
                     appendRuntimeTrace(rejected_paths,
                                        "JOIN_METHOD",
@@ -4180,6 +4214,10 @@ namespace scratchbird::optimizer
                     HASH_JOIN,
                     MERGE_JOIN
                 };
+                const bool merge_requires_explicit_sort =
+                    merge_legality.requires_sort_outer ||
+                    merge_legality.requires_sort_inner;
+                bool merge_deferred_for_ordering = false;
                 ChosenJoinMethod chosen_method = ChosenJoinMethod::NESTED_LOOP;
                 decision.total_cost = nl_cost.total_cost;
                 decision.rows = nl_cost.rows;
@@ -4197,25 +4235,37 @@ namespace scratchbird::optimizer
                     decision.total_cost = hash_cost.total_cost;
                     decision.rows = hash_cost.rows;
                 }
-                if (allow_merge && merge_cost.total_cost < decision.total_cost)
+                if (allow_merge &&
+                    merge_cost.total_cost < decision.total_cost &&
+                    (!merge_requires_explicit_sort ||
+                     !allow_hash ||
+                     planner_controls.join_method ==
+                         PlannerJoinMethodControl::MERGE_ONLY))
                 {
                     chosen_method = ChosenJoinMethod::MERGE_JOIN;
                     decision.total_cost = merge_cost.total_cost;
                     decision.rows = merge_cost.rows;
+                }
+                else if (allow_merge && allow_hash && merge_requires_explicit_sort &&
+                         planner_controls.join_method !=
+                             PlannerJoinMethodControl::MERGE_ONLY &&
+                         merge_cost.total_cost < hash_cost.total_cost)
+                {
+                    merge_deferred_for_ordering = true;
                 }
                 const char *chosen_method_name =
                     chosen_method == ChosenJoinMethod::HASH_JOIN
                         ? "HASH_JOIN"
                         : chosen_method == ChosenJoinMethod::MERGE_JOIN
                               ? "MERGE_JOIN"
-                              : "NESTED_LOOP";
+                              : nested_loop_candidate_name;
                 if (allow_nested_loop &&
                     chosen_method != ChosenJoinMethod::NESTED_LOOP)
                 {
                     appendRuntimeTrace(rejected_paths,
                                        "JOIN_METHOD",
                                        join_subject,
-                                       "NESTED_LOOP",
+                                       nested_loop_candidate_name,
                                        "REJECTED",
                                        std::string("higher total cost than chosen ") +
                                            chosen_method_name,
@@ -4243,8 +4293,10 @@ namespace scratchbird::optimizer
                                        join_subject,
                                        "MERGE_JOIN",
                                        "REJECTED",
-                                       std::string("higher total cost than chosen ") +
-                                           chosen_method_name,
+                                       merge_deferred_for_ordering
+                                           ? "explicit sort-to-merge candidate deferred without ordering reuse"
+                                           : std::string("higher total cost than chosen ") +
+                                                 chosen_method_name,
                                        merge_cost.startup_cost,
                                        merge_cost.total_cost,
                                        merge_cost.rows);
@@ -4276,6 +4328,21 @@ namespace scratchbird::optimizer
                      join.condition_text.empty());
                 decision.runtime_join.legality_class =
                     std::string(joinLegalityClassName(join.legality_class));
+                decision.runtime_join.legal_method_families.clear();
+                if (nested_legality.legal)
+                {
+                    decision.runtime_join.legal_method_families.push_back(
+                        nested_loop_candidate_name);
+                }
+                if (hash_legality.legal)
+                {
+                    decision.runtime_join.legal_method_families.push_back("HASH_JOIN");
+                }
+                if (merge_legality.legal)
+                {
+                    decision.runtime_join.legal_method_families.push_back("MERGE_JOIN");
+                }
+                decision.runtime_join.method_enablers.clear();
                 decision.runtime_join.reorderable = join.reorderable;
                 decision.runtime_join.natural = join.natural;
                 decision.runtime_join.using_columns = join.using_columns;
@@ -4387,7 +4454,25 @@ namespace scratchbird::optimizer
                         ? "HASH_JOIN"
                         : chosen_method == ChosenJoinMethod::MERGE_JOIN
                               ? "MERGE_JOIN"
-                              : "NESTED_LOOP";
+                              : nested_loop_candidate_name;
+                if (chosen_method == ChosenJoinMethod::MERGE_JOIN)
+                {
+                    if (merge_legality.requires_sort_outer)
+                    {
+                        decision.runtime_join.method_enablers.push_back(
+                            "SORT_OUTER");
+                    }
+                    if (merge_legality.requires_sort_inner)
+                    {
+                        decision.runtime_join.method_enablers.push_back(
+                            "SORT_INNER");
+                    }
+                }
+                if (parameterized_inner)
+                {
+                    decision.runtime_join.method_enablers.push_back(
+                        "OUTER_PARAMETER_BINDING");
+                }
                 appendRuntimeTrace(considered_paths,
                                    "JOIN_METHOD",
                                    join_subject,
@@ -4400,7 +4485,8 @@ namespace scratchbird::optimizer
                                    decision.runtime_join.total_cost,
                                    decision.runtime_join.estimated_rows);
 
-                if (join.equi_join && !force_nested_loop_barrier)
+                if (has_resolved_join_key_metadata &&
+                    (hash_legality.legal || merge_legality.legal))
                 {
                     decision.runtime_join.has_hash_keys = true;
                     decision.runtime_join.has_merge_keys = true;
@@ -5385,6 +5471,16 @@ namespace scratchbird::optimizer
             for (const auto &predicate : join.residual_predicates)
             {
                 hash_seed << predicate << ';';
+            }
+            hash_seed << ':';
+            for (const auto &family : join.legal_method_families)
+            {
+                hash_seed << family << ';';
+            }
+            hash_seed << ':';
+            for (const auto &enabler : join.method_enablers)
+            {
+                hash_seed << enabler << ';';
             }
             hash_seed << '|';
         }
