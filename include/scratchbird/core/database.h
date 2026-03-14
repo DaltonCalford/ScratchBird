@@ -207,6 +207,34 @@ namespace scratchbird
                 std::vector<ConnectionContext::SecurityContext> security_stack;
             };
 
+            enum class StartupReconciliationOutcome : uint8_t
+            {
+                NOT_RUN = 0,
+                CLEAN = 1,
+                CLEAN_WITH_FINDINGS = 2,
+                RECOVERY_WITH_FINDINGS = 3,
+                FAILED_PAGE_SCAN = 4,
+                FAILED_TXN_RECONCILIATION = 5
+            };
+
+            struct StartupReconciliationState
+            {
+                StartupReconciliationOutcome outcome =
+                    StartupReconciliationOutcome::NOT_RUN;
+                Status failure_status = Status::OK;
+                bool clean_shutdown_marker = false;
+                bool startup_repair = false;
+                bool has_page_scan_findings = false;
+                bool has_corrupt_pages = false;
+                uint64_t tip_active_to_aborted = 0;
+                uint64_t tip_active_to_prepared = 0;
+                uint64_t stale_prepared_records_removed = 0;
+                uint64_t prepared_tip_without_catalog = 0;
+                uint64_t clog_states_synchronized = 0;
+                uint32_t relinkable_chain_pages = 0;
+                uint32_t cleanup_blocked_chain_pages = 0;
+            };
+
             // Dormant transaction handling (reattach support).
             // The ConnectionContext is retained to preserve locks and ProcArray visibility.
             Status detachToDormant(std::unique_ptr<class ConnectionContext> &connection,
@@ -245,6 +273,10 @@ namespace scratchbird
             uint64_t last_clean_shutdown_generation() const
             {
                 return last_clean_shutdown_generation_;
+            }
+            const StartupReconciliationState &last_startup_reconciliation() const
+            {
+                return startup_reconciliation_state_;
             }
             const ID &uuid() const
             {
@@ -659,6 +691,7 @@ namespace scratchbird
             uint64_t startup_generation_ = 0;
             uint64_t restart_generation_ = 0;
             uint64_t last_clean_shutdown_generation_ = 0;
+            StartupReconciliationState startup_reconciliation_state_{};
 
             // Forward declared pointers - managed via unique_ptr for RAII
             std::unique_ptr<PageManager> page_manager_;       // Page allocation manager (owned)
@@ -730,6 +763,9 @@ namespace scratchbird
                                                          ErrorContext *ctx);
             Status markStartupOpen(ErrorContext *ctx);
             Status markCleanShutdown(ErrorContext *ctx);
+            Status persistStartupReconciliationState(const StartupReconciliationState &state,
+                                                     ErrorContext *ctx);
+            Status runStartupReconciliation(ErrorContext *ctx);
             Status validate_bootstrap_page_map(ErrorContext *ctx) const;
             static Status validate_db_path(const std::string &path, std::string &canonical_path,
                                            ErrorContext *ctx);

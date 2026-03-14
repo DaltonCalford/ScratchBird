@@ -2823,26 +2823,47 @@ namespace scratchbird::core
             return s;
         }
 
+        const uint32_t prepared_owner_proc_id = proc_id_;
+        uint32_t new_proc_id = UINT32_MAX;
+        s = ProcArrayManager::registerBackend(&new_proc_id, ctx);
+        if (s != Status::OK)
+        {
+            LOG_ERROR(TRANSACTION,
+                      "Failed to allocate fresh backend slot before prepare: proc_id=%u, xid=%lu, status=%d",
+                      proc_id_,
+                      current_xid_,
+                      static_cast<int>(s));
+            return s;
+        }
+
+        if (!isZeroUuidLocal(session_id_))
+        {
+            Status session_status = ProcArrayManager::setSessionId(new_proc_id, session_id_, ctx);
+            if (session_status != Status::OK)
+            {
+                ProcArrayManager::unregisterBackend(new_proc_id, nullptr);
+                return session_status;
+            }
+        }
+
         s = txn_manager_->prepareTransaction(proc_id_, current_xid_, gid, current_user_id_, ctx);
         if (s != Status::OK)
         {
+            ProcArrayManager::unregisterBackend(new_proc_id, nullptr);
             LOG_ERROR(TRANSACTION,
                       "Failed to prepare transaction: proc_id=%u, xid=%lu, status=%d",
                       proc_id_, current_xid_, static_cast<int>(s));
             return s;
         }
 
-        // Prepared transactions don't have a dedicated lock owner yet, so release locks
-        // to avoid leaking them into the next transaction on the same proc_id.
-        LockManager *lock_mgr = db_->lock_manager();
-        if (lock_mgr)
+        Status unregister_status = ProcArrayManager::unregisterBackend(prepared_owner_proc_id, ctx);
+        if (unregister_status != Status::OK)
         {
-            Status lock_status = lock_mgr->releaseAllLocks(proc_id_, ctx);
-            if (lock_status != Status::OK)
-            {
-                LOG_WARNING(LOCK, "Failed to release locks after prepare: proc_id=%u, xid=%lu",
-                            proc_id_, current_xid_);
-            }
+            LOG_WARNING(TRANSACTION,
+                        "Failed to detach prepared lock owner from ProcArray: proc_id=%u, xid=%lu, status=%d",
+                        prepared_owner_proc_id,
+                        current_xid_,
+                        static_cast<int>(unregister_status));
         }
 
         statement_xid_ = 0;
@@ -2854,6 +2875,11 @@ namespace scratchbird::core
         transaction_start_oat_ = 0;
         transaction_start_ost_ = 0;
         xact_start_time_ = std::chrono::microseconds(0);
+        proc_id_ = new_proc_id;
+        if (db_)
+        {
+            db_->rebindConnectionContext(proc_id_, this);
+        }
 
         applyStagedSettings();
 

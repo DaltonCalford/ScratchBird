@@ -155,10 +155,16 @@ namespace scratchbird::core
         return db_->sync(ctx);
     }
 
-    auto TransactionManager::load(ErrorContext *ctx) -> Status
+    auto TransactionManager::load(StartupReconciliationSummary *startup_summary,
+                                  ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
         snapshot_pins_.clear();
+        if (startup_summary != nullptr)
+        {
+            *startup_summary = {};
+            startup_summary->clean_shutdown_marker = db_->last_shutdown_was_clean();
+        }
 
         // Read database header to get TIP root page
         void *header_buffer;
@@ -310,10 +316,27 @@ namespace scratchbird::core
         }
 
         bool startup_repair = false;
-        status = normalizeStartupTipStates(db_->last_shutdown_was_clean(), &startup_repair, ctx);
+        status = normalizeStartupTipStates(
+            db_->last_shutdown_was_clean(), &startup_repair, startup_summary, ctx);
         if (status != Status::OK)
         {
             return status;
+        }
+
+        if (db_->clog() != nullptr)
+        {
+            uint64_t synchronized_count = 0;
+            status = synchronizeStartupClogStateLocked(&synchronized_count, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            if (startup_summary != nullptr)
+            {
+                startup_summary->clog_states_synchronized = synchronized_count;
+                startup_summary->startup_repair =
+                    startup_summary->startup_repair || synchronized_count > 0;
+            }
         }
 
         uint64_t reconciled_oat = current_next_xid;
@@ -351,6 +374,12 @@ namespace scratchbird::core
             {
                 return status;
             }
+        }
+
+        if (startup_summary != nullptr)
+        {
+            startup_summary->startup_repair =
+                startup_summary->startup_repair || startup_repair;
         }
 
         return Status::OK;
@@ -798,6 +827,7 @@ namespace scratchbird::core
         info.gid = gid;
         info.owner_id = owner_id;
         info.database_id = db_->uuid();
+        info.lock_owner_proc_id = proc_id;
         info.prepared_time = nowMicros();
         info.is_valid = true;
 
@@ -946,12 +976,25 @@ namespace scratchbird::core
             return status;
         }
 
+        LockManager *lock_mgr = db_ ? db_->lock_manager() : nullptr;
         Status delete_status = catalog->deletePreparedTransaction(gid, ctx);
         if (delete_status != Status::OK)
         {
             LOG_WARNING(TRANSACTION, "Failed to delete prepared transaction record: %s",
                         gid.c_str());
-            status = delete_status;
+        }
+
+        Status lock_status = Status::OK;
+        if (lock_mgr)
+        {
+            lock_status = lock_mgr->releaseAllLocks(info.lock_owner_proc_id, ctx);
+            if (lock_status != Status::OK)
+            {
+                LOG_WARNING(LOCK,
+                            "Failed to release prepared transaction locks after commit: gid=%s owner_proc_id=%u",
+                            gid.c_str(),
+                            info.lock_owner_proc_id);
+            }
         }
 
         if (status != Status::OK)
@@ -984,6 +1027,15 @@ namespace scratchbird::core
                 addToCacheLRU(info.txn_id, TransactionState::COMMITTED);
             }
             stats_.transactions_committed++;
+        }
+
+        if (delete_status != Status::OK)
+        {
+            return delete_status;
+        }
+        if (lock_status != Status::OK)
+        {
+            return lock_status;
         }
 
         return Status::OK;
@@ -1055,12 +1107,25 @@ namespace scratchbird::core
             return status;
         }
 
+        LockManager *lock_mgr = db_ ? db_->lock_manager() : nullptr;
         Status delete_status = catalog->deletePreparedTransaction(gid, ctx);
         if (delete_status != Status::OK)
         {
             LOG_WARNING(TRANSACTION, "Failed to delete prepared transaction record: %s",
                         gid.c_str());
-            status = delete_status;
+        }
+
+        Status lock_status = Status::OK;
+        if (lock_mgr)
+        {
+            lock_status = lock_mgr->releaseAllLocks(info.lock_owner_proc_id, ctx);
+            if (lock_status != Status::OK)
+            {
+                LOG_WARNING(LOCK,
+                            "Failed to release prepared transaction locks after rollback: gid=%s owner_proc_id=%u",
+                            gid.c_str(),
+                            info.lock_owner_proc_id);
+            }
         }
 
         if (status != Status::OK)
@@ -1093,6 +1158,15 @@ namespace scratchbird::core
                 addToCacheLRU(info.txn_id, TransactionState::ABORTED);
             }
             stats_.transactions_aborted++;
+        }
+
+        if (delete_status != Status::OK)
+        {
+            return delete_status;
+        }
+        if (lock_status != Status::OK)
+        {
+            return lock_status;
         }
 
         return Status::OK;
@@ -2780,6 +2854,7 @@ namespace scratchbird::core
 
     auto TransactionManager::normalizeStartupTipStates(bool clean_shutdown_marker,
                                                        bool *startup_repair_out,
+                                                       StartupReconciliationSummary *startup_summary,
                                                        ErrorContext *ctx) -> Status
     {
         if (startup_repair_out)
@@ -2851,8 +2926,9 @@ namespace scratchbird::core
 
                 if (state == TransactionState::ACTIVE && entries[i].xid < next_xid)
                 {
+                    const bool promote_to_prepared = has_prepared_record;
                     entries[i].state = static_cast<uint8_t>(
-                        has_prepared_record ? TransactionState::PREPARED
+                        promote_to_prepared ? TransactionState::PREPARED
                                             : TransactionState::ABORTED);
                     entries[i].commit_time = nowMicros();
                     page_mutation = true;
@@ -2860,6 +2936,18 @@ namespace scratchbird::core
                     if (startup_repair_out)
                     {
                         *startup_repair_out = true;
+                    }
+                    if (startup_summary)
+                    {
+                        startup_summary->startup_repair = true;
+                        if (promote_to_prepared)
+                        {
+                            ++startup_summary->tip_active_to_prepared;
+                        }
+                        else
+                        {
+                            ++startup_summary->tip_active_to_aborted;
+                        }
                     }
 
                     if (clean_shutdown_marker)
@@ -2888,6 +2976,10 @@ namespace scratchbird::core
                 {
                     if (!has_prepared_record)
                     {
+                        if (startup_summary)
+                        {
+                            ++startup_summary->prepared_tip_without_catalog;
+                        }
                         buffer_pool_->unpinPage(current_page, false, ctx);
                         SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0217",
                                                 "TX_LIMBO_FENCE_MISMATCH: PREPARED TIP state has no matching prepared transaction record");
@@ -2937,6 +3029,11 @@ namespace scratchbird::core
                 {
                     *startup_repair_out = true;
                 }
+                if (startup_summary)
+                {
+                    startup_summary->startup_repair = true;
+                    ++startup_summary->stale_prepared_records_removed;
+                }
             }
         }
 
@@ -2944,6 +3041,106 @@ namespace scratchbird::core
         {
             return db_->sync(ctx);
         }
+        return Status::OK;
+    }
+
+    auto TransactionManager::synchronizeStartupClogStateLocked(
+        uint64_t *synchronized_count_out,
+        ErrorContext *ctx) -> Status
+    {
+        if (synchronized_count_out != nullptr)
+        {
+            *synchronized_count_out = 0;
+        }
+
+        if (db_ == nullptr || db_->clog() == nullptr || tip_root_page_ == 0)
+        {
+            return Status::OK;
+        }
+
+        std::lock_guard<std::mutex> tip_guard(tip_io_mutex_);
+        uint32_t current_page = tip_root_page_;
+
+        while (current_page != 0)
+        {
+            void *page_buffer = nullptr;
+            Status status = buffer_pool_->pinPage(current_page, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
+            if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
+            {
+                buffer_pool_->unpinPage(current_page, false, ctx);
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                        "Invalid TIP page during startup CLOG synchronization");
+                return Status::PAGE_CORRUPT;
+            }
+
+            auto *entries = reinterpret_cast<TIPEntry *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
+            for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
+            {
+                TransactionState tip_state = TransactionState::ACTIVE;
+                if (!decodeTipState(entries[i].state, tip_state))
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                            "Invalid TIP state during startup CLOG synchronization");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                ClogStatus expected = clogStatusForTransactionState(tip_state);
+                ClogStatus existing = ClogStatus::IN_PROGRESS;
+                ErrorContext clog_ctx;
+                Status clog_status = db_->clog()->getStatus(entries[i].xid, &existing, &clog_ctx);
+                if (clog_status == Status::OK && existing == expected)
+                {
+                    continue;
+                }
+                if (clog_status != Status::OK && clog_status != Status::NOT_FOUND)
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    if (ctx && !clog_ctx.message.empty())
+                    {
+                        ctx->set(clog_status,
+                                 clog_ctx.message.c_str(),
+                                 __FILE__,
+                                 __LINE__,
+                                 __func__);
+                    }
+                    return clog_status;
+                }
+
+                ErrorContext set_ctx;
+                clog_status = db_->clog()->setStatus(entries[i].xid, expected, &set_ctx);
+                if (clog_status != Status::OK)
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    if (ctx && !set_ctx.message.empty())
+                    {
+                        ctx->set(clog_status,
+                                 set_ctx.message.c_str(),
+                                 __FILE__,
+                                 __LINE__,
+                                 __func__);
+                    }
+                    return clog_status;
+                }
+
+                if (synchronized_count_out != nullptr)
+                {
+                    ++(*synchronized_count_out);
+                }
+            }
+
+            uint32_t page_to_unpin = current_page;
+            current_page = tip_header->next_tip_page;
+            buffer_pool_->unpinPage(page_to_unpin, false, ctx);
+        }
+
         return Status::OK;
     }
 

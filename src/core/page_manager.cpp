@@ -592,7 +592,8 @@ namespace scratchbird::core
         return total_pages_; // No free page found
     }
 
-    auto PageManager::reconstructFromPages(ErrorContext *ctx) -> Status
+    auto PageManager::reconstructFromPages(ReconstructionSummary *summary_out,
+                                           ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -714,6 +715,16 @@ namespace scratchbird::core
                  "FSM reconstruction complete: %u allocated, %u free, %u empty, %u corrupt, %u relinkable-chain pages, %u cleanup-blocked-chain pages",
                  allocated_count, free_pages_, empty_pages, corrupt_pages, chain_relinkable_pages,
                  chain_blocked_pages);
+
+        if (summary_out != nullptr)
+        {
+            summary_out->allocated_pages = allocated_count;
+            summary_out->free_pages = free_pages_;
+            summary_out->empty_pages = empty_pages;
+            summary_out->corrupt_pages = corrupt_pages;
+            summary_out->relinkable_chain_pages = chain_relinkable_pages;
+            summary_out->cleanup_blocked_chain_pages = chain_blocked_pages;
+        }
 
         // Mark FSM as dirty so it gets flushed with the corrected state
         dirty_ = true;

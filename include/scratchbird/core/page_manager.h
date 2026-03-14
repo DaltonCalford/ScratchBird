@@ -35,6 +35,16 @@ namespace scratchbird::core
     class PageManager
     {
     public:
+        struct ReconstructionSummary
+        {
+            uint32_t allocated_pages = 0;
+            uint32_t free_pages = 0;
+            uint32_t empty_pages = 0;
+            uint32_t corrupt_pages = 0;
+            uint32_t relinkable_chain_pages = 0;
+            uint32_t cleanup_blocked_chain_pages = 0;
+        };
+
         PageManager(Database *db, uint32_t page_size);
         ~PageManager();
 
@@ -241,7 +251,8 @@ namespace scratchbird::core
         auto flush(ErrorContext *ctx = nullptr) -> Status;
 
         // Reconstruct FSM from actual page state (MGA-style recovery)
-        auto reconstructFromPages(ErrorContext *ctx = nullptr) -> Status;
+        auto reconstructFromPages(ReconstructionSummary *summary_out = nullptr,
+                                  ErrorContext *ctx = nullptr) -> Status;
 
         // === NEW: Tablespace Metrics (Phase 3, Task 3.1.5) ===
 

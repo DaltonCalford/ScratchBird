@@ -144,6 +144,17 @@ namespace scratchbird::core
         uint64_t inventory_generation = 0;
     };
 
+    struct StartupReconciliationSummary
+    {
+        bool clean_shutdown_marker = false;
+        bool startup_repair = false;
+        uint64_t tip_active_to_aborted = 0;
+        uint64_t tip_active_to_prepared = 0;
+        uint64_t stale_prepared_records_removed = 0;
+        uint64_t prepared_tip_without_catalog = 0;
+        uint64_t clog_states_synchronized = 0;
+    };
+
 // Transaction Inventory Page (TIP) format
 // TIP pages track transaction states for MVCC visibility
 #pragma pack(push, 1)
@@ -218,7 +229,8 @@ namespace scratchbird::core
 
         // Load existing transaction state from disk
         // LOCKING: Thread-safe. Acquires mutex_ internally.
-        auto load(ErrorContext *ctx = nullptr) -> Status;
+        auto load(StartupReconciliationSummary *startup_summary = nullptr,
+                  ErrorContext *ctx = nullptr) -> Status;
 
         // ===========================================================================================
         // TRANSACTION LIFECYCLE
@@ -635,7 +647,11 @@ namespace scratchbird::core
         // LOCKING: Requires mutex_ held by caller.
         auto normalizeStartupTipStates(bool clean_shutdown_marker,
                                        bool *startup_repair_out,
+                                       StartupReconciliationSummary *startup_summary,
                                        ErrorContext *ctx) -> Status;
+
+        auto synchronizeStartupClogStateLocked(uint64_t *synchronized_count_out,
+                                               ErrorContext *ctx) -> Status;
 
         // Persist OAT/OST markers from current in-memory values.
         // LOCKING: Requires mutex_ held by caller.

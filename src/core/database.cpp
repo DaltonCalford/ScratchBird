@@ -1310,6 +1310,7 @@ namespace scratchbird::core
         restart_generation_ = 0;
         last_clean_shutdown_generation_ = 0;
         last_shutdown_was_clean_ = true;
+        startup_reconciliation_state_ = {};
     }
 
     Status Database::applySchedulerConfig(ErrorContext *ctx)
@@ -1525,6 +1526,15 @@ namespace scratchbird::core
         }
 
         std::lock_guard<std::mutex> lock(connection_registry_mutex_);
+        for (auto it = connection_registry_.begin(); it != connection_registry_.end();)
+        {
+            if (it->second == ctx)
+            {
+                it = connection_registry_.erase(it);
+                continue;
+            }
+            ++it;
+        }
         connection_registry_[proc_id] = ctx;
     }
 
@@ -2599,16 +2609,6 @@ namespace scratchbird::core
             return status;
         }
 
-        // Reconstruct FSM from actual pages (MGA-style recovery)
-        // This ensures FSM is always consistent with actual page state,
-        // supporting full transaction recovery without WAL
-        status = page_manager_->reconstructFromPages(ctx);
-        if (status != Status::OK)
-        {
-            close();
-            return status;
-        }
-
         // Initialize buffer pool
         BufferPool::Config bp_config;
         status = loadBufferPoolConfig(page_size_, &bp_config, ctx);
@@ -2699,6 +2699,34 @@ namespace scratchbird::core
             return Status::OOM;
         }
 
+        // Initialize CLOG manager before startup reconciliation so the startup
+        // pass can republish terminal transaction state from TIP into CLOG.
+        try
+        {
+            clog_ = std::make_unique<Clog>(this);
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate Clog");
+            return Status::OOM;
+        }
+        status = clog_->initialize(ctx);
+        if (status != Status::OK)
+        {
+            return close_with_stage_error(status, "clog.initialize");
+        }
+
+        // Mark DEFAULT_INITIAL_XID as committed in CLOG
+        // This allows tuples inserted without a proper transaction (using fallback XID)
+        // to be visible after recovery/restart
+        status = clog_->setStatus(config::DEFAULT_INITIAL_XID, ClogStatus::COMMITTED, ctx);
+        if (status != Status::OK)
+        {
+            LOG_WARNING(STORAGE, "Failed to mark DEFAULT_INITIAL_XID as committed in CLOG");
+            // Non-fatal - continue initialization
+        }
+
         // Initialize transaction manager
         try
         {
@@ -2710,10 +2738,10 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate TransactionManager");
             return Status::OOM;
         }
-        status = transaction_manager_->load(ctx);
+        status = runStartupReconciliation(ctx);
         if (status != Status::OK)
         {
-            return close_with_stage_error(status, "transaction_manager.load");
+            return close_with_stage_error(status, "database.runStartupReconciliation");
         }
 
         status = catalog_manager_->initializePolicyToastIfNeeded(ctx);
@@ -2772,33 +2800,6 @@ namespace scratchbird::core
             close();
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate GC manager");
             return Status::OOM;
-        }
-
-        // Initialize CLOG manager
-        try
-        {
-            clog_ = std::make_unique<Clog>(this);
-        }
-        catch (const std::bad_alloc &)
-        {
-            close();
-            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate Clog");
-            return Status::OOM;
-        }
-        status = clog_->initialize(ctx);
-        if (status != Status::OK)
-        {
-            return close_with_stage_error(status, "clog.initialize");
-        }
-
-        // Mark DEFAULT_INITIAL_XID as committed in CLOG
-        // This allows tuples inserted without a proper transaction (using fallback XID)
-        // to be visible after recovery/restart
-        status = clog_->setStatus(config::DEFAULT_INITIAL_XID, ClogStatus::COMMITTED, ctx);
-        if (status != Status::OK)
-        {
-            LOG_WARNING(STORAGE, "Failed to mark DEFAULT_INITIAL_XID as committed in CLOG");
-            // Non-fatal - continue initialization
         }
 
         // Initialize sweep manager
@@ -2965,6 +2966,171 @@ namespace scratchbird::core
         clean_shutdown_eligible_ = true;
         DEBUG_LOG_DB("Database opened successfully");
         return Status::OK;
+    }
+
+    auto Database::persistStartupReconciliationState(
+        const StartupReconciliationState &state,
+        ErrorContext *ctx) -> Status
+    {
+        if (buffer_pool_ == nullptr || !startup_state_loaded_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Startup reconciliation requires initialized system state");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        void *page_buffer = nullptr;
+        Status status = buffer_pool_->pinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *state_page = static_cast<BootstrapSystemStatePage *>(page_buffer);
+        if (state_page->page_header.page_type != PAGE_TYPE_SYSTEM_STATE)
+        {
+            buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid system state bootstrap page");
+            return Status::PAGE_CORRUPT;
+        }
+
+        uint64_t flags = 0;
+        if (state.clean_shutdown_marker)
+        {
+            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_CLEAN_MARKER;
+        }
+        if (state.startup_repair)
+        {
+            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_STARTUP_REPAIR;
+        }
+        if (state.has_page_scan_findings)
+        {
+            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_PAGE_SCAN_FINDINGS;
+        }
+        if (state.has_corrupt_pages)
+        {
+            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_CORRUPT_PAGES;
+        }
+
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT] =
+            SYSTEM_STATE_STARTUP_RECON_VERSION;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_OUTCOME_SLOT] =
+            static_cast<uint64_t>(state.outcome);
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_STATUS_SLOT] =
+            static_cast<uint64_t>(state.failure_status);
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_TIP_ABORTED_SLOT] =
+            state.tip_active_to_aborted;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_TIP_PREPARED_SLOT] =
+            state.tip_active_to_prepared;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_STALE_PREPARED_SLOT] =
+            state.stale_prepared_records_removed;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_CLOG_SYNC_SLOT] =
+            state.clog_states_synchronized;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_RELINKABLE_SLOT] =
+            state.relinkable_chain_pages;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_BLOCKED_SLOT] =
+            state.cleanup_blocked_chain_pages;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_FLAGS_SLOT] = flags;
+        state_page->page_header.checksum =
+            calculatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_);
+        buffer_pool_->unpinPage(BOOTSTRAP_PAGE_SYSTEM_STATE, true, ctx);
+
+        status = buffer_pool_->flushAll(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = sync(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        startup_reconciliation_state_ = state;
+        return Status::OK;
+    }
+
+    auto Database::runStartupReconciliation(ErrorContext *ctx) -> Status
+    {
+        if (page_manager_ == nullptr || transaction_manager_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Startup reconciliation requires page and transaction managers");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        StartupReconciliationState state{};
+        state.clean_shutdown_marker = last_shutdown_was_clean_;
+
+        PageManager::ReconstructionSummary page_summary{};
+        Status status = page_manager_->reconstructFromPages(&page_summary, ctx);
+        state.relinkable_chain_pages = page_summary.relinkable_chain_pages;
+        state.cleanup_blocked_chain_pages = page_summary.cleanup_blocked_chain_pages;
+        state.has_corrupt_pages = page_summary.corrupt_pages > 0;
+        state.has_page_scan_findings =
+            state.has_corrupt_pages ||
+            state.relinkable_chain_pages > 0 ||
+            state.cleanup_blocked_chain_pages > 0;
+        if (status != Status::OK)
+        {
+            state.outcome = StartupReconciliationOutcome::FAILED_PAGE_SCAN;
+            state.failure_status = status;
+            ErrorContext persist_ctx;
+            Status persist_status = persistStartupReconciliationState(state, &persist_ctx);
+            if (persist_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE,
+                            "Failed to persist startup reconciliation failure state: %d",
+                            static_cast<int>(persist_status));
+            }
+            return status;
+        }
+
+        StartupReconciliationSummary txn_summary{};
+        status = transaction_manager_->load(&txn_summary, ctx);
+        state.startup_repair = txn_summary.startup_repair;
+        state.tip_active_to_aborted = txn_summary.tip_active_to_aborted;
+        state.tip_active_to_prepared = txn_summary.tip_active_to_prepared;
+        state.stale_prepared_records_removed = txn_summary.stale_prepared_records_removed;
+        state.prepared_tip_without_catalog = txn_summary.prepared_tip_without_catalog;
+        state.clog_states_synchronized = txn_summary.clog_states_synchronized;
+        if (status != Status::OK)
+        {
+            state.outcome = StartupReconciliationOutcome::FAILED_TXN_RECONCILIATION;
+            state.failure_status = status;
+            ErrorContext persist_ctx;
+            Status persist_status = persistStartupReconciliationState(state, &persist_ctx);
+            if (persist_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE,
+                            "Failed to persist startup reconciliation transaction failure state: %d",
+                            static_cast<int>(persist_status));
+            }
+            return status;
+        }
+
+        const bool has_tx_findings =
+            state.startup_repair ||
+            state.tip_active_to_aborted > 0 ||
+            state.tip_active_to_prepared > 0 ||
+            state.stale_prepared_records_removed > 0 ||
+            state.clog_states_synchronized > 0;
+        if (!state.clean_shutdown_marker && !state.has_page_scan_findings && !has_tx_findings)
+        {
+            state.outcome = StartupReconciliationOutcome::RECOVERY_WITH_FINDINGS;
+        }
+        else if (!state.clean_shutdown_marker || state.has_page_scan_findings || has_tx_findings)
+        {
+            state.outcome = state.clean_shutdown_marker
+                ? StartupReconciliationOutcome::CLEAN_WITH_FINDINGS
+                : StartupReconciliationOutcome::RECOVERY_WITH_FINDINGS;
+        }
+        else
+        {
+            state.outcome = StartupReconciliationOutcome::CLEAN;
+        }
+
+        return persistStartupReconciliationState(state, ctx);
     }
 
     auto Database::markStartupOpen(ErrorContext *ctx) -> Status

@@ -3065,6 +3065,7 @@ public:
             std::string gid;        // Global transaction ID (2PC)
             ID owner_id;            // User that prepared the transaction
             ID database_id;         // Database UUID
+            uint32_t lock_owner_proc_id = 0; // Detached backend slot retaining prepared locks
             uint64_t prepared_time = 0; // Epoch micros
             bool is_valid = true;
         };

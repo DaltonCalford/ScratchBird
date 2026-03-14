@@ -10212,7 +10212,7 @@ bool hasTriggerNameConflictInTable(
         char gid[512];
         uint64_t prepared_time;
         uint32_t is_valid;
-        uint32_t padding;
+        uint32_t lock_owner_proc_id;
     };
 
     // Collation record on disk - see updated CollationRecord structure below at line ~194
@@ -48278,6 +48278,7 @@ auto CatalogManager::createPreparedTransaction(PreparedTransactionInfo& info,
     record.gid[info.gid.size()] = '\0';
     record.prepared_time = info.prepared_time;
     record.is_valid = info.is_valid ? 1 : 0;
+    record.lock_owner_proc_id = info.lock_owner_proc_id;
 
     Status status = writeRecordToHeapPage(prepared_transactions_table_page_, record, ctx);
     if (status != Status::OK)
@@ -48325,6 +48326,7 @@ auto CatalogManager::getPreparedTransactionByGid(const std::string& gid,
     info_out.gid.assign(rec.gid, strnlen(rec.gid, sizeof(rec.gid)));
     info_out.prepared_time = rec.prepared_time;
     info_out.is_valid = rec.is_valid != 0;
+    info_out.lock_owner_proc_id = rec.lock_owner_proc_id;
 
     return Status::OK;
 }
@@ -48403,6 +48405,7 @@ auto CatalogManager::listPreparedTransactions(std::vector<PreparedTransactionInf
         info.gid.assign(rec.gid, strnlen(rec.gid, sizeof(rec.gid)));
         info.prepared_time = rec.prepared_time;
         info.is_valid = rec.is_valid != 0;
+        info.lock_owner_proc_id = rec.lock_owner_proc_id;
     };
 
     return readRecordsToVector<PreparedTransactionRecord, PreparedTransactionInfo>(

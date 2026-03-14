@@ -475,6 +475,23 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         uint64_t reserved[10];
     };
 
+    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_VERSION = 1;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT = 0;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_OUTCOME_SLOT = 1;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_STATUS_SLOT = 2;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_TIP_ABORTED_SLOT = 3;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_TIP_PREPARED_SLOT = 4;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_STALE_PREPARED_SLOT = 5;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_CLOG_SYNC_SLOT = 6;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_RELINKABLE_SLOT = 7;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_BLOCKED_SLOT = 8;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_FLAGS_SLOT = 9;
+
+    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_CLEAN_MARKER = 1ULL << 0;
+    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_STARTUP_REPAIR = 1ULL << 1;
+    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_PAGE_SCAN_FINDINGS = 1ULL << 2;
+    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_CORRUPT_PAGES = 1ULL << 3;
+
     struct BootstrapCatalogRootHeader
     {
         uint16_t catalog_version;
