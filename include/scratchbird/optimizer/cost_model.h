@@ -371,6 +371,32 @@ namespace scratchbird::optimizer
             -> CostEstimate;
 
         /**
+         * costGroupAggregate - Estimate cost of ordered/group aggregate
+         *
+         * Models streaming aggregation on presorted input, avoiding hash-table
+         * build cost and large aggregation spill state.
+         */
+        auto costGroupAggregate(uint64_t input_rows,
+                                uint64_t num_groups,
+                                uint64_t num_aggregates,
+                                core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costDistinct - Estimate cost of DISTINCT elimination
+         *
+         * `presorted=true` models streaming duplicate elimination on already
+         * ordered input. `presorted=false` models hash-based duplicate
+         * elimination with spill estimation.
+         */
+        auto costDistinct(uint64_t input_rows,
+                          uint64_t num_distinct_rows,
+                          uint64_t num_distinct_keys,
+                          bool presorted,
+                          core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
          * costSort - Estimate cost of sorting
          *
          * Cost formula:
@@ -443,6 +469,15 @@ namespace scratchbird::optimizer
          * Accounts for required partition/order sorting plus per-row window
          * state maintenance.
          */
+        auto costWindow(uint64_t input_rows,
+                        uint64_t row_width,
+                        uint64_t num_partition_keys,
+                        uint64_t num_order_keys,
+                        uint64_t num_window_functions,
+                        bool input_presorted,
+                        core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
         auto costWindow(uint64_t input_rows,
                         uint64_t row_width,
                         uint64_t num_partition_keys,

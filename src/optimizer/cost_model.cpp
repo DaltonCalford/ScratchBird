@@ -849,6 +849,106 @@ namespace scratchbird::optimizer
         return cost;
     }
 
+    auto CostModel::costGroupAggregate(uint64_t input_rows,
+                                       uint64_t num_groups,
+                                       uint64_t num_aggregates,
+                                       core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating group aggregate cost: input_rows=" +
+                     std::to_string(input_rows) + ", num_groups=" +
+                     std::to_string(num_groups) + ", num_aggregates=" +
+                     std::to_string(num_aggregates));
+
+        CostEstimate cost;
+        const double transition_cost =
+            static_cast<double>(input_rows) *
+            (params_.cpu_tuple_cost * 0.35 +
+             static_cast<double>(std::max<uint64_t>(1, num_aggregates)) *
+                 params_.cpu_operator_cost * 0.15);
+        const double group_boundary_cost =
+            static_cast<double>(input_rows) * params_.cpu_operator_cost * 0.25;
+        const double finalize_cost =
+            static_cast<double>(num_groups) *
+            static_cast<double>(num_aggregates) *
+            params_.cpu_operator_cost;
+        const double output_cost =
+            static_cast<double>(num_groups) * params_.cpu_tuple_cost;
+
+        cost.startup_cost = static_cast<double>(input_rows) *
+                            params_.cpu_tuple_cost * 0.05;
+        cost.run_cost = transition_cost + group_boundary_cost + finalize_cost +
+                        output_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = num_groups;
+        cost.memory_budget_bytes = safeBudgetBytes(params_.work_mem_bytes);
+
+        return cost;
+    }
+
+    auto CostModel::costDistinct(uint64_t input_rows,
+                                 uint64_t num_distinct_rows,
+                                 uint64_t num_distinct_keys,
+                                 bool presorted,
+                                 core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating distinct cost: input_rows=" +
+                     std::to_string(input_rows) + ", distinct_rows=" +
+                     std::to_string(num_distinct_rows) + ", keys=" +
+                     std::to_string(num_distinct_keys) + ", presorted=" +
+                     std::to_string(presorted ? 1 : 0));
+
+        CostEstimate cost;
+        if (input_rows == 0)
+        {
+            return cost;
+        }
+
+        if (presorted)
+        {
+            cost.startup_cost = static_cast<double>(input_rows) *
+                                params_.cpu_tuple_cost * 0.05;
+            cost.run_cost =
+                static_cast<double>(input_rows) *
+                    (params_.cpu_tuple_cost * 0.2 +
+                     static_cast<double>(std::max<uint64_t>(1, num_distinct_keys)) *
+                         params_.cpu_operator_cost * 0.25) +
+                static_cast<double>(num_distinct_rows) * params_.cpu_tuple_cost;
+            cost.total_cost = cost.startup_cost + cost.run_cost;
+            cost.rows = num_distinct_rows;
+            cost.memory_budget_bytes = safeBudgetBytes(params_.work_mem_bytes);
+            return cost;
+        }
+
+        constexpr double HASH_DISTINCT_FACTOR = 1.6;
+        const uint64_t distinct_row_width =
+            params_.default_row_width_bytes +
+            std::max<uint64_t>(1, num_distinct_keys) * sizeof(uint64_t) +
+            params_.hash_tuple_overhead_bytes;
+        const SpillEstimate spill = estimateSpill(
+            params_,
+            std::max<uint64_t>(1, num_distinct_rows) * distinct_row_width,
+            params_.work_mem_bytes,
+            input_rows,
+            1.0);
+
+        cost.startup_cost =
+            static_cast<double>(input_rows) * params_.cpu_tuple_cost *
+                HASH_DISTINCT_FACTOR +
+            spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
+        cost.run_cost =
+            static_cast<double>(num_distinct_rows) *
+                (params_.cpu_tuple_cost +
+                 static_cast<double>(std::max<uint64_t>(1, num_distinct_keys)) *
+                     params_.cpu_operator_cost * 0.2) +
+            spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = num_distinct_rows;
+        applyResourceEstimate(cost, spill);
+        return cost;
+    }
+
     auto CostModel::costSort(uint64_t num_rows,
                             uint64_t row_width,
                             uint64_t num_sort_keys,
@@ -994,6 +1094,7 @@ namespace scratchbird::optimizer
                                uint64_t num_partition_keys,
                                uint64_t num_order_keys,
                                uint64_t num_window_functions,
+                               bool input_presorted,
                                core::ErrorContext *ctx)
         -> CostEstimate
     {
@@ -1001,7 +1102,8 @@ namespace scratchbird::optimizer
                      ", row_width=" + std::to_string(row_width) +
                      ", partition_keys=" + std::to_string(num_partition_keys) +
                      ", order_keys=" + std::to_string(num_order_keys) +
-                     ", funcs=" + std::to_string(num_window_functions));
+                     ", funcs=" + std::to_string(num_window_functions) +
+                     ", presorted=" + std::to_string(input_presorted ? 1 : 0));
 
         CostEstimate cost;
         if (input_rows == 0)
@@ -1009,7 +1111,8 @@ namespace scratchbird::optimizer
             return cost;
         }
 
-        const bool requires_sort = num_partition_keys > 0 || num_order_keys > 0;
+        const bool requires_sort =
+            !input_presorted && (num_partition_keys > 0 || num_order_keys > 0);
         double sort_cost = 0.0;
         if (requires_sort)
         {
@@ -1043,6 +1146,23 @@ namespace scratchbird::optimizer
             cost.memory_budget_bytes = safeBudgetBytes(params_.work_mem_bytes);
         }
         return cost;
+    }
+
+    auto CostModel::costWindow(uint64_t input_rows,
+                               uint64_t row_width,
+                               uint64_t num_partition_keys,
+                               uint64_t num_order_keys,
+                               uint64_t num_window_functions,
+                               core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        return costWindow(input_rows,
+                          row_width,
+                          num_partition_keys,
+                          num_order_keys,
+                          num_window_functions,
+                          false,
+                          ctx);
     }
 
 } // namespace scratchbird::optimizer

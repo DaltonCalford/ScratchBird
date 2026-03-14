@@ -408,6 +408,151 @@ namespace scratchbird::optimizer
             return true;
         }
 
+        auto orderingSatisfiesExpressions(
+            const AccessPathDescriptor &descriptor,
+            const std::vector<parser::v3::Expression *> &exprs,
+            const parser::v3::StringPool &pool) -> bool
+        {
+            return orderingSatisfiesGrouping(descriptor, exprs, pool);
+        }
+
+        auto orderingSatisfiesWindow(
+            const AccessPathDescriptor &descriptor,
+            const std::vector<parser::v3::FunctionCallExpr *> &window_funcs,
+            const parser::v3::StringPool &pool) -> bool
+        {
+            if (window_funcs.empty())
+            {
+                return true;
+            }
+
+            std::vector<parser::v3::Expression *> required_exprs;
+            std::vector<bool> required_descending;
+            std::vector<bool> required_nulls_first;
+
+            bool seed = false;
+            for (const auto *func : window_funcs)
+            {
+                if (func == nullptr || func->window == nullptr)
+                {
+                    continue;
+                }
+
+                std::vector<parser::v3::Expression *> candidate_exprs;
+                std::vector<bool> candidate_descending;
+                std::vector<bool> candidate_nulls_first;
+
+                for (auto *partition_expr : func->window->partition_by)
+                {
+                    candidate_exprs.push_back(partition_expr);
+                    candidate_descending.push_back(false);
+                    candidate_nulls_first.push_back(false);
+                }
+                for (auto *order_item : func->window->order_by)
+                {
+                    if (order_item == nullptr)
+                    {
+                        continue;
+                    }
+                    candidate_exprs.push_back(order_item->expr);
+                    candidate_descending.push_back(!order_item->ascending);
+                    candidate_nulls_first.push_back(
+                        orderItemNullsFirst(order_item));
+                }
+
+                if (!seed)
+                {
+                    required_exprs = candidate_exprs;
+                    required_descending = candidate_descending;
+                    required_nulls_first = candidate_nulls_first;
+                    seed = true;
+                    continue;
+                }
+
+                if (candidate_exprs.size() != required_exprs.size())
+                {
+                    return false;
+                }
+
+                for (size_t i = 0; i < candidate_exprs.size(); ++i)
+                {
+                    if (candidate_exprs[i] == nullptr || required_exprs[i] == nullptr)
+                    {
+                        return false;
+                    }
+                    if (normalizeOrderingExpression(
+                            expressionToString(candidate_exprs[i], pool)) !=
+                            normalizeOrderingExpression(
+                                expressionToString(required_exprs[i], pool)) ||
+                        candidate_descending[i] != required_descending[i] ||
+                        candidate_nulls_first[i] != required_nulls_first[i])
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (!seed)
+            {
+                return true;
+            }
+            if (!descriptor.order_complete ||
+                descriptor.ordering_keys.size() < required_exprs.size())
+            {
+                return false;
+            }
+            for (size_t i = 0; i < required_exprs.size(); ++i)
+            {
+                if (required_exprs[i] == nullptr)
+                {
+                    return false;
+                }
+                const std::string required_expression =
+                    normalizeOrderingExpression(
+                        expressionToString(required_exprs[i], pool));
+                const auto &available = descriptor.ordering_keys[i];
+                if (required_expression.empty() ||
+                    normalizeOrderingExpression(available.expression_text) !=
+                        required_expression ||
+                    available.descending != required_descending[i] ||
+                    available.nulls_first != required_nulls_first[i])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto collectDistinctExpressions(const parser::v3::SelectStmt *select_stmt)
+            -> std::vector<parser::v3::Expression *>
+        {
+            std::vector<parser::v3::Expression *> exprs;
+            if (select_stmt == nullptr)
+            {
+                return exprs;
+            }
+
+            if (!select_stmt->distinct_on.empty())
+            {
+                exprs = select_stmt->distinct_on;
+                return exprs;
+            }
+
+            exprs.reserve(select_stmt->items.size());
+            for (const auto *item : select_stmt->items)
+            {
+                if (item == nullptr ||
+                    item->item_type != parser::v3::SelectItem::Type::EXPRESSION ||
+                    item->expr == nullptr)
+                {
+                    exprs.clear();
+                    return exprs;
+                }
+                exprs.push_back(item->expr);
+            }
+            return exprs;
+        }
+
         auto isZeroId(const core::ID &id) -> bool
         {
             return id == core::ID{};
@@ -2646,8 +2791,17 @@ namespace scratchbird::optimizer
                     node.node_type = "Aggregate";
                     if (aggregate)
                     {
-                        node.detail_text =
-                            aggregate->isSimpleAggregation() ? "SIMPLE" : "GROUP";
+                        if (!aggregate->groupingExprs().empty() &&
+                            aggregate->aggregates().empty())
+                        {
+                            node.detail_text = "DISTINCT";
+                        }
+                        else
+                        {
+                            node.detail_text =
+                                aggregate->isSimpleAggregation() ? "SIMPLE"
+                                                                 : "GROUP";
+                        }
                         node.children.push_back(toRuntimePlanNode(aggregate->childPlan()));
                     }
                     break;
@@ -5990,21 +6144,95 @@ namespace scratchbird::optimizer
                 orderingSatisfiesGrouping(current_path->accessDescriptor(),
                                          select_stmt->group_by,
                                          pool);
+            const bool aggregate_has_distinct_inputs =
+                std::any_of(query_aggregates.begin(),
+                            query_aggregates.end(),
+                            [](const parser::v3::FunctionCallExpr *func) {
+                                return func != nullptr && func->distinct;
+                            });
+            const std::string hash_strategy =
+                aggregate_has_distinct_inputs
+                    ? "HASH_DISTINCT_AGGREGATE"
+                    : "HASH_AGGREGATE";
+            const std::string group_strategy =
+                aggregate_has_distinct_inputs
+                    ? "GROUP_DISTINCT_AGGREGATE_REUSE_ORDER"
+                    : "GROUP_AGGREGATE_REUSE_ORDER";
             uint64_t estimated_groups = select_stmt->group_by.empty()
                 ? 1
                 : std::max<uint64_t>(1, current_rows / 10);
-            CostEstimate aggregate_cost = active_cost_model.costAggregate(current_rows,
-                                                                    estimated_groups,
-                                                                    query_aggregates.size(),
-                                                                    ctx);
+            const CostEstimate hash_aggregate_cost =
+                active_cost_model.costAggregate(current_rows,
+                                                estimated_groups,
+                                                query_aggregates.size(),
+                                                ctx);
+            const CostEstimate group_aggregate_cost =
+                active_cost_model.costGroupAggregate(current_rows,
+                                                     estimated_groups,
+                                                     query_aggregates.size(),
+                                                     ctx);
             if (spill_policy == PlannerSpillPolicy::DISALLOW &&
-                aggregate_cost.spill_expected)
+                hash_aggregate_cost.spill_expected)
             {
                 SET_ERROR_CONTEXT(ctx,
                                   core::Status::CONFIGURATION_LIMIT_EXCEEDED,
                                   "Aggregate operator exceeds work_mem under spill-disallow policy");
                 return core::Status::CONFIGURATION_LIMIT_EXCEEDED;
             }
+            const bool choose_group_aggregate =
+                aggregate_reuses_group_order &&
+                group_aggregate_cost.total_cost <= hash_aggregate_cost.total_cost;
+            appendRuntimeTrace(considered_paths,
+                               "UPPER_STAGE_STRATEGY",
+                               "query:aggregate",
+                               choose_group_aggregate ? group_strategy : hash_strategy,
+                               "CHOSEN",
+                               choose_group_aggregate
+                                   ? "ordered input makes streaming/group aggregate cheaper than hash aggregate"
+                                   : "hash aggregate remains the selected aggregate strategy",
+                               choose_group_aggregate
+                                   ? group_aggregate_cost.startup_cost
+                                   : hash_aggregate_cost.startup_cost,
+                               choose_group_aggregate
+                                   ? group_aggregate_cost.total_cost
+                                   : hash_aggregate_cost.total_cost,
+                               choose_group_aggregate
+                                   ? group_aggregate_cost.rows
+                                   : hash_aggregate_cost.rows);
+            if (aggregate_reuses_group_order)
+            {
+                appendRuntimeTrace(rejected_paths,
+                                   "UPPER_STAGE_STRATEGY",
+                                   "query:aggregate",
+                                   choose_group_aggregate ? hash_strategy : group_strategy,
+                                   "REJECTED",
+                                   choose_group_aggregate
+                                       ? "ordered/group aggregate is cheaper on existing input order"
+                                       : "hash aggregate remains cheaper even though group order is available",
+                                   choose_group_aggregate
+                                       ? hash_aggregate_cost.startup_cost
+                                       : group_aggregate_cost.startup_cost,
+                                   choose_group_aggregate
+                                       ? hash_aggregate_cost.total_cost
+                                       : group_aggregate_cost.total_cost,
+                                   choose_group_aggregate
+                                       ? hash_aggregate_cost.rows
+                                       : group_aggregate_cost.rows);
+            }
+            else if (!select_stmt->group_by.empty())
+            {
+                appendRuntimeTrace(rejected_paths,
+                                   "UPPER_STAGE_STRATEGY",
+                                   "query:aggregate",
+                                   group_strategy,
+                                   "REJECTED",
+                                   "input path does not satisfy GROUP BY key order",
+                                   group_aggregate_cost.startup_cost,
+                                   group_aggregate_cost.total_cost,
+                                   group_aggregate_cost.rows);
+            }
+            const CostEstimate aggregate_cost =
+                choose_group_aggregate ? group_aggregate_cost : hash_aggregate_cost;
             current_path = std::make_shared<AggregatePath>(current_path,
                                                            select_stmt->group_by,
                                                            query_aggregates,
@@ -6021,7 +6249,7 @@ namespace scratchbird::optimizer
                     input_descriptor.parameterized;
                 aggregate_descriptor.required_outer_relation_indexes =
                     input_descriptor.required_outer_relation_indexes;
-                if (aggregate_reuses_group_order)
+                if (choose_group_aggregate)
                 {
                     aggregate_descriptor.ordered_output = true;
                     aggregate_descriptor.order_complete = true;
@@ -6064,6 +6292,11 @@ namespace scratchbird::optimizer
             const AccessPathDescriptor input_descriptor =
                 current_path ? current_path->accessDescriptor()
                              : AccessPathDescriptor{};
+            const bool window_reuses_input_order =
+                current_path &&
+                orderingSatisfiesWindow(current_path->accessDescriptor(),
+                                        query_windows,
+                                        pool);
             uint64_t partition_keys = 0;
             uint64_t order_keys = 0;
             std::vector<WindowNode::WindowFunction> window_functions;
@@ -6138,6 +6371,7 @@ namespace scratchbird::optimizer
                                                               partition_keys,
                                                               order_keys,
                                                               window_functions.size(),
+                                                              window_reuses_input_order,
                                                               ctx);
             if (spill_policy == PlannerSpillPolicy::DISALLOW &&
                 window_cost.spill_expected)
@@ -6147,6 +6381,31 @@ namespace scratchbird::optimizer
                                   "Window operator exceeds work_mem under spill-disallow policy");
                 return core::Status::CONFIGURATION_LIMIT_EXCEEDED;
             }
+            appendRuntimeTrace(considered_paths,
+                               "UPPER_STAGE_STRATEGY",
+                               "query:window",
+                               window_reuses_input_order
+                                   ? "WINDOW_REUSE_ORDER"
+                                   : "WINDOW_LOCAL_SORT",
+                               "CHOSEN",
+                               window_reuses_input_order
+                                   ? "window stage reuses existing partition/order path"
+                                   : "window stage requires internal local sort",
+                               window_cost.startup_cost,
+                               window_cost.total_cost,
+                               window_cost.rows);
+            if (!window_reuses_input_order)
+            {
+                appendRuntimeTrace(rejected_paths,
+                                   "UPPER_STAGE_STRATEGY",
+                                   "query:window",
+                                   "WINDOW_REUSE_ORDER",
+                                   "REJECTED",
+                                   "input path does not satisfy window partition/order keys",
+                                   window_cost.startup_cost,
+                                   window_cost.total_cost,
+                                   window_cost.rows);
+            }
             current_path = std::make_shared<WindowPath>(current_path,
                                                         query_windows,
                                                         window_cost);
@@ -6154,6 +6413,14 @@ namespace scratchbird::optimizer
             {
                 AccessPathDescriptor window_descriptor = input_descriptor;
                 window_descriptor.family = "WINDOW";
+                if (!window_reuses_input_order)
+                {
+                    window_descriptor.ordered_output = false;
+                    window_descriptor.order_complete = false;
+                    window_descriptor.ordered_prefix_length = 0;
+                    window_descriptor.ordering_keys.clear();
+                    window_descriptor.interesting_order_score = 0.0;
+                }
                 current_path->setAccessDescriptor(std::move(window_descriptor));
             }
             auto window_plan = std::make_shared<WindowNode>(current_plan, window_functions);
@@ -6162,6 +6429,158 @@ namespace scratchbird::optimizer
                                  window_cost.rows);
             current_plan = window_plan;
             current_rows = window_cost.rows;
+        }
+
+        if (select_stmt->distinct && select_stmt->distinct_on.empty())
+        {
+            const auto distinct_exprs = collectDistinctExpressions(select_stmt);
+            if (!distinct_exprs.empty())
+            {
+                const AccessPathDescriptor input_descriptor =
+                    current_path ? current_path->accessDescriptor()
+                                 : AccessPathDescriptor{};
+                const bool ordered_distinct =
+                    current_path &&
+                    orderingSatisfiesExpressions(current_path->accessDescriptor(),
+                                                 distinct_exprs,
+                                                 pool);
+                const uint64_t estimated_distinct_rows =
+                    std::max<uint64_t>(1, current_rows / 10);
+                const CostEstimate hash_distinct_cost =
+                    active_cost_model.costDistinct(current_rows,
+                                                   estimated_distinct_rows,
+                                                   distinct_exprs.size(),
+                                                   false,
+                                                   ctx);
+                const CostEstimate ordered_distinct_cost =
+                    active_cost_model.costDistinct(current_rows,
+                                                   estimated_distinct_rows,
+                                                   distinct_exprs.size(),
+                                                   true,
+                                                   ctx);
+                const bool choose_ordered_distinct =
+                    ordered_distinct &&
+                    ordered_distinct_cost.total_cost <=
+                        hash_distinct_cost.total_cost;
+
+                appendRuntimeTrace(considered_paths,
+                                   "UPPER_STAGE_STRATEGY",
+                                   "query:distinct",
+                                   choose_ordered_distinct
+                                       ? "ORDERED_DISTINCT"
+                                       : "HASH_DISTINCT",
+                                   "CHOSEN",
+                                   choose_ordered_distinct
+                                       ? "existing order is sufficient for streaming DISTINCT"
+                                       : "hash distinct remains the selected strategy",
+                                   choose_ordered_distinct
+                                       ? ordered_distinct_cost.startup_cost
+                                       : hash_distinct_cost.startup_cost,
+                                   choose_ordered_distinct
+                                       ? ordered_distinct_cost.total_cost
+                                       : hash_distinct_cost.total_cost,
+                                   choose_ordered_distinct
+                                       ? ordered_distinct_cost.rows
+                                       : hash_distinct_cost.rows);
+                if (ordered_distinct)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "UPPER_STAGE_STRATEGY",
+                                       "query:distinct",
+                                       choose_ordered_distinct
+                                           ? "HASH_DISTINCT"
+                                           : "ORDERED_DISTINCT",
+                                       "REJECTED",
+                                       choose_ordered_distinct
+                                           ? "ordered distinct is cheaper on the current input order"
+                                           : "hash distinct remains cheaper despite available order",
+                                       choose_ordered_distinct
+                                           ? hash_distinct_cost.startup_cost
+                                           : ordered_distinct_cost.startup_cost,
+                                       choose_ordered_distinct
+                                           ? hash_distinct_cost.total_cost
+                                           : ordered_distinct_cost.total_cost,
+                                       choose_ordered_distinct
+                                           ? hash_distinct_cost.rows
+                                           : ordered_distinct_cost.rows);
+                }
+                else
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "UPPER_STAGE_STRATEGY",
+                                       "query:distinct",
+                                       "ORDERED_DISTINCT",
+                                       "REJECTED",
+                                       "input path does not satisfy DISTINCT key order",
+                                       ordered_distinct_cost.startup_cost,
+                                       ordered_distinct_cost.total_cost,
+                                       ordered_distinct_cost.rows);
+                }
+
+                const CostEstimate distinct_cost =
+                    choose_ordered_distinct ? ordered_distinct_cost
+                                            : hash_distinct_cost;
+                std::vector<parser::v3::FunctionCallExpr *> no_aggregates;
+                current_path = std::make_shared<AggregatePath>(
+                    current_path,
+                    distinct_exprs,
+                    no_aggregates,
+                    nullptr,
+                    estimated_distinct_rows,
+                    distinct_cost,
+                    parser::GroupingType::STANDARD,
+                    std::vector<std::vector<parser::v3::Expression *>>{});
+                if (current_path)
+                {
+                    AccessPathDescriptor distinct_descriptor;
+                    distinct_descriptor.family = "AGGREGATE";
+                    distinct_descriptor.parameterized =
+                        input_descriptor.parameterized;
+                    distinct_descriptor.required_outer_relation_indexes =
+                        input_descriptor.required_outer_relation_indexes;
+                    if (choose_ordered_distinct)
+                    {
+                        distinct_descriptor.ordered_output = true;
+                        distinct_descriptor.order_complete = true;
+                        distinct_descriptor.ordered_prefix_length =
+                            distinct_exprs.size();
+                        distinct_descriptor.interesting_order_score =
+                            static_cast<double>(distinct_exprs.size());
+                        for (auto *expr : distinct_exprs)
+                        {
+                            distinct_descriptor.ordering_keys.push_back(
+                                makeOrderingKey(
+                                    expressionToString(expr, pool)));
+                        }
+                    }
+                    current_path->setAccessDescriptor(
+                        std::move(distinct_descriptor));
+                }
+                auto distinct_plan = std::make_shared<AggregateNode>(
+                    current_plan,
+                    distinct_exprs,
+                    no_aggregates,
+                    nullptr,
+                    parser::GroupingType::STANDARD,
+                    std::vector<std::vector<parser::v3::Expression *>>{});
+                distinct_plan->setCost(distinct_cost.startup_cost,
+                                       distinct_cost.total_cost,
+                                       distinct_cost.rows);
+                current_plan = distinct_plan;
+                current_rows = distinct_cost.rows;
+            }
+            else
+            {
+                appendRuntimeTrace(considered_paths,
+                                   "UPPER_STAGE_STRATEGY",
+                                   "query:distinct",
+                                   "DISTINCT_EXECUTOR_FALLBACK",
+                                   "CHOSEN",
+                                   "planner could not derive explicit DISTINCT key expressions from the select list",
+                                   current_path ? current_path->startupCost() : 0.0,
+                                   current_path ? current_path->totalCost() : 0.0,
+                                   current_path ? current_path->rows() : current_rows);
+            }
         }
 
         int64_t limit_count = -1;
@@ -6207,6 +6626,18 @@ namespace scratchbird::optimizer
                                    current_path->startupCost(),
                                    current_path->totalCost(),
                                    current_path->rows());
+                if (has_limit)
+                {
+                    appendRuntimeTrace(considered_paths,
+                                       "UPPER_STAGE_STRATEGY",
+                                       "query:top_n",
+                                       "ORDERED_LIMIT",
+                                       "CHOSEN",
+                                       "existing order allows LIMIT/OFFSET without an explicit sort",
+                                       current_path->startupCost(),
+                                       current_path->totalCost(),
+                                       current_path->rows());
+                }
             }
             else
             {
@@ -6242,6 +6673,26 @@ namespace scratchbird::optimizer
                                    current_path ? current_path->rows() : 0);
                 if (has_limit)
                 {
+                    appendRuntimeTrace(rejected_paths,
+                                       "UPPER_STAGE_STRATEGY",
+                                       "query:top_n",
+                                       "ORDERED_LIMIT",
+                                       "REJECTED",
+                                       sort_avoidance_reason.empty()
+                                           ? "input path is not ordered for LIMIT/OFFSET reuse"
+                                           : sort_avoidance_reason,
+                                       current_path ? current_path->startupCost() : 0.0,
+                                       current_path ? current_path->totalCost() : 0.0,
+                                       current_path ? current_path->rows() : 0);
+                    appendRuntimeTrace(considered_paths,
+                                       "UPPER_STAGE_STRATEGY",
+                                       "query:top_n",
+                                       "TOP_N_SORT",
+                                       "CHOSEN",
+                                       "bounded top-N sort selected for ORDER BY with LIMIT/OFFSET",
+                                       sort_cost.startup_cost,
+                                       sort_cost.total_cost,
+                                       sort_cost.rows);
                     appendRuntimeTrace(considered_paths,
                                        "SORT_STRATEGY",
                                        "query:order_by",

@@ -2745,6 +2745,147 @@ TEST_F(QueryPlannerIntegrationTest,
 }
 
 TEST_F(QueryPlannerIntegrationTest,
+       AggregateStagePublishesHashStrategyWhenGroupOrderUnavailable)
+{
+    ASSERT_TRUE(createDatabase());
+
+    for (int i = 1; i <= 256; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'agg" +
+                               std::to_string(i) + "', 'agg" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 7)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    const std::string sql =
+        "SELECT age, COUNT(*) FROM users GROUP BY age";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+
+    const auto chosen_it =
+        std::find_if(plan.considered_paths.begin(),
+                     plan.considered_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "UPPER_STAGE_STRATEGY" &&
+                                entry.subject == "query:aggregate" &&
+                                entry.candidate == "HASH_AGGREGATE" &&
+                                entry.verdict == "CHOSEN";
+                     });
+    ASSERT_NE(chosen_it, plan.considered_paths.end());
+
+    const auto rejected_it =
+        std::find_if(plan.rejected_paths.begin(),
+                     plan.rejected_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "UPPER_STAGE_STRATEGY" &&
+                                entry.subject == "query:aggregate" &&
+                                entry.candidate == "GROUP_AGGREGATE_REUSE_ORDER" &&
+                                entry.verdict == "REJECTED";
+                     });
+    ASSERT_NE(rejected_it, plan.rejected_paths.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       DistinctStageUsesOrderedDistinctWhenInputOrderIsAvailable)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_orders_user_id ON orders (user_id)")
+                    .success());
+    for (int i = 1; i <= 512; ++i)
+    {
+        const int user_id = 1 + (i % 8);
+        ASSERT_TRUE(executeSQL("INSERT INTO orders (id, user_id, amount) VALUES (" +
+                               std::to_string(i) + ", " +
+                               std::to_string(user_id) + ", " +
+                               std::to_string(10 + (i % 11)) + ".0)")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE orders").success());
+
+    const std::string sql =
+        "SELECT DISTINCT user_id FROM orders WHERE user_id <= 5 ORDER BY user_id";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    EXPECT_EQ(plan.root.node_type, "Aggregate");
+    ASSERT_EQ(plan.root.children.size(), 1u);
+    EXPECT_NE(plan.root.children.front().node_type, "Sort");
+    EXPECT_EQ(plan.root.detail_text, "DISTINCT");
+
+    const auto chosen_it =
+        std::find_if(plan.considered_paths.begin(),
+                     plan.considered_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "UPPER_STAGE_STRATEGY" &&
+                                entry.subject == "query:distinct" &&
+                                entry.candidate == "ORDERED_DISTINCT" &&
+                                entry.verdict == "CHOSEN";
+                     });
+    ASSERT_NE(chosen_it, plan.considered_paths.end());
+
+    auto result = executeSQL(sql);
+    ASSERT_TRUE(result.success()) << result.error();
+    const auto rows = resultStrings(result);
+    ASSERT_EQ(rows.size(), 5u);
+    EXPECT_EQ(rows.front(), "1");
+    EXPECT_EQ(rows.back(), "5");
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       DistinctStageUsesHashDistinctWhenOrderIsUnavailable)
+{
+    ASSERT_TRUE(createDatabase());
+
+    for (int i = 1; i <= 128; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'distinct" +
+                               std::to_string(i) + "', 'distinct" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 6)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT DISTINCT age FROM users");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+
+    const auto chosen_it =
+        std::find_if(plan.considered_paths.begin(),
+                     plan.considered_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "UPPER_STAGE_STRATEGY" &&
+                                entry.subject == "query:distinct" &&
+                                entry.candidate == "HASH_DISTINCT" &&
+                                entry.verdict == "CHOSEN";
+                     });
+    ASSERT_NE(chosen_it, plan.considered_paths.end());
+
+    const auto rejected_it =
+        std::find_if(plan.rejected_paths.begin(),
+                     plan.rejected_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "UPPER_STAGE_STRATEGY" &&
+                                entry.subject == "query:distinct" &&
+                                entry.candidate == "ORDERED_DISTINCT" &&
+                                entry.verdict == "REJECTED";
+                     });
+    ASSERT_NE(rejected_it, plan.rejected_paths.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
        WindowPreservesOrderedInputAndAvoidsFinalSort)
 {
     ASSERT_TRUE(createDatabase());
@@ -2791,6 +2932,50 @@ TEST_F(QueryPlannerIntegrationTest,
     ASSERT_EQ(result.resultSet()->rowCount(), 57u);
     EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "200");
     EXPECT_EQ(result.resultSet()->getValue(56, 0).toString(), "256");
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       WindowStagePublishesLocalSortStrategyWhenOrderIsMissing)
+{
+    ASSERT_TRUE(createDatabase());
+
+    for (int i = 1; i <= 64; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'z" +
+                               std::to_string(65 - i) + "', 'window" +
+                               std::to_string(i) + "@example.com', 30)")
+                        .success());
+    }
+
+    auto bytecode =
+        compileSQL("SELECT ROW_NUMBER() OVER (ORDER BY name) FROM users");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+
+    const auto chosen_it =
+        std::find_if(plan.considered_paths.begin(),
+                     plan.considered_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "UPPER_STAGE_STRATEGY" &&
+                                entry.subject == "query:window" &&
+                                entry.candidate == "WINDOW_LOCAL_SORT" &&
+                                entry.verdict == "CHOSEN";
+                     });
+    ASSERT_NE(chosen_it, plan.considered_paths.end());
+
+    const auto rejected_it =
+        std::find_if(plan.rejected_paths.begin(),
+                     plan.rejected_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "UPPER_STAGE_STRATEGY" &&
+                                entry.subject == "query:window" &&
+                                entry.candidate == "WINDOW_REUSE_ORDER" &&
+                                entry.verdict == "REJECTED";
+                     });
+    ASSERT_NE(rejected_it, plan.rejected_paths.end());
 }
 
 TEST_F(QueryPlannerIntegrationTest,
@@ -2847,6 +3032,45 @@ TEST_F(QueryPlannerIntegrationTest,
     ASSERT_EQ(rows.size(), 128u);
     EXPECT_TRUE(std::is_sorted(rows.begin(), rows.end()));
     EXPECT_EQ(rows.front(), "user1");
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       OrderedLimitPublishesOrderedLimitStrategyWithoutSortNode)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_id ON users (id)").success());
+    for (int i = 1; i <= 256; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'limit" +
+                               std::to_string(i) + "', 'limit" +
+                               std::to_string(i) + "@example.com', 30)")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    const std::string sql =
+        "SELECT id FROM users WHERE id >= 200 ORDER BY id LIMIT 5";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    EXPECT_EQ(plan.root.node_type, "Limit");
+    ASSERT_EQ(plan.root.children.size(), 1u);
+    EXPECT_NE(plan.root.children.front().node_type, "Sort");
+
+    const auto chosen_it =
+        std::find_if(plan.considered_paths.begin(),
+                     plan.considered_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "UPPER_STAGE_STRATEGY" &&
+                                entry.subject == "query:top_n" &&
+                                entry.candidate == "ORDERED_LIMIT" &&
+                                entry.verdict == "CHOSEN";
+                     });
+    ASSERT_NE(chosen_it, plan.considered_paths.end());
 }
 
 TEST_F(QueryPlannerIntegrationTest, CorrelatedExistsPreservesQualifiedOuterReferenceInBytecode)
