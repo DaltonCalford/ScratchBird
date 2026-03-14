@@ -10,6 +10,7 @@
 #include "scratchbird/core/page_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tablespace.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -621,6 +622,8 @@ namespace scratchbird::core
         uint32_t allocated_count = BOOTSTRAP_FIXED_PAGE_COUNT;
         uint32_t empty_pages = 0;
         uint32_t corrupt_pages = 0;
+        uint32_t chain_relinkable_pages = 0;
+        uint32_t chain_blocked_pages = 0;
 
         for (uint32_t page_id = BOOTSTRAP_FIXED_PAGE_COUNT; page_id < total_pages_; page_id++)
         {
@@ -663,6 +666,39 @@ namespace scratchbird::core
                 // the page contains data and should not be reused until GC
                 setBit(page_id, true);
                 allocated_count++;
+
+                if (header->page_type == PAGE_TYPE_HEAP && db_ != nullptr && db_->buffer_pool() != nullptr)
+                {
+                    HeapPage heap_page(buffer.get(), page_size_, nullptr, db_, ID{});
+                    HeapPage::VersionChainAuditResult audit{};
+                    ErrorContext audit_ctx;
+                    Status audit_status = heap_page.auditVersionChainMetadata(
+                        HeapPage::VersionChainAuditMode::READ_ONLY, &audit, &audit_ctx);
+                    if (audit_status != Status::OK)
+                    {
+                        ++chain_blocked_pages;
+                        LOG_WARNING(STORAGE,
+                                    "FSM reconstruction: heap page %u chain audit failed: %d",
+                                    page_id,
+                                    static_cast<int>(audit_status));
+                    }
+                    else if (audit.cleanup_blocked)
+                    {
+                        ++chain_blocked_pages;
+                        LOG_WARNING(STORAGE,
+                                    "FSM reconstruction: heap page %u has cleanup-blocking chain anomalies: %s",
+                                    page_id,
+                                    audit.summary.c_str());
+                    }
+                    else if (audit.strongest_class == HeapPage::VersionChainAnomalyClass::RELINKABLE)
+                    {
+                        ++chain_relinkable_pages;
+                        LOG_WARNING(STORAGE,
+                                    "FSM reconstruction: heap page %u has relinkable chain anomalies: %s",
+                                    page_id,
+                                    audit.summary.c_str());
+                    }
+                }
             }
             else
             {
@@ -675,8 +711,9 @@ namespace scratchbird::core
         }
 
         LOG_INFO(STORAGE,
-                 "FSM reconstruction complete: %u allocated, %u free, %u empty, %u corrupt",
-                 allocated_count, free_pages_, empty_pages, corrupt_pages);
+                 "FSM reconstruction complete: %u allocated, %u free, %u empty, %u corrupt, %u relinkable-chain pages, %u cleanup-blocked-chain pages",
+                 allocated_count, free_pages_, empty_pages, corrupt_pages, chain_relinkable_pages,
+                 chain_blocked_pages);
 
         // Mark FSM as dirty so it gets flushed with the corrected state
         dirty_ = true;

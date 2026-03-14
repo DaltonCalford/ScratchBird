@@ -334,6 +334,47 @@ namespace scratchbird::core
             uint32_t logical_dead_root_count = 0;
         };
 
+        enum class VersionChainAnomalyClass
+        {
+            NONE,
+            RELINKABLE,
+            TRUNCATABLE,
+            QUARANTINABLE,
+            UNRECOVERABLE,
+        };
+
+        enum class VersionChainAnomalyCode
+        {
+            NONE,
+            PRIMARY_SELF_TID_MISMATCH,
+            BACKLINK_TID_MISMATCH,
+            INVALID_BACK_TARGET,
+            SELF_REFERENTIAL_BACK_TARGET,
+            BACK_SLOT_OUT_OF_BOUNDS,
+            BACK_TARGET_NOT_RECLAIM_SAFE,
+            CROSS_PAGE_TARGET_UNAVAILABLE,
+            CROSS_PAGE_TARGET_INVALID_HEAP,
+            CROSS_PAGE_SLOT_OUT_OF_BOUNDS,
+            CROSS_PAGE_TARGET_NOT_RECLAIM_SAFE,
+        };
+
+        enum class VersionChainAuditMode
+        {
+            READ_ONLY,
+            APPLY_RELINKABLE_REPAIRS,
+        };
+
+        struct VersionChainAuditResult
+        {
+            VersionChainAnomalyClass strongest_class = VersionChainAnomalyClass::NONE;
+            VersionChainAnomalyCode strongest_code = VersionChainAnomalyCode::NONE;
+            uint32_t anomaly_count = 0;
+            uint32_t relink_repairs = 0;
+            bool cleanup_blocked = false;
+            bool quarantine_recommended = false;
+            std::string summary;
+        };
+
         // Constructor wraps an existing page buffer
         explicit HeapPage(uint8_t *page_data, uint32_t page_size);
 
@@ -445,6 +486,13 @@ namespace scratchbird::core
                                  std::vector<uint16_t> *reclaimable_item_ids_out = nullptr,
                                  std::vector<TID> *dead_tids_out = nullptr,
                                  ErrorContext *ctx = nullptr) -> Status;
+
+        // Read-only or explicitly repairing audit of version-chain metadata.
+        // RMGA-006 uses this to classify anomalies without making inline repair
+        // a routine correctness dependency for GC or maintenance scans.
+        auto auditVersionChainMetadata(VersionChainAuditMode mode,
+                                       VersionChainAuditResult *audit_out,
+                                       ErrorContext *ctx = nullptr) -> Status;
 
         // Prune dead tuples from page (GC helper)
         // Marks garbage tuples as LP_UNUSED based on provided OIT

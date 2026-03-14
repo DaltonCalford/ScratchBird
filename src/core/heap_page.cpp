@@ -177,6 +177,77 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    static auto anomalyClassSeverity(HeapPage::VersionChainAnomalyClass anomaly_class) -> uint32_t
+    {
+        switch (anomaly_class)
+        {
+            case HeapPage::VersionChainAnomalyClass::NONE:
+                return 0;
+            case HeapPage::VersionChainAnomalyClass::RELINKABLE:
+                return 1;
+            case HeapPage::VersionChainAnomalyClass::TRUNCATABLE:
+                return 2;
+            case HeapPage::VersionChainAnomalyClass::QUARANTINABLE:
+                return 3;
+            case HeapPage::VersionChainAnomalyClass::UNRECOVERABLE:
+                return 4;
+        }
+
+        return 4;
+    }
+
+    static auto versionChainAnomalyClassName(HeapPage::VersionChainAnomalyClass anomaly_class)
+        -> const char *
+    {
+        switch (anomaly_class)
+        {
+            case HeapPage::VersionChainAnomalyClass::NONE:
+                return "NONE";
+            case HeapPage::VersionChainAnomalyClass::RELINKABLE:
+                return "RELINKABLE";
+            case HeapPage::VersionChainAnomalyClass::TRUNCATABLE:
+                return "TRUNCATABLE";
+            case HeapPage::VersionChainAnomalyClass::QUARANTINABLE:
+                return "QUARANTINABLE";
+            case HeapPage::VersionChainAnomalyClass::UNRECOVERABLE:
+                return "UNRECOVERABLE";
+        }
+
+        return "UNRECOVERABLE";
+    }
+
+    static auto versionChainAnomalyCodeName(HeapPage::VersionChainAnomalyCode anomaly_code)
+        -> const char *
+    {
+        switch (anomaly_code)
+        {
+            case HeapPage::VersionChainAnomalyCode::NONE:
+                return "NONE";
+            case HeapPage::VersionChainAnomalyCode::PRIMARY_SELF_TID_MISMATCH:
+                return "PRIMARY_SELF_TID_MISMATCH";
+            case HeapPage::VersionChainAnomalyCode::BACKLINK_TID_MISMATCH:
+                return "BACKLINK_TID_MISMATCH";
+            case HeapPage::VersionChainAnomalyCode::INVALID_BACK_TARGET:
+                return "INVALID_BACK_TARGET";
+            case HeapPage::VersionChainAnomalyCode::SELF_REFERENTIAL_BACK_TARGET:
+                return "SELF_REFERENTIAL_BACK_TARGET";
+            case HeapPage::VersionChainAnomalyCode::BACK_SLOT_OUT_OF_BOUNDS:
+                return "BACK_SLOT_OUT_OF_BOUNDS";
+            case HeapPage::VersionChainAnomalyCode::BACK_TARGET_NOT_RECLAIM_SAFE:
+                return "BACK_TARGET_NOT_RECLAIM_SAFE";
+            case HeapPage::VersionChainAnomalyCode::CROSS_PAGE_TARGET_UNAVAILABLE:
+                return "CROSS_PAGE_TARGET_UNAVAILABLE";
+            case HeapPage::VersionChainAnomalyCode::CROSS_PAGE_TARGET_INVALID_HEAP:
+                return "CROSS_PAGE_TARGET_INVALID_HEAP";
+            case HeapPage::VersionChainAnomalyCode::CROSS_PAGE_SLOT_OUT_OF_BOUNDS:
+                return "CROSS_PAGE_SLOT_OUT_OF_BOUNDS";
+            case HeapPage::VersionChainAnomalyCode::CROSS_PAGE_TARGET_NOT_RECLAIM_SAFE:
+                return "CROSS_PAGE_TARGET_NOT_RECLAIM_SAFE";
+        }
+
+        return "NONE";
+    }
+
     HeapPage::HeapPage(uint8_t *page_data, uint32_t page_size)
         : page_data_(page_data), page_size_(page_size), toast_mgr_(nullptr), db_(nullptr)
     {
@@ -1786,34 +1857,41 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto HeapPage::repairVersionChainMetadata(uint32_t *repairs_out,
-                                              bool *cleanup_blocked_out,
-                                              ErrorContext *ctx) -> Status
+    auto HeapPage::auditVersionChainMetadata(VersionChainAuditMode mode,
+                                             VersionChainAuditResult *audit_out,
+                                             ErrorContext *ctx) -> Status
     {
-        if (repairs_out != nullptr)
+        if (audit_out == nullptr)
         {
-            *repairs_out = 0;
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "audit_out cannot be null");
+            return Status::INVALID_ARGUMENT;
         }
-        if (cleanup_blocked_out != nullptr)
-        {
-            *cleanup_blocked_out = false;
-        }
+
+        *audit_out = {};
 
         ItemPointer *items = getItemArray();
         const uint16_t item_count = getItemCount();
         const GPID current_gpid =
             makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
 
-        uint32_t repairs = 0;
-
-        auto blockCleanup = [&](const char *message) -> Status
+        auto noteAnomaly = [&](VersionChainAnomalyClass anomaly_class,
+                               VersionChainAnomalyCode anomaly_code,
+                               const char *message)
         {
-            if (cleanup_blocked_out != nullptr)
+            ++audit_out->anomaly_count;
+            if (anomalyClassSeverity(anomaly_class) >
+                anomalyClassSeverity(audit_out->strongest_class))
             {
-                *cleanup_blocked_out = true;
+                audit_out->strongest_class = anomaly_class;
+                audit_out->strongest_code = anomaly_code;
+                audit_out->summary = message;
             }
-            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, message);
-            return Status::DATA_CORRUPTED;
+            audit_out->cleanup_blocked =
+                anomalyClassSeverity(anomaly_class) >=
+                anomalyClassSeverity(VersionChainAnomalyClass::TRUNCATABLE);
+            audit_out->quarantine_recommended =
+                anomalyClassSeverity(anomaly_class) >=
+                anomalyClassSeverity(VersionChainAnomalyClass::QUARANTINABLE);
         };
 
         for (uint16_t item_id = 0; item_id < item_count; ++item_id)
@@ -1833,8 +1911,14 @@ namespace scratchbird::core
             if (!is_chain_member &&
                 (tuple_hdr->ctid_gpid != current_gpid || tuple_hdr->ctid_slot != item_id))
             {
-                tuple_hdr->setTID(current_gpid, item_id);
-                ++repairs;
+                noteAnomaly(VersionChainAnomalyClass::RELINKABLE,
+                            VersionChainAnomalyCode::PRIMARY_SELF_TID_MISMATCH,
+                            "CHAIN_AUDIT[RELINKABLE/PRIMARY_SELF_TID_MISMATCH]: primary tuple TID metadata diverges from slot identity");
+                if (mode == VersionChainAuditMode::APPLY_RELINKABLE_REPAIRS)
+                {
+                    tuple_hdr->setTID(current_gpid, item_id);
+                    ++audit_out->relink_repairs;
+                }
             }
 
             if (!tuple_hdr->hasBackVersion())
@@ -1845,46 +1929,71 @@ namespace scratchbird::core
             const TID back_tid = tuple_hdr->getBackVersionTID();
             if (back_tid.gpid == INVALID_GPID)
             {
-                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: tuple advertises an invalid back-version target");
+                noteAnomaly(VersionChainAnomalyClass::UNRECOVERABLE,
+                            VersionChainAnomalyCode::INVALID_BACK_TARGET,
+                            "CHAIN_AUDIT[UNRECOVERABLE/INVALID_BACK_TARGET]: tuple advertises an invalid back-version target");
+                continue;
             }
 
             if (back_tid.gpid == current_gpid)
             {
                 if (back_tid.slot == item_id)
                 {
-                    return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: self-referential version chain");
+                    noteAnomaly(VersionChainAnomalyClass::TRUNCATABLE,
+                                VersionChainAnomalyCode::SELF_REFERENTIAL_BACK_TARGET,
+                                "CHAIN_AUDIT[TRUNCATABLE/SELF_REFERENTIAL_BACK_TARGET]: self-referential version chain");
+                    continue;
                 }
                 if (back_tid.slot >= item_count)
                 {
-                    return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: back-version slot is out of bounds");
+                    noteAnomaly(VersionChainAnomalyClass::TRUNCATABLE,
+                                VersionChainAnomalyCode::BACK_SLOT_OUT_OF_BOUNDS,
+                                "CHAIN_AUDIT[TRUNCATABLE/BACK_SLOT_OUT_OF_BOUNDS]: back-version slot is out of bounds");
+                    continue;
                 }
                 if (items[back_tid.slot].isUnused() || items[back_tid.slot].isDeleted() ||
                     !items[back_tid.slot].isValid(page_size_))
                 {
-                    return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: back-version target slot is not reclaim-safe");
+                    noteAnomaly(VersionChainAnomalyClass::TRUNCATABLE,
+                                VersionChainAnomalyCode::BACK_TARGET_NOT_RECLAIM_SAFE,
+                                "CHAIN_AUDIT[TRUNCATABLE/BACK_TARGET_NOT_RECLAIM_SAFE]: same-page back-version target is not reclaim-safe");
+                    continue;
                 }
 
                 auto *back_hdr =
                     reinterpret_cast<TupleHeader *>(page_data_ + items[back_tid.slot].offset);
                 if (back_hdr->ctid_gpid != current_gpid || back_hdr->ctid_slot != item_id)
                 {
-                    back_hdr->setTID(current_gpid, item_id);
-                    ++repairs;
+                    noteAnomaly(VersionChainAnomalyClass::RELINKABLE,
+                                VersionChainAnomalyCode::BACKLINK_TID_MISMATCH,
+                                "CHAIN_AUDIT[RELINKABLE/BACKLINK_TID_MISMATCH]: same-page back-version TID metadata does not point to the owning head");
+                    if (mode == VersionChainAuditMode::APPLY_RELINKABLE_REPAIRS)
+                    {
+                        back_hdr->setTID(current_gpid, item_id);
+                        ++audit_out->relink_repairs;
+                    }
                 }
                 continue;
             }
 
             if (db_ == nullptr || db_->buffer_pool() == nullptr)
             {
-                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page chain target cannot be validated");
+                noteAnomaly(VersionChainAnomalyClass::QUARANTINABLE,
+                            VersionChainAnomalyCode::CROSS_PAGE_TARGET_UNAVAILABLE,
+                            "CHAIN_AUDIT[QUARANTINABLE/CROSS_PAGE_TARGET_UNAVAILABLE]: cross-page chain target cannot be validated");
+                continue;
             }
 
             void *target_buffer = nullptr;
+            ErrorContext pin_ctx;
             Status pin_status = db_->buffer_pool()->pinPageGlobal(
-                back_tid.gpid, &target_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
+                back_tid.gpid, &target_buffer, &pin_ctx, BufferPool::AccessStrategy::Vacuum);
             if (pin_status != Status::OK)
             {
-                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page chain target cannot be pinned");
+                noteAnomaly(VersionChainAnomalyClass::QUARANTINABLE,
+                            VersionChainAnomalyCode::CROSS_PAGE_TARGET_UNAVAILABLE,
+                            "CHAIN_AUDIT[QUARANTINABLE/CROSS_PAGE_TARGET_UNAVAILABLE]: cross-page chain target cannot be pinned");
+                continue;
             }
 
             bool target_dirty = false;
@@ -1899,7 +2008,10 @@ namespace scratchbird::core
                 target_page_hdr->page_size != db_->page_size())
             {
                 unpinTarget();
-                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page chain target is not a valid heap page");
+                noteAnomaly(VersionChainAnomalyClass::QUARANTINABLE,
+                            VersionChainAnomalyCode::CROSS_PAGE_TARGET_INVALID_HEAP,
+                            "CHAIN_AUDIT[QUARANTINABLE/CROSS_PAGE_TARGET_INVALID_HEAP]: cross-page chain target is not a valid heap page");
+                continue;
             }
 
             auto *target_items =
@@ -1909,14 +2021,20 @@ namespace scratchbird::core
             if (back_tid.slot >= target_item_count)
             {
                 unpinTarget();
-                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page back-version slot is out of bounds");
+                noteAnomaly(VersionChainAnomalyClass::TRUNCATABLE,
+                            VersionChainAnomalyCode::CROSS_PAGE_SLOT_OUT_OF_BOUNDS,
+                            "CHAIN_AUDIT[TRUNCATABLE/CROSS_PAGE_SLOT_OUT_OF_BOUNDS]: cross-page back-version slot is out of bounds");
+                continue;
             }
 
             if (target_items[back_tid.slot].isUnused() || target_items[back_tid.slot].isDeleted() ||
                 !target_items[back_tid.slot].isValid(db_->page_size()))
             {
                 unpinTarget();
-                return blockCleanup("GC_CHAIN_REPAIR_REQUIRED: cross-page back-version target is not reclaim-safe");
+                noteAnomaly(VersionChainAnomalyClass::TRUNCATABLE,
+                            VersionChainAnomalyCode::CROSS_PAGE_TARGET_NOT_RECLAIM_SAFE,
+                            "CHAIN_AUDIT[TRUNCATABLE/CROSS_PAGE_TARGET_NOT_RECLAIM_SAFE]: cross-page back-version target is not reclaim-safe");
+                continue;
             }
 
             auto *target_tuple_hdr = reinterpret_cast<TupleHeader *>(
@@ -1924,18 +2042,64 @@ namespace scratchbird::core
             if (target_tuple_hdr->ctid_gpid != current_gpid ||
                 target_tuple_hdr->ctid_slot != item_id)
             {
-                target_tuple_hdr->setTID(current_gpid, item_id);
-                target_dirty = true;
-                ++repairs;
+                noteAnomaly(VersionChainAnomalyClass::RELINKABLE,
+                            VersionChainAnomalyCode::BACKLINK_TID_MISMATCH,
+                            "CHAIN_AUDIT[RELINKABLE/BACKLINK_TID_MISMATCH]: cross-page back-version TID metadata does not point to the owning head");
+                if (mode == VersionChainAuditMode::APPLY_RELINKABLE_REPAIRS)
+                {
+                    target_tuple_hdr->setTID(current_gpid, item_id);
+                    target_dirty = true;
+                    ++audit_out->relink_repairs;
+                }
             }
 
             unpinTarget();
         }
 
+        if (audit_out->summary.empty())
+        {
+            audit_out->summary = "CHAIN_AUDIT[NONE/NONE]: version chain metadata is consistent";
+        }
+
+        return Status::OK;
+    }
+
+    auto HeapPage::repairVersionChainMetadata(uint32_t *repairs_out,
+                                              bool *cleanup_blocked_out,
+                                              ErrorContext *ctx) -> Status
+    {
         if (repairs_out != nullptr)
         {
-            *repairs_out = repairs;
+            *repairs_out = 0;
         }
+        if (cleanup_blocked_out != nullptr)
+        {
+            *cleanup_blocked_out = false;
+        }
+
+        VersionChainAuditResult audit{};
+        Status status =
+            auditVersionChainMetadata(VersionChainAuditMode::APPLY_RELINKABLE_REPAIRS, &audit, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (repairs_out != nullptr)
+        {
+            *repairs_out = audit.relink_repairs;
+        }
+        if (cleanup_blocked_out != nullptr)
+        {
+            *cleanup_blocked_out = audit.cleanup_blocked;
+        }
+
+        if (audit.cleanup_blocked)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, audit.summary.c_str());
+            return Status::DATA_CORRUPTED;
+        }
+
         return Status::OK;
     }
 

@@ -296,17 +296,27 @@ namespace scratchbird::core
             page_data + db_->page_size() - sizeof(HeapPageSpecial));
         const ID page_table_id = (special != nullptr) ? special->table_id : table_id;
         HeapPage heap(page_data, db_->page_size(), nullptr, db_, page_table_id);
-        uint32_t repairs = 0;
-        bool cleanup_blocked = false;
-        status = heap.repairVersionChainMetadata(&repairs, &cleanup_blocked, ctx);
-        if (status != Status::OK || cleanup_blocked)
+        HeapPage::VersionChainAuditResult chain_audit{};
+        status = heap.auditVersionChainMetadata(
+            HeapPage::VersionChainAuditMode::READ_ONLY, &chain_audit, ctx);
+        if (status != Status::OK)
         {
-            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
             if (stats_out != nullptr)
             {
                 *stats_out = stats;
             }
-            return (status == Status::OK) ? Status::DATA_CORRUPTED : status;
+            return status;
+        }
+        if (chain_audit.cleanup_blocked)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, chain_audit.summary.c_str());
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            if (stats_out != nullptr)
+            {
+                *stats_out = stats;
+            }
+            return Status::DATA_CORRUPTED;
         }
 
         stats.pages_scanned++;
@@ -347,7 +357,7 @@ namespace scratchbird::core
         status = heap.scanVersionMaturity(horizon, &maturity_scan, &dead_items, nullptr, ctx);
         if (status != Status::OK)
         {
-            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
             if (stats_out != nullptr)
             {
                 *stats_out = stats;
@@ -370,7 +380,7 @@ namespace scratchbird::core
                                                              hints,
                                                              nullptr);
 
-        db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+        db_->buffer_pool()->unpinPage(page_id, false, ctx);
 
         if (!dead_items.empty())
         {
@@ -456,12 +466,16 @@ namespace scratchbird::core
                 page_data + db_->page_size() - sizeof(HeapPageSpecial));
             const ID page_table_id = (special != nullptr) ? special->table_id : table_id;
             HeapPage heap(page_data, db_->page_size(), nullptr, db_, page_table_id);
-            uint32_t repairs = 0;
-            bool cleanup_blocked = false;
-            Status repair_status = heap.repairVersionChainMetadata(&repairs, &cleanup_blocked, ctx);
-            if (repair_status != Status::OK || cleanup_blocked)
+            HeapPage::VersionChainAuditResult chain_audit{};
+            Status audit_status = heap.auditVersionChainMetadata(
+                HeapPage::VersionChainAuditMode::READ_ONLY, &chain_audit, ctx);
+            if (audit_status != Status::OK || chain_audit.cleanup_blocked)
             {
-                db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+                if (audit_status == Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, chain_audit.summary.c_str());
+                }
+                db_->buffer_pool()->unpinPage(page_id, false, ctx);
                 continue;
             }
             stats->pages_scanned++;
@@ -533,7 +547,7 @@ namespace scratchbird::core
                                                                  hints,
                                                                  nullptr);
 
-            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
         }
 
         return Status::OK;
@@ -555,13 +569,19 @@ namespace scratchbird::core
             page_data + db_->page_size() - sizeof(HeapPageSpecial));
         const ID table_uuid = (special != nullptr) ? special->table_id : table_id;
         HeapPage heap(page_data, db_->page_size(), nullptr, db_, table_uuid);
-        uint32_t repairs = 0;
-        bool cleanup_blocked = false;
-        Status repair_status = heap.repairVersionChainMetadata(&repairs, &cleanup_blocked, ctx);
-        if (repair_status != Status::OK || cleanup_blocked)
+        HeapPage::VersionChainAuditResult chain_audit{};
+        Status audit_status = heap.auditVersionChainMetadata(
+            HeapPage::VersionChainAuditMode::READ_ONLY, &chain_audit, ctx);
+        if (audit_status != Status::OK)
         {
-            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
-            return (repair_status == Status::OK) ? Status::DATA_CORRUPTED : repair_status;
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            return audit_status;
+        }
+        if (chain_audit.cleanup_blocked)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, chain_audit.summary.c_str());
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            return Status::DATA_CORRUPTED;
         }
 
         // Scan all tuples looking for reclaimable historical versions.
@@ -589,7 +609,7 @@ namespace scratchbird::core
         Status maturity_status = heap.scanVersionMaturity(horizon, &maturity_scan, nullptr, nullptr, ctx);
         if (maturity_status != Status::OK)
         {
-            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
             return maturity_status;
         }
         stats->version_chains_pruned += maturity_scan.prune_only_item_count;
@@ -603,7 +623,7 @@ namespace scratchbird::core
                                                              hints,
                                                              nullptr);
 
-        db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+        db_->buffer_pool()->unpinPage(page_id, false, ctx);
         return Status::OK;
     }
 

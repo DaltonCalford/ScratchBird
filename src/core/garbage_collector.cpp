@@ -590,16 +590,16 @@ namespace scratchbird::core
             return 0;
         }
 
-        uint32_t repairs = 0;
-        bool cleanup_blocked = false;
-        Status repair_status = heap_page.repairVersionChainMetadata(&repairs, &cleanup_blocked, ctx);
-        if (repair_status != Status::OK || cleanup_blocked)
+        HeapPage::VersionChainAuditResult chain_audit{};
+        Status audit_status = heap_page.auditVersionChainMetadata(
+            HeapPage::VersionChainAuditMode::READ_ONLY, &chain_audit, ctx);
+        if (audit_status != Status::OK)
         {
             LOG_WARNING(VACUUM,
-                        "Skipping page %u for GC because version chain repair is required: %s",
+                        "Skipping page %u for GC because version chain audit failed: %d",
                         page_id,
-                        (ctx != nullptr) ? ctx->message.c_str() : "unsafe chain metadata");
-            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+                        static_cast<int>(audit_status));
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
             if (space_reclaimed_out != nullptr)
             {
                 *space_reclaimed_out = 0;
@@ -609,6 +609,31 @@ namespace scratchbird::core
                 dirty_pages_.erase(page_id);
             }
             return 0;
+        }
+        if (chain_audit.cleanup_blocked)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, chain_audit.summary.c_str());
+            LOG_WARNING(VACUUM,
+                        "Skipping page %u for GC because version chain cleanup is blocked: %s",
+                        page_id,
+                        chain_audit.summary.c_str());
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
+            {
+                std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
+                dirty_pages_.erase(page_id);
+            }
+            return 0;
+        }
+        if (chain_audit.strongest_class == HeapPage::VersionChainAnomalyClass::RELINKABLE)
+        {
+            LOG_WARNING(VACUUM,
+                        "Continuing GC on page %u with relinkable version chain anomalies: %s",
+                        page_id,
+                        chain_audit.summary.c_str());
         }
 
         uint32_t tuples_pruned = 0;
@@ -626,7 +651,7 @@ namespace scratchbird::core
         {
             LOG_WARNING(VACUUM, "Failed to classify version maturity on page %u: %d", page_id,
                        static_cast<int>(collect_status));
-            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
             if (space_reclaimed_out != nullptr)
             {
                 *space_reclaimed_out = 0;
@@ -687,7 +712,7 @@ namespace scratchbird::core
         {
             LOG_WARNING(VACUUM, "Failed to prune page %u during GC: %d", page_id,
                         static_cast<int>(prune_status));
-            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
             if (space_reclaimed_out != nullptr)
             {
                 *space_reclaimed_out = 0;
@@ -699,7 +724,7 @@ namespace scratchbird::core
             return 0;
         }
 
-        bool page_modified = (tuples_pruned > 0) || (repairs != 0);
+        bool page_modified = tuples_pruned > 0;
 
         MgaFailpointManager* failpoints = db_ ? db_->mga_failpoint_manager() : nullptr;
         if (failpoints != nullptr)
