@@ -43,6 +43,8 @@ namespace scratchbird::optimizer
             std::shared_ptr<Path> path;
             std::shared_ptr<PlanNode> plan;
             RuntimePlanRelation runtime_relation;
+            AccessPathDescriptor access_descriptor;
+            std::vector<std::string> candidate_scan_families;
             double selectivity = 1.0;
         };
 
@@ -122,6 +124,143 @@ namespace scratchbird::optimizer
             std::string upper;
             bool upper_inclusive = true;
         };
+
+        auto renderSchemaPath(const parser::v3::SchemaPath &path,
+                              const parser::v3::StringPool &pool) -> std::string
+        {
+            if (path.components.empty())
+            {
+                return {};
+            }
+
+            std::ostringstream out;
+            for (size_t i = 0; i < path.components.size(); ++i)
+            {
+                if (i > 0)
+                {
+                    out << '.';
+                }
+                out << pool.get(path.components[i]);
+            }
+            return out.str();
+        }
+
+        auto expressionToString(const parser::v3::Expression *expr,
+                                const parser::v3::StringPool &pool) -> std::string
+        {
+            if (expr == nullptr)
+            {
+                return {};
+            }
+
+            switch (expr->kind())
+            {
+                case parser::v3::ASTKind::LiteralExpr: {
+                    const auto *literal = static_cast<const parser::v3::LiteralExpr *>(expr);
+                    switch (literal->literal_type)
+                    {
+                        case parser::v3::LiteralType::INTEGER:
+                            return std::to_string(literal->int_value);
+                        case parser::v3::LiteralType::FLOAT: {
+                            std::ostringstream out;
+                            out << literal->float_value;
+                            return out.str();
+                        }
+                        case parser::v3::LiteralType::STRING:
+                            return "'" + std::string(pool.get(literal->string_value)) + "'";
+                        case parser::v3::LiteralType::BOOLEAN:
+                            return literal->bool_value ? "TRUE" : "FALSE";
+                        case parser::v3::LiteralType::NULL_VALUE:
+                            return "NULL";
+                        default:
+                            return "LITERAL";
+                    }
+                }
+                case parser::v3::ASTKind::ColumnRefExpr: {
+                    const auto *column_ref =
+                        static_cast<const parser::v3::ColumnRefExpr *>(expr);
+                    std::ostringstream out;
+                    if (column_ref->column.has_table_qualifier &&
+                        !column_ref->column.table_path.components.empty())
+                    {
+                        out << renderSchemaPath(column_ref->column.table_path, pool)
+                            << '.';
+                    }
+                    out << pool.get(column_ref->column.column_name);
+                    return out.str();
+                }
+                case parser::v3::ASTKind::BinaryExpr: {
+                    const auto *binary = static_cast<const parser::v3::BinaryExpr *>(expr);
+                    const char *op_name = "?";
+                    switch (binary->op)
+                    {
+                        case parser::v3::BinaryOp::EQ: op_name = "="; break;
+                        case parser::v3::BinaryOp::NE: op_name = "!="; break;
+                        case parser::v3::BinaryOp::LT: op_name = "<"; break;
+                        case parser::v3::BinaryOp::LE: op_name = "<="; break;
+                        case parser::v3::BinaryOp::GT: op_name = ">"; break;
+                        case parser::v3::BinaryOp::GE: op_name = ">="; break;
+                        case parser::v3::BinaryOp::AND: op_name = "AND"; break;
+                        case parser::v3::BinaryOp::OR: op_name = "OR"; break;
+                        case parser::v3::BinaryOp::ADD: op_name = "+"; break;
+                        case parser::v3::BinaryOp::SUB: op_name = "-"; break;
+                        case parser::v3::BinaryOp::MUL: op_name = "*"; break;
+                        case parser::v3::BinaryOp::DIV: op_name = "/"; break;
+                        case parser::v3::BinaryOp::CONCAT: op_name = "||"; break;
+                        default: break;
+                    }
+                    return "(" + expressionToString(binary->left, pool) + " " +
+                           std::string(op_name) + " " +
+                           expressionToString(binary->right, pool) + ")";
+                }
+                case parser::v3::ASTKind::LikeExpr: {
+                    const auto *like_expr = static_cast<const parser::v3::LikeExpr *>(expr);
+                    return expressionToString(like_expr->expr, pool) + " LIKE " +
+                           expressionToString(like_expr->pattern, pool);
+                }
+                case parser::v3::ASTKind::BetweenExpr: {
+                    const auto *between_expr =
+                        static_cast<const parser::v3::BetweenExpr *>(expr);
+                    return expressionToString(between_expr->expr, pool) + " BETWEEN " +
+                           expressionToString(between_expr->low, pool) + " AND " +
+                           expressionToString(between_expr->high, pool);
+                }
+                case parser::v3::ASTKind::UnaryExpr: {
+                    const auto *unary = static_cast<const parser::v3::UnaryExpr *>(expr);
+                    switch (unary->op)
+                    {
+                        case parser::v3::UnaryOp::NOT:
+                            return "NOT " + expressionToString(unary->operand, pool);
+                        case parser::v3::UnaryOp::NEGATE:
+                            return "-" + expressionToString(unary->operand, pool);
+                        case parser::v3::UnaryOp::IS_NULL:
+                            return expressionToString(unary->operand, pool) + " IS NULL";
+                        case parser::v3::UnaryOp::IS_NOT_NULL:
+                            return expressionToString(unary->operand, pool) + " IS NOT NULL";
+                        default:
+                            return "UNARY";
+                    }
+                }
+                case parser::v3::ASTKind::FunctionCallExpr: {
+                    const auto *func =
+                        static_cast<const parser::v3::FunctionCallExpr *>(expr);
+                    std::ostringstream out;
+                    out << renderSchemaPath(func->function_path, pool) << '(';
+                    for (size_t i = 0; i < func->arguments.size(); ++i)
+                    {
+                        if (i > 0)
+                        {
+                            out << ", ";
+                        }
+                        out << expressionToString(func->arguments[i], pool);
+                    }
+                    out << ')';
+                    return out.str();
+                }
+                default:
+                    return parser::v3::astKindToString(expr->kind());
+            }
+        }
 
         auto isZeroId(const core::ID &id) -> bool
         {
@@ -2064,6 +2203,11 @@ namespace scratchbird::optimizer
                 return false;
             }
 
+            if (path->accessDescriptor().ordered_output)
+            {
+                return true;
+            }
+
             switch (path->type())
             {
                 case PathType::INDEX_SCAN:
@@ -3245,6 +3389,176 @@ namespace scratchbird::optimizer
                 return out;
             };
 
+            auto appendUniqueText =
+                [](std::vector<std::string> &entries, const std::string &value) {
+                    if (value.empty() ||
+                        std::find(entries.begin(), entries.end(), value) !=
+                            entries.end())
+                    {
+                        return;
+                    }
+                    entries.push_back(value);
+                };
+
+            auto normalizePlannerText = [](std::string text) -> std::string {
+                std::string normalized;
+                normalized.reserve(text.size());
+                for (unsigned char ch : text)
+                {
+                    if (!std::isspace(ch))
+                    {
+                        normalized.push_back(
+                            static_cast<char>(std::toupper(ch)));
+                    }
+                }
+                return normalized;
+            };
+
+            auto columnNameForId = [&](const core::ID &column_id) -> std::string {
+                const auto column_it =
+                    std::find_if(relation.columns.begin(),
+                                 relation.columns.end(),
+                                 [&](const core::CatalogManager::ColumnInfo &column) {
+                                     return column.column_id == column_id;
+                                 });
+                if (column_it == relation.columns.end())
+                {
+                    return {};
+                }
+                return column_it->column_name;
+            };
+
+            auto qualifierMatchesRelation =
+                [&](const std::string &qualifier) -> bool {
+                    if (qualifier.empty())
+                    {
+                        return true;
+                    }
+                    return core::IdentifierUtils::namesMatch(qualifier,
+                                                             false,
+                                                             relation.alias,
+                                                             false) ||
+                           core::IdentifierUtils::namesMatch(qualifier,
+                                                             false,
+                                                             relation.table_info.table_name,
+                                                             false) ||
+                           core::IdentifierUtils::namesMatch(qualifier,
+                                                             false,
+                                                             relation.table_path,
+                                                             false) ||
+                           core::IdentifierUtils::namesMatch(qualifier,
+                                                             false,
+                                                             relationLookupName(relation),
+                                                             false);
+                };
+
+            auto orderedPrefixLengthForIndex =
+                [&](const core::CatalogManager::IndexInfo &index) -> uint64_t {
+                    if (select_stmt == nullptr || select_stmt->order_by.empty())
+                    {
+                        return 0;
+                    }
+
+                    uint64_t prefix = 0;
+                    const size_t limit = std::min(index.column_ids.size(),
+                                                  select_stmt->order_by.size());
+                    for (size_t order_index = 0; order_index < limit; ++order_index)
+                    {
+                        const auto *order_item = select_stmt->order_by[order_index];
+                        if (order_item == nullptr || order_item->expr == nullptr ||
+                            order_item->expr->kind() !=
+                                parser::v3::ASTKind::ColumnRefExpr)
+                        {
+                            break;
+                        }
+
+                        const auto *column_ref =
+                            static_cast<const parser::v3::ColumnRefExpr *>(
+                                order_item->expr);
+                        if (column_ref->column.column_name ==
+                            parser::v3::StringPool::INVALID_ID)
+                        {
+                            break;
+                        }
+
+                        std::string qualifier;
+                        if (column_ref->column.has_table_qualifier &&
+                            !column_ref->column.table_path.components.empty())
+                        {
+                            qualifier = pool.get(
+                                column_ref->column.table_path.components.back());
+                        }
+                        if (!qualifierMatchesRelation(qualifier))
+                        {
+                            break;
+                        }
+
+                        const std::string expected_column =
+                            columnNameForId(index.column_ids[order_index]);
+                        if (expected_column.empty())
+                        {
+                            break;
+                        }
+                        const std::string actual_column =
+                            std::string(pool.get(column_ref->column.column_name));
+                        if (!core::IdentifierUtils::namesMatch(actual_column,
+                                                               false,
+                                                               expected_column,
+                                                               false))
+                        {
+                            break;
+                        }
+
+                        ++prefix;
+                    }
+
+                    return prefix;
+                };
+
+            std::string relation_predicate_text = buildPredicateText();
+            if (planned_out.resolved_query.relations.size() == 1 &&
+                select_stmt != nullptr && select_stmt->where != nullptr)
+            {
+                relation_predicate_text =
+                    expressionToString(select_stmt->where, pool);
+            }
+            const std::string normalized_relation_predicates =
+                normalizePlannerText(relation_predicate_text);
+
+            auto partialIndexMatches =
+                [&](const core::CatalogManager::IndexInfo &index) -> bool {
+                    if (!index.is_partial_index || index.predicate_string.empty())
+                    {
+                        return false;
+                    }
+                    const std::string normalized_index_predicate =
+                        normalizePlannerText(index.predicate_string);
+                    return !normalized_index_predicate.empty() &&
+                           normalized_relation_predicates.find(
+                               normalized_index_predicate) != std::string::npos;
+                };
+
+            auto expressionIndexMatches =
+                [&](const core::CatalogManager::IndexInfo &index) -> bool {
+                    if (!index.is_expression_index ||
+                        index.expression_strings.empty())
+                    {
+                        return false;
+                    }
+                    for (const auto &expression_text : index.expression_strings)
+                    {
+                        const std::string normalized_expression =
+                            normalizePlannerText(expression_text);
+                        if (!normalized_expression.empty() &&
+                            normalized_relation_predicates.find(
+                                normalized_expression) != std::string::npos)
+                        {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
             auto estimatePredicateSelectivity =
                 [&](const ResolvedScanPredicate &predicate) -> double {
                     if (!relation.resolved ||
@@ -3422,12 +3736,32 @@ namespace scratchbird::optimizer
             best_plan = seq_plan;
 
             std::string best_scan_kind = "SEQ_SCAN";
+            std::string best_scan_family = "SEQ_SCAN";
+            std::vector<std::string> best_scan_family_tags;
             RuntimePlanIndexPredicate best_runtime_predicate;
             std::vector<RuntimePlanIndexPredicate> best_runtime_predicates;
             std::string best_bitmap_op;
             bool best_covering_index = false;
             bool best_exact_key_lookup = false;
+            bool best_ordered_output = false;
+            uint64_t best_ordered_prefix_length = 0;
+            std::vector<size_t> best_required_outer_relation_indexes;
+            std::vector<std::string> best_required_outer_relation_aliases;
             core::CatalogManager::IndexInfo matched_index{};
+            appendUniqueText(choice.candidate_scan_families, "SEQ_SCAN");
+            for (const auto &index : relation.indexes)
+            {
+                if (index.is_partial_index)
+                {
+                    appendUniqueText(choice.candidate_scan_families,
+                                     "PARTIAL_INDEX_SCAN");
+                }
+                if (index.is_expression_index)
+                {
+                    appendUniqueText(choice.candidate_scan_families,
+                                     "EXPRESSION_INDEX_SCAN");
+                }
+            }
 
             auto indexCoversColumns =
                 [&](const core::CatalogManager::IndexInfo &index) -> bool {
@@ -3473,6 +3807,15 @@ namespace scratchbird::optimizer
                 const bool exact_key_lookup =
                     index.index_type == core::CatalogManager::IndexType::BTREE &&
                     predicateSupportsExactLookup(predicate);
+                const bool multicolumn_prefix_match =
+                    index.column_ids.size() > 1 &&
+                    !index.column_ids.empty() &&
+                    index.column_ids.front() == predicate.column_id;
+                const uint64_t ordered_prefix_length =
+                    orderedPrefixLengthForIndex(index);
+                const bool partial_index_match = partialIndexMatches(index);
+                const bool expression_index_match =
+                    expressionIndexMatches(index);
 
                 CostEstimate candidate_cost{};
                 std::string scan_kind = "INDEX_SCAN";
@@ -3508,6 +3851,49 @@ namespace scratchbird::optimizer
                                                                qual_cost,
                                                                correlation,
                                                                ctx);
+                }
+                std::vector<std::string> candidate_scan_families;
+                appendUniqueText(candidate_scan_families, scan_kind);
+                if (multicolumn_prefix_match)
+                {
+                    appendUniqueText(candidate_scan_families,
+                                     "MULTICOLUMN_PREFIX_INDEX_SCAN");
+                }
+                if (ordered_prefix_length > 0)
+                {
+                    appendUniqueText(candidate_scan_families,
+                                     "ORDERED_INDEX_SCAN");
+                }
+                if (partial_index_match)
+                {
+                    appendUniqueText(candidate_scan_families,
+                                     "PARTIAL_INDEX_SCAN");
+                }
+                if (expression_index_match)
+                {
+                    appendUniqueText(candidate_scan_families,
+                                     "EXPRESSION_INDEX_SCAN");
+                }
+                std::string candidate_scan_family = scan_kind;
+                if (expression_index_match)
+                {
+                    candidate_scan_family = "EXPRESSION_INDEX_SCAN";
+                }
+                else if (partial_index_match)
+                {
+                    candidate_scan_family = "PARTIAL_INDEX_SCAN";
+                }
+                else if (ordered_prefix_length > 0)
+                {
+                    candidate_scan_family = "ORDERED_INDEX_SCAN";
+                }
+                else if (multicolumn_prefix_match)
+                {
+                    candidate_scan_family = "MULTICOLUMN_PREFIX_INDEX_SCAN";
+                }
+                for (const auto &family : candidate_scan_families)
+                {
+                    appendUniqueText(choice.candidate_scan_families, family);
                 }
                 const double candidate_mga_penalty = applyMgaCostPenalty(
                     candidate_cost,
@@ -3563,11 +3949,22 @@ namespace scratchbird::optimizer
                 matched_index = index;
                 best_cost = candidate_cost;
                 best_scan_kind = scan_kind;
+                best_scan_family = candidate_scan_family;
+                best_scan_family_tags = candidate_scan_families;
+                best_scan_family_tags.erase(
+                    std::remove(best_scan_family_tags.begin(),
+                                best_scan_family_tags.end(),
+                                best_scan_family),
+                    best_scan_family_tags.end());
                 best_runtime_predicate = makeRuntimePredicate(predicate);
                 best_runtime_predicates = {best_runtime_predicate};
                 best_bitmap_op.clear();
                 best_covering_index = covering_index;
                 best_exact_key_lookup = exact_key_lookup;
+                best_ordered_output = ordered_prefix_length > 0;
+                best_ordered_prefix_length = ordered_prefix_length;
+                best_required_outer_relation_indexes.clear();
+                best_required_outer_relation_aliases.clear();
 
                 if (scan_kind == "INDEX_ONLY_SCAN")
                 {
@@ -3621,6 +4018,122 @@ namespace scratchbird::optimizer
                                         candidate_cost.rows);
                     best_plan = index_plan;
                 }
+            }
+
+            for (const auto &index : relation.indexes)
+            {
+                if (index.column_ids.size() < 2 ||
+                    index.index_type != core::CatalogManager::IndexType::BTREE)
+                {
+                    continue;
+                }
+
+                const auto skip_predicate_it =
+                    std::find_if(predicates.begin(),
+                                 predicates.end(),
+                                 [&](const ResolvedScanPredicate &predicate) {
+                                     return std::find(index.column_ids.begin() + 1,
+                                                      index.column_ids.end(),
+                                                      predicate.column_id) !=
+                                            index.column_ids.end();
+                                 });
+                if (skip_predicate_it == predicates.end())
+                {
+                    continue;
+                }
+
+                const double predicate_selectivity =
+                    std::min(selectivity,
+                             estimatePredicateSelectivity(*skip_predicate_it));
+                const uint64_t expected_rows =
+                    relationOutputRows(base_rows, predicate_selectivity);
+                const uint64_t index_pages =
+                    std::max<uint64_t>(1, base_pages / 8);
+                const uint64_t heap_pages =
+                    std::max<uint64_t>(1,
+                                       static_cast<uint64_t>(
+                                           static_cast<double>(base_pages) *
+                                           predicate_selectivity));
+                CostEstimate skip_cost =
+                    active_cost_model.costIndexScan(3,
+                                                    index_pages,
+                                                    expected_rows,
+                                                    heap_pages,
+                                                    expected_rows,
+                                                    qual_cost,
+                                                    0.15,
+                                                    ctx);
+                skip_cost.startup_cost *= 1.20;
+                skip_cost.total_cost *= 1.20;
+                appendUniqueText(choice.candidate_scan_families, "SKIP_SCAN");
+                appendRuntimeTrace(considered_paths,
+                                   "ACCESS_PATH",
+                                   relation_subject,
+                                   accessTraceCandidateLabel("SKIP_SCAN",
+                                                            index.index_name,
+                                                            std::string()),
+                                   "CONSIDERED",
+                                   skip_predicate_it->predicate_text,
+                                   skip_cost.startup_cost,
+                                   skip_cost.total_cost,
+                                   skip_cost.rows);
+                if (skip_cost.total_cost > best_cost.total_cost)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "ACCESS_PATH",
+                                       relation_subject,
+                                       accessTraceCandidateLabel("SKIP_SCAN",
+                                                                index.index_name,
+                                                                std::string()),
+                                       "REJECTED",
+                                       "higher total cost than current best",
+                                       skip_cost.startup_cost,
+                                       skip_cost.total_cost,
+                                       skip_cost.rows);
+                    continue;
+                }
+
+                matched_index = index;
+                best_cost = skip_cost;
+                best_scan_kind = "INDEX_SCAN";
+                best_scan_family = "SKIP_SCAN";
+                best_scan_family_tags = {"INDEX_SCAN"};
+                best_runtime_predicate = makeRuntimePredicate(*skip_predicate_it);
+                best_runtime_predicates = {best_runtime_predicate};
+                best_bitmap_op.clear();
+                best_covering_index = false;
+                best_exact_key_lookup = false;
+                best_ordered_output = false;
+                best_ordered_prefix_length = 0;
+                best_required_outer_relation_indexes.clear();
+                best_required_outer_relation_aliases.clear();
+
+                best_path = std::make_shared<IndexScanPath>(relation.table_info.table_id,
+                                                            relation_name,
+                                                            index.index_id,
+                                                            index.index_name,
+                                                            3,
+                                                            index_pages,
+                                                            expected_rows,
+                                                            heap_pages,
+                                                            expected_rows,
+                                                            qual_cost,
+                                                            0.15,
+                                                            skip_cost);
+                auto index_plan = std::make_shared<IndexScanNode>(
+                    relation.table_info.table_id,
+                    relation_name,
+                    index.index_id,
+                    index.index_name);
+                index_plan->setIndexQualCost(qual_cost);
+                index_plan->setHeapQualCost(qual_cost);
+                index_plan->setCorrelation(0.15);
+                index_plan->setIndexCond(skip_predicate_it->predicate_text);
+                index_plan->setFilter(buildPredicateText());
+                index_plan->setCost(skip_cost.startup_cost,
+                                    skip_cost.total_cost,
+                                    skip_cost.rows);
+                best_plan = index_plan;
             }
 
             std::vector<RuntimePlanIndexPredicate> bitmap_predicates;
@@ -3719,6 +4232,8 @@ namespace scratchbird::optimizer
                 {
                     best_cost = bitmap_cost;
                     best_scan_kind = "BITMAP_INDEX_SCAN";
+                    best_scan_family = "BITMAP_INDEX_SCAN";
+                    best_scan_family_tags.clear();
                     best_runtime_predicates = bitmap_predicates;
                     best_runtime_predicate =
                         bitmap_predicates.empty() ? RuntimePlanIndexPredicate{}
@@ -3726,7 +4241,13 @@ namespace scratchbird::optimizer
                     best_bitmap_op = predicate_or ? "OR" : "AND";
                     best_covering_index = false;
                     best_exact_key_lookup = bitmap_exact_lookup;
+                    best_ordered_output = false;
+                    best_ordered_prefix_length = 0;
+                    best_required_outer_relation_indexes.clear();
+                    best_required_outer_relation_aliases.clear();
                     matched_index = {};
+                    appendUniqueText(choice.candidate_scan_families,
+                                     "BITMAP_INDEX_SCAN");
 
                     best_path = std::make_shared<BitmapIndexScanPath>(
                         relation.table_info.table_id,
@@ -3783,12 +4304,23 @@ namespace scratchbird::optimizer
             choice.runtime_relation.base_rows = base_rows;
             choice.runtime_relation.selectivity = selectivity;
             choice.runtime_relation.scan_kind = best_scan_kind;
+            choice.runtime_relation.scan_family = best_scan_family;
+            choice.runtime_relation.scan_family_tags = best_scan_family_tags;
+            choice.runtime_relation.candidate_scan_families =
+                choice.candidate_scan_families;
             choice.runtime_relation.bitmap_op = best_bitmap_op;
             choice.runtime_relation.covering_index = best_covering_index;
             choice.runtime_relation.exact_key_lookup = best_exact_key_lookup;
             choice.runtime_relation.flattened_derived = relation.flattened_derived;
             choice.runtime_relation.lateral = relation.lateral;
             choice.runtime_relation.parameterized = relation.lateral;
+            choice.runtime_relation.ordered_output = best_ordered_output;
+            choice.runtime_relation.ordered_prefix_length =
+                best_ordered_prefix_length;
+            choice.runtime_relation.required_outer_relation_indexes =
+                best_required_outer_relation_indexes;
+            choice.runtime_relation.required_outer_relation_aliases =
+                best_required_outer_relation_aliases;
             choice.runtime_relation.partition_pruned = pruning.pruned;
             choice.runtime_relation.partition_strategy = pruning.strategy;
             choice.runtime_relation.partition_key_column = pruning.key_column;
@@ -3822,12 +4354,40 @@ namespace scratchbird::optimizer
                                best_cost.startup_cost,
                                best_cost.total_cost,
                                best_cost.rows);
+            choice.access_descriptor.family = best_scan_family;
+            choice.access_descriptor.family_tags = best_scan_family_tags;
+            choice.access_descriptor.ordered_output = best_ordered_output;
+            choice.access_descriptor.ordered_prefix_length =
+                best_ordered_prefix_length;
+            choice.access_descriptor.parameterized = relation.lateral;
+            choice.access_descriptor.required_outer_relation_indexes =
+                best_required_outer_relation_indexes;
+            if (choice.path)
+            {
+                choice.path->setAccessDescriptor(choice.access_descriptor);
+            }
             if (relation.lateral)
             {
                 appendStatsProvenance(statistics_provenance,
                                       relation_subject,
                                       "PARAMETERIZED_LATERAL",
                                       "evaluated per outer row through nested loop parameterization");
+                const bool has_parameterizable_index =
+                    std::any_of(relation.indexes.begin(),
+                                relation.indexes.end(),
+                                [](const core::CatalogManager::IndexInfo &index) {
+                                    return index.index_type ==
+                                               core::CatalogManager::IndexType::BTREE ||
+                                           index.index_type ==
+                                               core::CatalogManager::IndexType::LSM;
+                                });
+                if (has_parameterizable_index)
+                {
+                    appendUniqueText(choice.candidate_scan_families,
+                                     "PARAMETERIZED_INDEX_SCAN");
+                    choice.runtime_relation.candidate_scan_families =
+                        choice.candidate_scan_families;
+                }
             }
             access_choices[relation_index] = std::move(choice);
         }
@@ -4942,6 +5502,53 @@ namespace scratchbird::optimizer
                             best_join.runtime_filter_index_name;
                         runtime_relation_it->runtime_filter_index_id_text =
                             best_join.runtime_filter_index_id_text;
+                    }
+                }
+                if (best_join.runtime_join.parameterized_dependency)
+                {
+                    auto runtime_relation_it = std::find_if(
+                        materialized_out.runtime_relations.begin(),
+                        materialized_out.runtime_relations.end(),
+                        [&](RuntimePlanRelation &relation) {
+                            return relation.source_relation_index ==
+                                   best_join.candidate_relation_index;
+                        });
+                    if (runtime_relation_it !=
+                        materialized_out.runtime_relations.end())
+                    {
+                        runtime_relation_it->parameterized = true;
+                        runtime_relation_it->required_outer_relation_indexes =
+                            best_join.runtime_join
+                                .parameter_dependency_relation_indexes;
+                        runtime_relation_it->required_outer_relation_aliases =
+                            best_join.runtime_join
+                                .parameter_dependency_relation_aliases;
+                        if (std::find(runtime_relation_it->candidate_scan_families.begin(),
+                                      runtime_relation_it->candidate_scan_families.end(),
+                                      "PARAMETERIZED_INDEX_SCAN") ==
+                            runtime_relation_it->candidate_scan_families.end())
+                        {
+                            runtime_relation_it->candidate_scan_families.push_back(
+                                "PARAMETERIZED_INDEX_SCAN");
+                        }
+                        if ((runtime_relation_it->scan_kind == "INDEX_SCAN" ||
+                             runtime_relation_it->scan_kind ==
+                                 "INDEX_ONLY_SCAN") &&
+                            (runtime_relation_it->scan_family == "INDEX_SCAN" ||
+                             runtime_relation_it->scan_family ==
+                                 "INDEX_ONLY_SCAN"))
+                        {
+                            runtime_relation_it->scan_family =
+                                "PARAMETERIZED_INDEX_SCAN";
+                            if (std::find(runtime_relation_it->scan_family_tags.begin(),
+                                          runtime_relation_it->scan_family_tags.end(),
+                                          runtime_relation_it->scan_kind) ==
+                                runtime_relation_it->scan_family_tags.end())
+                            {
+                                runtime_relation_it->scan_family_tags.push_back(
+                                    runtime_relation_it->scan_kind);
+                            }
+                        }
                     }
                 }
                 materialized_out.runtime_joins = left_tree.runtime_joins;

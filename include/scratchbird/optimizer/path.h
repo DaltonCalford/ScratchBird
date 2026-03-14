@@ -12,6 +12,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/parser/shared_types.h"      // For JoinType, WindowFunc, GroupingType, etc.
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -47,6 +48,48 @@ namespace scratchbird::optimizer
         WINDOW             // Window functions (Phase 1, Task 6.2)
     };
 
+    struct AccessPathDescriptor
+    {
+        std::string family;
+        std::vector<std::string> family_tags;
+        bool ordered_output = false;
+        uint64_t ordered_prefix_length = 0;
+        bool parameterized = false;
+        std::vector<size_t> required_outer_relation_indexes;
+    };
+
+    inline auto defaultAccessPathFamily(PathType type) -> std::string
+    {
+        switch (type)
+        {
+            case PathType::SEQ_SCAN:
+                return "SEQ_SCAN";
+            case PathType::INDEX_SCAN:
+                return "INDEX_SCAN";
+            case PathType::INDEX_ONLY_SCAN:
+                return "INDEX_ONLY_SCAN";
+            case PathType::BITMAP_INDEX_SCAN:
+                return "BITMAP_INDEX_SCAN";
+            case PathType::RTREE_SCAN:
+                return "RTREE_SCAN";
+            case PathType::NESTED_LOOP_JOIN:
+                return "NESTED_LOOP_JOIN";
+            case PathType::HASH_JOIN:
+                return "HASH_JOIN";
+            case PathType::MERGE_JOIN:
+                return "MERGE_JOIN";
+            case PathType::AGGREGATE:
+                return "AGGREGATE";
+            case PathType::SORT:
+                return "SORT";
+            case PathType::LIMIT:
+                return "LIMIT";
+            case PathType::WINDOW:
+                return "WINDOW";
+        }
+        return "UNKNOWN";
+    }
+
     /**
      * Path - Represents a possible execution path for a query
      *
@@ -77,6 +120,7 @@ namespace scratchbird::optimizer
         Path(PathType type, const CostEstimate &cost)
             : type_(type), cost_(cost)
         {
+            access_descriptor_.family = defaultAccessPathFamily(type_);
         }
 
         virtual ~Path() = default;
@@ -106,6 +150,32 @@ namespace scratchbird::optimizer
          */
         uint64_t rows() const { return cost_.rows; }
 
+        const AccessPathDescriptor &accessDescriptor() const
+        {
+            return access_descriptor_;
+        }
+
+        void setAccessDescriptor(AccessPathDescriptor descriptor)
+        {
+            access_descriptor_ = std::move(descriptor);
+            if (access_descriptor_.family.empty())
+            {
+                access_descriptor_.family = defaultAccessPathFamily(type_);
+            }
+        }
+
+        void addAccessFamilyTag(std::string tag)
+        {
+            if (tag.empty() ||
+                std::find(access_descriptor_.family_tags.begin(),
+                          access_descriptor_.family_tags.end(),
+                          tag) != access_descriptor_.family_tags.end())
+            {
+                return;
+            }
+            access_descriptor_.family_tags.push_back(std::move(tag));
+        }
+
         /**
          * Convert path to string for debugging
          */
@@ -114,6 +184,7 @@ namespace scratchbird::optimizer
     protected:
         PathType type_;
         CostEstimate cost_;
+        AccessPathDescriptor access_descriptor_;
     };
 
     /**

@@ -82,12 +82,27 @@ namespace
                         relation.value("table_path", "");
                     normalized_relation["scan_kind"] =
                         relation.value("scan_kind", "");
+                    normalized_relation["scan_family"] =
+                        relation.value("scan_family", "");
+                    normalized_relation["scan_family_tags"] =
+                        relation.value("scan_family_tags",
+                                       nlohmann::json::array());
+                    normalized_relation["candidate_scan_families"] =
+                        relation.value("candidate_scan_families",
+                                       nlohmann::json::array());
                     normalized_relation["index_name"] =
                         relation.value("index_name", "");
                     normalized_relation["covering_index"] =
                         relation.value("covering_index", false);
                     normalized_relation["parameterized"] =
                         relation.value("parameterized", false);
+                    normalized_relation["ordered_output"] =
+                        relation.value("ordered_output", false);
+                    normalized_relation["ordered_prefix_length"] =
+                        relation.value("ordered_prefix_length", 0u);
+                    normalized_relation["required_outer_relation_aliases"] =
+                        relation.value("required_outer_relation_aliases",
+                                       nlohmann::json::array());
                     normalized_relation["partition_pruned"] =
                         relation.value("partition_pruned", false);
                     snapshot["join_graph"]["relations"].push_back(
@@ -1788,6 +1803,12 @@ TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesJoinGraphContractFields)
     ASSERT_TRUE(join_graph.at("join_steps").is_array());
     ASSERT_EQ(join_graph.at("relations").size(), 2u);
     ASSERT_EQ(join_graph.at("join_steps").size(), 1u);
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("scan_family"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("scan_family_tags"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("candidate_scan_families"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("ordered_output"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("ordered_prefix_length"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("required_outer_relation_aliases"));
     EXPECT_EQ(join_graph.at("join_steps")[0].at("join_edge_left_alias").get<std::string>(),
               "users");
     EXPECT_EQ(join_graph.at("join_steps")[0].at("join_edge_right_alias").get<std::string>(),
@@ -2110,6 +2131,53 @@ TEST_F(QueryPlannerIntegrationTest, CoveringIndexPlanUsesIndexOnlyScan)
     EXPECT_EQ(result.resultSet()->getValue(0, 1).toString(), "user777");
 }
 
+TEST_F(QueryPlannerIntegrationTest,
+       MulticolumnOrderedAccessFamiliesSurviveIntoRuntimePlan)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_id_name ON users (id, name)").success());
+    for (int i = 1; i <= 1200; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'user" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 30)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode =
+        compileSQL("SELECT id, name FROM users WHERE id >= 1000 ORDER BY id, name");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto &relation = plan.relations.front();
+    EXPECT_EQ(relation.scan_kind, "INDEX_ONLY_SCAN");
+    EXPECT_EQ(relation.scan_family, "ORDERED_INDEX_SCAN");
+    EXPECT_TRUE(relation.ordered_output);
+    EXPECT_GE(relation.ordered_prefix_length, 2u);
+    EXPECT_NE(std::find(relation.candidate_scan_families.begin(),
+                        relation.candidate_scan_families.end(),
+                        "MULTICOLUMN_PREFIX_INDEX_SCAN"),
+              relation.candidate_scan_families.end());
+    EXPECT_NE(std::find(relation.candidate_scan_families.begin(),
+                        relation.candidate_scan_families.end(),
+                        "ORDERED_INDEX_SCAN"),
+              relation.candidate_scan_families.end());
+
+    auto result =
+        executeSQL("SELECT id, name FROM users WHERE id >= 1000 ORDER BY id, name");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 201u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "1000");
+}
+
 TEST_F(QueryPlannerIntegrationTest, BitmapIndexPlanExecutesExactProbes)
 {
     ASSERT_TRUE(createDatabase());
@@ -2156,6 +2224,93 @@ TEST_F(QueryPlannerIntegrationTest, BitmapIndexPlanExecutesExactProbes)
     auto rows = resultStrings(result);
     ASSERT_FALSE(rows.empty());
     EXPECT_NE(std::find(rows.begin(), rows.end(), "9001"), rows.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest, SkipScanFamilyCanWinSingleRelationPlan)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_age_name ON users (age, name)").success());
+    for (int i = 1; i <= 1600; ++i)
+    {
+        const std::string name = (i == 777) ? "needle" : "user" + std::to_string(i);
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", '" + name + "', 'u" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 8)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT id FROM users WHERE name = 'needle'");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_EQ(plan.relations.front().scan_family, "SKIP_SCAN");
+    EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "SKIP_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+
+    auto result = executeSQL("SELECT id FROM users WHERE name = 'needle'");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "777");
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       PartialAndExpressionIndexFamiliesAreEnumeratedInRuntimePlan)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "CREATE INDEX idx_users_active_email ON users(email) WHERE age = 30")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE INDEX idx_users_lower_name ON users((LOWER(name)))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES (1, 'MiXeD', 'mixed@example.com', 30)")
+                    .success());
+    for (int i = 2; i <= 256; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'u" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 15)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL(
+        "SELECT id FROM users "
+        "WHERE age = 30 AND email = 'mixed@example.com' AND LOWER(name) = 'mixed'");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "PARTIAL_INDEX_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+    EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "EXPRESSION_INDEX_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+
+    auto result = executeSQL(
+        "SELECT id FROM users "
+        "WHERE age = 30 AND email = 'mixed@example.com' AND LOWER(name) = 'mixed'");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "1");
 }
 
 TEST_F(QueryPlannerIntegrationTest, PassThroughViewIsFlattenedInRuntimePlan)
@@ -2233,6 +2388,57 @@ TEST_F(QueryPlannerIntegrationTest, LateralJoinUsesParameterizedNestedLoopPath)
     EXPECT_EQ(result.resultSet()->getValue(0, 1).toString(), "10");
     EXPECT_EQ(result.resultSet()->getValue(1, 0).toString(), "2");
     EXPECT_TRUE(result.resultSet()->getValue(1, 1).isNull());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       LateralJoinPublishesParameterizedIndexCandidateFamily)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_orders_user_id ON orders (user_id)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES (1, 'alice', 'a@example.com', 30)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES (2, 'bob', 'b@example.com', 31)")
+                    .success());
+    ASSERT_TRUE(executeSQL("INSERT INTO orders (id, user_id, amount) VALUES (10, 1, 50.0)")
+                    .success());
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(executeSQL("ANALYZE orders").success());
+
+    const std::string sql =
+        "SELECT u.id, o.order_id "
+        "FROM users AS u "
+        "LEFT JOIN LATERAL "
+        "(SELECT id AS order_id FROM orders WHERE orders.user_id = u.id) AS o "
+        "ON TRUE "
+        "ORDER BY u.id";
+
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 2u);
+
+    const auto relation_it =
+        std::find_if(plan.relations.begin(),
+                     plan.relations.end(),
+                     [](const scratchbird::optimizer::RuntimePlanRelation &relation) {
+                         return relation.alias == "o" || relation.table_path == "orders";
+                     });
+    ASSERT_NE(relation_it, plan.relations.end());
+    EXPECT_TRUE(relation_it->parameterized);
+    EXPECT_NE(std::find(relation_it->candidate_scan_families.begin(),
+                        relation_it->candidate_scan_families.end(),
+                        "PARAMETERIZED_INDEX_SCAN"),
+              relation_it->candidate_scan_families.end());
+    EXPECT_NE(std::find(relation_it->required_outer_relation_aliases.begin(),
+                        relation_it->required_outer_relation_aliases.end(),
+                        "u"),
+              relation_it->required_outer_relation_aliases.end());
 }
 
 TEST_F(QueryPlannerIntegrationTest, CorrelatedExistsAndNotExistsUseOuterRowBindings)

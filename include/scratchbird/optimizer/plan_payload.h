@@ -33,6 +33,9 @@ namespace scratchbird::optimizer
         std::string alias;
         std::string table_id_text;
         std::string scan_kind;
+        std::string scan_family;
+        std::vector<std::string> scan_family_tags;
+        std::vector<std::string> candidate_scan_families;
         std::string index_name;
         std::string index_id_text;
         RuntimePlanIndexPredicate index_predicate;
@@ -43,6 +46,10 @@ namespace scratchbird::optimizer
         bool flattened_derived = false;
         bool lateral = false;
         bool parameterized = false;
+        bool ordered_output = false;
+        uint64_t ordered_prefix_length = 0;
+        std::vector<size_t> required_outer_relation_indexes;
+        std::vector<std::string> required_outer_relation_aliases;
         bool partition_pruned = false;
         std::string partition_strategy;
         std::string partition_key_column;

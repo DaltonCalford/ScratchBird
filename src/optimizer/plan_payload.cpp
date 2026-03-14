@@ -15,6 +15,9 @@ namespace scratchbird::optimizer
             out["alias"] = relation.alias;
             out["table_id_text"] = relation.table_id_text;
             out["scan_kind"] = relation.scan_kind;
+            out["scan_family"] = relation.scan_family;
+            out["scan_family_tags"] = relation.scan_family_tags;
+            out["candidate_scan_families"] = relation.candidate_scan_families;
             out["index_name"] = relation.index_name;
             out["index_id_text"] = relation.index_id_text;
             out["bitmap_op"] = relation.bitmap_op;
@@ -23,6 +26,12 @@ namespace scratchbird::optimizer
             out["flattened_derived"] = relation.flattened_derived;
             out["lateral"] = relation.lateral;
             out["parameterized"] = relation.parameterized;
+            out["ordered_output"] = relation.ordered_output;
+            out["ordered_prefix_length"] = relation.ordered_prefix_length;
+            out["required_outer_relation_indexes"] =
+                relation.required_outer_relation_indexes;
+            out["required_outer_relation_aliases"] =
+                relation.required_outer_relation_aliases;
             out["partition_pruned"] = relation.partition_pruned;
             out["partition_strategy"] = relation.partition_strategy;
             out["partition_key_column"] = relation.partition_key_column;
@@ -80,6 +89,34 @@ namespace scratchbird::optimizer
             relation_out.alias = json_in.value("alias", std::string());
             relation_out.table_id_text = json_in.value("table_id_text", std::string());
             relation_out.scan_kind = json_in.value("scan_kind", std::string());
+            relation_out.scan_family = json_in.value("scan_family", std::string());
+            relation_out.scan_family_tags.clear();
+            const auto scan_family_tags_it = json_in.find("scan_family_tags");
+            if (scan_family_tags_it != json_in.end() && scan_family_tags_it->is_array())
+            {
+                for (const auto &entry : *scan_family_tags_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.scan_family_tags.push_back(entry.get<std::string>());
+                    }
+                }
+            }
+            relation_out.candidate_scan_families.clear();
+            const auto candidate_scan_families_it =
+                json_in.find("candidate_scan_families");
+            if (candidate_scan_families_it != json_in.end() &&
+                candidate_scan_families_it->is_array())
+            {
+                for (const auto &entry : *candidate_scan_families_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.candidate_scan_families.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
             relation_out.index_name = json_in.value("index_name", std::string());
             relation_out.index_id_text = json_in.value("index_id_text", std::string());
             relation_out.bitmap_op = json_in.value("bitmap_op", std::string());
@@ -88,6 +125,39 @@ namespace scratchbird::optimizer
             relation_out.flattened_derived = json_in.value("flattened_derived", false);
             relation_out.lateral = json_in.value("lateral", false);
             relation_out.parameterized = json_in.value("parameterized", false);
+            relation_out.ordered_output = json_in.value("ordered_output", false);
+            relation_out.ordered_prefix_length =
+                json_in.value("ordered_prefix_length", 0ULL);
+            relation_out.required_outer_relation_indexes.clear();
+            const auto required_outer_relation_indexes_it =
+                json_in.find("required_outer_relation_indexes");
+            if (required_outer_relation_indexes_it != json_in.end() &&
+                required_outer_relation_indexes_it->is_array())
+            {
+                for (const auto &entry : *required_outer_relation_indexes_it)
+                {
+                    if (entry.is_number_unsigned())
+                    {
+                        relation_out.required_outer_relation_indexes.push_back(
+                            entry.get<size_t>());
+                    }
+                }
+            }
+            relation_out.required_outer_relation_aliases.clear();
+            const auto required_outer_relation_aliases_it =
+                json_in.find("required_outer_relation_aliases");
+            if (required_outer_relation_aliases_it != json_in.end() &&
+                required_outer_relation_aliases_it->is_array())
+            {
+                for (const auto &entry : *required_outer_relation_aliases_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.required_outer_relation_aliases.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
             relation_out.partition_pruned = json_in.value("partition_pruned", false);
             relation_out.partition_strategy =
                 json_in.value("partition_strategy", std::string());

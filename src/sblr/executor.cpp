@@ -65024,6 +65024,38 @@ namespace scratchbird
                                      << "] alias=" << relation.alias
                                      << " table_id=" << relation.table_id_text
                                      << " scan_kind=" << relation.scan_kind;
+                                if (!relation.scan_family.empty())
+                                {
+                                    line << " scan_family=" << relation.scan_family;
+                                }
+                                if (!relation.scan_family_tags.empty())
+                                {
+                                    line << " family_tags=";
+                                    for (size_t i = 0;
+                                         i < relation.scan_family_tags.size();
+                                         ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            line << ",";
+                                        }
+                                        line << relation.scan_family_tags[i];
+                                    }
+                                }
+                                if (!relation.candidate_scan_families.empty())
+                                {
+                                    line << " candidate_families=";
+                                    for (size_t i = 0;
+                                         i < relation.candidate_scan_families.size();
+                                         ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            line << ",";
+                                        }
+                                        line << relation.candidate_scan_families[i];
+                                    }
+                                }
                                 if (relation.lateral)
                                 {
                                     line << " lateral=true";
@@ -65031,6 +65063,26 @@ namespace scratchbird
                                 if (relation.parameterized)
                                 {
                                     line << " parameterized=true";
+                                }
+                                if (relation.ordered_output)
+                                {
+                                    line << " ordered_output=true";
+                                    line << " ordered_prefix_length="
+                                         << relation.ordered_prefix_length;
+                                }
+                                if (!relation.required_outer_relation_aliases.empty())
+                                {
+                                    line << " required_outer_aliases=";
+                                    for (size_t i = 0;
+                                         i < relation.required_outer_relation_aliases.size();
+                                         ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            line << ",";
+                                        }
+                                        line << relation.required_outer_relation_aliases[i];
+                                    }
                                 }
                                 if (relation.partition_pruned)
                                 {
@@ -65258,10 +65310,63 @@ namespace scratchbird
                                         << escape_json(entry.table_id_text) << "\""
                                         << ",\"scan_kind\":\""
                                         << escape_json(entry.scan_kind) << "\""
+                                        << ",\"scan_family\":\""
+                                        << escape_json(entry.scan_family) << "\""
+                                        << ",\"scan_family_tags\":[";
+                                    for (size_t tag_index = 0;
+                                         tag_index < entry.scan_family_tags.size();
+                                         ++tag_index)
+                                    {
+                                        if (tag_index > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(
+                                                   entry.scan_family_tags[tag_index])
+                                            << "\"";
+                                    }
+                                    out << "]"
+                                        << ",\"candidate_scan_families\":[";
+                                    for (size_t family_index = 0;
+                                         family_index <
+                                         entry.candidate_scan_families.size();
+                                         ++family_index)
+                                    {
+                                        if (family_index > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(
+                                                   entry.candidate_scan_families[family_index])
+                                            << "\"";
+                                    }
+                                    out << "]"
                                         << ",\"lateral\":"
                                         << (entry.lateral ? "true" : "false")
                                         << ",\"parameterized\":"
                                         << (entry.parameterized ? "true" : "false")
+                                        << ",\"ordered_output\":"
+                                        << (entry.ordered_output ? "true" : "false")
+                                        << ",\"ordered_prefix_length\":"
+                                        << entry.ordered_prefix_length
+                                        << ",\"required_outer_relation_aliases\":[";
+                                    for (size_t alias_index = 0;
+                                         alias_index <
+                                         entry.required_outer_relation_aliases.size();
+                                         ++alias_index)
+                                    {
+                                        if (alias_index > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(
+                                                   entry.required_outer_relation_aliases[alias_index])
+                                            << "\"";
+                                    }
+                                    out << "]"
                                         << ",\"partition_pruned\":"
                                         << (entry.partition_pruned ? "true" : "false")
                                         << "}";
