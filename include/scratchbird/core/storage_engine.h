@@ -10,6 +10,7 @@
 #pragma once
 
 #include "scratchbird/core/status.h"
+#include "scratchbird/core/savepoint_backout.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/tid.h"
 #include <cstdint>
@@ -201,6 +202,8 @@ namespace scratchbird::core
                                          ErrorContext *ctx = nullptr) -> Status;
         auto clearTupleDeleteMark(uint32_t page_id, uint16_t item_id,
                                   ErrorContext *ctx = nullptr) -> Status;
+        auto rollbackSavepointAction(const SavepointBackoutAction &action, uint64_t rollback_xid,
+                                     ErrorContext *ctx = nullptr) -> Status;
 
         // Create a sequential scan iterator
         auto createScan(const ID &table_id, ErrorContext *ctx = nullptr)

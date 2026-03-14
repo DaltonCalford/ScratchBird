@@ -13,6 +13,7 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/savepoint_backout.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/monitoring_stats.h"
 #include <cstdint>
@@ -793,14 +794,6 @@ namespace scratchbird::core
         // Subtransaction/Savepoint support (Issue 2.15)
         struct Savepoint
         {
-            struct UpdateRecord
-            {
-                ID table_id{};
-                uint32_t page_id = 0;
-                uint16_t item_id = 0;
-                std::vector<uint8_t> old_tuple_image;
-            };
-
             std::string name;                    // Savepoint name
             uint32_t level;                      // Nesting level
             uint64_t xid;                        // Transaction ID at savepoint creation
@@ -809,12 +802,8 @@ namespace scratchbird::core
             // FIREBIRD MGA: No snapshot needed - use XID for visibility
             // XID field above is sufficient for rollback
 
-            // Track tuples modified after this savepoint
-            // For rollback, we need to mark inserted tuples as aborted
-            // and clear xmax on deleted tuples
-            std::vector<std::pair<uint32_t, uint16_t>> inserted_tids;  // (page_id, item_id)
-            std::vector<std::pair<uint32_t, uint16_t>> deleted_tids;   // (page_id, item_id)
-            std::vector<UpdateRecord> updated_rows;                     // Restore images for UPDATE rollback
+            // Ordered backout log for rollback-to-savepoint and release-to-parent.
+            std::vector<SavepointBackoutAction> actions;
         };
 
         std::vector<Savepoint> savepoint_stack_;  // Stack of active savepoints
@@ -886,6 +875,14 @@ namespace scratchbird::core
                               uint16_t item_id,
                               const uint8_t* old_tuple_data,
                               uint32_t old_tuple_size);
+        [[nodiscard]] bool hasActiveSavepoints() const
+        {
+            return !savepoint_stack_.empty();
+        }
+        [[nodiscard]] bool isSavepointRollbackInProgress() const
+        {
+            return savepoint_rollback_in_progress_;
+        }
 
         /**
          * Increment command ID (for statement-level tracking)

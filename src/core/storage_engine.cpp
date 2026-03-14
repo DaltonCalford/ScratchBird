@@ -2187,6 +2187,40 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto StorageEngine::rollbackSavepointAction(const SavepointBackoutAction &action,
+                                                uint64_t rollback_xid,
+                                                ErrorContext *ctx) -> Status
+    {
+        switch (action.kind)
+        {
+            case SavepointBackoutActionKind::INSERT:
+                return markInsertedTupleRolledBack(action.page_id, action.item_id, rollback_xid,
+                                                   ctx);
+
+            case SavepointBackoutActionKind::DELETE:
+                return clearTupleDeleteMark(action.page_id, action.item_id, ctx);
+
+            case SavepointBackoutActionKind::UPDATE:
+                if (isZeroId(action.table_id) || action.old_tuple_image.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Update backout action is missing restore image");
+                    return Status::INVALID_ARGUMENT;
+                }
+                return updateTuple(action.table_id,
+                                   action.page_id,
+                                   action.item_id,
+                                   action.old_tuple_image.data(),
+                                   static_cast<uint32_t>(action.old_tuple_image.size()),
+                                   nullptr,
+                                   nullptr,
+                                   ctx);
+        }
+
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown savepoint backout action");
+        return Status::INVALID_ARGUMENT;
+    }
+
     auto StorageEngine::createScan(const ID &table_id, ErrorContext *ctx)
         -> std::unique_ptr<HeapScanIterator>
     {
@@ -3219,6 +3253,10 @@ namespace scratchbird::core
 
         // Capture the current tuple before update for index key comparison.
         std::vector<uint8_t> old_tuple_buffer;
+        std::vector<uint8_t> rollback_tuple_buffer;
+        const bool capture_savepoint_restore_image =
+            conn_ctx != nullptr && conn_ctx->hasActiveSavepoints() &&
+            !conn_ctx->isSavepointRollbackInProgress();
         uint32_t old_tuple_length = 0;
         {
             HeapPage snapshot_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
@@ -3242,6 +3280,17 @@ namespace scratchbird::core
 
             old_tuple_buffer.resize(old_tuple_length);
             memcpy(old_tuple_buffer.data(), page_data + old_offset, old_tuple_length);
+
+            if (capture_savepoint_restore_image)
+            {
+                Status restore_capture_status =
+                    snapshot_page.getTupleDetoasted(item_id, &rollback_tuple_buffer, xmax, ctx);
+                if (restore_capture_status != Status::OK)
+                {
+                    buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                    return restore_capture_status;
+                }
+            }
         }
 
         TID stable_tid = TID(makeGPID(tablespace_id, static_cast<uint64_t>(page_id)), item_id);
@@ -3263,17 +3312,17 @@ namespace scratchbird::core
         HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
         uint16_t new_item_id;
 
-        status = heap_page.updateTuple(item_id, tuple_data_ptr, new_tuple_size, xmax, new_xmin,
-                                       &new_item_id, ctx);
+        status = heap_page.updateTuple(item_id,
+                                       tuple_data_ptr,
+                                       new_tuple_size,
+                                       xmax,
+                                       new_xmin,
+                                       &new_item_id,
+                                       ctx,
+                                       capture_savepoint_restore_image);
 
         if (status == Status::OK)
         {
-            if (conn_ctx != nullptr)
-            {
-                conn_ctx->trackTupleUpdate(table_id, page_id, item_id,
-                                           old_tuple_buffer.data(), old_tuple_length);
-            }
-
             // Success - new version on same page
             // Phase 3 Task 3.3: Update indexes if indexed columns changed
             // MGA benefit: If indexed columns unchanged, TID is stable and indexes remain valid!
@@ -3479,8 +3528,13 @@ namespace scratchbird::core
 
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
+                const uint8_t *rollback_image =
+                    rollback_tuple_buffer.empty() ? old_tuple_buffer.data() : rollback_tuple_buffer.data();
+                const uint32_t rollback_image_size =
+                    rollback_tuple_buffer.empty() ? old_tuple_length
+                                                 : static_cast<uint32_t>(rollback_tuple_buffer.size());
                 conn_ctx->trackTupleUpdate(table_id, page_id, item_id,
-                                           old_tuple_buffer.data(), old_tuple_length);
+                                           rollback_image, rollback_image_size);
                 conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
             }
 

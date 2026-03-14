@@ -4215,54 +4215,21 @@ namespace scratchbird::core
             }
         } rollback_guard(savepoint_rollback_in_progress_);
 
-        auto markTupleRolledBackInsert = [&](uint32_t page_id, uint16_t item_id) {
-            Status s = storage->markInsertedTupleRolledBack(page_id, item_id, current_xid_, ctx);
-            if (s != Status::OK)
-            {
-                LOG_WARNING(TRANSACTION,
-                            "Failed to roll back inserted tuple on page %u during savepoint rollback: %d",
-                            page_id, static_cast<int>(s));
-            }
-        };
-
-        auto clearTupleDeleteMark = [&](uint32_t page_id, uint16_t item_id) {
-            Status s = storage->clearTupleDeleteMark(page_id, item_id, ctx);
-            if (s != Status::OK)
-            {
-                LOG_WARNING(TRANSACTION,
-                            "Failed to clear tuple delete mark on page %u during savepoint rollback: %d",
-                            page_id, static_cast<int>(s));
-            }
-        };
-
         // Rollback changes made in target savepoint and nested savepoints, newest first.
         for (size_t idx = savepoint_stack_.size(); idx-- > target_index;)
         {
             auto &sp = savepoint_stack_[idx];
 
-            for (auto rit = sp.updated_rows.rbegin(); rit != sp.updated_rows.rend(); ++rit)
+            for (auto rit = sp.actions.rbegin(); rit != sp.actions.rend(); ++rit)
             {
-                if (rit->old_tuple_image.empty())
-                {
-                    LOG_WARNING(TRANSACTION,
-                                "Skipping empty update restore image for table/page/item");
-                    continue;
-                }
-
                 ErrorContext restore_ctx;
-                Status restore_status = storage->updateTuple(
-                    rit->table_id,
-                    rit->page_id,
-                    rit->item_id,
-                    rit->old_tuple_image.data(),
-                    static_cast<uint32_t>(rit->old_tuple_image.size()),
-                    nullptr,
-                    nullptr,
-                    &restore_ctx);
+                Status restore_status =
+                    storage->rollbackSavepointAction(*rit, current_xid_, &restore_ctx);
                 if (restore_status != Status::OK)
                 {
                     LOG_WARNING(TRANSACTION,
-                                "Failed to restore updated tuple during rollback: table=%s page=%u item=%u status=%d msg=%s",
+                                "Failed to roll back savepoint action: kind=%u table=%s page=%u item=%u status=%d msg=%s",
+                                static_cast<unsigned>(rit->kind),
                                 rit->table_id.toString().c_str(),
                                 rit->page_id,
                                 rit->item_id,
@@ -4270,22 +4237,11 @@ namespace scratchbird::core
                                 restore_ctx.message.c_str());
                 }
             }
-
-            for (auto rit = sp.inserted_tids.rbegin(); rit != sp.inserted_tids.rend(); ++rit)
-            {
-                markTupleRolledBackInsert(rit->first, rit->second);
-            }
-            for (auto rit = sp.deleted_tids.rbegin(); rit != sp.deleted_tids.rend(); ++rit)
-            {
-                clearTupleDeleteMark(rit->first, rit->second);
-            }
         }
 
         // Keep the target savepoint active, but clear its post-rollback mutation state.
         sp_it = savepoint_stack_.begin() + static_cast<std::ptrdiff_t>(target_index);
-        sp_it->inserted_tids.clear();
-        sp_it->deleted_tids.clear();
-        sp_it->updated_rows.clear();
+        sp_it->actions.clear();
 
         // Remove nested savepoints.
         auto erase_from = sp_it;
@@ -4340,24 +4296,11 @@ namespace scratchbird::core
         {
             auto &parent = savepoint_stack_[sp_index - 1];
 
-            // Merge inserted tuples
-            parent.inserted_tids.insert(parent.inserted_tids.end(), sp_it->inserted_tids.begin(),
-                                        sp_it->inserted_tids.end());
-
-            // Merge deleted tuples
-            parent.deleted_tids.insert(parent.deleted_tids.end(), sp_it->deleted_tids.begin(),
-                                       sp_it->deleted_tids.end());
-
-            // Merge update restore records
-            parent.updated_rows.insert(parent.updated_rows.end(),
-                                       sp_it->updated_rows.begin(),
-                                       sp_it->updated_rows.end());
+            parent.actions.insert(parent.actions.end(), sp_it->actions.begin(), sp_it->actions.end());
 
             LOG_DEBUG(TRANSACTION,
-                      "Merged %zu insertions, %zu deletions and %zu updates into parent savepoint '%s'",
-                      sp_it->inserted_tids.size(),
-                      sp_it->deleted_tids.size(),
-                      sp_it->updated_rows.size(),
+                      "Merged %zu backout actions into parent savepoint '%s'",
+                      sp_it->actions.size(),
                       parent.name.c_str());
         }
 
@@ -4389,7 +4332,11 @@ namespace scratchbird::core
         // If we have active savepoints, track this insertion in the most recent one
         if (!savepoint_stack_.empty())
         {
-            savepoint_stack_.back().inserted_tids.emplace_back(page_id, item_id);
+            SavepointBackoutAction action;
+            action.kind = SavepointBackoutActionKind::INSERT;
+            action.page_id = page_id;
+            action.item_id = item_id;
+            savepoint_stack_.back().actions.emplace_back(std::move(action));
 
             LOG_DEBUG(TRANSACTION,
                       "Tracked tuple insertion (page=%u, item=%u) in savepoint '%s' (level %u)",
@@ -4407,7 +4354,11 @@ namespace scratchbird::core
         // If we have active savepoints, track this deletion in the most recent one
         if (!savepoint_stack_.empty())
         {
-            savepoint_stack_.back().deleted_tids.emplace_back(page_id, item_id);
+            SavepointBackoutAction action;
+            action.kind = SavepointBackoutActionKind::DELETE;
+            action.page_id = page_id;
+            action.item_id = item_id;
+            savepoint_stack_.back().actions.emplace_back(std::move(action));
 
             LOG_DEBUG(TRANSACTION,
                       "Tracked tuple deletion (page=%u, item=%u) in savepoint '%s' (level %u)",
@@ -4428,12 +4379,13 @@ namespace scratchbird::core
             return;
         }
 
-        Savepoint::UpdateRecord record;
-        record.table_id = table_id;
-        record.page_id = page_id;
-        record.item_id = item_id;
-        record.old_tuple_image.assign(old_tuple_data, old_tuple_data + old_tuple_size);
-        savepoint_stack_.back().updated_rows.emplace_back(std::move(record));
+        SavepointBackoutAction action;
+        action.kind = SavepointBackoutActionKind::UPDATE;
+        action.table_id = table_id;
+        action.page_id = page_id;
+        action.item_id = item_id;
+        action.old_tuple_image.assign(old_tuple_data, old_tuple_data + old_tuple_size);
+        savepoint_stack_.back().actions.emplace_back(std::move(action));
     }
 
     // ============================================================================

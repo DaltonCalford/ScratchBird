@@ -10,10 +10,12 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/btree.h"
+#include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/toast.h"
 #include "scratchbird/core/types.h"
 #include "test_helpers.h"
 
@@ -180,6 +182,47 @@ protected:
         {
             std::memcpy(tuple.data() + sizeof(TupleHeader), payload, payload_size);
         }
+        return tuple;
+    }
+
+    std::vector<uint8_t> buildLargeRowTuple(int32_t value, char fill, size_t payload_size = 5000)
+    {
+        std::vector<uint8_t> payload(sizeof(value) + payload_size, 0);
+        std::memcpy(payload.data(), &value, sizeof(value));
+        std::memset(payload.data() + sizeof(value), fill, payload_size);
+        return buildTuple(payload.data(), payload.size());
+    }
+
+    void expectTuplePayloadEquals(const std::vector<uint8_t> &actual_tuple,
+                                  const std::vector<uint8_t> &expected_tuple)
+    {
+        ASSERT_GE(actual_tuple.size(), sizeof(TupleHeader));
+        ASSERT_GE(expected_tuple.size(), sizeof(TupleHeader));
+        const size_t actual_payload_size = actual_tuple.size() - sizeof(TupleHeader);
+        const size_t expected_payload_size = expected_tuple.size() - sizeof(TupleHeader);
+        ASSERT_EQ(actual_payload_size, expected_payload_size);
+        EXPECT_EQ(std::memcmp(actual_tuple.data() + sizeof(TupleHeader),
+                              expected_tuple.data() + sizeof(TupleHeader),
+                              expected_payload_size),
+                  0);
+    }
+
+    std::vector<uint8_t> readTupleDetoasted(const ID &table_id, uint32_t page_id, uint16_t item_id)
+    {
+        ErrorContext ctx;
+        void *page_buffer = nullptr;
+        EXPECT_EQ(db_->buffer_pool()->pinPage(page_id, &page_buffer, &ctx), Status::OK)
+            << ctx.message;
+
+        ToastManager toast_mgr(db_.get(), table_id);
+        EXPECT_EQ(toast_mgr.initialize(&ctx), Status::OK) << ctx.message;
+
+        HeapPage heap_page(static_cast<uint8_t *>(page_buffer), kPageSize, &toast_mgr, db_.get(),
+                           table_id);
+        std::vector<uint8_t> tuple;
+        Status status = heap_page.getTupleDetoasted(item_id, &tuple, conn_ctx_->getCurrentXid(), &ctx);
+        db_->buffer_pool()->unpinPage(page_id, false, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
         return tuple;
     }
 
@@ -565,4 +608,79 @@ TEST_F(StorageEngineTest, PageFullAllocatesNewPage)
 
     EXPECT_TRUE(saw_new_page)
         << "Expected inserts to span multiple pages";
+}
+
+TEST_F(StorageEngineTest, SavepointRollbackRestoresToastedUpdateImage)
+{
+    ID table_id = createTestTable("savepoint_toast_restore_test");
+
+    auto original_tuple = buildLargeRowTuple(1, 'A');
+    auto updated_tuple = buildLargeRowTuple(1, 'B');
+
+    ErrorContext ctx;
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_toast_restore", &ctx), Status::OK) << ctx.message;
+
+    uint32_t new_page_id = 0;
+    uint16_t new_item_id = 0;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   &new_page_id,
+                                   &new_item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_toast_restore", &ctx), Status::OK) << ctx.message;
+
+    std::vector<uint8_t> restored = readTupleDetoasted(table_id, page_id, item_id);
+    expectTuplePayloadEquals(restored, original_tuple);
+}
+
+TEST_F(StorageEngineTest, CooperativeGcPreservesRowAfterSavepointRollback)
+{
+    ID table_id = createTestTable("savepoint_gc_restore_test");
+
+    auto original_tuple = buildLargeRowTuple(7, 'Q');
+    auto updated_tuple = buildLargeRowTuple(7, 'R');
+
+    ErrorContext ctx;
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_gc_restore", &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_gc_restore", &ctx), Status::OK) << ctx.message;
+
+    db_->garbage_collector()->markPageDirty(page_id);
+    db_->garbage_collector()->processPageCooperative(page_id, &ctx);
+
+    std::vector<uint8_t> restored = readTupleDetoasted(table_id, page_id, item_id);
+    expectTuplePayloadEquals(restored, original_tuple);
 }

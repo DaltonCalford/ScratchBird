@@ -340,14 +340,16 @@ namespace scratchbird::core
                                          ErrorContext *ctx = nullptr) -> Status;
 
         // Mark tuple as deleted (and clean up TOAST if present)
-        auto deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx = nullptr) -> Status;
+        auto deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx = nullptr,
+                         bool defer_toast_cleanup = false) -> Status;
 
         // Update tuple (MGA Phase 3: Version Chains)
         // Creates a new version and links it to the old version
         // Returns the new tuple's item_id
         auto updateTuple(uint16_t old_item_id, const uint8_t *new_tuple_data,
                          uint32_t new_tuple_size, uint64_t xmax, uint64_t new_xmin,
-                         uint16_t *new_item_id_out, ErrorContext *ctx = nullptr) -> Status;
+                         uint16_t *new_item_id_out, ErrorContext *ctx = nullptr,
+                         bool defer_old_toast_cleanup = false) -> Status;
 
         // SPRINT 0: Overwrite tuple in-place with back version on different page (MGA cross-page update)
         // This is for cross-page updates where the back version is created on a different page

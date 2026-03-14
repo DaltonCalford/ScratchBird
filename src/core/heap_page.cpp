@@ -603,7 +603,8 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto HeapPage::deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx) -> Status
+    auto HeapPage::deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx,
+                               bool defer_toast_cleanup) -> Status
     {
         const bool force_delete = (xmax == UINT64_MAX);
 
@@ -633,7 +634,7 @@ namespace scratchbird::core
         }
 
         // Check if we need to delete TOAST data
-        if ((toast_mgr_ != nullptr) && (db_ != nullptr))
+        if (!defer_toast_cleanup && (toast_mgr_ != nullptr) && (db_ != nullptr))
         {
             // Get the tuple to check for TOAST pointers
             uint32_t offset = items[item_id].offset;
@@ -847,7 +848,8 @@ namespace scratchbird::core
 
     auto HeapPage::updateTuple(uint16_t old_item_id, const uint8_t *new_tuple_data,
                                uint32_t new_tuple_size, uint64_t xmax, uint64_t new_xmin,
-                               uint16_t *new_item_id_out, ErrorContext *ctx) -> Status
+                               uint16_t *new_item_id_out, ErrorContext *ctx,
+                               bool defer_old_toast_cleanup) -> Status
     {
         // ====================================================================
         // FIREBIRD MGA BACK VERSIONING ALGORITHM
@@ -910,7 +912,7 @@ namespace scratchbird::core
         // ====================================================================
         // This prevents TOAST storage leaks on UPDATE operations
         bool old_tuple_is_toasted = false;
-        if ((toast_mgr_ != nullptr) && (db_ != nullptr))
+        if (!defer_old_toast_cleanup && (toast_mgr_ != nullptr) && (db_ != nullptr))
         {
             if (primary_length >= sizeof(TupleHeader) + sizeof(ToastPointer))
             {
