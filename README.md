@@ -27,9 +27,10 @@ So what is scratchbird, it is a way to stop all the headaches I have dealt with 
 It depends what you consider "Vibe Coding" to be.  I have over 35 years of experience in IT.  I have been the poor guy at midnight working on maintenance or upgrades.  I have been the guy refactoring code on legacy systems.  I have been faced with years of data in legacy data systems that everyone believes to be easy to migrate.   So, I have felt the pain that everyone now faces.  I have also been a developer.  
 
 So, over the years I have worked with multiple databases and I created a list of "I Wish" items - as everyone does at 3am while trying to fix something that broke.   I combined all of this into a single goal - can I actually produce my "Dream" database?   I actually did not believe I could.  So, I started by studying all the different open source databases.  This led to my creating a list of best of processes.   The best transaction system, the best index systems, the best replication system.   Needless to say, I had my own bias, which I fought over and over with metrics and test code.   This is where the AI came in, assisting in gathering resources, checking my assumptions, telling me in very polite terms that I am insane and should give up.   But I did not trust the materials the AI produced, but due to the volume, I can't cross check everything, but, heh, I have an AI don't I... well I soon learned that what one AI model would create, another would tear to pieces. I started to due this over and over again, I tested commercial and open source models, finding what each is best for.   
+
 So, 1,800 pages of specifications, double that in work plans, reference material and white papers, which started as the base.   From there, I had to watch all the thought processes of every AI as it performed the tasks assigned to it.   AI, even with clear specifications and work-plans, will start to do something different.  The AI will always follow its initial training, which when you are creating something new, is totally outside of its training.
 
-Needless to say, what I built is totally new.
+Needless to say, what I built is totally new or based upon patterns that are different than the average database.
 
 So, is it Vibe coding?  I prefer AI assisted development, but, you decide.
 
@@ -68,12 +69,18 @@ ScratchBird is at **public beta 1** for **code and tests**.
 - Native execution model: SBLR-backed engine execution
 - Security surface in test gates: row-level, column-level, and domain-level enforcement
 
-This is not a GA/production declaration. It is a beta engineering baseline.
+This is not a GA/production declaration. It is a beta engineering baseline.  Beta 2 will be finished executable for people to play with.
 
-## Parser Model
+## **Parser Model**
 
-- `v3` is the core parser and semantic model.
+- The parser is separate from the engine.  The engine uses a bytecode language called SBLR
+- The engine identifies everything with UUID's - from the system tables to rows in a table.
+- `v3` is the core parser and semantic model.  All features in all the emulated engines are surfaced here in a single new sql dialect  
+- Emulated engines have a standalone parser that acts as a translation layer between the engine and client.
+- The emulated databases are stored inside a ScratchBird database
 - PostgreSQL/MySQL/Firebird parser paths are emulation surfaces for compatibility testing and protocol parity.
+- 10 more engines are being tested for possible next release
+- A emulated engine is not considered release ready until the emulated process can pass the original engines own regression tests using the original engines own tools
 
 ## Project Documentation
 
