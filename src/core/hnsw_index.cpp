@@ -1149,17 +1149,13 @@ bool HnswIndex::is_node_visible(const SBHnswNode *node,
         return true; // Fallback
     }
 
-    if (!txn_mgr->isVersionVisible(node->node_xmin, current_xid))
-    {
-        return false;
-    }
-
-    if (node->node_xmax != 0 && txn_mgr->isVersionVisible(node->node_xmax, current_xid))
-    {
-        return false;
-    }
-
-    return true;
+    return txn_mgr->evaluateRecordVisibility(
+                        node->node_xmin,
+                        node->node_xmax,
+                        current_xid,
+                        VisibilityMode::READ_CURRENT_VERSION,
+                        nullptr)
+        .visible;
 }
 
 Status HnswIndex::create_node(const VectorValue &vector,

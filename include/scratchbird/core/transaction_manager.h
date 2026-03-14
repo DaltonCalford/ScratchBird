@@ -12,6 +12,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/uuidv7.h"
 #include <atomic>
 #include <cstdint>
@@ -60,6 +61,76 @@ namespace scratchbird::core
         uint64_t snapshot_commit_seqno_high = 0;
         uint64_t snapshot_serial = 0;
         uint64_t capture_time = 0;
+    };
+
+    enum class VisibilityMode : uint8_t
+    {
+        READ_CURRENT_TRANSACTION = 0,
+        READ_CURRENT_VERSION = 1,
+        SNAPSHOT = 2,
+    };
+
+    enum class VisibilityReason : uint8_t
+    {
+        NONE = 0,
+        OWN_TRANSACTION,
+        FROZEN_XID,
+        FUTURE_XID,
+        INVALID_XID,
+        MISSING_SNAPSHOT,
+        ABOVE_SNAPSHOT_HIGH,
+        ACTIVE_IN_SNAPSHOT,
+        STATE_LOOKUP_FAILED,
+        STATE_LOOKUP_ASSUMED_COMMITTED,
+        COMMITTED_VISIBLE,
+        ACTIVE_INVISIBLE,
+        ABORTED_INVISIBLE,
+        PREPARED_INVISIBLE,
+        DELETE_NOT_PRESENT,
+    };
+
+    struct TransactionVisibilityDecision
+    {
+        bool visible = false;
+        VisibilityMode mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+        VisibilityReason reason = VisibilityReason::NONE;
+        TransactionState state = TransactionState::ACTIVE;
+    };
+
+    struct RecordVisibilityDecision
+    {
+        bool visible = false;
+        bool create_visible = false;
+        bool delete_visible = false;
+        VisibilityMode mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+        TransactionVisibilityDecision create_decision{};
+        TransactionVisibilityDecision delete_decision{};
+    };
+
+    enum class StatementRestartReason : uint8_t
+    {
+        NONE = 0,
+        TUPLE_WRITE_CONFLICT,
+        LOCK_TIMEOUT,
+        DEADLOCK_DETECTED,
+        MISSING_STATEMENT_SNAPSHOT,
+        INACTIVE_STATEMENT_SCOPE,
+        FORENSIC_REPLAY_ACTIVE,
+        UNSUPPORTED_CONFLICT_STATUS,
+    };
+
+    struct StatementRestartDecision
+    {
+        bool restart_required = false;
+        bool retry_eligible = false;
+        StatementRestartReason reason = StatementRestartReason::NONE;
+        Status source_status = Status::OK;
+        uint64_t reader_xid = 0;
+        uint64_t statement_snapshot_serial = 0;
+        LockTag resource_tag{};
+        LockMode requested_mode = LockMode::LOCK_ROW_EXCLUSIVE;
+        LockMode blocker_mode = LockMode::LOCK_ACCESS_SHARE;
+        uint32_t blocker_proc_id = 0;
     };
 
 // Transaction Inventory Page (TIP) format
@@ -206,6 +277,36 @@ namespace scratchbird::core
         auto isRecordVersionVisibleInSnapshot(uint64_t create_xid, uint64_t delete_xid,
                                               uint64_t reader_xid,
                                               const TransactionSnapshot &snapshot) -> bool;
+
+        // Canonical visibility classifier for a single transaction or version XID.
+        // LOCKING: Thread-safe. Performs transaction-state lookups internally.
+        auto evaluateTransactionVisibility(uint64_t xid, uint64_t reader_xid,
+                                           VisibilityMode mode,
+                                           const TransactionSnapshot *snapshot = nullptr)
+            -> TransactionVisibilityDecision;
+
+        // Canonical visibility classifier for create/delete tuple headers.
+        // LOCKING: Thread-safe. Performs transaction-state lookups internally.
+        auto evaluateRecordVisibility(uint64_t create_xid, uint64_t delete_xid,
+                                      uint64_t reader_xid, VisibilityMode mode,
+                                      const TransactionSnapshot *snapshot = nullptr)
+            -> RecordVisibilityDecision;
+
+        auto evaluateReadConsistencyRestart(Status conflict_status,
+                                            uint64_t reader_xid,
+                                            bool statement_scope_active,
+                                            bool forensic_replay_active,
+                                            const TransactionSnapshot *statement_snapshot,
+                                            const LockTag& resource_tag,
+                                            LockMode requested_mode,
+                                            uint32_t blocker_proc_id = 0,
+                                            LockMode blocker_mode =
+                                                LockMode::LOCK_ACCESS_SHARE) const
+            -> StatementRestartDecision;
+
+        static auto statementRestartReasonName(StatementRestartReason reason) -> const char *;
+        static auto formatStatementRestartMessage(const StatementRestartDecision& decision)
+            -> std::string;
 
         // Validate XID is structurally valid (not INVALID_XID)
         // LOCKING: No locks required (static method, no shared state access).

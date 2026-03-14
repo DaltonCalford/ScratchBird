@@ -52,6 +52,7 @@ namespace scratchbird
     namespace core
     {
         class ConnectionContext;
+        struct ErrorContext;
         class HashIndex;
     }
 
@@ -125,10 +126,20 @@ namespace scratchbird
                 RESULT_SET
             };
 
-            ExecutionResult() : type_(SUCCESS) {}
-            ExecutionResult(const std::string &error) : type_(ERROR), error_(error) {}
+            ExecutionResult() : type_(SUCCESS), status_(core::Status::OK) {}
+            ExecutionResult(const std::string &error)
+                : type_(ERROR), error_(error), status_(core::Status::INTERNAL_ERROR)
+            {
+            }
+            ExecutionResult(core::Status status, const std::string& error, std::string sqlstate = {})
+                : type_(ERROR),
+                  error_(error),
+                  status_(status),
+                  sqlstate_(std::move(sqlstate))
+            {
+            }
             ExecutionResult(std::unique_ptr<ResultSet> results)
-                : type_(RESULT_SET), result_set_(std::move(results))
+                : type_(RESULT_SET), result_set_(std::move(results)), status_(core::Status::OK)
             {
             }
 
@@ -149,6 +160,14 @@ namespace scratchbird
             {
                 return result_set_.get();
             }
+            core::Status status() const
+            {
+                return status_;
+            }
+            const std::string& sqlstate() const
+            {
+                return sqlstate_;
+            }
 
             // For DDL statements, return number of affected objects
             void setAffectedCount(int count)
@@ -164,6 +183,8 @@ namespace scratchbird
             ResultType type_;
             std::string error_;
             std::unique_ptr<ResultSet> result_set_;
+            core::Status status_;
+            std::string sqlstate_;
             int affected_count_ = 0;
         };
 
@@ -870,6 +891,10 @@ namespace scratchbird
 
             // Error handling
             void error(const std::string &msg);
+            void errorWithStatus(core::Status status, const std::string& msg,
+                                 const std::string& sqlstate = {});
+            auto makeExecutionStatusError(core::Status status, const core::ErrorContext* ctx,
+                                          const std::string& fallback) const -> ExecutionResult;
 
             // Tuple deserialization helper
             bool deserializeTuple(const uint8_t *tuple_data, uint32_t tuple_size,

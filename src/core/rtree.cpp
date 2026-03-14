@@ -1353,19 +1353,13 @@ bool RTree::isEntryVisible(const RTreeEntry& entry, uint64_t current_xid) const
 
     TransactionManager* txn_mgr = db_->transaction_manager();
 
-    // Check if xmin is visible (entry created)
-    if (!txn_mgr->isVersionVisible(entry.xmin, current_xid))
-    {
-        return false; // Entry not yet visible
-    }
-
-    // Check if xmax is visible (entry deleted)
-    if (entry.xmax != 0 && txn_mgr->isVersionVisible(entry.xmax, current_xid))
-    {
-        return false; // Entry is deleted
-    }
-
-    return true; // Entry is visible
+    return txn_mgr->evaluateRecordVisibility(
+                        entry.xmin,
+                        entry.xmax,
+                        current_xid,
+                        VisibilityMode::READ_CURRENT_VERSION,
+                        nullptr)
+        .visible;
 }
 
 void RTree::updateStatistics()

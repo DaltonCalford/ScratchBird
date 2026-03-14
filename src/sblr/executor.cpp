@@ -204,6 +204,33 @@ namespace scratchbird
     namespace sblr
     {
         namespace {
+            class ExecutionStatusException : public std::runtime_error
+            {
+            public:
+                ExecutionStatusException(core::Status status,
+                                         std::string sqlstate,
+                                         const std::string& message)
+                    : std::runtime_error(message),
+                      status_(status),
+                      sqlstate_(std::move(sqlstate))
+                {
+                }
+
+                auto status() const -> core::Status
+                {
+                    return status_;
+                }
+
+                const std::string& sqlstate() const
+                {
+                    return sqlstate_;
+                }
+
+            private:
+                core::Status status_;
+                std::string sqlstate_;
+            };
+
             struct UdrCompileProfileSeed
             {
                 const char* profile_id;
@@ -5723,6 +5750,10 @@ namespace scratchbird
                 }
 
                 return executeCanonicalV3(bytecode);
+            }
+            catch (const ExecutionStatusException& e)
+            {
+                return ExecutionResult(e.status(), e.what(), e.sqlstate());
             }
             catch (const std::exception& e)
             {
@@ -17770,12 +17801,17 @@ namespace scratchbird
             while (scan_iter->next(&tuple, &ctx) == core::Status::OK)
             {
                 // Delete this tuple
+                core::ErrorContext storage_ctx;
                 status = db_->storage_engine()->deleteTuple(
-                    view_info.materialized_table_id, tuple.tid, &ctx);
+                    view_info.materialized_table_id, tuple.tid, &storage_ctx);
 
                 if (status != core::Status::OK)
                 {
-                    error("Failed to delete tuple during refresh");
+                    errorWithStatus(status,
+                                    storage_ctx.message.empty()
+                                        ? "Failed to delete tuple during refresh"
+                                        : storage_ctx.message,
+                                    storage_ctx.sqlstate);
                 }
             }
 
@@ -20519,14 +20555,19 @@ namespace scratchbird
                             uint32_t new_page_id;
                             uint16_t new_item_id;
 
+                            core::ErrorContext storage_ctx;
                             auto update_status = db_->storage_engine()->updateTuple(
                                 table_id, page_id, item_id,
                                 new_tuple_data.data(), new_tuple_data.size(),
-                                &new_page_id, &new_item_id, nullptr);
+                                &new_page_id, &new_item_id, &storage_ctx);
 
                             if (update_status != core::Status::OK)
                             {
-                                error("Failed to update tuple in storage");
+                                errorWithStatus(update_status,
+                                                storage_ctx.message.empty()
+                                                    ? "Failed to update tuple in storage"
+                                                    : storage_ctx.message,
+                                                storage_ctx.sqlstate);
                             }
 
                             core::TID old_tid(page_id, item_id);
@@ -23525,11 +23566,16 @@ namespace scratchbird
                     updateIndexesOnDelete(xid, table_id, table_info,
                                           target_columns, old_row_values_full, old_tid);
 
+                    core::ErrorContext delete_ctx;
                     auto delete_status = db_->storage_engine()->deleteTuple(
-                        table_id, old_tid, nullptr);
+                        table_id, old_tid, &delete_ctx);
                     if (delete_status != core::Status::OK)
                     {
-                        error("Failed to delete tuple during partition migration");
+                        errorWithStatus(delete_status,
+                                        delete_ctx.message.empty()
+                                            ? "Failed to delete tuple during partition migration"
+                                            : delete_ctx.message,
+                                        delete_ctx.sqlstate);
                     }
 
                     updated_tables.insert(routed_table_id);
@@ -23538,14 +23584,19 @@ namespace scratchbird
                 {
                     uint32_t new_page_id;
                     uint16_t new_item_id;
+                    core::ErrorContext storage_ctx;
                     auto update_status = db_->storage_engine()->updateTuple(
                         table_id, page_id, item_id,
                         new_tuple_data.data(), new_tuple_data.size(),
-                        &new_page_id, &new_item_id, nullptr);
+                        &new_page_id, &new_item_id, &storage_ctx);
 
                     if (update_status != core::Status::OK)
                     {
-                        error("Failed to update tuple in storage");
+                        errorWithStatus(update_status,
+                                        storage_ctx.message.empty()
+                                            ? "Failed to update tuple in storage"
+                                            : storage_ctx.message,
+                                        storage_ctx.sqlstate);
                     }
 
                     new_tid = core::TID(new_page_id, new_item_id);
@@ -24721,12 +24772,17 @@ namespace scratchbird
                 core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
                 uint64_t xmax = conn_ctx ? conn_ctx->getCurrentTransactionId() : 0;
 
+                core::ErrorContext storage_ctx;
                 auto delete_status = db_->storage_engine()->deleteTuple(
-                    table_id, tuple.tid, nullptr);
+                    table_id, tuple.tid, &storage_ctx);
 
                 if (delete_status != core::Status::OK)
                 {
-                    error("Failed to delete tuple from storage");
+                    errorWithStatus(delete_status,
+                                    storage_ctx.message.empty()
+                                        ? "Failed to delete tuple from storage"
+                                        : storage_ctx.message,
+                                    storage_ctx.sqlstate);
                 }
 
                 // Plan 03B Task 3.2: Unregister domain uniqueness entries for deleted row
@@ -25152,9 +25208,18 @@ namespace scratchbird
 
                                 if (clause.is_delete)
                                 {
+                                    core::ErrorContext storage_ctx;
                                     auto delete_status = db_->storage_engine()->deleteTuple(
-                                        target_table_info.table_id, target_tuple.tid, nullptr);
-                                    if (delete_status == core::Status::OK)
+                                        target_table_info.table_id, target_tuple.tid, &storage_ctx);
+                                    if (delete_status != core::Status::OK)
+                                    {
+                                        errorWithStatus(delete_status,
+                                                        storage_ctx.message.empty()
+                                                            ? "Failed to delete tuple in MERGE"
+                                                            : storage_ctx.message,
+                                                        storage_ctx.sqlstate);
+                                    }
+                                    else
                                     {
                                         merge_affected_count++;
                                     }
@@ -25247,13 +25312,22 @@ namespace scratchbird
                                 uint16_t item_id = core::getSlot(target_tuple.tid);
                                 uint32_t new_page_id;
                                 uint16_t new_item_id;
+                                core::ErrorContext storage_ctx;
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     target_table_info.table_id, page_id, item_id,
                                     new_tuple_data.data(), new_tuple_data.size(),
-                                    &new_page_id, &new_item_id, nullptr);
+                                    &new_page_id, &new_item_id, &storage_ctx);
 
-                                if (update_status == core::Status::OK)
+                                if (update_status != core::Status::OK)
+                                {
+                                    errorWithStatus(update_status,
+                                                    storage_ctx.message.empty()
+                                                        ? "Failed to update tuple in MERGE"
+                                                        : storage_ctx.message,
+                                                    storage_ctx.sqlstate);
+                                }
+                                else
                                 {
                                     merge_affected_count++;
                                 }
@@ -25437,9 +25511,19 @@ namespace scratchbird
 
                             if (clause.is_delete)
                             {
+                                core::ErrorContext storage_ctx;
                                 auto delete_status = db_->storage_engine()->deleteTuple(
-                                    target_table_info.table_id, target_tuple.tid, nullptr);
-                                if (delete_status == core::Status::OK)
+                                    target_table_info.table_id, target_tuple.tid, &storage_ctx);
+                                if (delete_status != core::Status::OK)
+                                {
+                                    errorWithStatus(
+                                        delete_status,
+                                        storage_ctx.message.empty()
+                                            ? "Failed to delete tuple in MERGE NOT MATCHED BY SOURCE"
+                                            : storage_ctx.message,
+                                        storage_ctx.sqlstate);
+                                }
+                                else
                                 {
                                     merge_affected_count++;
                                 }
@@ -25492,13 +25576,23 @@ namespace scratchbird
                                 uint16_t item_id = core::getSlot(target_tuple.tid);
                                 uint32_t new_page_id;
                                 uint16_t new_item_id;
+                                core::ErrorContext storage_ctx;
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     target_table_info.table_id, page_id, item_id,
                                     new_tuple_data.data(), new_tuple_data.size(),
-                                    &new_page_id, &new_item_id, nullptr);
+                                    &new_page_id, &new_item_id, &storage_ctx);
 
-                                if (update_status == core::Status::OK)
+                                if (update_status != core::Status::OK)
+                                {
+                                    errorWithStatus(
+                                        update_status,
+                                        storage_ctx.message.empty()
+                                            ? "Failed to update tuple in MERGE NOT MATCHED BY SOURCE"
+                                            : storage_ctx.message,
+                                        storage_ctx.sqlstate);
+                                }
+                                else
                                 {
                                     merge_affected_count++;
                                 }
@@ -42535,6 +42629,34 @@ namespace scratchbird
             throw std::runtime_error(msg);
         }
 
+        void Executor::errorWithStatus(core::Status status, const std::string& msg,
+                                       const std::string& sqlstate)
+        {
+            const std::string effective_sqlstate =
+                sqlstate.empty() ? core::statusToSQLState(status) : sqlstate;
+            throw ExecutionStatusException(status, effective_sqlstate, msg);
+        }
+
+        auto Executor::makeExecutionStatusError(core::Status status,
+                                                const core::ErrorContext* ctx,
+                                                const std::string& fallback) const
+            -> ExecutionResult
+        {
+            std::string message = fallback;
+            if (ctx != nullptr && !ctx->message.empty())
+            {
+                message = ctx->message;
+            }
+
+            std::string sqlstate = core::statusToSQLState(status);
+            if (ctx != nullptr && ctx->sqlstate != nullptr && ctx->sqlstate[0] != '\0')
+            {
+                sqlstate = ctx->sqlstate;
+            }
+
+            return ExecutionResult(status, message, std::move(sqlstate));
+        }
+
         bool Executor::matchPattern(const std::string &text, const std::string &pattern,
                                     bool case_insensitive)
         {
@@ -55003,10 +55125,10 @@ namespace scratchbird
                         if (delete_status != core::Status::OK &&
                             delete_status != core::Status::NOT_FOUND)
                         {
-                            return ExecutionResult(delete_ctx.message.empty()
-                                                       ? ("TRUNCATE failed for " +
-                                                          table_info.table_name)
-                                                       : delete_ctx.message);
+                            return makeExecutionStatusError(
+                                delete_status,
+                                &delete_ctx,
+                                "TRUNCATE failed for " + table_info.table_name);
                         }
                     }
 
@@ -70049,6 +70171,7 @@ namespace scratchbird
                                         uint16_t item_id = core::getSlot(conflict_tid);
                                         uint32_t new_page_id = 0;
                                         uint16_t new_item_id = 0;
+                                        core::ErrorContext storage_ctx;
                                         auto status = db_->storage_engine()->updateTuple(
                                             table_info.table_id,
                                             page_id,
@@ -70057,10 +70180,13 @@ namespace scratchbird
                                             new_tuple.size(),
                                             &new_page_id,
                                             &new_item_id,
-                                            nullptr);
+                                            &storage_ctx);
                                         if (status != core::Status::OK)
                                         {
-                                            return ExecutionResult("Failed to update tuple for ON CONFLICT");
+                                            return makeExecutionStatusError(
+                                                status,
+                                                &storage_ctx,
+                                                "Failed to update tuple for ON CONFLICT");
                                         }
                                         uint64_t xid = db_->storage_engine()->getCurrentXid();
                                         updateIndexesOnUpdate(xid, table_info.table_id, table_info, all_columns,
@@ -71495,6 +71621,7 @@ namespace scratchbird
                                 uint16_t item_id = core::getSlot(tuple.tid);
                                 uint32_t new_page_id = 0;
                                 uint16_t new_item_id = 0;
+                                core::ErrorContext storage_ctx;
                                 auto status = db_->storage_engine()->updateTuple(
                                     table_info.table_id,
                                     page_id,
@@ -71503,10 +71630,13 @@ namespace scratchbird
                                     new_tuple.size(),
                                     &new_page_id,
                                     &new_item_id,
-                                    nullptr);
+                                    &storage_ctx);
                                 if (status != core::Status::OK)
                                 {
-                                    return ExecutionResult("Failed to update tuple in storage");
+                                    return makeExecutionStatusError(
+                                        status,
+                                        &storage_ctx,
+                                        "Failed to update tuple in storage");
                                 }
                                 updateIndexesOnUpdate(xid, table_info.table_id, table_info, all_columns,
                                                       row_values, new_values, tuple.tid,
@@ -72121,13 +72251,17 @@ namespace scratchbird
                                 continue;
                             }
 
+                            core::ErrorContext storage_ctx;
                             auto status = db_->storage_engine()->deleteTuple(
                                 table_info.table_id,
                                 tuple.tid,
-                                nullptr);
+                                &storage_ctx);
                             if (status != core::Status::OK)
                             {
-                                return ExecutionResult("Failed to delete tuple in storage");
+                                return makeExecutionStatusError(
+                                    status,
+                                    &storage_ctx,
+                                    "Failed to delete tuple in storage");
                             }
                             if (auto* domain_mgr = db_->domain_manager(); domain_mgr)
                             {
@@ -72679,13 +72813,17 @@ namespace scratchbird
                                     }
                                     if (action.is_delete)
                                     {
+                                        core::ErrorContext storage_ctx;
                                         auto status = db_->storage_engine()->deleteTuple(
                                             target_info.table_id,
                                             target_row.tid,
-                                            nullptr);
+                                            &storage_ctx);
                                         if (status != core::Status::OK)
                                         {
-                                            return ExecutionResult("Failed to delete tuple in MERGE");
+                                            return makeExecutionStatusError(
+                                                status,
+                                                &storage_ctx,
+                                                "Failed to delete tuple in MERGE");
                                         }
                                         updateIndexesOnDelete(xid, target_info.table_id, target_info,
                                                               target_columns, target_row.values, target_row.tid);
@@ -72725,6 +72863,7 @@ namespace scratchbird
                                     uint16_t item_id = core::getSlot(target_row.tid);
                                     uint32_t new_page_id = 0;
                                     uint16_t new_item_id = 0;
+                                    core::ErrorContext storage_ctx;
                                     auto status = db_->storage_engine()->updateTuple(
                                         target_info.table_id,
                                         page_id,
@@ -72733,10 +72872,13 @@ namespace scratchbird
                                         new_tuple.size(),
                                         &new_page_id,
                                         &new_item_id,
-                                        nullptr);
+                                        &storage_ctx);
                                     if (status != core::Status::OK)
                                     {
-                                        return ExecutionResult("Failed to update tuple in MERGE");
+                                        return makeExecutionStatusError(
+                                            status,
+                                            &storage_ctx,
+                                            "Failed to update tuple in MERGE");
                                     }
                                     updateIndexesOnUpdate(xid, target_info.table_id, target_info, target_columns,
                                                           target_row.values, new_values, target_row.tid,
@@ -72873,13 +73015,17 @@ namespace scratchbird
                                     }
                                     if (action.is_delete)
                                     {
+                                        core::ErrorContext storage_ctx;
                                         auto status = db_->storage_engine()->deleteTuple(
                                             target_info.table_id,
                                             target_row.tid,
-                                            nullptr);
+                                            &storage_ctx);
                                         if (status != core::Status::OK)
                                         {
-                                            return ExecutionResult("Failed to delete tuple in MERGE NOT MATCHED BY SOURCE");
+                                            return makeExecutionStatusError(
+                                                status,
+                                                &storage_ctx,
+                                                "Failed to delete tuple in MERGE NOT MATCHED BY SOURCE");
                                         }
                                         updateIndexesOnDelete(xid, target_info.table_id, target_info,
                                                               target_columns, row_values, target_row.tid);
@@ -72918,6 +73064,7 @@ namespace scratchbird
                                     uint16_t item_id = core::getSlot(target_row.tid);
                                     uint32_t new_page_id = 0;
                                     uint16_t new_item_id = 0;
+                                    core::ErrorContext storage_ctx;
                                     auto status = db_->storage_engine()->updateTuple(
                                         target_info.table_id,
                                         page_id,
@@ -72926,10 +73073,13 @@ namespace scratchbird
                                         new_tuple.size(),
                                         &new_page_id,
                                         &new_item_id,
-                                        nullptr);
+                                        &storage_ctx);
                                     if (status != core::Status::OK)
                                     {
-                                        return ExecutionResult("Failed to update tuple in MERGE");
+                                        return makeExecutionStatusError(
+                                            status,
+                                            &storage_ctx,
+                                            "Failed to update tuple in MERGE");
                                     }
                                     updateIndexesOnUpdate(xid, target_info.table_id, target_info, target_columns,
                                                           row_values, new_values, target_row.tid,
@@ -106302,10 +106452,18 @@ namespace scratchbird
                             uint64_t xmax = db_->storage_engine()->getCurrentXid();
                             for (const auto& tid : matching_tids)
                             {
-                                auto status = db_->storage_engine()->deleteTuple(fk.child_table_id, tid, nullptr);
+                                core::ErrorContext storage_ctx;
+                                auto status = db_->storage_engine()->deleteTuple(
+                                    fk.child_table_id, tid, &storage_ctx);
                                 if (status != core::Status::OK)
                                 {
-                                    DEBUG_LOG_DB("FK CASCADE DELETE failed for child row");
+                                    errorWithStatus(
+                                        status,
+                                        storage_ctx.message.empty()
+                                            ? ("FK CASCADE DELETE: failed to delete child row for FK: " +
+                                               fk.fk_name)
+                                            : storage_ctx.message,
+                                        storage_ctx.sqlstate);
                                 }
                             }
                             break;
@@ -106358,15 +106516,21 @@ namespace scratchbird
                                 uint16_t item_id = core::getSlot(tid);
                                 uint32_t new_page_id;
                                 uint16_t new_item_id;
+                                core::ErrorContext storage_ctx;
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
                                     new_tuple_data.data(), new_tuple_data.size(),
-                                    &new_page_id, &new_item_id, nullptr);
+                                    &new_page_id, &new_item_id, &storage_ctx);
 
                                 if (update_status != core::Status::OK)
                                 {
-                                    error("FK SET NULL: failed to update child row for FK: " + fk.fk_name);
+                                    errorWithStatus(update_status,
+                                                    storage_ctx.message.empty()
+                                                        ? ("FK SET NULL: failed to update child row for FK: " +
+                                                           fk.fk_name)
+                                                        : storage_ctx.message,
+                                                    storage_ctx.sqlstate);
                                 }
 
                                 DEBUG_LOG_DB("FK SET NULL: updated child row (" +
@@ -106428,15 +106592,21 @@ namespace scratchbird
                                 uint16_t item_id = core::getSlot(tid);
                                 uint32_t new_page_id;
                                 uint16_t new_item_id;
+                                core::ErrorContext storage_ctx;
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
                                     new_tuple_data.data(), new_tuple_data.size(),
-                                    &new_page_id, &new_item_id, nullptr);
+                                    &new_page_id, &new_item_id, &storage_ctx);
 
                                 if (update_status != core::Status::OK)
                                 {
-                                    error("FK SET DEFAULT: failed to update child row for FK: " + fk.fk_name);
+                                    errorWithStatus(update_status,
+                                                    storage_ctx.message.empty()
+                                                        ? ("FK SET DEFAULT: failed to update child row for FK: " +
+                                                           fk.fk_name)
+                                                        : storage_ctx.message,
+                                                    storage_ctx.sqlstate);
                                 }
 
                                 DEBUG_LOG_DB("FK SET DEFAULT: updated child row (" +
@@ -106644,15 +106814,21 @@ namespace scratchbird
                                 uint16_t item_id = core::getSlot(tid);
                                 uint32_t new_page_id;
                                 uint16_t new_item_id;
+                                core::ErrorContext storage_ctx;
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
                                     new_tuple_data.data(), new_tuple_data.size(),
-                                    &new_page_id, &new_item_id, nullptr);
+                                    &new_page_id, &new_item_id, &storage_ctx);
 
                                 if (update_status != core::Status::OK)
                                 {
-                                    error("FK CASCADE UPDATE: failed to update child row for FK: " + fk.fk_name);
+                                    errorWithStatus(update_status,
+                                                    storage_ctx.message.empty()
+                                                        ? ("FK CASCADE UPDATE: failed to update child row for FK: " +
+                                                           fk.fk_name)
+                                                        : storage_ctx.message,
+                                                    storage_ctx.sqlstate);
                                 }
 
                                 DEBUG_LOG_DB("FK CASCADE UPDATE: updated child row (" +
@@ -106708,15 +106884,21 @@ namespace scratchbird
                                 uint16_t item_id = core::getSlot(tid);
                                 uint32_t new_page_id;
                                 uint16_t new_item_id;
+                                core::ErrorContext storage_ctx;
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
                                     new_tuple_data.data(), new_tuple_data.size(),
-                                    &new_page_id, &new_item_id, nullptr);
+                                    &new_page_id, &new_item_id, &storage_ctx);
 
                                 if (update_status != core::Status::OK)
                                 {
-                                    error("FK SET NULL: failed to update child row for FK: " + fk.fk_name);
+                                    errorWithStatus(update_status,
+                                                    storage_ctx.message.empty()
+                                                        ? ("FK SET NULL: failed to update child row for FK: " +
+                                                           fk.fk_name)
+                                                        : storage_ctx.message,
+                                                    storage_ctx.sqlstate);
                                 }
 
                                 DEBUG_LOG_DB("FK SET NULL: updated child row (" +
@@ -106778,15 +106960,21 @@ namespace scratchbird
                                 uint16_t item_id = core::getSlot(tid);
                                 uint32_t new_page_id;
                                 uint16_t new_item_id;
+                                core::ErrorContext storage_ctx;
 
                                 auto update_status = db_->storage_engine()->updateTuple(
                                     fk.child_table_id, page_id, item_id,
                                     new_tuple_data.data(), new_tuple_data.size(),
-                                    &new_page_id, &new_item_id, nullptr);
+                                    &new_page_id, &new_item_id, &storage_ctx);
 
                                 if (update_status != core::Status::OK)
                                 {
-                                    error("FK SET DEFAULT: failed to update child row for FK: " + fk.fk_name);
+                                    errorWithStatus(update_status,
+                                                    storage_ctx.message.empty()
+                                                        ? ("FK SET DEFAULT: failed to update child row for FK: " +
+                                                           fk.fk_name)
+                                                        : storage_ctx.message,
+                                                    storage_ctx.sqlstate);
                                 }
 
                                 DEBUG_LOG_DB("FK SET DEFAULT: updated child row (" +

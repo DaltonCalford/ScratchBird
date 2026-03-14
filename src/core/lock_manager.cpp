@@ -211,7 +211,9 @@ namespace scratchbird::core
     }
 
     auto LockManager::acquireLock(uint32_t proc_id, const LockTag &tag, LockMode mode, bool wait,
-                                  uint32_t timeout_ms, ErrorContext *ctx) -> Status
+                                  uint32_t timeout_ms, ErrorContext *ctx,
+                                  uint32_t *blocker_proc_id_out,
+                                  LockMode *blocker_mode_out) -> Status
     {
         // OPTIMIZATION: Check if this is a read-only transaction
         // Read-only transactions can benefit from fast-path lock acquisition
@@ -275,6 +277,14 @@ namespace scratchbird::core
             uint32_t blocker_proc_id = 0;
             LockMode blocker_mode = LockMode::LOCK_ACCESS_SHARE;
             (void)checkConflictInternal(lock_obj, mode, proc_id, &blocker_proc_id, &blocker_mode);
+            if (blocker_proc_id_out != nullptr)
+            {
+                *blocker_proc_id_out = blocker_proc_id;
+            }
+            if (blocker_mode_out != nullptr)
+            {
+                *blocker_mode_out = blocker_mode;
+            }
 
             if (!wait)
             {
@@ -342,6 +352,14 @@ namespace scratchbird::core
                 LockMode timeout_blocker_mode = LockMode::LOCK_ACCESS_SHARE;
                 (void)checkConflictInternal(lock_obj, mode, proc_id, &timeout_blocker_proc_id,
                                             &timeout_blocker_mode);
+                if (blocker_proc_id_out != nullptr)
+                {
+                    *blocker_proc_id_out = timeout_blocker_proc_id;
+                }
+                if (blocker_mode_out != nullptr)
+                {
+                    *blocker_mode_out = timeout_blocker_mode;
+                }
                 recordLockWaitHistory(db_, proc_id, timeout_blocker_proc_id, tag, mode,
                                       timeout_blocker_mode, request_time, end_time, true,
                                       "LOCK_TIMEOUT", "", false);
@@ -363,6 +381,14 @@ namespace scratchbird::core
                 if (it != lock_obj->wait_queue.end())
                 {
                     lock_obj->wait_queue.erase(it);
+                }
+                if (blocker_proc_id_out != nullptr)
+                {
+                    *blocker_proc_id_out = blocker_proc_id;
+                }
+                if (blocker_mode_out != nullptr)
+                {
+                    *blocker_mode_out = terminal_blocker_mode;
                 }
                 recordLockWaitHistory(db_, proc_id, blocker_proc_id, tag, mode,
                                       terminal_blocker_mode, request_time, end_time, false,

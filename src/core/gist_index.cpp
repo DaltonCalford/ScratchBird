@@ -1456,18 +1456,13 @@ bool GiSTIndex::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xi
         return false;
     }
 
-    // Check transaction states via TIP
-    if (!txn_manager_->isVersionVisible(xmin, current_xid))
-    {
-        return false;
-    }
-
-    if (xmax != 0 && txn_manager_->isVersionVisible(xmax, current_xid))
-    {
-        return false;
-    }
-
-    return true;
+    return txn_manager_->evaluateRecordVisibility(
+                              xmin,
+                              xmax,
+                              current_xid,
+                              VisibilityMode::READ_CURRENT_VERSION,
+                              nullptr)
+        .visible;
 }
 
 Status GiSTIndex::loadPage(uint64_t page_num, SBGiSTPage** page, ErrorContext* ctx)

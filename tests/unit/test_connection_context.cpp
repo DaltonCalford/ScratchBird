@@ -944,6 +944,44 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyUsesStatementSnapshotI
         << "After statement end, READ COMMITTED visibility should refresh";
 }
 
+TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyActiveStatementDoesNotFallbackWithoutSnapshot)
+{
+    ErrorContext err_ctx;
+    std::unique_ptr<ConnectionContext> writer;
+    std::unique_ptr<ConnectionContext> reader;
+
+    ASSERT_EQ(db_.connect(writer, &err_ctx), Status::OK);
+    uint64_t xid_writer = writer->getCurrentXid();
+
+    ASSERT_EQ(db_.connect(reader, &err_ctx), Status::OK);
+    ASSERT_EQ(reader->startTransaction(false,
+                                       IsolationLevel::READ_COMMITTED_READ_CONSISTENCY,
+                                       true,
+                                       &err_ctx),
+              Status::OK);
+    uint64_t xid_reader = reader->getCurrentXid();
+    ASSERT_LT(xid_writer, xid_reader);
+
+    ASSERT_EQ(reader->beginStatementTracking("SELECT * FROM users.public.t", &err_ctx),
+              Status::OK);
+    ASSERT_NE(reader->getStatementTransactionSnapshot(), nullptr);
+    ASSERT_EQ(reader->clearStatementXID(&err_ctx), Status::OK);
+    EXPECT_EQ(reader->getStatementTransactionSnapshot(), nullptr);
+
+    auto visibility_context = reader->resolveReadConsistencyVisibilityContext();
+    EXPECT_FALSE(visibility_context.valid);
+    EXPECT_EQ(visibility_context.reason, VisibilityReason::MISSING_SNAPSHOT);
+
+    ASSERT_EQ(writer->commit(&err_ctx), Status::OK);
+
+    StorageEngine *storage = db_.storage_engine();
+    ASSERT_NE(storage, nullptr);
+
+    ConnectionContext::setCurrent(reader.get());
+    EXPECT_FALSE(storage->isVisible(xid_writer, 0, xid_reader))
+        << "Active READ CONSISTENCY statements must not fall back to current-version reads";
+}
+
 TEST_F(ConnectionContextTest, SnapshotMarkersPersistAcrossCleanReopen)
 {
     ErrorContext err_ctx;

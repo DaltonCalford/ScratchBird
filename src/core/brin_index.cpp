@@ -1088,18 +1088,13 @@ static bool isRangeVisible(uint64_t xmin, uint64_t xmax,
         return false;
     }
 
-    // Check transaction states via TIP
-    if (!txn_mgr->isVersionVisible(xmin, current_xid))
-    {
-        return false;
-    }
-
-    if (xmax != 0 && txn_mgr->isVersionVisible(xmax, current_xid))
-    {
-        return false;
-    }
-
-    return true;
+    return txn_mgr->evaluateRecordVisibility(
+                        xmin,
+                        xmax,
+                        current_xid,
+                        VisibilityMode::READ_CURRENT_VERSION,
+                        nullptr)
+        .visible;
 }
 
 // =============================================================================

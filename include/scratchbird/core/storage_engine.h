@@ -195,6 +195,13 @@ namespace scratchbird::core
                          uint32_t *new_page_id_out, uint16_t *new_item_id_out,
                          ErrorContext *ctx = nullptr) -> Status;
 
+        // Savepoint/backout helpers. These centralize physical tuple undo so the
+        // connection layer does not directly edit tuple headers.
+        auto markInsertedTupleRolledBack(uint32_t page_id, uint16_t item_id, uint64_t rollback_xid,
+                                         ErrorContext *ctx = nullptr) -> Status;
+        auto clearTupleDeleteMark(uint32_t page_id, uint16_t item_id,
+                                  ErrorContext *ctx = nullptr) -> Status;
+
         // Create a sequential scan iterator
         auto createScan(const ID &table_id, ErrorContext *ctx = nullptr)
             -> std::unique_ptr<HeapScanIterator>;

@@ -3494,9 +3494,16 @@ core::Status ServerSession::executeBytecode(const std::vector<uint8_t>& bytecode
         }
         if (conn_ctx_) {
             conn_ctx_->endStatementTrackingFailure(
-                static_cast<uint32_t>(core::Status::INTERNAL_ERROR), "42000");
+                static_cast<uint32_t>(exec_result.status()),
+                exec_result.sqlstate().empty()
+                    ? core::statusToSQLState(exec_result.status())
+                    : exec_result.sqlstate());
         }
-        return sendError(exec_result.error(), "42000", ctx);
+        return sendError(exec_result.error(),
+                         exec_result.sqlstate().empty()
+                             ? core::statusToSQLState(exec_result.status())
+                             : exec_result.sqlstate(),
+                         ctx);
     }
 
     if (copy_active) {

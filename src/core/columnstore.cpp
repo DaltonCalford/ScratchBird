@@ -3270,17 +3270,13 @@ bool ColumnstoreIndex::isValueVisible(uint64_t value_xmin,
         return false;  // Fail-safe: treat as invisible if no txn manager
     }
 
-    // Check if the version's creating transaction is visible to current transaction
-    // This uses TIP to look up transaction state (committed/active/aborted)
-    if (!txn_mgr->isVersionVisible(value_xmin, current_xid))
-        return false;  // Creating transaction not visible
-
-    // If value_xmax is set (value was deleted), check if deletion is visible
-    // If deletion is visible, the value should not be visible
-    if (value_xmax != 0 && txn_mgr->isVersionVisible(value_xmax, current_xid))
-        return false;  // Deletion is visible, so value is not
-
-    return true;
+    return txn_mgr->evaluateRecordVisibility(
+                      value_xmin,
+                      value_xmax,
+                      current_xid,
+                      VisibilityMode::READ_CURRENT_VERSION,
+                      nullptr)
+        .visible;
 }
 
 Status ColumnstoreIndex::getColumnDataType(const ID &column_uuid,

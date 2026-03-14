@@ -1416,8 +1416,11 @@ core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
     auto exec_result = executor_->execute(bytecode);
     if (!exec_result.success()) {
         result.has_error = true;
+        result.error_code = static_cast<uint32_t>(exec_result.status());
         result.error_message = exec_result.error();
-        result.sqlstate = "42000";
+        result.sqlstate = exec_result.sqlstate().empty()
+            ? core::statusToSQLState(exec_result.status())
+            : exec_result.sqlstate();
         return core::Status::OK;
     }
 

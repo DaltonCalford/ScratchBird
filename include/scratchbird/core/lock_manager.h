@@ -175,7 +175,9 @@ namespace scratchbird::core
         Status acquireLock(uint32_t proc_id, const LockTag &tag, LockMode mode,
                            bool wait,           // Block if conflict?
                            uint32_t timeout_ms, // Wait timeout (0 = infinite)
-                           ErrorContext *ctx = nullptr);
+                           ErrorContext *ctx = nullptr,
+                           uint32_t *blocker_proc_id_out = nullptr,
+                           LockMode *blocker_mode_out = nullptr);
 
         // Lock release
         Status releaseLock(uint32_t proc_id, const LockTag &tag, LockMode mode,

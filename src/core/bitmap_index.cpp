@@ -74,28 +74,13 @@ namespace scratchbird
                 return (xmax == 0 || xmax != current_xid);
             }
 
-            // Per MGA_RULES.md Rule 3: Look up transaction state in TIP (NOT snapshot)
-            // isVersionVisible() checks: "Is xmin committed and older than current_xid?"
-            bool xmin_visible = txn_mgr->isVersionVisible(xmin, current_xid);
-
-            if (!xmin_visible)
-            {
-                // Insert transaction not visible - entry not visible
-                return false;
-            }
-
-            // Insert transaction visible - check if deleted
-            if (xmax == 0)
-            {
-                // Not deleted - visible
-                return true;
-            }
-
-            // Check if delete transaction is visible
-            bool xmax_visible = txn_mgr->isVersionVisible(xmax, current_xid);
-
-            // Visible if deleted by invisible transaction (or not yet committed delete)
-            return !xmax_visible;
+            return txn_mgr->evaluateRecordVisibility(
+                              xmin,
+                              xmax,
+                              current_xid,
+                              VisibilityMode::READ_CURRENT_VERSION,
+                              nullptr)
+                .visible;
         }
 
         // ========================================
@@ -795,13 +780,13 @@ namespace scratchbird
 
                 if (!visible)
                 {
-                    // Check if creating transaction is visible using TIP
-                    bool xmin_visible = txn_manager->isVersionVisible(tuple_header->xmin, current_xid);
-                    bool xmax_visible = (tuple_header->xmax != 0) &&
-                                        txn_manager->isVersionVisible(tuple_header->xmax, current_xid);
-
-                    // Tuple is visible if inserted by visible transaction and not deleted by visible transaction
-                    visible = (xmin_visible && !xmax_visible);
+                    visible = txn_manager->evaluateRecordVisibility(
+                                               tuple_header->xmin,
+                                               tuple_header->xmax,
+                                               current_xid,
+                                               VisibilityMode::READ_CURRENT_VERSION,
+                                               nullptr)
+                                  .visible;
                 }
 
                 if (visible)

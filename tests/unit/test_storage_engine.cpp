@@ -428,6 +428,10 @@ TEST_F(StorageEngineTest, ReadConsistencyNoWaitUpdateRequiresRestart)
         << ctx.message;
     conn2->setWaitForLocks(false);
     ASSERT_NE(conn2->getProcId(), blocker_proc_id);
+    ASSERT_EQ(conn2->beginStatementTracking(
+                  "UPDATE users.public.rc_restart_table SET v = 42 WHERE id = 41", &ctx),
+              Status::OK)
+        << ctx.message;
 
     auto updated_tuple = buildIntTuple(42, conn2->getCurrentXid());
     ConnectionContext::setCurrent(conn2.get());
@@ -440,6 +444,79 @@ TEST_F(StorageEngineTest, ReadConsistencyNoWaitUpdateRequiresRestart)
                                          &new_page_id, &new_item_id, &ctx);
     EXPECT_EQ(status, Status::SERIALIZATION_FAILURE);
     EXPECT_NE(ctx.message.find("READ_CONSISTENCY_RESTART_REQUIRED"), std::string::npos);
+    EXPECT_EQ(conn2->statementRestartCount(), 1u);
+    EXPECT_EQ(conn2->lastStatementRestartDecision().reason,
+              StatementRestartReason::TUPLE_WRITE_CONFLICT);
+    EXPECT_EQ(conn2->lastStatementRestartDecision().blocker_proc_id, blocker_proc_id);
+    EXPECT_TRUE(conn2->lastStatementRestartDecision().retry_eligible);
+
+    ConnectionContext::setCurrent(conn_ctx_.get());
+    db_->lock_manager()->releaseAllLocks(blocker_proc_id, nullptr);
+    db_->transaction_manager()->rollbackTransaction(blocker_proc_id, blocker_xid, nullptr);
+    ProcArrayManager::unregisterBackend(blocker_proc_id, &ctx);
+}
+
+TEST_F(StorageEngineTest, ReadConsistencyWaitModeAlsoUsesRestartSemantics)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("rc_restart_wait_table");
+
+    auto tuple = buildIntTuple(41, conn_ctx_->getCurrentXid());
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id, tuple.data(), static_cast<uint32_t>(tuple.size()),
+                                   &page_id, &item_id, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    LockTag tag{};
+    tag.target_type = LockTarget::LOCK_TARGET_TUPLE;
+    tag.object_uuid = table_id;
+    tag.page_num = page_id;
+    tag.offset_num = item_id;
+    tag.padding = 0;
+
+    uint32_t blocker_proc_id = 0;
+    ASSERT_EQ(ProcArrayManager::registerBackend(&blocker_proc_id, &ctx), Status::OK)
+        << ctx.message;
+    uint64_t blocker_xid = 0;
+    ASSERT_EQ(db_->transaction_manager()->beginTransaction(blocker_proc_id, blocker_xid, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->lock_manager()->acquireLock(blocker_proc_id, tag,
+                                               LockMode::LOCK_ROW_EXCLUSIVE, true, 0, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    std::unique_ptr<ConnectionContext> conn2;
+    ASSERT_EQ(db_->connect(conn2, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn2->initialize(&ctx), Status::OK) << ctx.message;
+    ID system_user = db_->catalog_manager()->getSystemUserId(&ctx);
+    conn2->setCurrentUser(system_user, true);
+    ASSERT_EQ(conn2->startTransaction(false, IsolationLevel::READ_COMMITTED_READ_CONSISTENCY,
+                                      true, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_TRUE(conn2->getWaitForLocks());
+    ASSERT_EQ(conn2->beginStatementTracking(
+                  "UPDATE users.public.rc_restart_wait_table SET v = 42 WHERE id = 41", &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto updated_tuple = buildIntTuple(42, conn2->getCurrentXid());
+    ConnectionContext::setCurrent(conn2.get());
+    uint32_t new_page_id = 0;
+    uint16_t new_item_id = 0;
+    Status status = engine_->updateTuple(table_id, page_id, item_id,
+                                         updated_tuple.data(),
+                                         static_cast<uint32_t>(updated_tuple.size()),
+                                         &new_page_id, &new_item_id, &ctx);
+    EXPECT_EQ(status, Status::SERIALIZATION_FAILURE);
+    EXPECT_NE(ctx.message.find("READ_CONSISTENCY_RESTART_REQUIRED"), std::string::npos);
+    EXPECT_EQ(conn2->statementRestartCount(), 1u);
+    EXPECT_EQ(conn2->lastStatementRestartDecision().reason,
+              StatementRestartReason::TUPLE_WRITE_CONFLICT);
+    EXPECT_EQ(conn2->lastStatementRestartDecision().blocker_proc_id, blocker_proc_id);
 
     ConnectionContext::setCurrent(conn_ctx_.get());
     db_->lock_manager()->releaseAllLocks(blocker_proc_id, nullptr);

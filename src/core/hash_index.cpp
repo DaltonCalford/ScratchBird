@@ -1401,15 +1401,15 @@ namespace scratchbird
                             {
                                 visible = true;
                             }
-                            // Check if creating transaction is visible
-                            else if (txn_mgr->isVersionVisible(entry.he_xmin, current_xid))
+                            else
                             {
-                                // Entry is visible if not deleted OR deletion not yet visible
-                                if (entry.he_xmax == 0 ||
-                                    !txn_mgr->isVersionVisible(entry.he_xmax, current_xid))
-                                {
-                                    visible = true;
-                                }
+                                visible = txn_mgr->evaluateRecordVisibility(
+                                                      entry.he_xmin,
+                                                      entry.he_xmax,
+                                                      current_xid,
+                                                      VisibilityMode::READ_CURRENT_VERSION,
+                                                      nullptr)
+                                              .visible;
                             }
                         }
 

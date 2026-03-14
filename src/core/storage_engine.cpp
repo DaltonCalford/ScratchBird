@@ -2098,6 +2098,95 @@ namespace scratchbird::core
         return status;
     }
 
+    auto StorageEngine::markInsertedTupleRolledBack(uint32_t page_id, uint16_t item_id,
+                                                    uint64_t rollback_xid,
+                                                    ErrorContext *ctx) -> Status
+    {
+        if (buffer_pool_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Buffer pool not available");
+            return Status::IO_ERROR;
+        }
+
+        void *page_buffer = nullptr;
+        Status pin_status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+        if (pin_status != Status::OK)
+        {
+            return pin_status;
+        }
+
+        bool dirty = false;
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        auto *page_header = reinterpret_cast<PageHeader *>(page_data);
+        auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
+        uint16_t item_count = static_cast<uint16_t>(
+            (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
+
+        if (item_id >= item_count || !items[item_id].isValid(db_->page_size()) ||
+            items[item_id].isDeleted())
+        {
+            buffer_pool_->unpinPage(page_id, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              "Cannot mark rolled back insert for missing tuple");
+            return Status::NOT_FOUND;
+        }
+
+        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
+        tuple_hdr->xmax = rollback_xid;
+        tuple_hdr->infomask = static_cast<uint16_t>(
+            tuple_hdr->infomask &
+            ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
+        tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, true);
+        dirty = true;
+
+        buffer_pool_->unpinPage(page_id, dirty, ctx);
+        return Status::OK;
+    }
+
+    auto StorageEngine::clearTupleDeleteMark(uint32_t page_id, uint16_t item_id,
+                                             ErrorContext *ctx) -> Status
+    {
+        if (buffer_pool_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Buffer pool not available");
+            return Status::IO_ERROR;
+        }
+
+        void *page_buffer = nullptr;
+        Status pin_status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
+        if (pin_status != Status::OK)
+        {
+            return pin_status;
+        }
+
+        bool dirty = false;
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        auto *page_header = reinterpret_cast<PageHeader *>(page_data);
+        auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
+        uint16_t item_count = static_cast<uint16_t>(
+            (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
+
+        if (item_id >= item_count || !items[item_id].isValid(db_->page_size()) ||
+            items[item_id].isDeleted())
+        {
+            buffer_pool_->unpinPage(page_id, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              "Cannot clear delete mark for missing tuple");
+            return Status::NOT_FOUND;
+        }
+
+        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
+        tuple_hdr->xmax = 0;
+        tuple_hdr->infomask = static_cast<uint16_t>(
+            tuple_hdr->infomask &
+            ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
+        tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
+        dirty = true;
+
+        buffer_pool_->unpinPage(page_id, dirty, ctx);
+        return Status::OK;
+    }
+
     auto StorageEngine::createScan(const ID &table_id, ErrorContext *ctx)
         -> std::unique_ptr<HeapScanIterator>
     {
@@ -2178,38 +2267,20 @@ namespace scratchbird::core
                 const auto* replay_snapshot = conn_ctx->getForensicReplaySnapshot();
                 if (replay_snapshot != nullptr)
                 {
-                    return tm->isRecordVersionVisibleInSnapshot(
-                        xmin, xmax, current_xid, *replay_snapshot);
+                    return tm->evaluateRecordVisibility(
+                                 xmin, xmax, current_xid, VisibilityMode::SNAPSHOT,
+                                 replay_snapshot)
+                        .visible;
                 }
-            }
-
-            // "See own changes" logic - transaction always sees its own modifications
-            if (xmin == current_xid)
-            {
-                // Created by current transaction - check if deleted by current transaction
-                if (xmax == current_xid)
-                {
-                    return false; // Deleted by current transaction - not visible
-                }
-                return true; // Created by current transaction and not yet deleted - visible
             }
 
             // If no connection context, fall back to READ COMMITTED semantics
             if (conn_ctx == nullptr)
             {
-                // Check if creating transaction is visible
-                if (!tm->isTransactionVisible(xmin, current_xid))
-                {
-                    return false;
-                }
-
-                // If deleted, check if deleting transaction is visible
-                if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
-                {
-                    return false;
-                }
-
-                return true;
+                return tm->evaluateRecordVisibility(
+                             xmin, xmax, current_xid,
+                             VisibilityMode::READ_CURRENT_TRANSACTION, nullptr)
+                    .visible;
             }
 
             // Isolation-level-aware visibility checking
@@ -2219,20 +2290,10 @@ namespace scratchbird::core
             {
                 case IsolationLevel::READ_COMMITTED:
                 {
-                    // READ COMMITTED: See latest committed data
-                    // Check if creating transaction is visible
-                    if (!tm->isTransactionVisible(xmin, current_xid))
-                    {
-                        return false;
-                    }
-
-                    // If deleted, check if deleting transaction is visible
-                    if (xmax != 0 && tm->isTransactionVisible(xmax, current_xid))
-                    {
-                        return false;
-                    }
-
-                    return true;
+                    return tm->evaluateRecordVisibility(
+                                 xmin, xmax, current_xid,
+                                 VisibilityMode::READ_CURRENT_TRANSACTION, nullptr)
+                        .visible;
                 }
 
                 case IsolationLevel::SNAPSHOT:
@@ -2241,56 +2302,36 @@ namespace scratchbird::core
                     const auto *retained_snapshot = conn_ctx->getRetainedTransactionSnapshot();
                     if (retained_snapshot != nullptr)
                     {
-                        return tm->isRecordVersionVisibleInSnapshot(
-                            xmin, xmax, current_xid, *retained_snapshot);
+                        return tm->evaluateRecordVisibility(
+                                     xmin, xmax, current_xid, VisibilityMode::SNAPSHOT,
+                                     retained_snapshot)
+                            .visible;
                     }
 
                     // Fallback for paths that do not yet have a retained snapshot bound.
-                    if (!tm->isVersionVisible(xmin, current_xid))
-                    {
-                        return false;
-                    }
-                    if (xmax != 0)
-                    {
-                        if (xmax == current_xid)
-                        {
-                            return false;
-                        }
-                        if (tm->isVersionVisible(xmax, current_xid))
-                        {
-                            return false;
-                        }
-                    }
-                    return true;
+                    return tm->evaluateRecordVisibility(
+                                 xmin, xmax, current_xid, VisibilityMode::READ_CURRENT_VERSION,
+                                 nullptr)
+                        .visible;
                 }
 
                 case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
                 {
-                    const auto *statement_snapshot = conn_ctx->getStatementTransactionSnapshot();
-                    if (statement_snapshot != nullptr)
+                    const auto visibility_context =
+                        conn_ctx->resolveReadConsistencyVisibilityContext();
+                    if (!visibility_context.valid)
                     {
-                        return tm->isRecordVersionVisibleInSnapshot(
-                            xmin, xmax, current_xid, *statement_snapshot);
-                    }
-
-                    uint64_t stmt_xid = conn_ctx->getStatementXID();
-                    if (!tm->isVersionVisible(xmin, stmt_xid))
-                    {
+                        LOG_ERROR(STORAGE,
+                                  "Missing statement snapshot for READ_CONSISTENCY visibility: "
+                                  "proc_id=%d xid=%lu",
+                                  ConnectionContext::getCurrentProcId(),
+                                  conn_ctx->getCurrentXid());
                         return false;
                     }
-
-                    if (xmax != 0)
-                    {
-                        if (xmax == current_xid)
-                        {
-                            return false;
-                        }
-                        if (tm->isVersionVisible(xmax, stmt_xid))
-                        {
-                            return false;
-                        }
-                    }
-                    return true;
+                    return tm->evaluateRecordVisibility(
+                                 xmin, xmax, visibility_context.reader_xid,
+                                 visibility_context.mode, visibility_context.snapshot)
+                        .visible;
                 }
 
                 default:
@@ -3908,23 +3949,43 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        Status status = lock_mgr->acquireLock(proc_id, tag, LockMode::LOCK_ROW_EXCLUSIVE, wait, 0,
-                                              ctx);
-        if (status == Status::LOCK_CONFLICT)
+        ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
+        const bool read_consistency_active =
+            conn_ctx != nullptr &&
+            conn_ctx->getIsolationLevel() == IsolationLevel::READ_COMMITTED_READ_CONSISTENCY &&
+            !conn_ctx->isForensicReplayActive();
+        const bool effective_wait = read_consistency_active ? false : wait;
+
+        uint32_t blocker_proc_id = 0;
+        LockMode blocker_mode = LockMode::LOCK_ACCESS_SHARE;
+        Status status = lock_mgr->acquireLock(proc_id, tag, LockMode::LOCK_ROW_EXCLUSIVE,
+                                              effective_wait, 0, ctx,
+                                              &blocker_proc_id, &blocker_mode);
+        if (read_consistency_active &&
+            (status == Status::LOCK_CONFLICT || status == Status::LOCK_TIMEOUT ||
+             status == Status::DEADLOCK))
         {
-            if (ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-                conn_ctx != nullptr &&
-                conn_ctx->getIsolationLevel() == IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+            const auto decision = db_->transaction_manager()->evaluateReadConsistencyRestart(
+                status,
+                conn_ctx->getCurrentXid(),
+                conn_ctx->statementTrackingActive(),
+                conn_ctx->isForensicReplayActive(),
+                conn_ctx->getStatementTransactionSnapshot(),
+                tag,
+                LockMode::LOCK_ROW_EXCLUSIVE,
+                blocker_proc_id,
+                blocker_mode);
+            if (decision.restart_required)
             {
                 incrementCanonicalCounter(
                     "sb_lock_read_consistency_restarts_total",
-                    {metricDbLabel(db_), "tuple_write_conflict"});
+                    {metricDbLabel(db_),
+                     TransactionManager::statementRestartReasonName(decision.reason)});
                 incrementCanonicalCounter(
                     "sb_mga_statement_restarts_total",
-                    {metricDbLabel(db_), "tuple_write_conflict"});
-                SET_ERROR_CONTEXT(ctx, Status::SERIALIZATION_FAILURE,
-                                  "READ_CONSISTENCY_RESTART_REQUIRED: tuple write conflict");
-                return Status::SERIALIZATION_FAILURE;
+                    {metricDbLabel(db_),
+                     TransactionManager::statementRestartReasonName(decision.reason)});
+                return conn_ctx->registerReadConsistencyRestart(decision, ctx);
             }
         }
 

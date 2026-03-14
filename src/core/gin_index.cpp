@@ -3433,14 +3433,13 @@ namespace scratchbird
 
                 if (!visible)
                 {
-                    // Tuple is visible if:
-                    // 1. xmin is visible (inserting transaction committed and visible to current_xid)
-                    // 2. xmax is not visible (deleting transaction not yet visible, or no deletion)
-                    bool xmin_visible = txn_manager->isVersionVisible(tuple_header->xmin, current_xid);
-                    bool xmax_visible = (tuple_header->xmax != 0) &&
-                                        txn_manager->isVersionVisible(tuple_header->xmax, current_xid);
-
-                    visible = (xmin_visible && !xmax_visible);
+                    visible = txn_manager->evaluateRecordVisibility(
+                                               tuple_header->xmin,
+                                               tuple_header->xmax,
+                                               current_xid,
+                                               VisibilityMode::READ_CURRENT_VERSION,
+                                               nullptr)
+                                  .visible;
                 }
 
                 // Tuple is visible if inserted by visible transaction and not deleted by visible transaction

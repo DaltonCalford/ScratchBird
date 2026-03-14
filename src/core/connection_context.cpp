@@ -1037,6 +1037,8 @@ namespace scratchbird::core
           next_wait_for_locks_(other.next_wait_for_locks_),
           next_lock_timeout_seconds_(other.next_lock_timeout_seconds_),
           statement_xid_(other.statement_xid_),
+          last_statement_restart_decision_(other.last_statement_restart_decision_),
+          statement_restart_count_(other.statement_restart_count_),
           table_reservations_(std::move(other.table_reservations_))
     {
         if (db_)
@@ -1050,6 +1052,8 @@ namespace scratchbird::core
         other.proc_id_ = UINT32_MAX;  // Invalidate so destructor doesn't double-unregister
         other.current_xid_ = 0;
         other.statement_xid_ = 0;
+        other.last_statement_restart_decision_ = StatementRestartDecision{};
+        other.statement_restart_count_ = 0;
         std::memset(&other.current_user_id_, 0, sizeof(other.current_user_id_));
         std::memset(&other.active_role_id_, 0, sizeof(other.active_role_id_));
         std::memset(&other.current_transaction_uuid_, 0, sizeof(other.current_transaction_uuid_));
@@ -1215,6 +1219,8 @@ namespace scratchbird::core
             next_wait_for_locks_ = other.next_wait_for_locks_;
             next_lock_timeout_seconds_ = other.next_lock_timeout_seconds_;
             statement_xid_ = other.statement_xid_;
+            last_statement_restart_decision_ = other.last_statement_restart_decision_;
+            statement_restart_count_ = other.statement_restart_count_;
             table_reservations_ = std::move(other.table_reservations_);
 
             if (db_)
@@ -1228,6 +1234,8 @@ namespace scratchbird::core
             other.proc_id_ = UINT32_MAX;  // Invalidate so destructor doesn't double-unregister
             other.current_xid_ = 0;
             other.statement_xid_ = 0;
+            other.last_statement_restart_decision_ = StatementRestartDecision{};
+            other.statement_restart_count_ = 0;
             other.transaction_start_oit_ = 0;
             other.transaction_start_oat_ = 0;
             other.transaction_start_ost_ = 0;
@@ -1440,6 +1448,38 @@ namespace scratchbird::core
     ConnectionContext::getStatementTransactionSnapshot() const
     {
         return statement_transaction_snapshot_.get();
+    }
+
+    auto ConnectionContext::resolveReadConsistencyVisibilityContext() const
+        -> VisibilityContext
+    {
+        VisibilityContext context{};
+        context.reader_xid = getStatementXID();
+
+        if (isolation_level_ != IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+        {
+            context.valid = true;
+            context.mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+            return context;
+        }
+
+        if (statement_io_active_)
+        {
+            if (statement_transaction_snapshot_ == nullptr)
+            {
+                context.reason = VisibilityReason::MISSING_SNAPSHOT;
+                return context;
+            }
+
+            context.valid = true;
+            context.mode = VisibilityMode::SNAPSHOT;
+            context.snapshot = statement_transaction_snapshot_.get();
+            return context;
+        }
+
+        context.valid = true;
+        context.mode = VisibilityMode::READ_CURRENT_VERSION;
+        return context;
     }
 
     Status ConnectionContext::ensureCurrentSchemaEpochInitialized(ErrorContext* ctx)
@@ -2919,6 +2959,7 @@ namespace scratchbird::core
 
     Status ConnectionContext::beginStatementTracking(const std::string& sql, ErrorContext *ctx)
     {
+        clearStatementRestartState();
         // Record the SQL text so dormant reattach can show what was running.
         last_statement_text_ = sql;
         last_statement_hash_ = fnv1a64(sql);
@@ -3808,6 +3849,7 @@ namespace scratchbird::core
         statement_io_stats_.reset();
         statement_io_active_ = false;
         statement_id_ = 0;
+        clearStatementRestartState();
         if (!commit)
         {
             current_schema_epoch_uuid_ = transaction_start_schema_epoch_uuid_;
@@ -3993,6 +4035,12 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    void ConnectionContext::clearStatementRestartState()
+    {
+        last_statement_restart_decision_ = StatementRestartDecision{};
+        statement_restart_count_ = 0;
+    }
+
     Status ConnectionContext::clearStatementXID(ErrorContext *ctx)
     {
         if (statement_xid_ != 0)
@@ -4007,6 +4055,27 @@ namespace scratchbird::core
         }
         statement_transaction_snapshot_.reset();
         return Status::OK;
+    }
+
+    Status ConnectionContext::registerReadConsistencyRestart(
+        const StatementRestartDecision& decision, ErrorContext *ctx)
+    {
+        if (!decision.restart_required)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Read-consistency restart decision is not restart-eligible");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        last_statement_restart_decision_ = decision;
+        if (statement_restart_count_ < std::numeric_limits<uint32_t>::max())
+        {
+            ++statement_restart_count_;
+        }
+
+        const std::string message = TransactionManager::formatStatementRestartMessage(decision);
+        SET_ERROR_CONTEXT(ctx, Status::SERIALIZATION_FAILURE, message.c_str());
+        return Status::SERIALIZATION_FAILURE;
     }
 
     Status ConnectionContext::checkTerminationRequested(ErrorContext *ctx)
@@ -4123,14 +4192,6 @@ namespace scratchbird::core
         LOG_DEBUG(TRANSACTION, "Rolling back to savepoint '%s' at level %u: proc_id=%u, xid=%lu",
                   name.c_str(), sp_it->level, proc_id_, current_xid_);
 
-        // Get buffer pool for page access
-        BufferPool *pool = db_->buffer_pool();
-        if (!pool)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Buffer pool not available");
-            return Status::IO_ERROR;
-        }
-
         StorageEngine *storage = db_->storage_engine();
         if (!storage)
         {
@@ -4155,69 +4216,23 @@ namespace scratchbird::core
         } rollback_guard(savepoint_rollback_in_progress_);
 
         auto markTupleRolledBackInsert = [&](uint32_t page_id, uint16_t item_id) {
-            void *page_buffer = nullptr;
-            Status s = pool->pinPage(page_id, &page_buffer, ctx);
+            Status s = storage->markInsertedTupleRolledBack(page_id, item_id, current_xid_, ctx);
             if (s != Status::OK)
             {
                 LOG_WARNING(TRANSACTION,
-                            "Failed to pin page %u during savepoint rollback insert undo: %d",
+                            "Failed to roll back inserted tuple on page %u during savepoint rollback: %d",
                             page_id, static_cast<int>(s));
-                return;
             }
-
-            bool dirty = false;
-            auto *page_data = static_cast<uint8_t *>(page_buffer);
-            auto *page_header = reinterpret_cast<PageHeader *>(page_data);
-            auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
-            uint16_t item_count = static_cast<uint16_t>(
-                (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
-
-            if (item_id < item_count && items[item_id].isValid(db_->page_size()) &&
-                !items[item_id].isDeleted())
-            {
-                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
-                tuple_hdr->xmax = current_xid_;
-                tuple_hdr->infomask = static_cast<uint16_t>(
-                    tuple_hdr->infomask &
-                    ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
-                tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, true);
-                dirty = true;
-            }
-
-            pool->unpinPage(page_id, dirty, ctx);
         };
 
         auto clearTupleDeleteMark = [&](uint32_t page_id, uint16_t item_id) {
-            void *page_buffer = nullptr;
-            Status s = pool->pinPage(page_id, &page_buffer, ctx);
+            Status s = storage->clearTupleDeleteMark(page_id, item_id, ctx);
             if (s != Status::OK)
             {
                 LOG_WARNING(TRANSACTION,
-                            "Failed to pin page %u during savepoint rollback delete undo: %d",
+                            "Failed to clear tuple delete mark on page %u during savepoint rollback: %d",
                             page_id, static_cast<int>(s));
-                return;
             }
-
-            bool dirty = false;
-            auto *page_data = static_cast<uint8_t *>(page_buffer);
-            auto *page_header = reinterpret_cast<PageHeader *>(page_data);
-            auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
-            uint16_t item_count = static_cast<uint16_t>(
-                (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
-
-            if (item_id < item_count && items[item_id].isValid(db_->page_size()) &&
-                !items[item_id].isDeleted())
-            {
-                auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
-                tuple_hdr->xmax = 0;
-                tuple_hdr->infomask = static_cast<uint16_t>(
-                    tuple_hdr->infomask &
-                    ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
-                tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
-                dirty = true;
-            }
-
-            pool->unpinPage(page_id, dirty, ctx);
         };
 
         // Rollback changes made in target savepoint and nested savepoints, newest first.

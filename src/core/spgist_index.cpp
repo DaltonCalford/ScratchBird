@@ -1330,18 +1330,13 @@ bool SPGiSTIndex::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_
         return false;
     }
 
-    // Check transaction states via TIP
-    if (!txn_manager_->isVersionVisible(xmin, current_xid))
-    {
-        return false;
-    }
-
-    if (xmax != 0 && txn_manager_->isVersionVisible(xmax, current_xid))
-    {
-        return false;
-    }
-
-    return true;
+    return txn_manager_->evaluateRecordVisibility(
+                              xmin,
+                              xmax,
+                              current_xid,
+                              VisibilityMode::READ_CURRENT_VERSION,
+                              nullptr)
+        .visible;
 }
 
 Status SPGiSTIndex::loadPage(uint64_t page_num, SBSPGiSTPage** page, ErrorContext* ctx)

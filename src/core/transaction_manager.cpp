@@ -36,6 +36,39 @@ namespace {
                 .count());
     }
 
+    auto lockModeNameLocal(scratchbird::core::LockMode mode) -> const char*
+    {
+        using scratchbird::core::LockMode;
+        switch (mode)
+        {
+            case LockMode::LOCK_ACCESS_SHARE:
+                return "LOCK_ACCESS_SHARE";
+            case LockMode::LOCK_ROW_SHARE:
+                return "LOCK_ROW_SHARE";
+            case LockMode::LOCK_ROW_EXCLUSIVE:
+                return "LOCK_ROW_EXCLUSIVE";
+            case LockMode::LOCK_SHARE_UPDATE_EXCLUSIVE:
+                return "LOCK_SHARE_UPDATE_EXCLUSIVE";
+            case LockMode::LOCK_SHARE:
+                return "LOCK_SHARE";
+            case LockMode::LOCK_SHARE_ROW_EXCLUSIVE:
+                return "LOCK_SHARE_ROW_EXCLUSIVE";
+            case LockMode::LOCK_EXCLUSIVE:
+                return "LOCK_EXCLUSIVE";
+            case LockMode::LOCK_ACCESS_EXCLUSIVE:
+                return "LOCK_ACCESS_EXCLUSIVE";
+        }
+        return "LOCK_UNKNOWN";
+    }
+
+    auto formatLockResourceIdLocal(const scratchbird::core::LockTag& tag) -> std::string
+    {
+        return std::to_string(static_cast<uint8_t>(tag.target_type)) + ":" +
+               tag.object_uuid.toString() + ":" +
+               std::to_string(tag.page_num) + ":" +
+               std::to_string(tag.offset_num);
+    }
+
     scratchbird::core::ClogStatus clogStatusForTransactionState(
         scratchbird::core::TransactionState state)
     {
@@ -1606,67 +1639,9 @@ namespace scratchbird::core
 
     auto TransactionManager::isTransactionVisible(uint64_t xid, uint64_t current_xid) -> bool
     {
-        // VALIDATE XID FIRST - Critical security check
-        if (!isXidInRange(xid))
-        {
-            // Invalid XID - treat as invisible
-            // This protects against corrupted tuple headers
-            // ISSUE 3.4 FIX: Rate limit logging in hot path to prevent log spam
-            // Only log first occurrence per invalid XID to avoid performance degradation
-            static thread_local std::unordered_set<uint64_t> logged_invalid_xids;
-            if (logged_invalid_xids.find(xid) == logged_invalid_xids.end())
-            {
-                uint64_t current_next = next_xid_.load(std::memory_order_acquire);
-                LOG_WARNING(TRANSACTION,
-                          "Invalid XID %lu in visibility check (next_xid=%lu, oldest_xid=%lu) - "
-                          "further occurrences suppressed", xid,
-                          current_next, oldest_xid_);
-                logged_invalid_xids.insert(xid);
-
-                // Limit set size to prevent unbounded memory growth
-                if (logged_invalid_xids.size() > 1000)
-                {
-                    logged_invalid_xids.clear();
-                }
-            }
-            return false;
-        }
-
-        // Simple visibility rules for single connection:
-        // - Transaction sees its own changes
-        // - Transaction sees all committed changes with XID < current_xid
-        // - Transaction does not see aborted changes
-        // - Transaction does not see active changes from other transactions
-
-        if (xid == current_xid)
-        {
-            return true; // See own changes
-        }
-
-        if (xid > current_xid)
-        {
-            return false; // Future transaction
-        }
-
-        // Frozen tuples are always visible
-        if (xid <= FROZEN_XID)
-        {
-            return true;
-        }
-
-        TransactionState state;
-        Status get_status = getTransactionState(xid, state, nullptr);
-        if (get_status != Status::OK)
-        {
-            // Error getting state, for old transactions assume committed
-            if (xid < current_xid)
-            {
-                return true; // Old transaction, assume committed
-            }
-            return false;
-        }
-
-        return (state == TransactionState::COMMITTED);
+        return evaluateTransactionVisibility(
+                   xid, current_xid, VisibilityMode::READ_CURRENT_TRANSACTION, nullptr)
+            .visible;
     }
 
     auto TransactionManager::captureSnapshot(TransactionSnapshot &snapshot_out, ErrorContext *ctx)
@@ -1838,34 +1813,9 @@ namespace scratchbird::core
                                                        const TransactionSnapshot &snapshot)
         -> bool
     {
-        if (create_xid == reader_xid)
-        {
-            return true;
-        }
-
-        if (create_xid <= FROZEN_XID)
-        {
-            return true;
-        }
-
-        if (create_xid >= snapshot.snapshot_txid_high)
-        {
-            return false;
-        }
-
-        TransactionState state = TransactionState::ACTIVE;
-        Status status = getTransactionState(create_xid, state, nullptr);
-        if (status != Status::OK || state != TransactionState::COMMITTED)
-        {
-            return false;
-        }
-
-        if (snapshotHasActiveXid(snapshot, create_xid))
-        {
-            return false;
-        }
-
-        return true;
+        return evaluateTransactionVisibility(
+                   create_xid, reader_xid, VisibilityMode::SNAPSHOT, &snapshot)
+            .visible;
     }
 
     auto TransactionManager::isRecordVersionVisibleInSnapshot(uint64_t create_xid,
@@ -1874,113 +1824,247 @@ namespace scratchbird::core
                                                               const TransactionSnapshot &snapshot)
         -> bool
     {
-        if (!isCreateVisibleInSnapshot(create_xid, reader_xid, snapshot))
-        {
-            return false;
-        }
-
-        if (delete_xid == 0)
-        {
-            return true;
-        }
-
-        if (delete_xid == reader_xid)
-        {
-            return false;
-        }
-
-        if (delete_xid >= snapshot.snapshot_txid_high)
-        {
-            return true;
-        }
-
-        TransactionState delete_state = TransactionState::ACTIVE;
-        Status status = getTransactionState(delete_xid, delete_state, nullptr);
-        if (status != Status::OK)
-        {
-            return true;
-        }
-
-        if (delete_state == TransactionState::COMMITTED &&
-            !snapshotHasActiveXid(snapshot, delete_xid))
-        {
-            return false;
-        }
-
-        return true;
+        return evaluateRecordVisibility(
+                   create_xid, delete_xid, reader_xid, VisibilityMode::SNAPSHOT, &snapshot)
+            .visible;
     }
 
     auto TransactionManager::isVersionVisible(uint64_t version_xid, uint64_t reader_xid) -> bool
     {
-        // ===========================================================================================
-        // FIREBIRD MGA VISIBILITY - TIP-based, NOT snapshot-based
-        // Per MGA_RULES.md Rule 3 (lines 121-145)
-        // ===========================================================================================
+        return evaluateTransactionVisibility(
+                   version_xid, reader_xid, VisibilityMode::READ_CURRENT_VERSION, nullptr)
+            .visible;
+    }
 
-        // 1. Own changes always visible
-        //    A transaction can always see its own uncommitted changes
-        if (version_xid == reader_xid)
+    auto TransactionManager::evaluateTransactionVisibility(uint64_t xid, uint64_t reader_xid,
+                                                           VisibilityMode mode,
+                                                           const TransactionSnapshot *snapshot)
+        -> TransactionVisibilityDecision
+    {
+        TransactionVisibilityDecision decision{};
+        decision.mode = mode;
+
+        if (mode == VisibilityMode::SNAPSHOT && snapshot == nullptr)
         {
-            return true;
+            decision.reason = VisibilityReason::MISSING_SNAPSHOT;
+            return decision;
         }
 
-        // 2. Frozen tuples are always visible
-        //    FROZEN_XID = 2, used for tuples that survived VACUUM/sweep
-        if (version_xid <= FROZEN_XID)
+        if (!isXidInRange(xid))
         {
-            return true;
+            decision.reason = VisibilityReason::INVALID_XID;
+            return decision;
         }
 
-        // 3. Validate XID range - protect against corrupted tuple headers
-        if (!isXidInRange(version_xid))
+        if (xid == reader_xid)
         {
-            // ISSUE 3.4 FIX: Rate limit logging in hot path to prevent log spam
-            static thread_local std::unordered_set<uint64_t> logged_invalid_xids;
-            if (logged_invalid_xids.find(version_xid) == logged_invalid_xids.end())
+            decision.visible = true;
+            decision.reason = VisibilityReason::OWN_TRANSACTION;
+            return decision;
+        }
+
+        if (xid <= FROZEN_XID)
+        {
+            decision.visible = true;
+            decision.state = TransactionState::COMMITTED;
+            decision.reason = VisibilityReason::FROZEN_XID;
+            return decision;
+        }
+
+        if (mode == VisibilityMode::SNAPSHOT)
+        {
+            if (xid >= snapshot->snapshot_txid_high)
             {
-                LOG_WARNING(TRANSACTION,
-                           "Invalid XID %lu in MGA visibility check - further occurrences suppressed",
-                           version_xid);
-                logged_invalid_xids.insert(version_xid);
-
-                // Limit set size to prevent unbounded memory growth
-                if (logged_invalid_xids.size() > 1000)
-                {
-                    logged_invalid_xids.clear();
-                }
+                decision.reason = VisibilityReason::ABOVE_SNAPSHOT_HIGH;
+                return decision;
             }
-            return false;
+        }
+        else if (xid > reader_xid)
+        {
+            decision.reason = VisibilityReason::FUTURE_XID;
+            return decision;
         }
 
-        // 4. Look up transaction state in TIP (Transaction Inventory Page)
-        //    This is THE CORE of Firebird MGA visibility
-        //    We use TIP, NOT snapshots with active transaction arrays
-        TransactionState state;
-        ErrorContext ctx;
-        Status status = getTransactionState(version_xid, state, &ctx);
-
+        TransactionState state = TransactionState::ACTIVE;
+        Status status = getTransactionState(xid, state, nullptr);
         if (status != Status::OK)
         {
-            // If TIP lookup fails, assume not visible for safety
-            LOG_WARNING(TRANSACTION,
-                       "Failed to get transaction state for XID %lu in visibility check",
-                       version_xid);
-            return false;
+            if (mode == VisibilityMode::READ_CURRENT_TRANSACTION && xid < reader_xid)
+            {
+                decision.visible = true;
+                decision.state = TransactionState::COMMITTED;
+                decision.reason = VisibilityReason::STATE_LOOKUP_ASSUMED_COMMITTED;
+                return decision;
+            }
+
+            decision.reason = VisibilityReason::STATE_LOOKUP_FAILED;
+            return decision;
         }
 
-        // 5. Only committed transactions older than reader are visible
-        //    This is Firebird MGA semantics:
-        //    - ACTIVE transactions: not visible (still in progress)
-        //    - ABORTED transactions: not visible (rolled back)
-        //    - COMMITTED transactions: visible only if older than reader
-        //    - PREPARED transactions: not visible (2PC limbo state)
-        if (state == TransactionState::COMMITTED && version_xid < reader_xid)
+        decision.state = state;
+
+        if (mode == VisibilityMode::SNAPSHOT && snapshotHasActiveXid(*snapshot, xid))
         {
-            return true;
+            decision.reason = VisibilityReason::ACTIVE_IN_SNAPSHOT;
+            return decision;
         }
 
-        // All other cases: not visible
-        return false;
+        switch (state)
+        {
+            case TransactionState::COMMITTED:
+                decision.visible = true;
+                decision.reason = VisibilityReason::COMMITTED_VISIBLE;
+                break;
+
+            case TransactionState::ACTIVE:
+                decision.reason = VisibilityReason::ACTIVE_INVISIBLE;
+                break;
+
+            case TransactionState::ABORTED:
+                decision.reason = VisibilityReason::ABORTED_INVISIBLE;
+                break;
+
+            case TransactionState::PREPARED:
+                decision.reason = VisibilityReason::PREPARED_INVISIBLE;
+                break;
+        }
+
+        return decision;
+    }
+
+    auto TransactionManager::evaluateRecordVisibility(uint64_t create_xid, uint64_t delete_xid,
+                                                      uint64_t reader_xid, VisibilityMode mode,
+                                                      const TransactionSnapshot *snapshot)
+        -> RecordVisibilityDecision
+    {
+        RecordVisibilityDecision decision{};
+        decision.mode = mode;
+        decision.create_decision =
+            evaluateTransactionVisibility(create_xid, reader_xid, mode, snapshot);
+        decision.create_visible = decision.create_decision.visible;
+
+        if (delete_xid == 0)
+        {
+            decision.delete_decision.mode = mode;
+            decision.delete_decision.state = TransactionState::COMMITTED;
+            decision.delete_decision.reason = VisibilityReason::DELETE_NOT_PRESENT;
+            decision.delete_visible = false;
+        }
+        else
+        {
+            decision.delete_decision =
+                evaluateTransactionVisibility(delete_xid, reader_xid, mode, snapshot);
+            decision.delete_visible = decision.delete_decision.visible;
+        }
+
+        decision.visible = decision.create_visible && !decision.delete_visible;
+        return decision;
+    }
+
+    auto TransactionManager::evaluateReadConsistencyRestart(
+        Status conflict_status, uint64_t reader_xid, bool statement_scope_active,
+        bool forensic_replay_active, const TransactionSnapshot *statement_snapshot,
+        const LockTag& resource_tag, LockMode requested_mode, uint32_t blocker_proc_id,
+        LockMode blocker_mode) const -> StatementRestartDecision
+    {
+        StatementRestartDecision decision{};
+        decision.source_status = conflict_status;
+        decision.reader_xid = reader_xid;
+        decision.resource_tag = resource_tag;
+        decision.requested_mode = requested_mode;
+        decision.blocker_proc_id = blocker_proc_id;
+        decision.blocker_mode = blocker_mode;
+        if (statement_snapshot != nullptr)
+        {
+            decision.statement_snapshot_serial = statement_snapshot->snapshot_serial;
+        }
+
+        if (forensic_replay_active)
+        {
+            decision.reason = StatementRestartReason::FORENSIC_REPLAY_ACTIVE;
+            return decision;
+        }
+
+        if (!statement_scope_active)
+        {
+            decision.reason = StatementRestartReason::INACTIVE_STATEMENT_SCOPE;
+            return decision;
+        }
+
+        if (statement_snapshot == nullptr)
+        {
+            decision.reason = StatementRestartReason::MISSING_STATEMENT_SNAPSHOT;
+            return decision;
+        }
+
+        switch (conflict_status)
+        {
+            case Status::LOCK_CONFLICT:
+                decision.restart_required = true;
+                decision.retry_eligible = true;
+                decision.reason = StatementRestartReason::TUPLE_WRITE_CONFLICT;
+                break;
+
+            case Status::LOCK_TIMEOUT:
+                decision.restart_required = true;
+                decision.retry_eligible = true;
+                decision.reason = StatementRestartReason::LOCK_TIMEOUT;
+                break;
+
+            case Status::DEADLOCK:
+                decision.restart_required = true;
+                decision.retry_eligible = true;
+                decision.reason = StatementRestartReason::DEADLOCK_DETECTED;
+                break;
+
+            default:
+                decision.reason = StatementRestartReason::UNSUPPORTED_CONFLICT_STATUS;
+                break;
+        }
+
+        return decision;
+    }
+
+    auto TransactionManager::statementRestartReasonName(StatementRestartReason reason)
+        -> const char *
+    {
+        switch (reason)
+        {
+            case StatementRestartReason::NONE:
+                return "none";
+            case StatementRestartReason::TUPLE_WRITE_CONFLICT:
+                return "tuple_write_conflict";
+            case StatementRestartReason::LOCK_TIMEOUT:
+                return "lock_timeout";
+            case StatementRestartReason::DEADLOCK_DETECTED:
+                return "deadlock_detected";
+            case StatementRestartReason::MISSING_STATEMENT_SNAPSHOT:
+                return "missing_statement_snapshot";
+            case StatementRestartReason::INACTIVE_STATEMENT_SCOPE:
+                return "inactive_statement_scope";
+            case StatementRestartReason::FORENSIC_REPLAY_ACTIVE:
+                return "forensic_replay_active";
+            case StatementRestartReason::UNSUPPORTED_CONFLICT_STATUS:
+                return "unsupported_conflict_status";
+        }
+
+        return "unknown";
+    }
+
+    auto TransactionManager::formatStatementRestartMessage(
+        const StatementRestartDecision& decision) -> std::string
+    {
+        std::string message = "READ_CONSISTENCY_RESTART_REQUIRED: reason=";
+        message += statementRestartReasonName(decision.reason);
+        message += " blocker_proc_id=" + std::to_string(decision.blocker_proc_id);
+        message += " requested_mode=" +
+            std::string(lockModeNameLocal(decision.requested_mode));
+        message += " blocker_mode=" + std::string(lockModeNameLocal(decision.blocker_mode));
+        message += " resource=" + formatLockResourceIdLocal(decision.resource_tag);
+        message += " snapshot_serial=" + std::to_string(decision.statement_snapshot_serial);
+        message += " retry_eligible=";
+        message += decision.retry_eligible ? "true" : "false";
+        return message;
     }
 
     auto TransactionManager::getBackendXid(uint32_t proc_id) const -> uint64_t

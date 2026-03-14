@@ -1598,42 +1598,17 @@ namespace scratchbird::core
             {
                 TransactionManager *txn_mgr = db_->transaction_manager();
                 ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-
-                auto deleteVisibleInSnapshot = [&](const TransactionSnapshot &snapshot) -> bool
-                {
-                    const bool active_in_snapshot =
-                        std::binary_search(snapshot.active_txid_set.begin(),
-                                           snapshot.active_txid_set.end(),
-                                           effective_xmax);
-                    if (effective_xmax == 0)
-                    {
-                        return false;
-                    }
-                    if (effective_xmax == current_xid)
-                    {
-                        return true;
-                    }
-                    if (effective_xmax >= snapshot.snapshot_txid_high)
-                    {
-                        return false;
-                    }
-
-                    TransactionState delete_state = TransactionState::ACTIVE;
-                    Status delete_status =
-                        txn_mgr->getTransactionState(effective_xmax, delete_state, nullptr);
-                    return delete_status == Status::OK &&
-                           delete_state == TransactionState::COMMITTED &&
-                           !active_in_snapshot;
-                };
+                VisibilityMode visibility_mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+                const TransactionSnapshot *snapshot = nullptr;
+                uint64_t reader_visibility_xid = current_xid;
 
                 if (conn_ctx != nullptr)
                 {
                     if (const auto *replay_snapshot = conn_ctx->getForensicReplaySnapshot();
                         replay_snapshot != nullptr)
                     {
-                        create_visible = txn_mgr->isCreateVisibleInSnapshot(
-                            tuple_hdr->xmin, current_xid, *replay_snapshot);
-                        delete_visible = deleteVisibleInSnapshot(*replay_snapshot);
+                        visibility_mode = VisibilityMode::SNAPSHOT;
+                        snapshot = replay_snapshot;
                     }
                     else
                     {
@@ -1645,56 +1620,52 @@ namespace scratchbird::core
                                         conn_ctx->getRetainedTransactionSnapshot();
                                     retained_snapshot != nullptr)
                                 {
-                                    create_visible = txn_mgr->isCreateVisibleInSnapshot(
-                                        tuple_hdr->xmin, current_xid, *retained_snapshot);
-                                    delete_visible = deleteVisibleInSnapshot(*retained_snapshot);
-                                    break;
+                                    visibility_mode = VisibilityMode::SNAPSHOT;
+                                    snapshot = retained_snapshot;
                                 }
-                                [[fallthrough]];
+                                else
+                                {
+                                    visibility_mode = VisibilityMode::READ_CURRENT_VERSION;
+                                }
+                                break;
+
+                            case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
+                            {
+                                const auto visibility_context =
+                                    conn_ctx->resolveReadConsistencyVisibilityContext();
+                                if (!visibility_context.valid)
+                                {
+                                    LOG_ERROR(STORAGE,
+                                              "Missing statement snapshot for heap visibility: "
+                                              "proc_id=%d xid=%lu",
+                                              ConnectionContext::getCurrentProcId(),
+                                              conn_ctx->getCurrentXid());
+                                    create_visible = false;
+                                    delete_visible = true;
+                                    continue;
+                                }
+                                visibility_mode = visibility_context.mode;
+                                snapshot = visibility_context.snapshot;
+                                reader_visibility_xid = visibility_context.reader_xid;
+                                break;
+                            }
 
                             case IsolationLevel::READ_COMMITTED:
-                            case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
                             default:
+                                visibility_mode = VisibilityMode::READ_CURRENT_TRANSACTION;
                                 break;
                         }
                     }
                 }
 
-                if (!create_visible && conn_ctx == nullptr)
-                {
-                    create_visible = txn_mgr->isTransactionVisible(tuple_hdr->xmin, current_xid);
-                    delete_visible = effective_xmax != 0 &&
-                                     (effective_xmax == current_xid ||
-                                      txn_mgr->isTransactionVisible(effective_xmax, current_xid));
-                }
-                else if (conn_ctx != nullptr &&
-                         conn_ctx->getIsolationLevel() == IsolationLevel::READ_COMMITTED)
-                {
-                    create_visible = txn_mgr->isTransactionVisible(tuple_hdr->xmin, current_xid);
-                    delete_visible = effective_xmax != 0 &&
-                                     (effective_xmax == current_xid ||
-                                      txn_mgr->isTransactionVisible(effective_xmax, current_xid));
-                }
-                else if (conn_ctx != nullptr &&
-                         conn_ctx->getIsolationLevel() ==
-                             IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
-                {
-                    if (const auto *statement_snapshot =
-                            conn_ctx->getStatementTransactionSnapshot();
-                        statement_snapshot != nullptr)
-                    {
-                        create_visible = txn_mgr->isCreateVisibleInSnapshot(
-                            tuple_hdr->xmin, current_xid, *statement_snapshot);
-                        delete_visible = deleteVisibleInSnapshot(*statement_snapshot);
-                    }
-                    else
-                    {
-                        create_visible = txn_mgr->isTransactionVisible(tuple_hdr->xmin, current_xid);
-                        delete_visible = effective_xmax != 0 &&
-                                         (effective_xmax == current_xid ||
-                                          txn_mgr->isTransactionVisible(effective_xmax, current_xid));
-                    }
-                }
+                const RecordVisibilityDecision visibility_decision =
+                    txn_mgr->evaluateRecordVisibility(tuple_hdr->xmin,
+                                                      effective_xmax,
+                                                      reader_visibility_xid,
+                                                      visibility_mode,
+                                                      snapshot);
+                create_visible = visibility_decision.create_visible;
+                delete_visible = visibility_decision.delete_visible;
             }
             else
             {

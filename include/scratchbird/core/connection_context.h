@@ -304,6 +304,15 @@ namespace scratchbird::core
         const TransactionSnapshot* getForensicReplaySnapshot() const;
         const TransactionSnapshot* getRetainedTransactionSnapshot() const;
         const TransactionSnapshot* getStatementTransactionSnapshot() const;
+        struct VisibilityContext
+        {
+            bool valid = false;
+            VisibilityMode mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+            VisibilityReason reason = VisibilityReason::NONE;
+            uint64_t reader_xid = 0;
+            const TransactionSnapshot* snapshot = nullptr;
+        };
+        auto resolveReadConsistencyVisibilityContext() const -> VisibilityContext;
         const ID& getCurrentSchemaEpochUuid() const { return current_schema_epoch_uuid_; }
         void setCurrentSchemaEpochUuid(const ID& schema_epoch_uuid)
         {
@@ -404,6 +413,24 @@ namespace scratchbird::core
 
         // Clear the statement XID
         Status clearStatementXID(ErrorContext *ctx = nullptr);
+
+        bool statementTrackingActive() const
+        {
+            return statement_io_active_;
+        }
+
+        const StatementRestartDecision& lastStatementRestartDecision() const
+        {
+            return last_statement_restart_decision_;
+        }
+
+        uint32_t statementRestartCount() const
+        {
+            return statement_restart_count_;
+        }
+
+        Status registerReadConsistencyRestart(const StatementRestartDecision& decision,
+                                              ErrorContext *ctx = nullptr);
 
         // Check if termination has been requested (for long transaction monitor)
         // Returns Status::IO_ERROR if termination requested, Status::OK otherwise
@@ -757,6 +784,8 @@ namespace scratchbird::core
         // Captures XID at statement start for consistent reads within statement
         // 0 = no statement-level XID (use transaction XID)
         uint64_t statement_xid_;
+        StatementRestartDecision last_statement_restart_decision_{};
+        uint32_t statement_restart_count_ = 0;
 
         // Table reservations for SNAPSHOT TABLE STABILITY
         std::vector<TableReservation> table_reservations_;
@@ -801,6 +830,7 @@ namespace scratchbird::core
         Status endCurrentTransaction(bool commit, ErrorContext *ctx);
         void applyStagedSettings();
         Status createSnapshot(ErrorContext *ctx);
+        void clearStatementRestartState();
 
     public:
         // Savepoint operations (Issue 2.15: Subtransaction Support)

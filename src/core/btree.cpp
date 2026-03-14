@@ -1351,24 +1351,13 @@ namespace scratchbird::core
             return true;
         }
 
-        // Check if creating transaction (xmin) is visible using TIP-based visibility
-        // This is Firebird MGA: checks if xmin is COMMITTED and older than reader
-        if (!txn_mgr->isVersionVisible(xmin, current_xid))
-        {
-            return false; // Entry not created or created by uncommitted/aborted transaction
-        }
-
-        // Check if deleting transaction (xmax) affects visibility
-        if (xmax != 0)
-        {
-            // If deleting transaction is visible, the entry is deleted
-            if (txn_mgr->isVersionVisible(xmax, current_xid))
-            {
-                return false; // Entry was deleted
-            }
-        }
-
-        return true; // Entry is visible
+        return txn_mgr->evaluateRecordVisibility(
+                          xmin,
+                          xmax,
+                          current_xid,
+                          VisibilityMode::READ_CURRENT_VERSION,
+                          nullptr)
+            .visible;
     }
 
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
