@@ -3162,6 +3162,178 @@ namespace scratchbird::core
 
     // MGA Phase 3: Version Chains
 
+    auto StorageEngine::updateStableTidIndexesForMutation(const ID &table_id,
+                                                          uint16_t tablespace_id,
+                                                          uint32_t stable_page_id,
+                                                          uint16_t stable_item_id,
+                                                          const uint8_t *old_tuple_data,
+                                                          uint32_t old_tuple_size,
+                                                          const uint8_t *new_tuple_data,
+                                                          uint32_t new_tuple_size,
+                                                          uint64_t current_xid,
+                                                          ErrorContext *ctx) -> Status
+    {
+        std::vector<CatalogManager::IndexInfo> indexes;
+        Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
+        if (index_status != Status::OK || indexes.empty())
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        index_status = catalog_manager_->getColumns(table_id, columns, ctx);
+        if (index_status != Status::OK)
+        {
+            LOG_WARNING(STORAGE, "Skipping index updates due to column lookup failure");
+            return Status::OK;
+        }
+
+        TID tid(makeGPID(tablespace_id, static_cast<uint64_t>(stable_page_id)), stable_item_id);
+        IndexKeyExtractor extractor;
+
+        std::vector<size_t> old_offsets;
+        std::vector<size_t> old_sizes;
+        std::vector<size_t> new_offsets;
+        std::vector<size_t> new_sizes;
+        Status old_layout_status = computeColumnLayout(old_tuple_data,
+                                                       old_tuple_size,
+                                                       columns,
+                                                       db_->domain_manager(),
+                                                       old_offsets,
+                                                       old_sizes,
+                                                       ctx);
+        Status new_layout_status = computeColumnLayout(new_tuple_data,
+                                                       new_tuple_size,
+                                                       columns,
+                                                       db_->domain_manager(),
+                                                       new_offsets,
+                                                       new_sizes,
+                                                       ctx);
+        if (old_layout_status != Status::OK || new_layout_status != Status::OK)
+        {
+            LOG_WARNING(STORAGE, "Skipping index updates due to column layout failure");
+            return Status::OK;
+        }
+
+        for (const auto &index_info : indexes)
+        {
+            CatalogManager::IndexType actual_index_type;
+            void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+            if (index_ptr == nullptr)
+            {
+                LOG_WARNING(STORAGE, "Index %s not found in cache, skipping",
+                            index_info.index_name.c_str());
+                continue;
+            }
+
+            if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
+            {
+                auto *columnstore = static_cast<ColumnstoreIndex *>(index_ptr);
+                for (const auto &col_id : index_info.column_ids)
+                {
+                    size_t col_idx = 0;
+                    bool found = false;
+                    for (size_t i = 0; i < columns.size(); i++)
+                    {
+                        if (columns[i].column_id == col_id)
+                        {
+                            col_idx = i;
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        LOG_WARNING(STORAGE, "Column not found for columnstore index %s",
+                                    index_info.index_name.c_str());
+                        continue;
+                    }
+
+                    bool is_null = (new_offsets[col_idx] == 0 && new_sizes[col_idx] == 0);
+                    const void *col_value = is_null ? nullptr : (new_tuple_data + new_offsets[col_idx]);
+                    size_t col_value_len = new_sizes[col_idx];
+
+                    Status insert_status = columnstore->insert(
+                        col_id, tid, col_value, col_value_len, is_null, ctx);
+                    if (insert_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE, "Failed to insert into columnstore index %s: %s",
+                                    index_info.index_name.c_str(),
+                                    ctx ? ctx->message.c_str() : "unknown error");
+                    }
+                }
+                continue;
+            }
+
+            std::vector<uint16_t> column_indices;
+            for (const auto &col_id : index_info.column_ids)
+            {
+                for (size_t i = 0; i < columns.size(); i++)
+                {
+                    if (columns[i].column_id == col_id)
+                    {
+                        column_indices.push_back(static_cast<uint16_t>(i));
+                        break;
+                    }
+                }
+            }
+
+            std::vector<uint8_t> old_key;
+            std::vector<uint8_t> new_key;
+            Status extract_status = extractor.extractKeyForUpdate(
+                old_tuple_data,
+                old_tuple_size,
+                old_offsets,
+                old_sizes,
+                new_tuple_data,
+                new_tuple_size,
+                new_offsets,
+                new_sizes,
+                column_indices,
+                getOrCreateToastManager(table_id, ctx),
+                current_xid,
+                &old_key,
+                &new_key,
+                ctx);
+            if (extract_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE, "Failed to extract keys for index %s: %s",
+                            index_info.index_name.c_str(),
+                            ctx ? ctx->message.c_str() : "unknown error");
+                continue;
+            }
+
+            if (old_key == new_key)
+            {
+                continue;
+            }
+
+            Status remove_status = removeFromIndex(actual_index_type, index_ptr, old_key, tid,
+                                                   current_xid, ctx);
+            if (remove_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE, "Failed to remove old key from %s index %s: %s",
+                            indexTypeToString(actual_index_type).c_str(),
+                            index_info.index_name.c_str(),
+                            ctx ? ctx->message.c_str() : "unknown error");
+            }
+
+            Status insert_status = insertIntoIndex(actual_index_type, index_ptr, new_key, tid,
+                                                   current_xid, ctx);
+            if (insert_status != Status::OK)
+            {
+                LOG_ERROR(STORAGE, "Failed to insert new key into %s index %s: %s",
+                          indexTypeToString(actual_index_type).c_str(),
+                          index_info.index_name.c_str(),
+                          ctx ? ctx->message.c_str() : "unknown error");
+            }
+        }
+
+        extractor.clearCache();
+        return Status::OK;
+    }
+
     auto StorageEngine::updateTuple(const ID &table_id, uint32_t page_id, uint16_t item_id,
                                     const uint8_t *new_tuple_data, uint32_t new_tuple_size,
                                     uint32_t *new_page_id_out, uint16_t *new_item_id_out,
@@ -3323,187 +3495,19 @@ namespace scratchbird::core
 
         if (status == Status::OK)
         {
-            // Success - new version on same page
-            // Phase 3 Task 3.3: Update indexes if indexed columns changed
-            // MGA benefit: If indexed columns unchanged, TID is stable and indexes remain valid!
-
-            // Get all indexes for this table
-            std::vector<CatalogManager::IndexInfo> indexes;
-            Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
-
-            if (index_status == Status::OK && !indexes.empty())
-            {
-                // Get column information
-                std::vector<CatalogManager::ColumnInfo> columns;
-                index_status = catalog_manager_->getColumns(table_id, columns, ctx);
-
-                if (index_status == Status::OK)
-                {
-                    // Create TID for this tuple (stable across update!)
-                    TID tid = TID(makeGPID(tablespace_id, static_cast<uint64_t>(page_id)), item_id);
-
-                    // Create IndexKeyExtractor for detoasting
-                    IndexKeyExtractor extractor;
-
-                    // Extract old and new tuple layouts
-                    std::vector<size_t> old_offsets, old_sizes, new_offsets, new_sizes;
-                    Status old_layout_status = computeColumnLayout(old_tuple_buffer.data(),
-                                                                   old_tuple_length, columns,
-                                                                   db_->domain_manager(),
-                                                                   old_offsets, old_sizes, ctx);
-                    Status new_layout_status = computeColumnLayout(tuple_data_ptr, new_tuple_size, columns,
-                                                                   db_->domain_manager(),
-                                                                   new_offsets, new_sizes, ctx);
-                    if (old_layout_status == Status::OK && new_layout_status == Status::OK)
-                    {
-                        // Check each index to see if indexed columns changed
-                        for (const auto &index_info : indexes)
-                    {
-                        // Get index type and pointer
-                        CatalogManager::IndexType actual_index_type;
-                        void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
-
-                        if (!index_ptr)
-                        {
-                            LOG_WARNING(STORAGE, "Index %s not found in cache, skipping",
-                                        index_info.index_name.c_str());
-                            continue;
-                        }
-
-                        // TASK-DML-7: Special handling for columnstore UPDATE (append-only)
-                        if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
-                        {
-                            auto *columnstore = static_cast<ColumnstoreIndex*>(index_ptr);
-
-                            // Columnstore is append-only: insert new values
-                            // Old values are already marked with xmax in heap (visibility filtering)
-                            for (const auto &col_id : index_info.column_ids)
-                            {
-                                // Find column index and info
-                                size_t col_idx = 0;
-                                bool found = false;
-                                for (size_t i = 0; i < columns.size(); i++)
-                                {
-                                    if (columns[i].column_id == col_id)
-                                    {
-                                        col_idx = i;
-                                        found = true;
-                                        break;
-                                    }
-                                }
-
-                                if (!found)
-                                {
-                                    LOG_WARNING(STORAGE, "Column not found for columnstore index %s",
-                                                index_info.index_name.c_str());
-                                    continue;
-                                }
-
-                                // Check if column is NULL in new tuple
-                                bool is_null = (new_offsets[col_idx] == 0 && new_sizes[col_idx] == 0);
-
-                                // Get new column value pointer and size
-                                const void *col_value = is_null ? nullptr : (tuple_data_ptr + new_offsets[col_idx]);
-                                size_t col_value_len = new_sizes[col_idx];
-
-                                // STOR-M1: Row-level OLTP insert into columnstore (append-only)
-                                // Old values are already marked with xmax in heap (visibility filtering)
-                                // New values are appended to columnstore buffer
-                                // Use full TID (GPID + slot) for columnstore tracking
-                                Status insert_status = columnstore->insert(
-                                    col_id,
-                                    tid,
-                                    col_value,
-                                    col_value_len,
-                                    is_null,
-                                    ctx);
-
-                                if (insert_status != Status::OK)
-                                {
-                                    LOG_WARNING(STORAGE, "Failed to insert into columnstore index %s: %s",
-                                                index_info.index_name.c_str(),
-                                                ctx ? ctx->message.c_str() : "unknown error");
-                                }
-                            }
-
-                            continue; // Columnstore handled via row-level buffering
-                        }
-
-                        // Regular index handling (key-based indexes)
-                        // Convert column IDs to column indices
-                        std::vector<uint16_t> column_indices;
-                        for (const auto &col_id : index_info.column_ids)
-                        {
-                            for (size_t i = 0; i < columns.size(); i++)
-                            {
-                                if (columns[i].column_id == col_id)
-                                {
-                                    column_indices.push_back(static_cast<uint16_t>(i));
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Extract OLD and NEW keys
-                        std::vector<uint8_t> old_key, new_key;
-                        Status old_status = extractor.extractKeyForUpdate(
-                            old_tuple_buffer.data(), old_tuple_length, old_offsets, old_sizes,
-                            tuple_data_ptr, new_tuple_size, new_offsets, new_sizes,
-                            column_indices,
-                            getOrCreateToastManager(table_id, ctx),
-                            xmax,
-                            &old_key, &new_key, ctx);
-
-                        if (old_status != Status::OK)
-                        {
-                            LOG_WARNING(STORAGE, "Failed to extract keys for index %s: %s",
-                                        index_info.index_name.c_str(),
-                                        ctx ? ctx->message.c_str() : "unknown error");
-                            continue;
-                        }
-
-                        // Check if keys are different
-                        if (old_key == new_key)
-                        {
-                            // Keys unchanged - no index update needed (MGA TID stability!)
-                            continue;
-                        }
-
-                        // Keys changed - update index
-                        // Remove old key
-                        Status remove_status = removeFromIndex(
-                            actual_index_type, index_ptr, old_key, tid, xmax, ctx);
-
-                        if (remove_status != Status::OK)
-                        {
-                            LOG_WARNING(STORAGE, "Failed to remove old key from %s index %s: %s",
-                                        indexTypeToString(actual_index_type).c_str(),
-                                        index_info.index_name.c_str(),
-                                        ctx ? ctx->message.c_str() : "unknown error");
-                        }
-
-                        // Insert new key (same TID!)
-                        Status insert_status = insertIntoIndex(
-                                actual_index_type, index_ptr, new_key, tid, xmax, ctx);
-
-                            if (insert_status != Status::OK)
-                            {
-                                LOG_ERROR(STORAGE, "Failed to insert new key into %s index %s: %s",
-                                          indexTypeToString(actual_index_type).c_str(),
-                                          index_info.index_name.c_str(),
-                                          ctx ? ctx->message.c_str() : "unknown error");
-                            }
-                    }
-
-                        // Clear detoasting cache
-                        extractor.clearCache();
-                    }
-                    else
-                    {
-                        LOG_WARNING(STORAGE, "Skipping index updates due to column layout failure");
-                    }
-                }
-            }
+            // Success - new version on same page. Stable-TID secondary effects
+            // now route through the shared mutation helper used by cross-page
+            // updates as well.
+            updateStableTidIndexesForMutation(table_id,
+                                              tablespace_id,
+                                              page_id,
+                                              item_id,
+                                              old_tuple_buffer.data(),
+                                              old_tuple_length,
+                                              tuple_data_ptr,
+                                              new_tuple_size,
+                                              xmax,
+                                              ctx);
 
             if (new_page_id_out != nullptr)
             {
@@ -3699,62 +3703,42 @@ namespace scratchbird::core
             }
 
             auto *back_page_data = static_cast<uint8_t *>(back_page_buffer);
-            HeapPage back_heap_page(back_page_data, db_->page_size());
+            HeapPage back_heap_page(back_page_data, db_->page_size(), toast_mgr, db_, table_id);
 
-	            // Insert OLD tuple data as back version
-	            uint16_t back_item_id;
-	            status = back_heap_page.insertTuple(old_tuple_buffer.data(), old_length, old_xmin,
-	                                               &back_item_id, ctx);
+            // Insert OLD tuple data as back version.
+            uint16_t back_item_id;
+            status = back_heap_page.insertTuple(old_tuple_buffer.data(), old_length, old_xmin,
+                                                &back_item_id, ctx);
 
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
                 cleanupToastedOverwrite();
-		        SET_ERROR_CONTEXT(ctx, status, "Failed to insert back version");
-		        return status;
-	            }
-
-	            // Restore back-version metadata that insertTuple() reinitialized.
-	            // Back versions must carry xmax and chain state for MVCC/version-walk correctness.
-	            const uint8_t* back_tuple_data = nullptr;
-	            uint32_t back_tuple_size = 0;
-	            status = back_heap_page.getTuple(back_item_id, &back_tuple_data, &back_tuple_size, ctx);
-            if (status != Status::OK)
-            {
-                buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
-                cleanupToastedOverwrite();
-                SET_ERROR_CONTEXT(ctx, status, "Failed to read inserted back version");
+                SET_ERROR_CONTEXT(ctx, status, "Failed to insert back version");
                 return status;
             }
 
-	            auto* stored_back_hdr =
-	                reinterpret_cast<TupleHeader*>(const_cast<uint8_t*>(back_tuple_data));
-	            const auto* source_old_hdr =
-	                reinterpret_cast<const TupleHeader*>(old_tuple_buffer.data());
+            // Same-page and cross-page updates now share the same back-version
+            // metadata finalization primitive.
+            status = back_heap_page.finalizeBackVersionMetadata(
+                back_item_id,
+                *old_tuple_hdr,
+                xmax,
+                makeGPID(tablespace_id, static_cast<uint64_t>(page_id)),
+                item_id,
+                true,
+                ctx);
+            if (status != Status::OK)
+            {
+                buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
+                cleanupToastedOverwrite();
+                SET_ERROR_CONTEXT(ctx, status, "Failed to finalize back version");
+                return status;
+            }
 
-	            stored_back_hdr->xmin = source_old_hdr->xmin;
-	            stored_back_hdr->xmax = xmax;
-	            stored_back_hdr->back_version_gpid = source_old_hdr->back_version_gpid;
-	            stored_back_hdr->back_version_slot = source_old_hdr->back_version_slot;
-	            stored_back_hdr->session_id = source_old_hdr->session_id;
-	            stored_back_hdr->setTID(
-	                makeGPID(tablespace_id, static_cast<uint64_t>(page_id)),
-	                item_id);
-	            uint16_t preserved_back_infomask =
-	                stored_back_hdr->infomask &
-	                (TupleHeader::HEAP_HAS_NULLS |
-	                 TupleHeader::HEAP_XMIN_COMMITTED |
-	                 TupleHeader::HEAP_XMIN_INVALID |
-	                 TupleHeader::HEAP_XMIN_FROZEN);
-	            stored_back_hdr->infomask =
-	                preserved_back_infomask |
-	                TupleHeader::HEAP_CHAIN |
-	                TupleHeader::HEAP_UPDATED |
-	                TupleHeader::HEAP_MOVED;
-
-	            // Build GPID for back version (different page!)
-	            back_version_gpid = makeGPID(tablespace_id,
-	                                         static_cast<uint64_t>(back_version_page_id));
+            // Build GPID for back version (different page!)
+            back_version_gpid = makeGPID(tablespace_id,
+                                         static_cast<uint64_t>(back_version_page_id));
 
             // Unpin back version page (mark as dirty)
             buffer_pool_->unpinPageGlobal(back_version_gpid, true, ctx);
@@ -3778,7 +3762,7 @@ namespace scratchbird::core
             }
 
             page_data = static_cast<uint8_t *>(page_buffer);
-            HeapPage primary_heap_page(page_data, db_->page_size());
+            HeapPage primary_heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
 
             // Overwrite primary tuple in-place (NEW data, back version on different page)
             status = primary_heap_page.overwriteTuple(item_id, overwrite_tuple_data, overwrite_tuple_size,
@@ -3792,6 +3776,17 @@ namespace scratchbird::core
                 SET_ERROR_CONTEXT(ctx, status, "Failed to overwrite primary tuple");
                 return status;
             }
+
+            updateStableTidIndexesForMutation(table_id,
+                                              tablespace_id,
+                                              page_id,
+                                              item_id,
+                                              old_tuple_buffer.data(),
+                                              old_length,
+                                              tuple_data_ptr,
+                                              new_tuple_size,
+                                              xmax,
+                                              ctx);
 
             // Sprint 4 Task 5.4.3: Mark pages dirty if migrating
             if (is_migrating)
@@ -3824,13 +3819,24 @@ namespace scratchbird::core
                 *new_item_id_out = item_id;  // SAME item!
             }
 
-            // Step 5: NO INDEX UPDATES NEEDED!
-            // Because TID is stable, all indexes remain valid
-            // This is an 80% performance improvement over PostgreSQL MVCC!
-            // (The old buggy code called updateIndexesForRelocation here)
+            // Step 5: Apply shared stable-TID secondary effects.
+            // Stable TID alone is not enough when indexed column values change.
+            // Secondary-index updates now flow through the same stable-TID
+            // mutation helper as same-page updates.
 
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
+                const uint8_t *rollback_image =
+                    rollback_tuple_buffer.empty() ? old_tuple_buffer.data()
+                                                  : rollback_tuple_buffer.data();
+                const uint32_t rollback_image_size =
+                    rollback_tuple_buffer.empty() ? old_length
+                                                  : static_cast<uint32_t>(rollback_tuple_buffer.size());
+                conn_ctx->trackTupleUpdate(table_id,
+                                           page_id,
+                                           item_id,
+                                           rollback_image,
+                                           rollback_image_size);
                 conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
             }
 

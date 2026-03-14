@@ -300,6 +300,16 @@ namespace scratchbird::core
                                    const TID &stable_tid,
                                    uint64_t current_xid,
                                    ErrorContext *ctx) -> Status;
+        auto updateStableTidIndexesForMutation(const ID &table_id,
+                                               uint16_t tablespace_id,
+                                               uint32_t stable_page_id,
+                                               uint16_t stable_item_id,
+                                               const uint8_t *old_tuple_data,
+                                               uint32_t old_tuple_size,
+                                               const uint8_t *new_tuple_data,
+                                               uint32_t new_tuple_size,
+                                               uint64_t current_xid,
+                                               ErrorContext *ctx) -> Status;
 
         // Lock management helpers
         auto acquireTupleLock(const ID &table_id, uint32_t page_id, uint16_t item_id,

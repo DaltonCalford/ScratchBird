@@ -846,6 +846,144 @@ namespace scratchbird::core
 
     // MGA Phase 3: Version Chains - FIREBIRD MGA BACK VERSIONING
 
+    auto HeapPage::finalizeBackVersionMetadata(uint16_t item_id,
+                                               const TupleHeader &source_old_header,
+                                               uint64_t update_xid,
+                                               GPID primary_gpid,
+                                               uint16_t primary_item_id,
+                                               bool cross_page_back_version,
+                                               ErrorContext *ctx) -> Status
+    {
+        const uint8_t *back_version_data = nullptr;
+        uint32_t back_version_size = 0;
+        Status read_status = getTuple(item_id, &back_version_data, &back_version_size, ctx);
+        if (read_status != Status::OK)
+        {
+            return read_status;
+        }
+
+        auto *back_version_hdr =
+            reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(back_version_data));
+        back_version_hdr->xmin = source_old_header.xmin;
+        back_version_hdr->xmax = update_xid;
+        back_version_hdr->back_version_gpid = source_old_header.back_version_gpid;
+        back_version_hdr->back_version_slot = source_old_header.back_version_slot;
+        back_version_hdr->session_id = source_old_header.session_id;
+        back_version_hdr->setTID(primary_gpid, primary_item_id);
+
+        uint16_t preserved_infomask =
+            back_version_hdr->infomask &
+            (TupleHeader::HEAP_HAS_NULLS |
+             TupleHeader::HEAP_XMIN_COMMITTED |
+             TupleHeader::HEAP_XMIN_INVALID |
+             TupleHeader::HEAP_XMIN_FROZEN);
+        back_version_hdr->infomask =
+            preserved_infomask | TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED;
+        if (cross_page_back_version)
+        {
+            back_version_hdr->infomask |= TupleHeader::HEAP_MOVED;
+        }
+
+        ID stable_row_uuid = source_old_header.row_uuid;
+        applyCanonicalRecordContract(back_version_hdr, back_version_data,
+                                     back_version_size, &stable_row_uuid);
+        return Status::OK;
+    }
+
+    auto HeapPage::installUpdatedPrimaryVersion(uint16_t item_id,
+                                                const uint8_t *new_tuple_data,
+                                                uint32_t new_tuple_size,
+                                                uint64_t new_xmin,
+                                                GPID back_version_gpid,
+                                                uint16_t back_version_slot,
+                                                const ID &session_id,
+                                                const ID &stable_row_uuid,
+                                                bool *tuple_location_moved_out,
+                                                ErrorContext *ctx) -> Status
+    {
+        if (page_data_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page data is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (item_id >= getItemCount())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Item ID out of range");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ItemPointer *items = getItemArray();
+        ItemPointer *item_ptr = &items[item_id];
+        if (item_ptr->isDeleted() || item_ptr->isUnused())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple is deleted or unused");
+            return Status::NOT_FOUND;
+        }
+
+        auto *hdr = header();
+        uint32_t old_length = item_ptr->length;
+        bool tuple_location_moved = false;
+
+        if (new_tuple_size <= old_length)
+        {
+            std::memcpy(page_data_ + item_ptr->offset, new_tuple_data, new_tuple_size);
+            item_ptr->length = new_tuple_size;
+        }
+        else
+        {
+            uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
+            if (new_tuple_size > free_space)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for updated tuple");
+                return Status::PAGE_FULL;
+            }
+
+            uint32_t new_offset = (pageUpper(*hdr) - new_tuple_size) & ~uint32_t{7};
+            if (new_offset + new_tuple_size > page_size_ || new_offset < pageLower(*hdr))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                  "Not enough aligned space for updated tuple");
+                return Status::PAGE_FULL;
+            }
+
+            std::memcpy(page_data_ + new_offset, new_tuple_data, new_tuple_size);
+            item_ptr->offset = new_offset;
+            item_ptr->length = new_tuple_size;
+            tuple_location_moved = true;
+            pageSetUpper(*hdr, new_offset);
+        }
+
+        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + item_ptr->offset);
+        tuple_hdr->xmin = new_xmin;
+        tuple_hdr->xmax = 0;
+        tuple_hdr->session_id = session_id;
+        tuple_hdr->back_version_gpid = back_version_gpid;
+        tuple_hdr->back_version_slot = back_version_slot;
+        tuple_hdr->setTID(makeGPID(PRIMARY_TABLESPACE_ID,
+                                   static_cast<uint64_t>(header()->page_id)),
+                          item_id);
+
+        uint16_t preserved_infomask = tuple_hdr->infomask & TupleHeader::HEAP_HAS_NULLS;
+        tuple_hdr->infomask = preserved_infomask;
+        if (tuple_location_moved)
+        {
+            tuple_hdr->infomask |= TupleHeader::HEAP_MOVED;
+        }
+
+        ID preferred_row_uuid = stable_row_uuid;
+        applyCanonicalRecordContract(tuple_hdr, page_data_ + item_ptr->offset,
+                                     item_ptr->length, &preferred_row_uuid);
+        updateHeaderStats();
+
+        if (tuple_location_moved_out != nullptr)
+        {
+            *tuple_location_moved_out = tuple_location_moved;
+        }
+
+        return Status::OK;
+    }
+
     auto HeapPage::updateTuple(uint16_t old_item_id, const uint8_t *new_tuple_data,
                                uint32_t new_tuple_size, uint64_t xmax, uint64_t new_xmin,
                                uint16_t *new_item_id_out, ErrorContext *ctx,
@@ -911,7 +1049,6 @@ namespace scratchbird::core
         // TOAST CLEANUP: Delete old TOAST data if present
         // ====================================================================
         // This prevents TOAST storage leaks on UPDATE operations
-        bool old_tuple_is_toasted = false;
         if (!defer_old_toast_cleanup && (toast_mgr_ != nullptr) && (db_ != nullptr))
         {
             if (primary_length >= sizeof(TupleHeader) + sizeof(ToastPointer))
@@ -920,7 +1057,6 @@ namespace scratchbird::core
 
                 if (isToastPointer(old_data_ptr, sizeof(ToastPointer)))
                 {
-                    old_tuple_is_toasted = true;
                     const auto *old_toast_ptr =
                         reinterpret_cast<const ToastPointer *>(old_data_ptr);
 
@@ -1066,35 +1202,19 @@ namespace scratchbird::core
                 return insert_status;
             }
 
-            const uint8_t *back_version_data = nullptr;
-            uint32_t back_version_size = 0;
-            Status read_status =
-                getTuple(back_version_item_id, &back_version_data, &back_version_size, ctx);
-            if (read_status != Status::OK)
+            Status finalize_status =
+                finalizeBackVersionMetadata(back_version_item_id,
+                                            *source_old_hdr,
+                                            xmax,
+                                            makeGPID(PRIMARY_TABLESPACE_ID,
+                                                     static_cast<uint64_t>(header()->page_id)),
+                                            old_item_id,
+                                            false,
+                                            ctx);
+            if (finalize_status != Status::OK)
             {
-                return read_status;
+                return finalize_status;
             }
-
-            auto *back_version_hdr =
-                reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(back_version_data));
-            back_version_hdr->xmin = source_old_hdr->xmin;
-            back_version_hdr->xmax = xmax;
-            back_version_hdr->back_version_gpid = source_old_hdr->back_version_gpid;
-            back_version_hdr->back_version_slot = source_old_hdr->back_version_slot;
-            back_version_hdr->session_id = source_old_hdr->session_id;
-            back_version_hdr->setTID(
-                makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id)),
-                old_item_id);
-            uint16_t preserved_infomask =
-                back_version_hdr->infomask &
-                (TupleHeader::HEAP_HAS_NULLS |
-                 TupleHeader::HEAP_XMIN_COMMITTED |
-                 TupleHeader::HEAP_XMIN_INVALID |
-                 TupleHeader::HEAP_XMIN_FROZEN);
-            back_version_hdr->infomask =
-                preserved_infomask | TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED;
-            applyCanonicalRecordContract(back_version_hdr, back_version_data,
-                                         back_version_size, &stable_row_uuid);
         }
         else
         {
@@ -1105,92 +1225,23 @@ namespace scratchbird::core
             return Status::PAGE_FULL;
         }
 
-        // ====================================================================
-        // PHASE 3: OVERWRITE PRIMARY LOCATION IN-PLACE
-        // ====================================================================
-        // Now overwrite the primary location with new tuple data (possibly TOASTed)
-        // Item pointer remains UNCHANGED (stable TID)
-        // ====================================================================
-
-        // Check if new tuple fits in old tuple's space
-        // If not, we need to allocate new space at primary location
-        bool primary_location_moved = false;
-        if (final_new_tuple_size <= primary_length)
+        Status install_status =
+            installUpdatedPrimaryVersion(old_item_id,
+                                         final_new_tuple_data,
+                                         final_new_tuple_size,
+                                         new_xmin,
+                                         makeGPID(PRIMARY_TABLESPACE_ID,
+                                                  static_cast<uint64_t>(header()->page_id)),
+                                         back_version_item_id,
+                                         normalizeSessionId(db_, table_id_,
+                                                            primary_tuple_hdr->session_id),
+                                         stable_row_uuid,
+                                         nullptr,
+                                         ctx);
+        if (install_status != Status::OK)
         {
-            // New tuple fits in old space - overwrite in-place
-            memcpy(page_data_ + primary_offset, final_new_tuple_data, final_new_tuple_size);
-
-            // Update item pointer length
-            items[old_item_id].length = final_new_tuple_size;
+            return install_status;
         }
-        else
-        {
-            // New tuple is larger - need to allocate new space at end of free area
-            uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
-            if (final_new_tuple_size > free_space)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
-                                  "Not enough space for updated tuple");
-                return Status::PAGE_FULL;
-            }
-            uint32_t new_primary_offset = pageUpper(*hdr) - final_new_tuple_size;
-
-            // Align to 8-byte boundary
-            new_primary_offset = (new_primary_offset / 8) * 8;
-
-            // Validate offset
-            if (new_primary_offset + final_new_tuple_size > page_size_ ||
-                new_primary_offset < pageLower(*hdr))
-            {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
-                                  "Not enough aligned space for updated tuple");
-                return Status::PAGE_FULL;
-            }
-
-            // Copy new tuple to new primary location
-            memcpy(page_data_ + new_primary_offset, final_new_tuple_data, final_new_tuple_size);
-
-            // Update item pointer to new primary location
-            items[old_item_id].offset = new_primary_offset;
-            items[old_item_id].length = final_new_tuple_size;
-            primary_location_moved = true;
-
-            // Update upper boundary
-            pageSetUpper(*hdr, new_primary_offset);
-        }
-
-        // Initialize new primary tuple header
-        auto *new_primary_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[old_item_id].offset);
-        new_primary_hdr->xmin = new_xmin;
-        new_primary_hdr->xmax = 0; // Not deleted
-        // Preserve session scope from the old version (temp tables) or keep zero for permanent.
-        new_primary_hdr->session_id =
-            normalizeSessionId(db_, table_id_, primary_tuple_hdr->session_id);
-
-        // PHASE 1, TASK 1.2.5: Use GPID-based TID fields
-        // CRITICAL: Set back_version to point BACKWARD to back version
-        // Build TID for back version
-        GPID back_version_gpid =
-            makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
-        new_primary_hdr->back_version_gpid = back_version_gpid;
-        new_primary_hdr->back_version_slot = back_version_item_id;
-
-        // Set primary TID to current page and item ID (stable!)
-        GPID primary_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(header()->page_id));
-        new_primary_hdr->setTID(primary_gpid, old_item_id); // Same item ID (stable!)
-        // Preserve NULL bitmap flag from serialized tuple header.
-        uint16_t preserved_infomask = new_primary_hdr->infomask & TupleHeader::HEAP_HAS_NULLS;
-        new_primary_hdr->infomask = preserved_infomask; // Clear flags, keep NULL bitmap
-        if (primary_location_moved)
-        {
-            new_primary_hdr->infomask |= TupleHeader::HEAP_MOVED;
-        }
-        applyCanonicalRecordContract(new_primary_hdr, page_data_ + items[old_item_id].offset,
-                                     items[old_item_id].length, &stable_row_uuid);
-        // Note: We don't set HEAP_HOT_UPDATED here - that's for index update optimization
-        // MGA provides stable TIDs naturally, so indexes don't need updating regardless
-
-        updateHeaderStats();
 
         // ====================================================================
         // RETURN SAME ITEM_ID (STABLE POINTER)
@@ -1227,129 +1278,41 @@ namespace scratchbird::core
         // 5. Indexes remain valid (TID unchanged)
         // ====================================================================
 
+        (void)xmax;
+
         if (page_data_ == nullptr)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page data is null");
             return Status::INVALID_ARGUMENT;
         }
 
-        ItemPointer *items = getItemArray();
-        auto *special = getSpecial();
-        auto *hdr = header();
-
-        // Validate item_id
         if (item_id >= getItemCount())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Item ID out of range");
             return Status::INVALID_ARGUMENT;
         }
 
+        ItemPointer *items = getItemArray();
         ItemPointer *item_ptr = &items[item_id];
-
-        // Check if item is deleted or unused
         if (item_ptr->isDeleted() || item_ptr->isUnused())
         {
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple is deleted or unused");
             return Status::NOT_FOUND;
         }
 
-        // Get current tuple location
-        uint32_t old_offset = item_ptr->offset;
-        uint32_t old_length = item_ptr->length;
-        ID old_session_id = reinterpret_cast<TupleHeader *>(page_data_ + old_offset)->session_id;
-        ID stable_row_uuid = reinterpret_cast<TupleHeader *>(page_data_ + old_offset)->row_uuid;
-        if (isZeroIdLocal(stable_row_uuid))
-        {
-            stable_row_uuid = generateUuidV7();
-        }
-
-        // new_tuple_size already includes TupleHeader.
-        uint32_t final_new_tuple_size = new_tuple_size;
-
-        // Check if new tuple fits in old tuple's space
-        bool tuple_location_moved = false;
-        if (final_new_tuple_size <= old_length)
-        {
-            // New tuple fits in old space - overwrite in-place
-            // Copy tuple header + data
-            memcpy(page_data_ + old_offset, new_tuple_data, final_new_tuple_size);
-
-            // Update item pointer length
-            item_ptr->length = final_new_tuple_size;
-        }
-        else
-        {
-            // New tuple is larger - need to allocate new space at end of free area
-            uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
-            if (final_new_tuple_size > free_space)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for larger tuple");
-                return Status::PAGE_FULL;
-            }
-
-            // Allocate space from end of page
-            uint32_t new_offset = pageUpper(*hdr) - final_new_tuple_size;
-
-            // Align to 8-byte boundary
-            new_offset = (new_offset / 8) * 8;
-
-            // Validate offset
-            if (new_offset + final_new_tuple_size > page_size_)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "New tuple offset out of bounds");
-                return Status::PAGE_CORRUPT;
-            }
-
-            // Copy new tuple to new location
-            memcpy(page_data_ + new_offset, new_tuple_data, final_new_tuple_size);
-
-            // Update item pointer to new location
-            item_ptr->offset = new_offset;
-            item_ptr->length = final_new_tuple_size;
-            tuple_location_moved = true;
-
-            // Update upper boundary
-            pageSetUpper(*hdr, new_offset);
-        }
-
-        // ====================================================================
-        // UPDATE TUPLE HEADER WITH CROSS-PAGE BACK VERSION POINTERS
-        // ====================================================================
-        // This is the CRITICAL part: Set back version to point to different page
-        // ====================================================================
-
-        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + item_ptr->offset);
-
-        // Set transaction IDs
-        tuple_hdr->xmin = new_xmin;  // New version created by this XID
-        tuple_hdr->xmax = 0;          // Not deleted
-        // Preserve session scope from the old version (temp tables) or keep zero for permanent.
-        tuple_hdr->session_id = normalizeSessionId(db_, table_id_, old_session_id);
-
-        // Set back version pointers (CROSS-PAGE!)
-        tuple_hdr->back_version_gpid = back_version_gpid;  // Different page!
-        tuple_hdr->back_version_slot = back_version_slot;
-
-        // Set current TID (UNCHANGED - stable!)
-        uint32_t page_id = header()->page_id;
-        GPID page_gpid = makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id));
-        tuple_hdr->setTID(page_gpid, item_id);  // Same item_id!
-
-        // Clear flags for new primary version but preserve NULL bitmap flag
-        uint16_t preserved_infomask = tuple_hdr->infomask & TupleHeader::HEAP_HAS_NULLS;
-        tuple_hdr->infomask = preserved_infomask;
-        tuple_hdr->infomask |= TupleHeader::HEAP_CHAIN;  // Part of version chain
-        if (tuple_location_moved)
-        {
-            tuple_hdr->infomask |= TupleHeader::HEAP_MOVED;
-        }
-        applyCanonicalRecordContract(tuple_hdr, page_data_ + item_ptr->offset,
-                                     item_ptr->length, &stable_row_uuid);
-
-        // Update page statistics
-        updateHeaderStats();
-
-        return Status::OK;
+        const auto *existing_hdr =
+            reinterpret_cast<const TupleHeader *>(page_data_ + item_ptr->offset);
+        return installUpdatedPrimaryVersion(item_id,
+                                            new_tuple_data,
+                                            new_tuple_size,
+                                            new_xmin,
+                                            back_version_gpid,
+                                            back_version_slot,
+                                            normalizeSessionId(db_, table_id_,
+                                                               existing_hdr->session_id),
+                                            existing_hdr->row_uuid,
+                                            nullptr,
+                                            ctx);
     }
 
     auto HeapPage::findVisibleVersion(uint16_t item_id, uint64_t current_xid,

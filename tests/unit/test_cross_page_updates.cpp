@@ -522,6 +522,92 @@ TEST_F(CrossPageUpdateTest, HOTUpdateVsCrossPage)
         << "Back version should be allocated on a different page";
 }
 
+TEST_F(CrossPageUpdateTest, SameAndCrossPageHeadsShareMutationContract)
+{
+    ErrorContext ctx;
+
+    auto tuple1 = createTupleData(120, 0x61);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    Status status = storage_engine_->insertTuple(test_table_id_, tuple1.data(),
+                                                 tuple1.size(), &page_id, &item_id, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    auto same_page_tuple = createTupleData(140, 0x62);
+    uint32_t same_page_id = 0;
+    uint16_t same_item_id = 0;
+    status = storage_engine_->updateTuple(test_table_id_, page_id, item_id,
+                                          same_page_tuple.data(), same_page_tuple.size(),
+                                          &same_page_id, &same_item_id, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    ASSERT_EQ(same_page_id, page_id);
+    ASSERT_EQ(same_item_id, item_id);
+
+    void *same_page_buffer = nullptr;
+    ASSERT_EQ(db_->buffer_pool()->pinPage(page_id, &same_page_buffer, &ctx), Status::OK)
+        << ctx.message;
+    HeapPage same_page(static_cast<uint8_t *>(same_page_buffer), db_->page_size());
+    const uint8_t *same_head_tuple = nullptr;
+    uint32_t same_head_size = 0;
+    ASSERT_EQ(same_page.getTuple(item_id, &same_head_tuple, &same_head_size, &ctx), Status::OK)
+        << ctx.message;
+    const auto *same_head_hdr = reinterpret_cast<const TupleHeader *>(same_head_tuple);
+    ASSERT_TRUE(same_head_hdr->hasBackVersion());
+    EXPECT_EQ((same_head_hdr->infomask & TupleHeader::HEAP_CHAIN), 0u);
+    TID same_back_tid = same_head_hdr->getBackVersionTID();
+    ASSERT_EQ(static_cast<uint32_t>(getPageNumber(same_back_tid.gpid)), page_id);
+    const uint8_t *same_back_tuple = nullptr;
+    uint32_t same_back_size = 0;
+    ASSERT_EQ(same_page.getTuple(same_back_tid.slot, &same_back_tuple, &same_back_size, &ctx),
+              Status::OK) << ctx.message;
+    const auto *same_back_hdr = reinterpret_cast<const TupleHeader *>(same_back_tuple);
+    EXPECT_NE((same_back_hdr->infomask & TupleHeader::HEAP_CHAIN), 0u);
+    EXPECT_NE((same_back_hdr->infomask & TupleHeader::HEAP_UPDATED), 0u);
+    db_->buffer_pool()->unpinPage(page_id, false, &ctx);
+
+    fillPageAlmostFull(page_id, &ctx);
+    auto cross_page_tuple = createCrossPageUpdateTuple(page_id, item_id, 0x63, &ctx);
+    uint32_t final_page_id = 0;
+    uint16_t final_item_id = 0;
+    status = storage_engine_->updateTuple(test_table_id_, page_id, item_id,
+                                          cross_page_tuple.data(), cross_page_tuple.size(),
+                                          &final_page_id, &final_item_id, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    ASSERT_EQ(final_page_id, page_id);
+    ASSERT_EQ(final_item_id, item_id);
+
+    void *cross_head_buffer = nullptr;
+    ASSERT_EQ(db_->buffer_pool()->pinPage(page_id, &cross_head_buffer, &ctx), Status::OK)
+        << ctx.message;
+    HeapPage cross_head_page(static_cast<uint8_t *>(cross_head_buffer), db_->page_size());
+    const uint8_t *cross_head_tuple = nullptr;
+    uint32_t cross_head_size = 0;
+    ASSERT_EQ(cross_head_page.getTuple(item_id, &cross_head_tuple, &cross_head_size, &ctx),
+              Status::OK) << ctx.message;
+    const auto *cross_head_hdr = reinterpret_cast<const TupleHeader *>(cross_head_tuple);
+    ASSERT_TRUE(cross_head_hdr->hasBackVersion());
+    EXPECT_EQ((cross_head_hdr->infomask & TupleHeader::HEAP_CHAIN), 0u);
+    TID cross_back_tid = cross_head_hdr->getBackVersionTID();
+    EXPECT_NE(static_cast<uint32_t>(getPageNumber(cross_back_tid.gpid)), page_id);
+    db_->buffer_pool()->unpinPage(page_id, false, &ctx);
+
+    void *cross_back_buffer = nullptr;
+    uint32_t cross_back_page_id = static_cast<uint32_t>(getPageNumber(cross_back_tid.gpid));
+    ASSERT_EQ(db_->buffer_pool()->pinPage(cross_back_page_id, &cross_back_buffer, &ctx),
+              Status::OK) << ctx.message;
+    HeapPage cross_back_page(static_cast<uint8_t *>(cross_back_buffer), db_->page_size());
+    const uint8_t *cross_back_tuple = nullptr;
+    uint32_t cross_back_size = 0;
+    ASSERT_EQ(cross_back_page.getTuple(cross_back_tid.slot, &cross_back_tuple, &cross_back_size,
+                                       &ctx),
+              Status::OK) << ctx.message;
+    const auto *cross_back_hdr = reinterpret_cast<const TupleHeader *>(cross_back_tuple);
+    EXPECT_NE((cross_back_hdr->infomask & TupleHeader::HEAP_CHAIN), 0u);
+    EXPECT_NE((cross_back_hdr->infomask & TupleHeader::HEAP_UPDATED), 0u);
+    EXPECT_NE((cross_back_hdr->infomask & TupleHeader::HEAP_MOVED), 0u);
+    db_->buffer_pool()->unpinPage(cross_back_page_id, false, &ctx);
+}
+
 /**
  * Test 5: Verify MVCC visibility with cross-page updates
  */

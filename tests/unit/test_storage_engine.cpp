@@ -193,6 +193,12 @@ protected:
         return buildTuple(payload.data(), payload.size());
     }
 
+    std::vector<uint8_t> buildFilledTuple(size_t payload_size, uint8_t fill)
+    {
+        std::vector<uint8_t> payload(payload_size, fill);
+        return buildTuple(payload.data(), payload.size());
+    }
+
     void expectTuplePayloadEquals(const std::vector<uint8_t> &actual_tuple,
                                   const std::vector<uint8_t> &expected_tuple)
     {
@@ -224,6 +230,98 @@ protected:
         db_->buffer_pool()->unpinPage(page_id, false, &ctx);
         EXPECT_EQ(status, Status::OK) << ctx.message;
         return tuple;
+    }
+
+    void fillPageAlmostFull(uint32_t page_id, size_t payload_size = 64)
+    {
+        ErrorContext ctx;
+        void *page_buffer = nullptr;
+        ASSERT_EQ(db_->buffer_pool()->pinPage(page_id, &page_buffer, &ctx), Status::OK)
+            << ctx.message;
+
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        HeapPage heap_page(page_data, kPageSize);
+        const uint32_t target_free_space = 260;
+        auto tuple_data = buildFilledTuple(payload_size, 0xAB);
+
+        while (heap_page.getFreeSpace() >
+               target_free_space + tuple_data.size() + sizeof(ItemPointer))
+        {
+            uint16_t filler_item_id = 0;
+            Status status = heap_page.insertTuple(tuple_data.data(),
+                                                  static_cast<uint32_t>(tuple_data.size()),
+                                                  conn_ctx_->getCurrentXid(),
+                                                  &filler_item_id,
+                                                  &ctx);
+            if (status != Status::OK)
+            {
+                break;
+            }
+        }
+
+        db_->buffer_pool()->unpinPage(page_id, true, &ctx);
+    }
+
+    std::vector<uint8_t> buildCrossPageTriggerTuple(uint32_t page_id,
+                                                    uint16_t item_id,
+                                                    uint8_t fill)
+    {
+        ErrorContext ctx;
+        void *page_buffer = nullptr;
+        EXPECT_EQ(db_->buffer_pool()->pinPage(page_id, &page_buffer, &ctx), Status::OK)
+            << ctx.message;
+
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        HeapPage heap_page(page_data, kPageSize);
+        const uint8_t *old_tuple = nullptr;
+        uint32_t old_tuple_size = 0;
+        Status status = heap_page.getTuple(item_id, &old_tuple, &old_tuple_size, &ctx);
+        uint32_t free_space = heap_page.getFreeSpace();
+        db_->buffer_pool()->unpinPage(page_id, false, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+
+        const uint32_t min_total = sizeof(TupleHeader) + 8;
+        uint32_t chosen_total = min_total;
+
+        if (free_space > 8)
+        {
+            uint32_t candidate_total = free_space - 8;
+            if (candidate_total > 240)
+            {
+                candidate_total = 240;
+            }
+            if (candidate_total > old_tuple_size && candidate_total >= min_total)
+            {
+                chosen_total = candidate_total;
+            }
+        }
+
+        if (chosen_total == min_total)
+        {
+            uint32_t max_total = (free_space > 8) ? (free_space - 8) : free_space;
+            if (max_total > 240)
+            {
+                max_total = 240;
+            }
+            if (max_total < min_total)
+            {
+                max_total = min_total;
+            }
+
+            uint32_t cross_page_min_total = min_total;
+            if (free_space > old_tuple_size)
+            {
+                cross_page_min_total = free_space - old_tuple_size + 1;
+            }
+
+            chosen_total = max_total;
+            if (cross_page_min_total <= max_total)
+            {
+                chosen_total = cross_page_min_total;
+            }
+        }
+
+        return buildFilledTuple(chosen_total - sizeof(TupleHeader), fill);
     }
 
     std::string test_db_path_;
@@ -683,4 +781,51 @@ TEST_F(StorageEngineTest, CooperativeGcPreservesRowAfterSavepointRollback)
 
     std::vector<uint8_t> restored = readTupleDetoasted(table_id, page_id, item_id);
     expectTuplePayloadEquals(restored, original_tuple);
+}
+
+TEST_F(StorageEngineTest, CrossPageSavepointRollbackRestoresOriginalTuple)
+{
+    ID table_id = createSingleIntTable("cross_page_savepoint_restore_test");
+
+    auto original_tuple = buildFilledTuple(120, 0x11);
+
+    ErrorContext ctx;
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    fillPageAlmostFull(page_id);
+    auto updated_tuple = buildCrossPageTriggerTuple(page_id, item_id, 0x33);
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_cross_page_restore", &ctx), Status::OK)
+        << ctx.message;
+
+    uint32_t updated_page_id = 0;
+    uint16_t updated_item_id = 0;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   &updated_page_id,
+                                   &updated_item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(updated_page_id, page_id);
+    ASSERT_EQ(updated_item_id, item_id);
+
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_cross_page_restore", &ctx), Status::OK)
+        << ctx.message;
+
+    Tuple restored{};
+    ASSERT_EQ(engine_->getTuple(page_id, item_id, &restored, &ctx), Status::OK)
+        << ctx.message;
+    std::vector<uint8_t> restored_tuple(restored.data, restored.data + restored.data_size);
+    expectTuplePayloadEquals(restored_tuple, original_tuple);
 }

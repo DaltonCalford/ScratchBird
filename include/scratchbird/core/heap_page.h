@@ -359,6 +359,16 @@ namespace scratchbird::core
                            uint64_t back_version_gpid, uint16_t back_version_slot,
                            ErrorContext *ctx = nullptr) -> Status;
 
+        // Finalize a stored back version so same-page and cross-page update paths
+        // share one back-version metadata contract.
+        auto finalizeBackVersionMetadata(uint16_t item_id,
+                                         const TupleHeader &source_old_header,
+                                         uint64_t update_xid,
+                                         GPID primary_gpid,
+                                         uint16_t primary_item_id,
+                                         bool cross_page_back_version,
+                                         ErrorContext *ctx = nullptr) -> Status;
+
         // Find visible version of tuple by traversing version chains.
         // FIREBIRD MGA: Uses TIP-based visibility, NOT snapshots.
         // Version links are canonical TIDs (page + slot) for both same-page and cross-page chains.
@@ -464,6 +474,17 @@ namespace scratchbird::core
 
         // Update page header after modifications
         void updateHeaderStats();
+
+        auto installUpdatedPrimaryVersion(uint16_t item_id,
+                                          const uint8_t *new_tuple_data,
+                                          uint32_t new_tuple_size,
+                                          uint64_t new_xmin,
+                                          GPID back_version_gpid,
+                                          uint16_t back_version_slot,
+                                          const ID &session_id,
+                                          const ID &stable_row_uuid,
+                                          bool *tuple_location_moved_out,
+                                          ErrorContext *ctx) -> Status;
     };
 
 } // namespace scratchbird::core
