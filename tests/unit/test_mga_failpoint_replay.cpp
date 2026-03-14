@@ -1,12 +1,15 @@
 #include <gtest/gtest.h>
 
+#include <cerrno>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fcntl.h>
 #include <memory>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #include "scratchbird/core/catalog_manager.h"
@@ -251,6 +254,175 @@ protected:
         return page_id;
     }
 
+    void closeDatabase()
+    {
+        ConnectionContext::setCurrent(nullptr);
+        conn_.reset();
+        if (db_)
+        {
+            db_->close();
+            db_.reset();
+        }
+    }
+
+    auto readSystemStatePageFromFile() -> scratchbird::core::BootstrapSystemStatePage
+    {
+        scratchbird::core::BootstrapSystemStatePage state{};
+        std::vector<uint8_t> buffer(8192, 0);
+        const int fd = ::open(db_path_.c_str(), O_RDWR);
+        EXPECT_GE(fd, 0) << std::strerror(errno);
+        if (fd < 0)
+        {
+            return state;
+        }
+
+        const off_t offset = static_cast<off_t>(scratchbird::core::BOOTSTRAP_PAGE_SYSTEM_STATE) *
+                             static_cast<off_t>(buffer.size());
+        const ssize_t bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        EXPECT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        if (bytes == static_cast<ssize_t>(buffer.size()))
+        {
+            std::memcpy(&state, buffer.data(), sizeof(state));
+        }
+        ::close(fd);
+        return state;
+    }
+
+    void writeSystemStatePageToFile(
+        const scratchbird::core::BootstrapSystemStatePage& state_in)
+    {
+        std::vector<uint8_t> buffer(8192, 0);
+        const int fd = ::open(db_path_.c_str(), O_RDWR);
+        ASSERT_GE(fd, 0) << std::strerror(errno);
+
+        const off_t offset = static_cast<off_t>(scratchbird::core::BOOTSTRAP_PAGE_SYSTEM_STATE) *
+                             static_cast<off_t>(buffer.size());
+        const ssize_t bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+
+        auto state = state_in;
+        std::memcpy(buffer.data(), &state, sizeof(state));
+        auto* page = reinterpret_cast<scratchbird::core::BootstrapSystemStatePage*>(buffer.data());
+        page->page_header.checksum =
+            scratchbird::core::calculatePageChecksum(buffer.data(), buffer.size());
+
+        const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
+        ::close(fd);
+    }
+
+    void patchTipStateInFile(uint64_t xid, scratchbird::core::TransactionState new_state)
+    {
+        std::vector<uint8_t> buffer(8192, 0);
+        const int fd = ::open(db_path_.c_str(), O_RDWR);
+        ASSERT_GE(fd, 0) << std::strerror(errno);
+
+        const off_t offset = static_cast<off_t>(scratchbird::core::BOOTSTRAP_PAGE_TX_MAP_ROOT) *
+                             static_cast<off_t>(buffer.size());
+        const ssize_t bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+
+        auto* tip_header =
+            reinterpret_cast<scratchbird::core::TIPPageHeader*>(buffer.data());
+        auto* entries = reinterpret_cast<scratchbird::core::TIPEntry*>(
+            buffer.data() + sizeof(scratchbird::core::TIPPageHeader));
+
+        bool found = false;
+        for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
+        {
+            if (entries[i].xid == xid)
+            {
+                entries[i].state = static_cast<uint8_t>(new_state);
+                entries[i].commit_time = 0;
+                found = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(found);
+
+        tip_header->page_header.checksum =
+            scratchbird::core::calculatePageChecksum(buffer.data(), buffer.size());
+        const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
+        ::close(fd);
+    }
+
+    void markNextOpenAsUnclean()
+    {
+        auto state_page = readSystemStatePageFromFile();
+        state_page.clean_shutdown = 0;
+        writeSystemStatePageToFile(state_page);
+    }
+
+    void reopenDatabase()
+    {
+        ErrorContext ctx;
+        db_ = std::make_unique<Database>();
+        ASSERT_EQ(db_->open(db_path_, &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(db_->initializeProcArray(16, &ctx), Status::OK) << ctx.message;
+
+        catalog_ = db_->catalog_manager();
+        txn_mgr_ = db_->transaction_manager();
+        lock_mgr_ = db_->lock_manager();
+        sweep_mgr_ = db_->sweep_manager();
+        storage_ = db_->storage_engine();
+        ASSERT_NE(catalog_, nullptr);
+        ASSERT_NE(txn_mgr_, nullptr);
+        ASSERT_NE(lock_mgr_, nullptr);
+        ASSERT_NE(sweep_mgr_, nullptr);
+        ASSERT_NE(storage_, nullptr);
+
+        ASSERT_EQ(db_->connect(conn_, &ctx), Status::OK) << ctx.message;
+        ConnectionContext::setCurrent(conn_.get());
+        system_user_id_ = catalog_->getSystemUserId(&ctx);
+    }
+
+    auto visibleRows(ConnectionContext* conn) -> std::vector<std::pair<int32_t, int32_t>>
+    {
+        ScopedCurrentConnection scope(conn);
+        ErrorContext ctx;
+        auto scan = storage_->createScan(table_id_, &ctx);
+        EXPECT_NE(scan, nullptr) << ctx.message;
+
+        std::vector<std::pair<int32_t, int32_t>> rows;
+        if (!scan)
+        {
+            return rows;
+        }
+
+        Tuple tuple{};
+        while (true)
+        {
+            Status status = scan->next(&tuple, &ctx);
+            if (status == Status::NOT_FOUND)
+            {
+                break;
+            }
+            EXPECT_EQ(status, Status::OK) << ctx.message;
+            if (status != Status::OK)
+            {
+                break;
+            }
+
+            EXPECT_GE(tuple.data_size, sizeof(TupleHeader) + sizeof(int32_t) * 2);
+            if (tuple.data_size < sizeof(TupleHeader) + sizeof(int32_t) * 2)
+            {
+                break;
+            }
+            int32_t id = 0;
+            int32_t value = 0;
+            std::memcpy(&id, tuple.data + sizeof(TupleHeader), sizeof(int32_t));
+            std::memcpy(&value,
+                        tuple.data + sizeof(TupleHeader) + sizeof(int32_t),
+                        sizeof(int32_t));
+            rows.emplace_back(id, value);
+        }
+
+        return rows;
+    }
+
     std::string db_path_;
     std::unique_ptr<Database> db_;
     CatalogManager* catalog_ = nullptr;
@@ -430,6 +602,162 @@ TEST_F(MgaFailpointReplayTest, SweepCheckpointLossCanBeReplayedAndRecovered)
     ASSERT_EQ(db_->mga_failpoint_manager()->clear(&ctx), Status::OK) << ctx.message;
 
     ASSERT_EQ(sweep_mgr_->executeSweep(true, &ctx), Status::OK) << ctx.message;
+}
+
+TEST_F(MgaFailpointReplayTest, CommitPreTipFailpointAbortsInsertedRowAcrossUncleanRestart)
+{
+    ErrorContext ctx;
+    {
+        ScopedCurrentConnection scope(conn_.get());
+        auto tuple = makeTuple(101, 1001);
+        uint32_t page_id = 0;
+        uint16_t item_id = 0;
+        ASSERT_EQ(storage_->insertTuple(table_id_,
+                                        tuple.data(),
+                                        tuple.size(),
+                                        &page_id,
+                                        &item_id,
+                                        &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+
+    const uint64_t xid = conn_->getCurrentXid();
+    armFailpoint("commit-pre-restart-seed",
+                 {std::string(MgaFailpointTriggers::kAfterDirtyFlushBeforeTipTerminal),
+                  MgaFailpointAction::RETURN_ERROR,
+                  1,
+                  Status::IO_ERROR,
+                  0,
+                  "commit_pre_tip_blocked"});
+
+    ASSERT_EQ(conn_->commit(&ctx), Status::IO_ERROR);
+    auto events = listEvents();
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].trigger_name, MgaFailpointTriggers::kAfterDirtyFlushBeforeTipTerminal);
+
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::COMMITTED;
+    ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::ACTIVE);
+
+    closeDatabase();
+    markNextOpenAsUnclean();
+    patchTipStateInFile(xid, scratchbird::core::TransactionState::ACTIVE);
+    reopenDatabase();
+
+    ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::ABORTED);
+    EXPECT_TRUE(visibleRows(conn_.get()).empty());
+}
+
+TEST_F(MgaFailpointReplayTest, CommitPostTipFailpointKeepsInsertedRowCommittedAcrossRestart)
+{
+    ErrorContext ctx;
+    {
+        ScopedCurrentConnection scope(conn_.get());
+        auto tuple = makeTuple(202, 2002);
+        uint32_t page_id = 0;
+        uint16_t item_id = 0;
+        ASSERT_EQ(storage_->insertTuple(table_id_,
+                                        tuple.data(),
+                                        tuple.size(),
+                                        &page_id,
+                                        &item_id,
+                                        &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+
+    const uint64_t xid = conn_->getCurrentXid();
+    armFailpoint("commit-post-restart-seed",
+                 {std::string(MgaFailpointTriggers::kAfterTipTerminalBeforeClientAck),
+                  MgaFailpointAction::RETURN_ERROR,
+                  1,
+                  Status::IO_ERROR,
+                  0,
+                  "commit_durable_before_ack"});
+
+    ASSERT_EQ(conn_->commit(&ctx), Status::IO_ERROR);
+    auto events = listEvents();
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].trigger_name, MgaFailpointTriggers::kAfterTipTerminalBeforeClientAck);
+
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::ACTIVE;
+    ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
+
+    closeDatabase();
+    markNextOpenAsUnclean();
+    reopenDatabase();
+
+    ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
+
+    const auto rows = visibleRows(conn_.get());
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0].first, 202);
+    EXPECT_EQ(rows[0].second, 2002);
+}
+
+TEST_F(MgaFailpointReplayTest, PrepareCatalogOnlyFailpointPromotesToPreparedAcrossRestart)
+{
+    ErrorContext ctx;
+    {
+        ScopedCurrentConnection scope(conn_.get());
+        auto tuple = makeTuple(303, 3003);
+        uint32_t page_id = 0;
+        uint16_t item_id = 0;
+        ASSERT_EQ(storage_->insertTuple(table_id_,
+                                        tuple.data(),
+                                        tuple.size(),
+                                        &page_id,
+                                        &item_id,
+                                        &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+
+    const uint64_t xid = conn_->getCurrentXid();
+    const std::string gid = "rmga016_prepare_catalog_only";
+    armFailpoint("prepare-restart-seed",
+                 {std::string(MgaFailpointTriggers::kBetweenPreparedRecordAndTipPrepared),
+                  MgaFailpointAction::RETURN_ERROR,
+                  1,
+                  Status::IO_ERROR,
+                  0,
+                  "prepare_catalog_only"});
+
+    ASSERT_EQ(conn_->prepareTransaction(gid, &ctx), Status::IO_ERROR);
+    auto events = listEvents();
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].trigger_name, MgaFailpointTriggers::kBetweenPreparedRecordAndTipPrepared);
+
+    CatalogManager::PreparedTransactionInfo info{};
+    ASSERT_EQ(catalog_->getPreparedTransactionByGid(gid, info, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(info.txn_id, xid);
+
+    scratchbird::core::TransactionState state = scratchbird::core::TransactionState::COMMITTED;
+    ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::ACTIVE);
+
+    closeDatabase();
+    markNextOpenAsUnclean();
+    patchTipStateInFile(xid, scratchbird::core::TransactionState::ACTIVE);
+    reopenDatabase();
+
+    ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(state, scratchbird::core::TransactionState::PREPARED);
+    std::unique_ptr<ConnectionContext> prepared_reader;
+    ASSERT_EQ(db_->connect(prepared_reader, &ctx), Status::OK) << ctx.message;
+    EXPECT_TRUE(visibleRows(prepared_reader.get()).empty());
+
+    ASSERT_EQ(txn_mgr_->commitPreparedTransaction(gid, &ctx), Status::OK) << ctx.message;
+    std::unique_ptr<ConnectionContext> committed_reader;
+    ASSERT_EQ(db_->connect(committed_reader, &ctx), Status::OK) << ctx.message;
+    const auto rows = visibleRows(committed_reader.get());
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0].first, 303);
+    EXPECT_EQ(rows[0].second, 3003);
 }
 
 TEST_F(MgaFailpointReplayTest, DeadlockFailpointsAreReachable)

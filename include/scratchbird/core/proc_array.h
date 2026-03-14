@@ -63,6 +63,7 @@ namespace scratchbird::core
         uint32_t proc_id;  // Process ID (slot number)
         pid_t backend_pid; // OS process ID
         bool is_active;    // Is this slot active?
+        bool is_detached_prepared_owner; // Reserved slot retaining prepared-tx lock ownership
         ID session_id;     // Bound session UUID (0 = none)
 
         // Transaction state
@@ -90,7 +91,7 @@ namespace scratchbird::core
         bool termination_requested; // Backend should terminate connection
 
         // Padding for cache line alignment (adjusted for new fields)
-        uint8_t padding[8];
+        uint8_t padding[7];
     };
 
     // Process array (shared memory structure)
@@ -130,6 +131,13 @@ namespace scratchbird::core
         static auto registerBackend(uint32_t *proc_id_out, ErrorContext *ctx = nullptr) -> Status;
 
         static auto unregisterBackend(uint32_t proc_id, ErrorContext *ctx = nullptr) -> Status;
+
+        // Prepared-transaction lock owner reservation
+        static auto detachPreparedOwner(uint32_t proc_id, ErrorContext *ctx = nullptr) -> Status;
+        static auto reserveDetachedPreparedOwner(uint32_t *proc_id_out,
+                                                 ErrorContext *ctx = nullptr) -> Status;
+        static auto releaseDetachedPreparedOwner(uint32_t proc_id,
+                                                 ErrorContext *ctx = nullptr) -> Status;
 
         // Transaction tracking
         static auto setTransactionId(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr)

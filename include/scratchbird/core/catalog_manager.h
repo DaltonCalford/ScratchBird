@@ -3066,7 +3066,21 @@ public:
             ID owner_id;            // User that prepared the transaction
             ID database_id;         // Database UUID
             uint32_t lock_owner_proc_id = 0; // Detached backend slot retaining prepared locks
+            uint32_t lock_count = 0; // Persisted non-version locks bound to the prepared owner
             uint64_t prepared_time = 0; // Epoch micros
+            bool is_valid = true;
+        };
+
+        struct PreparedTransactionLockInfo
+        {
+            ID prepared_id;
+            UuidV7Bytes object_uuid{};
+            uint64_t page_num = 0;
+            uint64_t request_time = 0;
+            uint16_t offset_num = 0;
+            uint8_t target_type = 0;
+            uint8_t mode = 0;
+            bool granted = true;
             bool is_valid = true;
         };
 
@@ -11088,6 +11102,22 @@ public:
         auto listPreparedTransactions(std::vector<PreparedTransactionInfo>& prepared_out,
                                      ErrorContext* ctx = nullptr) -> Status;
 
+        auto updatePreparedTransaction(const PreparedTransactionInfo& info,
+                                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto createPreparedTransactionLocks(
+            const ID& prepared_id,
+            const std::vector<PreparedTransactionLockInfo>& locks,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto listPreparedTransactionLocks(
+            const ID& prepared_id,
+            std::vector<PreparedTransactionLockInfo>& locks_out,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        auto deletePreparedTransactionLocks(const ID& prepared_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
         // Compute transitive closure of roles (including roles granted to roles)
         auto getEffectiveRoles(const ID& user_id, std::vector<ID>& roles_out,
                               ErrorContext* ctx = nullptr) -> Status;
@@ -13543,6 +13573,7 @@ public:
         uint32_t migration_history_table_page_ = 0; // Migration history (WP-2 CAT-L2)
         uint32_t dormant_transactions_table_page_ = 0; // Dormant transactions (Track 3.2)
         uint32_t prepared_transactions_table_page_ = 0; // Prepared transactions (2PC)
+        uint32_t prepared_transaction_locks_table_page_ = 0; // Prepared transaction lock snapshots
         uint32_t encryption_keys_table_page_ = 0;   // Encryption keys (Plan 03B)
         uint32_t authkeys_table_page_ = 0;          // AuthKeys (Plan 03)
         uint32_t sessions_table_page_ = 0;          // Sessions (Plan 03)

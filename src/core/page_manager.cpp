@@ -625,6 +625,8 @@ namespace scratchbird::core
         uint32_t corrupt_pages = 0;
         uint32_t chain_relinkable_pages = 0;
         uint32_t chain_blocked_pages = 0;
+        uint32_t chain_quarantinable_pages = 0;
+        uint32_t chain_unrecoverable_pages = 0;
 
         for (uint32_t page_id = BOOTSTRAP_FIXED_PAGE_COUNT; page_id < total_pages_; page_id++)
         {
@@ -678,6 +680,7 @@ namespace scratchbird::core
                     if (audit_status != Status::OK)
                     {
                         ++chain_blocked_pages;
+                        ++chain_unrecoverable_pages;
                         LOG_WARNING(STORAGE,
                                     "FSM reconstruction: heap page %u chain audit failed: %d",
                                     page_id,
@@ -690,6 +693,16 @@ namespace scratchbird::core
                                     "FSM reconstruction: heap page %u has cleanup-blocking chain anomalies: %s",
                                     page_id,
                                     audit.summary.c_str());
+                        if (audit.strongest_class ==
+                            HeapPage::VersionChainAnomalyClass::QUARANTINABLE)
+                        {
+                            ++chain_quarantinable_pages;
+                        }
+                        else if (audit.strongest_class ==
+                                 HeapPage::VersionChainAnomalyClass::UNRECOVERABLE)
+                        {
+                            ++chain_unrecoverable_pages;
+                        }
                     }
                     else if (audit.strongest_class == HeapPage::VersionChainAnomalyClass::RELINKABLE)
                     {
@@ -724,6 +737,8 @@ namespace scratchbird::core
             summary_out->corrupt_pages = corrupt_pages;
             summary_out->relinkable_chain_pages = chain_relinkable_pages;
             summary_out->cleanup_blocked_chain_pages = chain_blocked_pages;
+            summary_out->quarantinable_chain_pages = chain_quarantinable_pages;
+            summary_out->unrecoverable_chain_pages = chain_unrecoverable_pages;
         }
 
         // Mark FSM as dirty so it gets flushed with the corrected state

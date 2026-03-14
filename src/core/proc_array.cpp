@@ -129,6 +129,7 @@ namespace scratchbird::core
             std::memset(&pcbs[i], 0, sizeof(ProcessControlBlock));
             pcbs[i].proc_id = i;
             pcbs[i].is_active = false;
+            pcbs[i].is_detached_prepared_owner = false;
             pcbs[i].backend_pid = 0;
             pcbs[i].xid = 0;
             pcbs[i].backend_xmin = 0;
@@ -207,7 +208,7 @@ namespace scratchbird::core
 
         for (uint32_t i = 0; i < array->max_backends; ++i)
         {
-            if (!pcbs[i].is_active)
+            if (!pcbs[i].is_active && !pcbs[i].is_detached_prepared_owner)
             {
                 proc_id = i;
                 found = true;
@@ -226,6 +227,7 @@ namespace scratchbird::core
         // Initialize PCB
         ProcessControlBlock *pcb = &pcbs[proc_id];
         pcb->is_active = true;
+        pcb->is_detached_prepared_owner = false;
         pcb->backend_pid = static_cast<pid_t>(::getpid());
         pcb->xid = 0;
         pcb->backend_xmin = 0;
@@ -280,12 +282,153 @@ namespace scratchbird::core
         std::memset(pcb, 0, sizeof(ProcessControlBlock));
         pcb->proc_id = proc_id;
         pcb->is_active = false;
+        pcb->is_detached_prepared_owner = false;
 
         array->num_active--;
         pthread_rwlock_unlock(&array->array_lock);
 
         pthread_mutex_unlock(&array->alloc_lock);
 
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::detachPreparedOwner(uint32_t proc_id, ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (proc_id >= array->max_backends)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid proc_id");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_mutex_lock(&array->alloc_lock);
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_active)
+        {
+            pthread_mutex_unlock(&array->alloc_lock);
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Backend not active");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&array->array_lock);
+        pcb->is_active = false;
+        pcb->is_detached_prepared_owner = true;
+        pcb->backend_pid = 0;
+        pcb->session_id = ID{};
+        pcb->xid = 0;
+        pcb->backend_xmin = 0;
+        pcb->xmin = 0;
+        pcb->wait_lock_id = 0;
+        pcb->deadlock_check_pending = false;
+        pcb->xact_start_time = 0;
+        pcb->query_start_time = 0;
+        pcb->state_change_time = 0;
+        pcb->termination_requested = false;
+        std::memset(pcb->query_text, 0, sizeof(pcb->query_text));
+
+        array->num_active--;
+        pthread_rwlock_unlock(&array->array_lock);
+
+        pthread_mutex_unlock(&array->alloc_lock);
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::reserveDetachedPreparedOwner(uint32_t *proc_id_out,
+                                                        ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (!proc_id_out)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "proc_id_out is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_mutex_lock(&array->alloc_lock);
+
+        uint32_t proc_id = 0;
+        bool found = false;
+        auto *pcbs = reinterpret_cast<ProcessControlBlock *>(
+            reinterpret_cast<uint8_t *>(array) + sizeof(ProcArray));
+
+        for (uint32_t i = 0; i < array->max_backends; ++i)
+        {
+            if (!pcbs[i].is_active && !pcbs[i].is_detached_prepared_owner)
+            {
+                proc_id = i;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found)
+        {
+            pthread_mutex_unlock(&array->alloc_lock);
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                              "No free backend slots for prepared transaction owner");
+            return Status::PAGE_FULL;
+        }
+
+        pthread_rwlock_wrlock(&array->array_lock);
+        ProcessControlBlock *pcb = &pcbs[proc_id];
+        std::memset(pcb, 0, sizeof(ProcessControlBlock));
+        pcb->proc_id = proc_id;
+        pcb->is_active = false;
+        pcb->is_detached_prepared_owner = true;
+        pthread_rwlock_unlock(&array->array_lock);
+
+        pthread_mutex_unlock(&array->alloc_lock);
+        *proc_id_out = proc_id;
+        return Status::OK;
+    }
+
+    auto ProcArrayManager::releaseDetachedPreparedOwner(uint32_t proc_id,
+                                                        ErrorContext *ctx) -> Status
+    {
+        ProcArray *array = proc_array_.load(std::memory_order_acquire);
+        if (!array)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ProcArray not initialized");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (proc_id >= array->max_backends)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid proc_id");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_mutex_lock(&array->alloc_lock);
+
+        ProcessControlBlock *pcb = getPCB(proc_id);
+        if (!pcb || !pcb->is_detached_prepared_owner)
+        {
+            pthread_mutex_unlock(&array->alloc_lock);
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Backend slot is not a detached prepared owner");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        pthread_rwlock_wrlock(&array->array_lock);
+        std::memset(pcb, 0, sizeof(ProcessControlBlock));
+        pcb->proc_id = proc_id;
+        pcb->is_active = false;
+        pcb->is_detached_prepared_owner = false;
+        pthread_rwlock_unlock(&array->array_lock);
+
+        pthread_mutex_unlock(&array->alloc_lock);
         return Status::OK;
     }
 

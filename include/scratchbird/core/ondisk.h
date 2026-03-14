@@ -472,10 +472,10 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         uint64_t restart_generation;
         uint64_t last_clean_shutdown_generation;
         uint64_t config_flags;
-        uint64_t reserved[10];
+        uint64_t reserved[16];
     };
 
-    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_VERSION = 1;
+    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_VERSION = 2;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT = 0;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_OUTCOME_SLOT = 1;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_STATUS_SLOT = 2;
@@ -486,11 +486,17 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_RELINKABLE_SLOT = 7;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_BLOCKED_SLOT = 8;
     constexpr size_t SYSTEM_STATE_STARTUP_RECON_FLAGS_SLOT = 9;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_QUARANTINABLE_SLOT = 10;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_UNRECOVERABLE_SLOT = 11;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_CLASS_SLOT = 12;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_ACTION_SLOT = 13;
+    constexpr size_t SYSTEM_STATE_STARTUP_RECON_REPAIR_PLAN_SLOT = 14;
 
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_CLEAN_MARKER = 1ULL << 0;
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_STARTUP_REPAIR = 1ULL << 1;
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_PAGE_SCAN_FINDINGS = 1ULL << 2;
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_CORRUPT_PAGES = 1ULL << 3;
+    constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_FLAG_QUARANTINE_ACTIVE = 1ULL << 4;
 
     struct BootstrapCatalogRootHeader
     {

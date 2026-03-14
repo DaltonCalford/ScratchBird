@@ -238,8 +238,10 @@ protected:
     Database::StartupReconciliationState readPersistedStartupReconciliationStateFromFile() {
         const auto state_page = readSystemStatePageFromFile();
         Database::StartupReconciliationState state{};
-        if (state_page.reserved[scratchbird::core::SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT] !=
-            scratchbird::core::SYSTEM_STATE_STARTUP_RECON_VERSION) {
+        const uint64_t version =
+            state_page.reserved[scratchbird::core::SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT];
+        if (version == 0 ||
+            version > scratchbird::core::SYSTEM_STATE_STARTUP_RECON_VERSION) {
             return state;
         }
 
@@ -269,6 +271,20 @@ protected:
             (flags & scratchbird::core::SYSTEM_STATE_STARTUP_RECON_FLAG_PAGE_SCAN_FINDINGS) != 0;
         state.has_corrupt_pages =
             (flags & scratchbird::core::SYSTEM_STATE_STARTUP_RECON_FLAG_CORRUPT_PAGES) != 0;
+        state.quarantine_active =
+            (flags & scratchbird::core::SYSTEM_STATE_STARTUP_RECON_FLAG_QUARANTINE_ACTIVE) != 0;
+        if (version >= 2) {
+            state.quarantinable_chain_pages = static_cast<uint32_t>(
+                state_page.reserved[scratchbird::core::SYSTEM_STATE_STARTUP_RECON_QUARANTINABLE_SLOT]);
+            state.unrecoverable_chain_pages = static_cast<uint32_t>(
+                state_page.reserved[scratchbird::core::SYSTEM_STATE_STARTUP_RECON_UNRECOVERABLE_SLOT]);
+            state.corruption_class = static_cast<Database::StartupCorruptionClass>(
+                state_page.reserved[scratchbird::core::SYSTEM_STATE_STARTUP_RECON_CLASS_SLOT]);
+            state.quarantine_action = static_cast<Database::StartupQuarantineAction>(
+                state_page.reserved[scratchbird::core::SYSTEM_STATE_STARTUP_RECON_ACTION_SLOT]);
+            state.repair_plan_mask =
+                state_page.reserved[scratchbird::core::SYSTEM_STATE_STARTUP_RECON_REPAIR_PLAN_SLOT];
+        }
         return state;
     }
 
@@ -359,6 +375,84 @@ protected:
         status = db_.buffer_pool()->unpinPage(page_id, true, &ctx);
         EXPECT_EQ(status, Status::OK) << ctx.message;
         return page_id;
+    }
+
+    uint32_t createQuarantinableHeapPage() {
+        ErrorContext ctx;
+        uint32_t page_id = 0;
+        Status status = db_.page_manager()->allocatePage(page_id, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        if (status != Status::OK) {
+            return 0;
+        }
+
+        void *page_buffer = nullptr;
+        status = db_.buffer_pool()->pinPage(page_id, &page_buffer, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        if (status != Status::OK) {
+            return 0;
+        }
+        status = db_.buffer_pool()->lockPage(page_id, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        if (status != Status::OK) {
+            (void)db_.buffer_pool()->unpinPage(page_id, false, &ctx);
+            return 0;
+        }
+
+        auto *page_bytes = static_cast<uint8_t *>(page_buffer);
+        scratchbird::core::HeapPage heap_page(page_bytes, db_.page_size(), nullptr, &db_, {});
+        status = heap_page.initialize(page_id, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        if (status != Status::OK) {
+            (void)db_.buffer_pool()->unlockPage(page_id, &ctx);
+            (void)db_.buffer_pool()->unpinPage(page_id, false, &ctx);
+            return 0;
+        }
+
+        const uint8_t payload[4] = {0xAA, 0xBB, 0xCC, 0xDD};
+        auto tuple_data = buildHeapTuple(payload, sizeof(payload));
+        uint16_t item_id = 0;
+        status = heap_page.insertTuple(tuple_data.data(),
+                                       static_cast<uint32_t>(tuple_data.size()),
+                                       100,
+                                       &item_id,
+                                       &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        if (status == Status::OK) {
+            const uint8_t *tuple_bytes = nullptr;
+            uint32_t tuple_size = 0;
+            status = heap_page.getTuple(item_id, &tuple_bytes, &tuple_size, &ctx);
+            EXPECT_EQ(status, Status::OK) << ctx.message;
+            if (status == Status::OK) {
+                auto *tuple_hdr = reinterpret_cast<scratchbird::core::TupleHeader *>(
+                    const_cast<uint8_t *>(tuple_bytes));
+                tuple_hdr->back_version_gpid =
+                    scratchbird::core::makeGPID(scratchbird::core::PRIMARY_TABLESPACE_ID, 0);
+                tuple_hdr->back_version_slot = 0;
+            }
+        }
+
+        status = db_.buffer_pool()->unlockPage(page_id, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        status = db_.buffer_pool()->unpinPage(page_id, true, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return page_id;
+    }
+
+    void corruptPageWithoutChecksumRepair(uint32_t page_id, uint32_t byte_offset) {
+        std::vector<uint8_t> buffer(db_.page_size());
+        const int fd = ::open(db_file_->path().c_str(), O_RDWR);
+        ASSERT_GE(fd, 0) << std::strerror(errno);
+        const off_t offset = static_cast<off_t>(page_id) *
+                             static_cast<off_t>(db_.page_size());
+        const ssize_t read_bytes = ::pread(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(read_bytes, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ASSERT_LT(byte_offset, buffer.size());
+        buffer[byte_offset] ^= 0x5A;
+        const ssize_t written = ::pwrite(fd, buffer.data(), buffer.size(), offset);
+        ASSERT_EQ(written, static_cast<ssize_t>(buffer.size())) << std::strerror(errno);
+        ASSERT_EQ(::fsync(fd), 0) << std::strerror(errno);
+        ::close(fd);
     }
 
     Database db_{};
@@ -595,6 +689,47 @@ TEST_F(ExecutorTransactionPayloadTest, RollbackPreparedReleasesDetachedPreparedL
     }
 }
 
+TEST_F(ExecutorTransactionPayloadTest, PreparedDetachedOwnerSlotRemainsReservedUntilResolution) {
+    auto *txn_manager = db_.transaction_manager();
+    auto *lock_mgr = db_.lock_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    ASSERT_NE(lock_mgr, nullptr);
+
+    LockTag tag{};
+    tag.target_type = LockTarget::LOCK_TARGET_TABLE;
+    tag.object_uuid = scratchbird::core::generateUuidV7();
+    tag.page_num = 0;
+    tag.offset_num = 0;
+    tag.padding = 0;
+
+    ErrorContext ctx;
+    const uint32_t prepared_owner_proc_id = conn_->getProcId();
+    ASSERT_EQ(lock_mgr->acquireLock(prepared_owner_proc_id,
+                                    tag,
+                                    LockMode::LOCK_SHARE,
+                                    false,
+                                    0,
+                                    &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(conn_->prepareTransaction("gid_prepared_slot_reservation_test", &ctx), Status::OK)
+        << ctx.message;
+
+    std::unique_ptr<ConnectionContext> other_conn;
+    ASSERT_EQ(db_.connect(other_conn, &ctx), Status::OK) << ctx.message;
+    EXPECT_NE(other_conn->getProcId(), prepared_owner_proc_id);
+    other_conn.reset();
+
+    ASSERT_EQ(txn_manager->commitPreparedTransaction("gid_prepared_slot_reservation_test", &ctx),
+              Status::OK)
+        << ctx.message;
+
+    std::unique_ptr<ConnectionContext> reuse_conn;
+    ASSERT_EQ(db_.connect(reuse_conn, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(reuse_conn->getProcId(), prepared_owner_proc_id);
+}
+
 TEST_F(ExecutorTransactionPayloadTest, ActiveStateNormalizesToAbortedAcrossRestart) {
     auto *txn_manager = db_.transaction_manager();
     ASSERT_NE(txn_manager, nullptr);
@@ -755,6 +890,73 @@ TEST_F(ExecutorTransactionPayloadTest, PreparedStatePersistsAcrossRestartAndRema
               Status::NOT_FOUND);
 }
 
+TEST_F(ExecutorTransactionPayloadTest, PreparedLockStateRestoresAcrossRestart) {
+    auto *txn_manager = db_.transaction_manager();
+    auto *lock_mgr = db_.lock_manager();
+    ASSERT_NE(txn_manager, nullptr);
+    ASSERT_NE(lock_mgr, nullptr);
+
+    LockTag tag{};
+    tag.target_type = LockTarget::LOCK_TARGET_TABLE;
+    tag.object_uuid = scratchbird::core::generateUuidV7();
+    tag.page_num = 0;
+    tag.offset_num = 0;
+    tag.padding = 0;
+
+    ErrorContext ctx;
+    const uint32_t prepared_owner_proc_id = conn_->getProcId();
+    ASSERT_EQ(lock_mgr->acquireLock(prepared_owner_proc_id,
+                                    tag,
+                                    LockMode::LOCK_ROW_EXCLUSIVE,
+                                    false,
+                                    0,
+                                    &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(conn_->prepareTransaction("gid_restart_lock_restore_test", &ctx), Status::OK)
+        << ctx.message;
+
+    scratchbird::core::CatalogManager::PreparedTransactionInfo info{};
+    ASSERT_EQ(db_.catalog_manager()->getPreparedTransactionByGid("gid_restart_lock_restore_test",
+                                                                 info,
+                                                                 &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(info.lock_owner_proc_id, prepared_owner_proc_id);
+    EXPECT_EQ(info.lock_count, 1u);
+
+    closeDatabase();
+    reopenDatabase();
+
+    txn_manager = db_.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+
+    scratchbird::core::CatalogManager::PreparedTransactionInfo reopened_info{};
+    ASSERT_EQ(db_.catalog_manager()->getPreparedTransactionByGid("gid_restart_lock_restore_test",
+                                                                 reopened_info,
+                                                                 &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(reopened_info.lock_count, 1u);
+    EXPECT_NE(reopened_info.lock_owner_proc_id, conn_->getProcId());
+
+    auto locks = listLocks();
+    bool found_restored_lock = false;
+    for (const auto &lock : locks) {
+        if (lock.proc_id == reopened_info.lock_owner_proc_id &&
+            lock.tag == tag &&
+            lock.mode == LockMode::LOCK_ROW_EXCLUSIVE &&
+            lock.granted) {
+            found_restored_lock = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_restored_lock);
+
+    ASSERT_EQ(txn_manager->commitPreparedTransaction("gid_restart_lock_restore_test", &ctx),
+              Status::OK)
+        << ctx.message;
+}
+
 TEST_F(ExecutorTransactionPayloadTest, UncleanRestartPromotesPreparedEvidenceBackToPrepared) {
     auto *txn_manager = db_.transaction_manager();
     ASSERT_NE(txn_manager, nullptr);
@@ -849,6 +1051,47 @@ TEST_F(ExecutorTransactionPayloadTest, PreparedTipWithoutCatalogRowFailsRestart)
     EXPECT_EQ(persisted.failure_status, Status::PAGE_CORRUPT);
 }
 
+TEST_F(ExecutorTransactionPayloadTest, PreparedLockSnapshotMismatchFailsRestart) {
+    auto *lock_mgr = db_.lock_manager();
+    ASSERT_NE(lock_mgr, nullptr);
+
+    LockTag tag{};
+    tag.target_type = LockTarget::LOCK_TARGET_TABLE;
+    tag.object_uuid = scratchbird::core::generateUuidV7();
+    tag.page_num = 0;
+    tag.offset_num = 0;
+    tag.padding = 0;
+
+    ErrorContext ctx;
+    ASSERT_EQ(lock_mgr->acquireLock(conn_->getProcId(),
+                                    tag,
+                                    LockMode::LOCK_SHARE,
+                                    false,
+                                    0,
+                                    &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(conn_->prepareTransaction("gid_restart_missing_lock_snapshot", &ctx), Status::OK)
+        << ctx.message;
+
+    scratchbird::core::CatalogManager::PreparedTransactionInfo info{};
+    ASSERT_EQ(db_.catalog_manager()->getPreparedTransactionByGid("gid_restart_missing_lock_snapshot",
+                                                                 info,
+                                                                 &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(info.lock_count, 1u);
+    ASSERT_EQ(db_.catalog_manager()->deletePreparedTransactionLocks(info.prepared_id, &ctx),
+              Status::OK) << ctx.message;
+
+    closeDatabase();
+
+    ErrorContext reopen_ctx;
+    EXPECT_EQ(db_.open(db_file_->path(), &reopen_ctx), Status::PAGE_CORRUPT)
+        << reopen_ctx.message;
+    EXPECT_NE(reopen_ctx.message.find("lock snapshot count mismatch"), std::string::npos)
+        << reopen_ctx.message;
+}
+
 TEST_F(ExecutorTransactionPayloadTest, StartupReconciliationCapturesCleanupBlockedChainFindings) {
     closeDatabase();
 
@@ -881,6 +1124,88 @@ TEST_F(ExecutorTransactionPayloadTest, StartupReconciliationCapturesCleanupBlock
     EXPECT_TRUE(persisted.has_page_scan_findings);
     EXPECT_GE(persisted.cleanup_blocked_chain_pages,
               baseline.cleanup_blocked_chain_pages + 1);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, StartupReconciliationQuarantinesQuarantinableChainFindings) {
+    const uint32_t anomalous_page = createQuarantinableHeapPage();
+    EXPECT_GT(anomalous_page, scratchbird::core::BOOTSTRAP_FIXED_PAGE_COUNT);
+
+    closeDatabase();
+
+    auto state_page = readSystemStatePageFromFile();
+    state_page.clean_shutdown = 0;
+    writeSystemStatePageToFile(state_page);
+
+    reopenDatabase();
+
+    const auto &startup_state = db_.last_startup_reconciliation();
+    EXPECT_EQ(startup_state.outcome,
+              Database::StartupReconciliationOutcome::RECOVERY_WITH_FINDINGS);
+    EXPECT_EQ(startup_state.corruption_class,
+              Database::StartupCorruptionClass::QUARANTINE_REQUIRED);
+    EXPECT_EQ(startup_state.quarantine_action,
+              Database::StartupQuarantineAction::READ_ONLY);
+    EXPECT_TRUE(startup_state.quarantine_active);
+    EXPECT_GE(startup_state.quarantinable_chain_pages, 1u);
+    EXPECT_TRUE(db_.startup_quarantine_active());
+    EXPECT_NE(startup_state.repair_plan_mask &
+                  Database::STARTUP_REPAIR_PLAN_READ_ONLY_QUARANTINE,
+              0u);
+
+    ErrorContext tx_ctx;
+    EXPECT_EQ(conn_->startTransaction(false,
+                                      IsolationLevel::SNAPSHOT,
+                                      ReadCommittedMode::READ_CONSISTENCY,
+                                      true,
+                                      &tx_ctx),
+              Status::READ_ONLY_TRANSACTION);
+    EXPECT_NE(tx_ctx.message.find("STARTUP_QUARANTINE_READ_ONLY"), std::string::npos)
+        << tx_ctx.message;
+
+    const auto persisted = readPersistedStartupReconciliationStateFromFile();
+    EXPECT_EQ(persisted.corruption_class,
+              Database::StartupCorruptionClass::QUARANTINE_REQUIRED);
+    EXPECT_EQ(persisted.quarantine_action,
+              Database::StartupQuarantineAction::READ_ONLY);
+    EXPECT_TRUE(persisted.quarantine_active);
+    EXPECT_GE(persisted.quarantinable_chain_pages, 1u);
+}
+
+TEST_F(ExecutorTransactionPayloadTest, StartupCorruptionPolicyQuarantinesChecksumCorruption) {
+    const uint32_t page_id = createCleanupBlockedHeapPage();
+    EXPECT_GT(page_id, scratchbird::core::BOOTSTRAP_FIXED_PAGE_COUNT);
+
+    closeDatabase();
+    corruptPageWithoutChecksumRepair(page_id, 128);
+
+    reopenDatabase();
+
+    const auto &startup_state = db_.last_startup_reconciliation();
+    EXPECT_EQ(startup_state.outcome,
+              Database::StartupReconciliationOutcome::CLEAN_WITH_FINDINGS);
+    EXPECT_EQ(startup_state.corruption_class,
+              Database::StartupCorruptionClass::QUARANTINE_REQUIRED);
+    EXPECT_EQ(startup_state.quarantine_action,
+              Database::StartupQuarantineAction::READ_ONLY);
+    EXPECT_TRUE(startup_state.quarantine_active);
+    EXPECT_TRUE(startup_state.has_corrupt_pages);
+    EXPECT_NE(startup_state.repair_plan_mask &
+                  Database::STARTUP_REPAIR_PLAN_REBUILD_FSM,
+              0u);
+    EXPECT_TRUE(db_.startup_quarantine_active());
+
+    const auto persisted = readPersistedStartupReconciliationStateFromFile();
+    EXPECT_EQ(persisted.outcome,
+              Database::StartupReconciliationOutcome::CLEAN_WITH_FINDINGS);
+    EXPECT_EQ(persisted.corruption_class,
+              Database::StartupCorruptionClass::QUARANTINE_REQUIRED);
+    EXPECT_EQ(persisted.quarantine_action,
+              Database::StartupQuarantineAction::READ_ONLY);
+    EXPECT_TRUE(persisted.quarantine_active);
+    EXPECT_TRUE(persisted.has_corrupt_pages);
+    EXPECT_NE(persisted.repair_plan_mask &
+                  Database::STARTUP_REPAIR_PLAN_REBUILD_FSM,
+              0u);
 }
 
 TEST_F(ExecutorTransactionPayloadTest, CommittedRowRemainsVisibleAcrossRestart) {

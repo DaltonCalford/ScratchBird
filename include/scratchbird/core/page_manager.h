@@ -43,6 +43,8 @@ namespace scratchbird::core
             uint32_t corrupt_pages = 0;
             uint32_t relinkable_chain_pages = 0;
             uint32_t cleanup_blocked_chain_pages = 0;
+            uint32_t quarantinable_chain_pages = 0;
+            uint32_t unrecoverable_chain_pages = 0;
         };
 
         PageManager(Database *db, uint32_t page_size);

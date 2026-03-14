@@ -382,6 +382,111 @@ namespace scratchbird::core
                 startup_summary->startup_repair || startup_repair;
         }
 
+        status = restorePreparedLockOwners(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return Status::OK;
+    }
+
+    auto TransactionManager::restorePreparedLockOwners(ErrorContext *ctx) -> Status
+    {
+        CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
+        LockManager *lock_mgr = db_ ? db_->lock_manager() : nullptr;
+        if (catalog == nullptr || lock_mgr == nullptr)
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::PreparedTransactionInfo> prepared;
+        Status status = catalog->listPreparedTransactions(prepared, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        for (auto &info : prepared)
+        {
+            uint32_t detached_proc_id = 0;
+            status = ProcArrayManager::reserveDetachedPreparedOwner(&detached_proc_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            std::vector<CatalogManager::PreparedTransactionLockInfo> persisted_locks;
+            status = catalog->listPreparedTransactionLocks(info.prepared_id, persisted_locks, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND)
+            {
+                ErrorContext cleanup_ctx;
+                ProcArrayManager::releaseDetachedPreparedOwner(detached_proc_id, &cleanup_ctx);
+                return status;
+            }
+
+            if (info.lock_count != persisted_locks.size())
+            {
+                ErrorContext cleanup_ctx;
+                ProcArrayManager::releaseDetachedPreparedOwner(detached_proc_id, &cleanup_ctx);
+                SET_ERROR_CONTEXT_VNEXT(
+                    ctx,
+                    Status::PAGE_CORRUPT,
+                    "TXN_0218",
+                    "Prepared transaction lock snapshot count mismatch during startup restore");
+                return Status::PAGE_CORRUPT;
+            }
+
+            for (const auto &persisted_lock : persisted_locks)
+            {
+                if (persisted_lock.target_type > static_cast<uint8_t>(LockTarget::LOCK_TARGET_TUPLE) ||
+                    persisted_lock.mode < static_cast<uint8_t>(LockMode::LOCK_ACCESS_SHARE) ||
+                    persisted_lock.mode > static_cast<uint8_t>(LockMode::LOCK_ACCESS_EXCLUSIVE))
+                {
+                    ErrorContext cleanup_ctx;
+                    lock_mgr->releaseAllLocks(detached_proc_id, &cleanup_ctx);
+                    ProcArrayManager::releaseDetachedPreparedOwner(detached_proc_id, &cleanup_ctx);
+                    SET_ERROR_CONTEXT_VNEXT(
+                        ctx,
+                        Status::PAGE_CORRUPT,
+                        "TXN_0218",
+                        "Prepared transaction lock snapshot contains invalid target or mode");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                LockTag tag{};
+                tag.target_type = static_cast<LockTarget>(persisted_lock.target_type);
+                tag.object_uuid = persisted_lock.object_uuid;
+                tag.page_num = persisted_lock.page_num;
+                tag.offset_num = persisted_lock.offset_num;
+                tag.padding = 0;
+
+                status = lock_mgr->acquireLock(detached_proc_id,
+                                               tag,
+                                               static_cast<LockMode>(persisted_lock.mode),
+                                               false,
+                                               0,
+                                               ctx);
+                if (status != Status::OK)
+                {
+                    ErrorContext cleanup_ctx;
+                    lock_mgr->releaseAllLocks(detached_proc_id, &cleanup_ctx);
+                    ProcArrayManager::releaseDetachedPreparedOwner(detached_proc_id, &cleanup_ctx);
+                    return status;
+                }
+            }
+
+            info.lock_owner_proc_id = detached_proc_id;
+            status = catalog->updatePreparedTransaction(info, ctx);
+            if (status != Status::OK)
+            {
+                ErrorContext cleanup_ctx;
+                lock_mgr->releaseAllLocks(detached_proc_id, &cleanup_ctx);
+                ProcArrayManager::releaseDetachedPreparedOwner(detached_proc_id, &cleanup_ctx);
+                return status;
+            }
+        }
+
         return Status::OK;
     }
 
@@ -815,11 +920,43 @@ namespace scratchbird::core
         }
 
         CatalogManager *catalog = db_->catalog_manager();
+        LockManager *lock_mgr = db_ ? db_->lock_manager() : nullptr;
         if (!catalog)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                               "Catalog manager not available");
             return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::PreparedTransactionLockInfo> prepared_locks;
+        if (lock_mgr != nullptr)
+        {
+            std::vector<LockSnapshot> locks;
+            status = lock_mgr->listLocks(locks);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to snapshot prepared transaction locks");
+                return status;
+            }
+
+            for (const auto &lock : locks)
+            {
+                if (lock.proc_id != proc_id || !lock.granted)
+                {
+                    continue;
+                }
+
+                CatalogManager::PreparedTransactionLockInfo persisted_lock;
+                persisted_lock.object_uuid = lock.tag.object_uuid;
+                persisted_lock.page_num = lock.tag.page_num;
+                persisted_lock.request_time = lock.request_time;
+                persisted_lock.offset_num = lock.tag.offset_num;
+                persisted_lock.target_type = static_cast<uint8_t>(lock.tag.target_type);
+                persisted_lock.mode = static_cast<uint8_t>(lock.mode);
+                persisted_lock.granted = lock.granted;
+                persisted_lock.is_valid = true;
+                prepared_locks.push_back(persisted_lock);
+            }
         }
 
         CatalogManager::PreparedTransactionInfo info;
@@ -828,12 +965,22 @@ namespace scratchbird::core
         info.owner_id = owner_id;
         info.database_id = db_->uuid();
         info.lock_owner_proc_id = proc_id;
+        info.lock_count = static_cast<uint32_t>(prepared_locks.size());
         info.prepared_time = nowMicros();
         info.is_valid = true;
 
         status = catalog->createPreparedTransaction(info, ctx);
         if (status != Status::OK)
         {
+            return status;
+        }
+
+        status = catalog->createPreparedTransactionLocks(info.prepared_id, prepared_locks, ctx);
+        if (status != Status::OK)
+        {
+            ErrorContext cleanup_ctx;
+            catalog->deletePreparedTransaction(info.gid, &cleanup_ctx);
+            catalog->deletePreparedTransactionLocks(info.prepared_id, &cleanup_ctx);
             return status;
         }
 
@@ -872,6 +1019,7 @@ namespace scratchbird::core
         {
             ErrorContext cleanup_ctx;
             catalog->deletePreparedTransaction(gid, &cleanup_ctx);
+            catalog->deletePreparedTransactionLocks(info.prepared_id, &cleanup_ctx);
             return status;
         }
 
@@ -983,6 +1131,15 @@ namespace scratchbird::core
             LOG_WARNING(TRANSACTION, "Failed to delete prepared transaction record: %s",
                         gid.c_str());
         }
+        Status lock_snapshot_delete_status =
+            catalog->deletePreparedTransactionLocks(info.prepared_id, ctx);
+        if (lock_snapshot_delete_status != Status::OK &&
+            lock_snapshot_delete_status != Status::NOT_FOUND)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Failed to delete prepared transaction lock snapshots: gid=%s",
+                        gid.c_str());
+        }
 
         Status lock_status = Status::OK;
         if (lock_mgr)
@@ -995,6 +1152,16 @@ namespace scratchbird::core
                             gid.c_str(),
                             info.lock_owner_proc_id);
             }
+        }
+
+        Status owner_release_status = ProcArrayManager::releaseDetachedPreparedOwner(
+            info.lock_owner_proc_id, ctx);
+        if (owner_release_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Failed to release detached prepared owner slot after commit: gid=%s owner_proc_id=%u",
+                        gid.c_str(),
+                        info.lock_owner_proc_id);
         }
 
         if (status != Status::OK)
@@ -1036,6 +1203,11 @@ namespace scratchbird::core
         if (lock_status != Status::OK)
         {
             return lock_status;
+        }
+        if (owner_release_status != Status::OK &&
+            owner_release_status != Status::INVALID_ARGUMENT)
+        {
+            return owner_release_status;
         }
 
         return Status::OK;
@@ -1114,6 +1286,15 @@ namespace scratchbird::core
             LOG_WARNING(TRANSACTION, "Failed to delete prepared transaction record: %s",
                         gid.c_str());
         }
+        Status lock_snapshot_delete_status =
+            catalog->deletePreparedTransactionLocks(info.prepared_id, ctx);
+        if (lock_snapshot_delete_status != Status::OK &&
+            lock_snapshot_delete_status != Status::NOT_FOUND)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Failed to delete prepared transaction lock snapshots: gid=%s",
+                        gid.c_str());
+        }
 
         Status lock_status = Status::OK;
         if (lock_mgr)
@@ -1126,6 +1307,16 @@ namespace scratchbird::core
                             gid.c_str(),
                             info.lock_owner_proc_id);
             }
+        }
+
+        Status owner_release_status = ProcArrayManager::releaseDetachedPreparedOwner(
+            info.lock_owner_proc_id, ctx);
+        if (owner_release_status != Status::OK)
+        {
+            LOG_WARNING(TRANSACTION,
+                        "Failed to release detached prepared owner slot after rollback: gid=%s owner_proc_id=%u",
+                        gid.c_str(),
+                        info.lock_owner_proc_id);
         }
 
         if (status != Status::OK)
@@ -1167,6 +1358,11 @@ namespace scratchbird::core
         if (lock_status != Status::OK)
         {
             return lock_status;
+        }
+        if (owner_release_status != Status::OK &&
+            owner_release_status != Status::INVALID_ARGUMENT)
+        {
+            return owner_release_status;
         }
 
         return Status::OK;

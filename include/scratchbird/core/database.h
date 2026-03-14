@@ -214,25 +214,61 @@ namespace scratchbird
                 CLEAN_WITH_FINDINGS = 2,
                 RECOVERY_WITH_FINDINGS = 3,
                 FAILED_PAGE_SCAN = 4,
-                FAILED_TXN_RECONCILIATION = 5
+                FAILED_TXN_RECONCILIATION = 5,
+                FAILED_CORRUPTION_POLICY = 6
+            };
+
+            enum class StartupCorruptionClass : uint8_t
+            {
+                NONE = 0,
+                RELINKABLE_ONLY = 1,
+                REPAIR_REQUIRED = 2,
+                QUARANTINE_REQUIRED = 3,
+                STARTUP_REFUSAL = 4
+            };
+
+            enum class StartupQuarantineAction : uint8_t
+            {
+                NONE = 0,
+                READ_ONLY = 1,
+                REFUSE_OPEN = 2
+            };
+
+            enum StartupRepairPlan : uint64_t
+            {
+                STARTUP_REPAIR_PLAN_NONE = 0,
+                STARTUP_REPAIR_PLAN_DIAGNOSTIC_SCAN = 1ULL << 0,
+                STARTUP_REPAIR_PLAN_RELINKABLE_CHAIN_REPAIR = 1ULL << 1,
+                STARTUP_REPAIR_PLAN_CHAIN_REWRITE_REVIEW = 1ULL << 2,
+                STARTUP_REPAIR_PLAN_READ_ONLY_QUARANTINE = 1ULL << 3,
+                STARTUP_REPAIR_PLAN_REBUILD_FSM = 1ULL << 4,
+                STARTUP_REPAIR_PLAN_RESTORE_FROM_BACKUP = 1ULL << 5
             };
 
             struct StartupReconciliationState
             {
                 StartupReconciliationOutcome outcome =
                     StartupReconciliationOutcome::NOT_RUN;
+                StartupCorruptionClass corruption_class =
+                    StartupCorruptionClass::NONE;
+                StartupQuarantineAction quarantine_action =
+                    StartupQuarantineAction::NONE;
                 Status failure_status = Status::OK;
                 bool clean_shutdown_marker = false;
                 bool startup_repair = false;
                 bool has_page_scan_findings = false;
                 bool has_corrupt_pages = false;
+                bool quarantine_active = false;
                 uint64_t tip_active_to_aborted = 0;
                 uint64_t tip_active_to_prepared = 0;
                 uint64_t stale_prepared_records_removed = 0;
                 uint64_t prepared_tip_without_catalog = 0;
                 uint64_t clog_states_synchronized = 0;
+                uint64_t repair_plan_mask = STARTUP_REPAIR_PLAN_NONE;
                 uint32_t relinkable_chain_pages = 0;
                 uint32_t cleanup_blocked_chain_pages = 0;
+                uint32_t quarantinable_chain_pages = 0;
+                uint32_t unrecoverable_chain_pages = 0;
             };
 
             // Dormant transaction handling (reattach support).
@@ -277,6 +313,10 @@ namespace scratchbird
             const StartupReconciliationState &last_startup_reconciliation() const
             {
                 return startup_reconciliation_state_;
+            }
+            bool startup_quarantine_active() const
+            {
+                return startup_quarantine_active_;
             }
             const ID &uuid() const
             {
@@ -692,6 +732,7 @@ namespace scratchbird
             uint64_t restart_generation_ = 0;
             uint64_t last_clean_shutdown_generation_ = 0;
             StartupReconciliationState startup_reconciliation_state_{};
+            bool startup_quarantine_active_ = false;
 
             // Forward declared pointers - managed via unique_ptr for RAII
             std::unique_ptr<PageManager> page_manager_;       // Page allocation manager (owned)

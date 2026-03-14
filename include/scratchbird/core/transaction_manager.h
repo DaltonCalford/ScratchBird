@@ -232,6 +232,8 @@ namespace scratchbird::core
         auto load(StartupReconciliationSummary *startup_summary = nullptr,
                   ErrorContext *ctx = nullptr) -> Status;
 
+        auto restorePreparedLockOwners(ErrorContext *ctx = nullptr) -> Status;
+
         // ===========================================================================================
         // TRANSACTION LIFECYCLE
         // ===========================================================================================

@@ -860,7 +860,8 @@ namespace scratchbird::core
           isolation_level_(IsolationLevel::SNAPSHOT), // Default to SNAPSHOT
           read_committed_mode_(ReadCommittedMode::READ_CONSISTENCY)
           ,
-          is_read_only_(false), wait_for_locks_(true) // Default: wait for locks
+          is_read_only_(db != nullptr && db->startup_quarantine_active()),
+          wait_for_locks_(true) // Default: wait for locks
           ,
           lock_timeout_seconds_(config::DEFAULT_LOCK_TIMEOUT_SECONDS) // Default: 60 second timeout
           ,
@@ -888,12 +889,13 @@ namespace scratchbird::core
           pending_policy_epoch_table_(0),
           default_isolation_level_(IsolationLevel::SNAPSHOT),
           default_read_committed_mode_(ReadCommittedMode::READ_CONSISTENCY),
-          default_is_read_only_(false),
+          default_is_read_only_(db != nullptr && db->startup_quarantine_active()),
           default_wait_for_locks_(true),
           default_lock_timeout_seconds_(config::DEFAULT_LOCK_TIMEOUT_SECONDS),
           settings_staged_(false), next_isolation_level_(IsolationLevel::SNAPSHOT),
           next_read_committed_mode_(ReadCommittedMode::READ_CONSISTENCY),
-          next_is_read_only_(false), next_wait_for_locks_(true),
+          next_is_read_only_(db != nullptr && db->startup_quarantine_active()),
+          next_wait_for_locks_(true),
           next_lock_timeout_seconds_(config::DEFAULT_LOCK_TIMEOUT_SECONDS),
           statement_xid_(0)
     {
@@ -1858,6 +1860,13 @@ namespace scratchbird::core
 
     Status ConnectionContext::initialize(ErrorContext *ctx)
     {
+        if (db_ != nullptr && db_->startup_quarantine_active())
+        {
+            default_is_read_only_ = true;
+            next_is_read_only_ = true;
+            is_read_only_ = true;
+        }
+
         // Start initial transaction
         Status s = beginNewTransaction(ctx);
         if (s != Status::OK)
@@ -2856,14 +2865,14 @@ namespace scratchbird::core
             return s;
         }
 
-        Status unregister_status = ProcArrayManager::unregisterBackend(prepared_owner_proc_id, ctx);
-        if (unregister_status != Status::OK)
+        Status detach_status = ProcArrayManager::detachPreparedOwner(prepared_owner_proc_id, ctx);
+        if (detach_status != Status::OK)
         {
             LOG_WARNING(TRANSACTION,
                         "Failed to detach prepared lock owner from ProcArray: proc_id=%u, xid=%lu, status=%d",
                         prepared_owner_proc_id,
                         current_xid_,
-                        static_cast<int>(unregister_status));
+                        static_cast<int>(detach_status));
         }
 
         statement_xid_ = 0;
@@ -2925,6 +2934,14 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx,
                               Status::READ_ONLY_TRANSACTION,
                               "FORENSIC_REPLAY_MUTATION_FORBIDDEN: close replay before changing transaction mode");
+            return Status::READ_ONLY_TRANSACTION;
+        }
+        if (db_ != nullptr && db_->startup_quarantine_active() && !read_only)
+        {
+            SET_ERROR_CONTEXT(
+                ctx,
+                Status::READ_ONLY_TRANSACTION,
+                "STARTUP_QUARANTINE_READ_ONLY: startup corruption policy requires read-only transactions");
             return Status::READ_ONLY_TRANSACTION;
         }
         ReadCommittedMode effective_mode = read_committed_mode;

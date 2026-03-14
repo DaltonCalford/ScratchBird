@@ -3579,6 +3579,7 @@ const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
     {"predicate_string", "[sb_dom]U32"},
     {"prepared_id", "[sb_dom]KEY_PREPARED_TXN"},
     {"prepared_time", "[sb_dom]TIME_US"},
+    {"prepared_transaction_locks_page", "[sb_dom]PAGE_ID"},
     {"prepared_transactions_page", "[sb_dom]PAGE_ID"},
     {"profile_name", "[sb_dom]NAME"},
     {"privileges", "[sb_dom]U32"},
@@ -4950,6 +4951,7 @@ bool hasTriggerNameConflictInTable(
 
         // Track 2: Prepared transactions (2PC)
         uint32_t prepared_transactions_page; // Page containing prepared transactions table
+        uint32_t prepared_transaction_locks_page; // Page containing prepared lock snapshot table
 
         // Plan 03B: Encryption key management
         uint32_t encryption_keys_page; // Page containing encryption keys table
@@ -10213,6 +10215,20 @@ bool hasTriggerNameConflictInTable(
         uint64_t prepared_time;
         uint32_t is_valid;
         uint32_t lock_owner_proc_id;
+        uint32_t lock_count;
+        uint32_t reserved;
+    };
+
+    struct PreparedTransactionLockRecord
+    {
+        ID prepared_id;
+        UuidV7Bytes object_uuid;
+        uint64_t page_num;
+        uint64_t request_time;
+        uint16_t offset_num;
+        uint8_t target_type;
+        uint8_t mode;
+        uint32_t is_valid;
     };
 
     // Collation record on disk - see updated CollationRecord structure below at line ~194
@@ -13916,6 +13932,12 @@ bool hasTriggerNameConflictInTable(
                     return status;
                 }
                 status = backfill_catalog_page(prepared_transactions_table_page_, "prepared_transactions");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(prepared_transaction_locks_table_page_,
+                                               "prepared_transaction_locks");
                 if (status != Status::OK)
                 {
                     return status;
@@ -20622,6 +20644,7 @@ bool hasTriggerNameConflictInTable(
         root->migration_history_page = migration_history_table_page_;
         root->dormant_transactions_page = dormant_transactions_table_page_;
         root->prepared_transactions_page = prepared_transactions_table_page_;
+        root->prepared_transaction_locks_page = prepared_transaction_locks_table_page_;
         root->encryption_keys_page = encryption_keys_table_page_;
         root->authkeys_page = authkeys_table_page_;
         root->sessions_page = sessions_table_page_;
@@ -20955,6 +20978,7 @@ bool hasTriggerNameConflictInTable(
         migration_history_table_page_ = root->migration_history_page;
         dormant_transactions_table_page_ = root->dormant_transactions_page;
         prepared_transactions_table_page_ = root->prepared_transactions_page;
+        prepared_transaction_locks_table_page_ = root->prepared_transaction_locks_page;
         encryption_keys_table_page_ = root->encryption_keys_page;
         authkeys_table_page_ = root->authkeys_page;
         sessions_table_page_ = root->sessions_page;
@@ -48279,6 +48303,7 @@ auto CatalogManager::createPreparedTransaction(PreparedTransactionInfo& info,
     record.prepared_time = info.prepared_time;
     record.is_valid = info.is_valid ? 1 : 0;
     record.lock_owner_proc_id = info.lock_owner_proc_id;
+    record.lock_count = info.lock_count;
 
     Status status = writeRecordToHeapPage(prepared_transactions_table_page_, record, ctx);
     if (status != Status::OK)
@@ -48327,6 +48352,7 @@ auto CatalogManager::getPreparedTransactionByGid(const std::string& gid,
     info_out.prepared_time = rec.prepared_time;
     info_out.is_valid = rec.is_valid != 0;
     info_out.lock_owner_proc_id = rec.lock_owner_proc_id;
+    info_out.lock_count = rec.lock_count;
 
     return Status::OK;
 }
@@ -48406,10 +48432,203 @@ auto CatalogManager::listPreparedTransactions(std::vector<PreparedTransactionInf
         info.prepared_time = rec.prepared_time;
         info.is_valid = rec.is_valid != 0;
         info.lock_owner_proc_id = rec.lock_owner_proc_id;
+        info.lock_count = rec.lock_count;
     };
 
     return readRecordsToVector<PreparedTransactionRecord, PreparedTransactionInfo>(
         prepared_transactions_table_page_, prepared_out, filter, converter, ctx);
+}
+
+auto CatalogManager::updatePreparedTransaction(const PreparedTransactionInfo& info,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (prepared_transactions_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Prepared transactions table not initialized");
+        return Status::NOT_FOUND;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    uint32_t current_page_id = prepared_transactions_table_page_;
+    while (current_page_id != 0)
+    {
+        void *page_buffer = nullptr;
+        Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<PreparedTransactionRecord *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offset);
+            if (record->is_valid && record->prepared_id == info.prepared_id)
+            {
+                record->txn_id = info.txn_id;
+                record->owner_id = info.owner_id;
+                record->database_id = info.database_id;
+                record->prepared_time = info.prepared_time;
+                record->lock_owner_proc_id = info.lock_owner_proc_id;
+                record->lock_count = info.lock_count;
+                record->is_valid = info.is_valid ? 1 : 0;
+                heap->header.generation++;
+                return bp->unpinPage(current_page_id, true, ctx);
+            }
+            offset += sizeof(PreparedTransactionRecord);
+        }
+
+        uint32_t next_page = heap->next_page;
+        bp->unpinPage(current_page_id, false, ctx);
+        current_page_id = next_page;
+    }
+
+    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Prepared transaction not found");
+    return Status::NOT_FOUND;
+}
+
+auto CatalogManager::createPreparedTransactionLocks(
+    const ID& prepared_id,
+    const std::vector<PreparedTransactionLockInfo>& locks,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (locks.empty())
+    {
+        return Status::OK;
+    }
+
+    if (prepared_transaction_locks_table_page_ == 0)
+    {
+        Status status = allocateCatalogPage(prepared_transaction_locks_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status,
+                              "Failed to allocate prepared transaction locks table page");
+            return status;
+        }
+
+        status = writeCatalogRoot(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    for (const auto& info : locks)
+    {
+        PreparedTransactionLockRecord record{};
+        record.prepared_id = prepared_id;
+        record.object_uuid = info.object_uuid;
+        record.page_num = info.page_num;
+        record.request_time = info.request_time;
+        record.offset_num = info.offset_num;
+        record.target_type = info.target_type;
+        record.mode = info.mode;
+        record.is_valid = info.is_valid ? 1u : 0u;
+
+        Status status = writeRecordToHeapPage(prepared_transaction_locks_table_page_, record, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status,
+                              "Failed to write prepared transaction lock record");
+            return status;
+        }
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::listPreparedTransactionLocks(
+    const ID& prepared_id,
+    std::vector<PreparedTransactionLockInfo>& locks_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    locks_out.clear();
+    if (prepared_transaction_locks_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    auto filter = [&prepared_id](const PreparedTransactionLockRecord& rec) {
+        return rec.is_valid != 0 && rec.prepared_id == prepared_id;
+    };
+    auto converter = [](const PreparedTransactionLockRecord& rec,
+                        PreparedTransactionLockInfo& info) {
+        info.prepared_id = rec.prepared_id;
+        info.object_uuid = rec.object_uuid;
+        info.page_num = rec.page_num;
+        info.request_time = rec.request_time;
+        info.offset_num = rec.offset_num;
+        info.target_type = rec.target_type;
+        info.mode = rec.mode;
+        info.granted = true;
+        info.is_valid = rec.is_valid != 0;
+    };
+
+    return readRecordsToVector<PreparedTransactionLockRecord, PreparedTransactionLockInfo>(
+        prepared_transaction_locks_table_page_, locks_out, filter, converter, ctx);
+}
+
+auto CatalogManager::deletePreparedTransactionLocks(const ID& prepared_id,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    if (prepared_transaction_locks_table_page_ == 0)
+    {
+        return Status::OK;
+    }
+
+    BufferPool *bp = db_->buffer_pool();
+    uint32_t current_page_id = prepared_transaction_locks_table_page_;
+    bool deleted_any = false;
+    while (current_page_id != 0)
+    {
+        void *page_buffer = nullptr;
+        Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+        uint32_t offset = sizeof(CatalogHeapPage);
+        bool page_mutation = false;
+        for (uint32_t i = 0; i < heap->record_count; ++i)
+        {
+            auto *record = reinterpret_cast<PreparedTransactionLockRecord *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + offset);
+            if (record->is_valid != 0 && record->prepared_id == prepared_id)
+            {
+                record->is_valid = 0;
+                page_mutation = true;
+                deleted_any = true;
+            }
+            offset += sizeof(PreparedTransactionLockRecord);
+        }
+
+        if (page_mutation)
+        {
+            heap->header.generation++;
+        }
+        uint32_t next_page = heap->next_page;
+        Status unpin_status = bp->unpinPage(current_page_id, page_mutation, ctx);
+        if (unpin_status != Status::OK)
+        {
+            return unpin_status;
+        }
+        current_page_id = next_page;
+    }
+
+    return deleted_any ? Status::OK : Status::NOT_FOUND;
 }
 
 // Compute transitive closure of roles

@@ -43,6 +43,7 @@ namespace
         Status status = Status::OK;
         std::string message;
         std::map<int32_t, int32_t> rows;
+        std::map<int32_t, TID> tids;
         bool duplicate_row_ids = false;
     };
 
@@ -158,10 +159,12 @@ namespace
             const auto* row =
                 reinterpret_cast<const TestRow*>(tuple.data + sizeof(TupleHeader));
             auto inserted = result.rows.emplace(row->id, row->value);
+            result.tids[row->id] = tuple.tid;
             if (!inserted.second)
             {
                 result.duplicate_row_ids = true;
                 inserted.first->second = row->value;
+                result.tids[row->id] = tuple.tid;
             }
         }
 
@@ -937,4 +940,170 @@ TEST_F(MgaInvariantFuzzTest, SeededConcurrentVisibilityAndReclaimInvariantsHold)
         SCOPED_TRACE(::testing::Message() << "seed=" << seed);
         runVisibilityCorpus(seed);
     }
+}
+
+TEST_F(MgaInvariantFuzzTest,
+       LongCommittedUpdateChainWithNestedSavepointRollbacksKeepsVisibilityStable)
+{
+    const std::map<int32_t, int32_t> baseline_rows{{1, 10}};
+    const ID table_id = createTestTable("rmga015_long_chain_savepoint");
+    auto writer = connectContext(false, IsolationLevel::SNAPSHOT);
+    auto snapshot_reader = connectContext(true, IsolationLevel::SNAPSHOT);
+    auto current_reader = connectContext(true, IsolationLevel::SNAPSHOT);
+    ASSERT_NE(writer, nullptr);
+    ASSERT_NE(snapshot_reader, nullptr);
+    ASSERT_NE(current_reader, nullptr);
+
+    std::map<int32_t, RowState> current_model =
+        seedBaseRows(writer.get(), table_id, {{1, 10}});
+
+    {
+        ErrorContext ctx;
+        ASSERT_EQ(snapshot_reader->startTransaction(true, IsolationLevel::SNAPSHOT, true, &ctx),
+                  Status::OK)
+            << ctx.message;
+        ASSERT_EQ(current_reader->startTransaction(true, IsolationLevel::SNAPSHOT, true, &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+
+    const VisibleScanResult baseline_scan =
+        decodeVisibleRows(*db_, *storage_, snapshot_reader.get(), table_id);
+    ASSERT_EQ(baseline_scan.status, Status::OK) << baseline_scan.message;
+    ASSERT_FALSE(baseline_scan.duplicate_row_ids);
+    ASSERT_EQ(baseline_scan.rows, baseline_rows);
+    ASSERT_EQ(baseline_scan.tids.count(1), 1u);
+    current_model.at(1).tid = baseline_scan.tids.at(1);
+
+    std::vector<std::string> history;
+    for (int round = 1; round <= 24; ++round)
+    {
+        SCOPED_TRACE(::testing::Message() << "round=" << round);
+
+        const int32_t committed_value = 100 + round;
+        const int32_t transient_value = 2000 + round;
+        const std::string outer_savepoint = "rmga015_outer_" + std::to_string(round);
+        const std::string inner_savepoint = "rmga015_inner_" + std::to_string(round);
+
+        auto snapshot_future = std::async(std::launch::async,
+                                          [&]() {
+                                              return decodeVisibleRows(
+                                                  *db_, *storage_, snapshot_reader.get(), table_id);
+                                          });
+
+        ErrorContext ctx;
+        ScopedCurrentConnection writer_scope(writer.get());
+
+        ASSERT_EQ(writer->createSavepoint(outer_savepoint, &ctx), Status::OK) << ctx.message;
+
+        auto committed_tuple = buildTuple(1, committed_value);
+        uint32_t committed_page_id = 0;
+        uint16_t committed_item_id = 0;
+        ASSERT_EQ(storage_->updateTuple(table_id,
+                                        static_cast<uint32_t>(
+                                            getPageNumber(current_model.at(1).tid.gpid)),
+                                        current_model.at(1).tid.slot,
+                                        committed_tuple.data(),
+                                        static_cast<uint32_t>(committed_tuple.size()),
+                                        &committed_page_id,
+                                        &committed_item_id,
+                                        &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(writer->createSavepoint(inner_savepoint, &ctx), Status::OK) << ctx.message;
+
+        auto transient_tuple = buildTuple(1, transient_value);
+        uint32_t transient_page_id = 0;
+        uint16_t transient_item_id = 0;
+        ASSERT_EQ(storage_->updateTuple(table_id,
+                                        committed_page_id,
+                                        committed_item_id,
+                                        transient_tuple.data(),
+                                        static_cast<uint32_t>(transient_tuple.size()),
+                                        &transient_page_id,
+                                        &transient_item_id,
+                                        &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(writer->rollbackToSavepoint(inner_savepoint, &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(writer->releaseSavepoint(inner_savepoint, &ctx), Status::OK) << ctx.message;
+
+        const VisibleScanResult writer_view =
+            decodeVisibleRows(*db_, *storage_, writer.get(), table_id);
+        ASSERT_EQ(writer_view.status, Status::OK) << writer_view.message;
+        ASSERT_FALSE(writer_view.duplicate_row_ids);
+        ASSERT_EQ(writer_view.rows, (std::map<int32_t, int32_t>{{1, committed_value}}))
+            << "\nphysical_rows="
+            << describePhysicalRows(*db_, *storage_, writer.get(), table_id);
+
+        ASSERT_EQ(writer->releaseSavepoint(outer_savepoint, &ctx), Status::OK) << ctx.message;
+        ASSERT_EQ(writer->commit(&ctx), Status::OK) << ctx.message;
+
+        const VisibleScanResult snapshot_result = snapshot_future.get();
+        ASSERT_EQ(snapshot_result.status, Status::OK) << snapshot_result.message;
+        ASSERT_FALSE(snapshot_result.duplicate_row_ids);
+        ASSERT_EQ(snapshot_result.rows, baseline_rows)
+            << "\nsnapshot=" << describeSnapshot(snapshot_reader.get())
+            << "\nhistory_size=" << history.size();
+
+        {
+            ScopedCurrentConnection current_scope(current_reader.get());
+            ASSERT_EQ(current_reader->commit(&ctx), Status::OK) << ctx.message;
+        }
+
+        const VisibleScanResult current_scan =
+            decodeVisibleRows(*db_, *storage_, current_reader.get(), table_id);
+        ASSERT_EQ(current_scan.status, Status::OK) << current_scan.message;
+        ASSERT_FALSE(current_scan.duplicate_row_ids);
+        ASSERT_EQ(current_scan.rows, (std::map<int32_t, int32_t>{{1, committed_value}}))
+            << "\nphysical_rows="
+            << describePhysicalRows(*db_, *storage_, current_reader.get(), table_id);
+        ASSERT_EQ(current_scan.tids.count(1), 1u);
+
+        current_model[1] = RowState{committed_value, current_scan.tids.at(1)};
+        std::ostringstream step;
+        step << "round=" << round
+             << " committed=" << committed_value
+             << " transient=" << transient_value
+             << " visible_tid=(" << getPageNumber(current_model.at(1).tid.gpid)
+             << "," << current_model.at(1).tid.slot << ")";
+        history.push_back(step.str());
+
+        if ((round % 6) == 0)
+        {
+            ASSERT_EQ(sweep_mgr_->executeSweep(true, &ctx), Status::OK) << ctx.message;
+
+            const VisibleScanResult after_sweep_snapshot =
+                decodeVisibleRows(*db_, *storage_, snapshot_reader.get(), table_id);
+            ASSERT_EQ(after_sweep_snapshot.status, Status::OK)
+                << after_sweep_snapshot.message;
+            ASSERT_FALSE(after_sweep_snapshot.duplicate_row_ids);
+            ASSERT_EQ(after_sweep_snapshot.rows, baseline_rows);
+
+            const VisibleScanResult after_sweep_current =
+                decodeVisibleRows(*db_, *storage_, current_reader.get(), table_id);
+            ASSERT_EQ(after_sweep_current.status, Status::OK)
+                << after_sweep_current.message;
+            ASSERT_FALSE(after_sweep_current.duplicate_row_ids);
+            ASSERT_EQ(after_sweep_current.rows,
+                      (std::map<int32_t, int32_t>{{1, committed_value}}));
+            ASSERT_EQ(after_sweep_current.tids.count(1), 1u);
+            current_model[1].tid = after_sweep_current.tids.at(1);
+        }
+    }
+
+    {
+        ErrorContext ctx;
+        ScopedCurrentConnection snapshot_scope(snapshot_reader.get());
+        ASSERT_EQ(snapshot_reader->commit(&ctx), Status::OK) << ctx.message;
+    }
+
+    const VisibleScanResult final_current =
+        decodeVisibleRows(*db_, *storage_, current_reader.get(), table_id);
+    ASSERT_EQ(final_current.status, Status::OK) << final_current.message;
+    ASSERT_FALSE(final_current.duplicate_row_ids);
+    ASSERT_EQ(final_current.rows,
+              (std::map<int32_t, int32_t>{{1, current_model.at(1).value}}));
 }

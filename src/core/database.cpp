@@ -87,6 +87,154 @@ namespace scratchbird::core
             return value;
         }
 
+        auto formatStartupRepairPlanMask(uint64_t repair_plan_mask) -> std::string
+        {
+            if (repair_plan_mask == Database::STARTUP_REPAIR_PLAN_NONE)
+            {
+                return "none";
+            }
+
+            std::string result;
+            auto append = [&](Database::StartupRepairPlan flag, const char *token)
+            {
+                if ((repair_plan_mask & static_cast<uint64_t>(flag)) == 0)
+                {
+                    return;
+                }
+                if (!result.empty())
+                {
+                    result += "|";
+                }
+                result += token;
+            };
+
+            append(Database::STARTUP_REPAIR_PLAN_DIAGNOSTIC_SCAN, "diagnostic_scan");
+            append(Database::STARTUP_REPAIR_PLAN_RELINKABLE_CHAIN_REPAIR,
+                   "relinkable_chain_repair");
+            append(Database::STARTUP_REPAIR_PLAN_CHAIN_REWRITE_REVIEW, "chain_rewrite_review");
+            append(Database::STARTUP_REPAIR_PLAN_READ_ONLY_QUARANTINE, "read_only_quarantine");
+            append(Database::STARTUP_REPAIR_PLAN_REBUILD_FSM, "rebuild_fsm");
+            append(Database::STARTUP_REPAIR_PLAN_RESTORE_FROM_BACKUP, "restore_from_backup");
+            return result;
+        }
+
+        auto startupCorruptionClassName(Database::StartupCorruptionClass value) -> const char *
+        {
+            switch (value)
+            {
+                case Database::StartupCorruptionClass::NONE:
+                    return "none";
+                case Database::StartupCorruptionClass::RELINKABLE_ONLY:
+                    return "relinkable_only";
+                case Database::StartupCorruptionClass::REPAIR_REQUIRED:
+                    return "repair_required";
+                case Database::StartupCorruptionClass::QUARANTINE_REQUIRED:
+                    return "quarantine_required";
+                case Database::StartupCorruptionClass::STARTUP_REFUSAL:
+                    return "startup_refusal";
+            }
+            return "unknown";
+        }
+
+        auto startupQuarantineActionName(Database::StartupQuarantineAction value) -> const char *
+        {
+            switch (value)
+            {
+                case Database::StartupQuarantineAction::NONE:
+                    return "none";
+                case Database::StartupQuarantineAction::READ_ONLY:
+                    return "read_only";
+                case Database::StartupQuarantineAction::REFUSE_OPEN:
+                    return "refuse_open";
+            }
+            return "unknown";
+        }
+
+        auto classifyStartupCorruptionPolicy(Database::StartupReconciliationState *state) -> void
+        {
+            if (state == nullptr)
+            {
+                return;
+            }
+
+            state->corruption_class = Database::StartupCorruptionClass::NONE;
+            state->quarantine_action = Database::StartupQuarantineAction::NONE;
+            state->quarantine_active = false;
+            state->repair_plan_mask = Database::STARTUP_REPAIR_PLAN_NONE;
+
+            if (state->relinkable_chain_pages > 0)
+            {
+                state->corruption_class = Database::StartupCorruptionClass::RELINKABLE_ONLY;
+                state->repair_plan_mask |=
+                    Database::STARTUP_REPAIR_PLAN_DIAGNOSTIC_SCAN |
+                    Database::STARTUP_REPAIR_PLAN_RELINKABLE_CHAIN_REPAIR;
+            }
+
+            if (state->cleanup_blocked_chain_pages > 0)
+            {
+                state->corruption_class = Database::StartupCorruptionClass::REPAIR_REQUIRED;
+                state->repair_plan_mask |=
+                    Database::STARTUP_REPAIR_PLAN_DIAGNOSTIC_SCAN |
+                    Database::STARTUP_REPAIR_PLAN_CHAIN_REWRITE_REVIEW;
+            }
+
+            if (state->quarantinable_chain_pages > 0)
+            {
+                state->corruption_class = Database::StartupCorruptionClass::QUARANTINE_REQUIRED;
+                state->quarantine_action = Database::StartupQuarantineAction::READ_ONLY;
+                state->quarantine_active = true;
+                state->repair_plan_mask |=
+                    Database::STARTUP_REPAIR_PLAN_DIAGNOSTIC_SCAN |
+                    Database::STARTUP_REPAIR_PLAN_CHAIN_REWRITE_REVIEW |
+                    Database::STARTUP_REPAIR_PLAN_READ_ONLY_QUARANTINE;
+            }
+
+            if (state->has_corrupt_pages)
+            {
+                state->corruption_class = Database::StartupCorruptionClass::QUARANTINE_REQUIRED;
+                state->quarantine_action = Database::StartupQuarantineAction::READ_ONLY;
+                state->quarantine_active = true;
+                state->repair_plan_mask |=
+                    Database::STARTUP_REPAIR_PLAN_DIAGNOSTIC_SCAN |
+                    Database::STARTUP_REPAIR_PLAN_REBUILD_FSM |
+                    Database::STARTUP_REPAIR_PLAN_READ_ONLY_QUARANTINE;
+            }
+
+            if (state->unrecoverable_chain_pages > 0)
+            {
+                state->corruption_class = Database::StartupCorruptionClass::STARTUP_REFUSAL;
+                state->quarantine_action = Database::StartupQuarantineAction::REFUSE_OPEN;
+                state->quarantine_active = false;
+                state->repair_plan_mask |=
+                    Database::STARTUP_REPAIR_PLAN_DIAGNOSTIC_SCAN |
+                    Database::STARTUP_REPAIR_PLAN_RESTORE_FROM_BACKUP;
+            }
+
+            if (state->corruption_class == Database::StartupCorruptionClass::STARTUP_REFUSAL)
+            {
+                state->repair_plan_mask &=
+                    ~static_cast<uint64_t>(Database::STARTUP_REPAIR_PLAN_READ_ONLY_QUARANTINE);
+            }
+        }
+
+        auto buildStartupCorruptionPolicyMessage(const Database::StartupReconciliationState &state)
+            -> std::string
+        {
+            std::ostringstream oss;
+            oss << "STARTUP_CORRUPTION_POLICY[class="
+                << startupCorruptionClassName(state.corruption_class)
+                << ",action="
+                << startupQuarantineActionName(state.quarantine_action)
+                << ",repair_plan="
+                << formatStartupRepairPlanMask(state.repair_plan_mask)
+                << ",corrupt_pages=" << state.has_corrupt_pages
+                << ",relinkable=" << state.relinkable_chain_pages
+                << ",cleanup_blocked=" << state.cleanup_blocked_chain_pages
+                << ",quarantinable=" << state.quarantinable_chain_pages
+                << ",unrecoverable=" << state.unrecoverable_chain_pages << "]";
+            return oss.str();
+        }
+
         bool parseUnsignedIntegerStrict(const std::string &value, uint64_t *out_value)
         {
             if (out_value == nullptr)
@@ -1311,6 +1459,7 @@ namespace scratchbird::core
         last_clean_shutdown_generation_ = 0;
         last_shutdown_was_clean_ = true;
         startup_reconciliation_state_ = {};
+        startup_quarantine_active_ = false;
     }
 
     Status Database::applySchedulerConfig(ErrorContext *ctx)
@@ -2789,6 +2938,16 @@ namespace scratchbird::core
         {
             return close_with_stage_error(status, "lock_manager.initialize");
         }
+        status = initializeProcArray(config::DEFAULT_MAX_BACKENDS, ctx);
+        if (status != Status::OK)
+        {
+            return close_with_stage_error(status, "database.initializeProcArray");
+        }
+        status = transaction_manager_->restorePreparedLockOwners(ctx);
+        if (status != Status::OK)
+        {
+            return close_with_stage_error(status, "transaction_manager.restorePreparedLockOwners");
+        }
 
         // Initialize GC manager
         try
@@ -3011,6 +3170,10 @@ namespace scratchbird::core
         {
             flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_CORRUPT_PAGES;
         }
+        if (state.quarantine_active)
+        {
+            flags |= SYSTEM_STATE_STARTUP_RECON_FLAG_QUARANTINE_ACTIVE;
+        }
 
         state_page->reserved[SYSTEM_STATE_STARTUP_RECON_VERSION_SLOT] =
             SYSTEM_STATE_STARTUP_RECON_VERSION;
@@ -3030,6 +3193,16 @@ namespace scratchbird::core
             state.relinkable_chain_pages;
         state_page->reserved[SYSTEM_STATE_STARTUP_RECON_BLOCKED_SLOT] =
             state.cleanup_blocked_chain_pages;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_QUARANTINABLE_SLOT] =
+            state.quarantinable_chain_pages;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_UNRECOVERABLE_SLOT] =
+            state.unrecoverable_chain_pages;
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_CLASS_SLOT] =
+            static_cast<uint64_t>(state.corruption_class);
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_ACTION_SLOT] =
+            static_cast<uint64_t>(state.quarantine_action);
+        state_page->reserved[SYSTEM_STATE_STARTUP_RECON_REPAIR_PLAN_SLOT] =
+            state.repair_plan_mask;
         state_page->reserved[SYSTEM_STATE_STARTUP_RECON_FLAGS_SLOT] = flags;
         state_page->page_header.checksum =
             calculatePageChecksum(reinterpret_cast<uint8_t *>(state_page), page_size_);
@@ -3060,17 +3233,22 @@ namespace scratchbird::core
         }
 
         StartupReconciliationState state{};
+        startup_quarantine_active_ = false;
         state.clean_shutdown_marker = last_shutdown_was_clean_;
 
         PageManager::ReconstructionSummary page_summary{};
         Status status = page_manager_->reconstructFromPages(&page_summary, ctx);
         state.relinkable_chain_pages = page_summary.relinkable_chain_pages;
         state.cleanup_blocked_chain_pages = page_summary.cleanup_blocked_chain_pages;
+        state.quarantinable_chain_pages = page_summary.quarantinable_chain_pages;
+        state.unrecoverable_chain_pages = page_summary.unrecoverable_chain_pages;
         state.has_corrupt_pages = page_summary.corrupt_pages > 0;
         state.has_page_scan_findings =
             state.has_corrupt_pages ||
             state.relinkable_chain_pages > 0 ||
-            state.cleanup_blocked_chain_pages > 0;
+            state.cleanup_blocked_chain_pages > 0 ||
+            state.quarantinable_chain_pages > 0 ||
+            state.unrecoverable_chain_pages > 0;
         if (status != Status::OK)
         {
             state.outcome = StartupReconciliationOutcome::FAILED_PAGE_SCAN;
@@ -3130,6 +3308,32 @@ namespace scratchbird::core
             state.outcome = StartupReconciliationOutcome::CLEAN;
         }
 
+        classifyStartupCorruptionPolicy(&state);
+        startup_quarantine_active_ = state.quarantine_active;
+        if (state.corruption_class == Database::StartupCorruptionClass::STARTUP_REFUSAL)
+        {
+            state.outcome = StartupReconciliationOutcome::FAILED_CORRUPTION_POLICY;
+            state.failure_status = Status::PAGE_CORRUPT;
+            const std::string policy_message = buildStartupCorruptionPolicyMessage(state);
+            Status persist_status = persistStartupReconciliationState(state, ctx);
+            if (persist_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE,
+                            "Failed to persist startup corruption refusal state: %d",
+                            static_cast<int>(persist_status));
+            }
+            startup_quarantine_active_ = false;
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, policy_message.c_str());
+            return Status::PAGE_CORRUPT;
+        }
+
+        if (state.quarantine_active)
+        {
+            LOG_WARNING(STORAGE,
+                        "Startup opened in read-only quarantine: %s",
+                        buildStartupCorruptionPolicyMessage(state).c_str());
+        }
+
         return persistStartupReconciliationState(state, ctx);
     }
 
@@ -3173,6 +3377,7 @@ namespace scratchbird::core
             ++restart_generation_;
         }
         last_clean_shutdown_generation_ = state_page->last_clean_shutdown_generation;
+        startup_quarantine_active_ = false;
 
         state_page->clean_shutdown = 0;
         state_page->startup_counter = startup_generation_;
