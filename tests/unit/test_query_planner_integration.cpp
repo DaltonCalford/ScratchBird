@@ -105,6 +105,17 @@ namespace
                                        nlohmann::json::array());
                     normalized_relation["partition_pruned"] =
                         relation.value("partition_pruned", false);
+                    normalized_relation["partition_key_columns"] =
+                        relation.value("partition_key_columns",
+                                       nlohmann::json::array());
+                    normalized_relation["partition_targets_pruned_at_plan"] =
+                        relation.value("partition_targets_pruned_at_plan",
+                                       nlohmann::json::array());
+                    normalized_relation["runtime_partition_pruning_eligible"] =
+                        relation.value("runtime_partition_pruning_eligible", false);
+                    normalized_relation["runtime_partition_pruning_sources"] =
+                        relation.value("runtime_partition_pruning_sources",
+                                       nlohmann::json::array());
                     snapshot["join_graph"]["relations"].push_back(
                         std::move(normalized_relation));
                 }
@@ -391,6 +402,21 @@ protected:
             return ExecutionResult("Bytecode payload is empty");
         }
         return executor_->execute(bytecode);
+    }
+
+    ExecutionResult executeBytecodeWithParameters(
+        const std::vector<uint8_t>& bytecode,
+        const std::vector<std::string>& values,
+        const std::vector<bool>& nulls = {})
+    {
+        if (bytecode.empty())
+        {
+            return ExecutionResult("Bytecode payload is empty");
+        }
+        executor_->setParameters(values, nulls);
+        auto result = executor_->execute(bytecode);
+        executor_->clearParameters();
+        return result;
     }
 
     bool containsOpcode(const std::vector<uint8_t> &bytecode, sblr_v3::Opcode opcode)
@@ -2589,6 +2615,210 @@ TEST_F(QueryPlannerIntegrationTest, PartitionedParentSelectPrunesChildTargetsAnd
     auto result = executeSQL(sql);
     ASSERT_TRUE(result.success()) << result.error();
     ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "2");
+    EXPECT_EQ(result.resultSet()->getValue(0, 1).toString(), "east");
+}
+
+TEST_F(QueryPlannerIntegrationTest, MultiColumnStaticPartitionPruningPublishesPrunedTargets)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32)) "
+                    "PARTITION BY LIST (region, bucket)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc_p1 "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc_p2 "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "ALTER TABLE measurement_mc ATTACH PARTITION measurement_mc_p1 "
+                    "FOR VALUES IN ((1, 10), (1, 20))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "ALTER TABLE measurement_mc ATTACH PARTITION measurement_mc_p2 "
+                    "FOR VALUES IN ((2, 30), (2, 40))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO measurement_mc_p1 (id, region, bucket, note) "
+                    "VALUES (1, 1, 10, 'west')")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO measurement_mc_p2 (id, region, bucket, note) "
+                    "VALUES (2, 2, 40, 'east')")
+                    .success());
+    ASSERT_TRUE(executeSQL("ANALYZE measurement_mc_p1").success());
+    ASSERT_TRUE(executeSQL("ANALYZE measurement_mc_p2").success());
+
+    const std::string sql =
+        "SELECT id, note FROM measurement_mc WHERE region = 2 AND bucket = 40";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto& relation = plan.relations.front();
+    EXPECT_TRUE(relation.partition_pruned);
+    EXPECT_EQ(relation.partition_strategy, "LIST");
+    ASSERT_EQ(relation.partition_key_columns.size(), 2u);
+    EXPECT_EQ(relation.partition_key_columns[0], "region");
+    EXPECT_EQ(relation.partition_key_columns[1], "bucket");
+    ASSERT_EQ(relation.partition_targets.size(), 1u);
+    EXPECT_EQ(relation.partition_targets.front(), "measurement_mc_p2");
+    ASSERT_EQ(relation.partition_targets_pruned_at_plan.size(), 1u);
+    EXPECT_EQ(relation.partition_targets_pruned_at_plan.front(),
+              "measurement_mc_p1");
+    EXPECT_FALSE(relation.runtime_partition_pruning_eligible);
+
+    auto result = executeSQL(sql);
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "2");
+    EXPECT_EQ(result.resultSet()->getValue(0, 1).toString(), "east");
+}
+
+TEST_F(QueryPlannerIntegrationTest, ParameterSensitivePartitionPruningUsesBoundValuesAtPlanTime)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32)) "
+                    "PARTITION BY LIST (region, bucket)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc_p1 "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc_p2 "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "ALTER TABLE measurement_mc ATTACH PARTITION measurement_mc_p1 "
+                    "FOR VALUES IN ((1, 10), (1, 20))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "ALTER TABLE measurement_mc ATTACH PARTITION measurement_mc_p2 "
+                    "FOR VALUES IN ((2, 30), (2, 40))")
+                    .success());
+
+    optimizer::ParameterBindings bindings;
+    bindings.positional.push_back({false, "2"});
+    bindings.positional.push_back({false, "40"});
+
+    auto compile_result = compileSQLWithParameters(
+        "SELECT id FROM measurement_mc WHERE region = $1 AND bucket = $2",
+        bindings);
+    ASSERT_TRUE(compile_result.success()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(compile_result.bytecode(), plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto& relation = plan.relations.front();
+    EXPECT_TRUE(plan.parameter_sensitive);
+    EXPECT_TRUE(relation.partition_pruned);
+    EXPECT_FALSE(relation.runtime_partition_pruning_eligible);
+    ASSERT_EQ(relation.partition_targets.size(), 1u);
+    EXPECT_EQ(relation.partition_targets.front(), "measurement_mc_p2");
+    ASSERT_EQ(relation.partition_targets_pruned_at_plan.size(), 1u);
+    EXPECT_EQ(relation.partition_targets_pruned_at_plan.front(),
+              "measurement_mc_p1");
+}
+
+TEST_F(QueryPlannerIntegrationTest, GenericPlanRuntimePartitionPruningUsesLateParameterValues)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32)) "
+                    "PARTITION BY LIST (region, bucket)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc_p1 "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE measurement_mc_p2 "
+                    "(id INTEGER, region INTEGER, bucket INTEGER, note VARCHAR(32))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "ALTER TABLE measurement_mc ATTACH PARTITION measurement_mc_p1 "
+                    "FOR VALUES IN ((1, 10), (1, 20))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "ALTER TABLE measurement_mc ATTACH PARTITION measurement_mc_p2 "
+                    "FOR VALUES IN ((2, 30), (2, 40))")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO measurement_mc_p1 (id, region, bucket, note) "
+                    "VALUES (1, 1, 10, 'west')")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO measurement_mc_p2 (id, region, bucket, note) "
+                    "VALUES (2, 2, 40, 'east')")
+                    .success());
+
+    connection_ctx_->setSessionVariable("OPTIMIZER.PLAN_DIRECTIVES",
+                                        "PLAN_PROFILE=GENERIC");
+    optimizer::ParameterBindings compile_bindings;
+    compile_bindings.positional.push_back({false, "1"});
+    compile_bindings.positional.push_back({false, "10"});
+
+    auto compile_result = compileSQLWithParameters(
+        "SELECT id, note FROM measurement_mc WHERE region = $1 AND bucket = $2",
+        compile_bindings);
+    ASSERT_TRUE(compile_result.success()) << last_compile_errors_;
+    EXPECT_EQ(compile_result.planProfile().mode,
+              scratchbird::sblr::detail::QueryCompilerV3PlanProfileMode::GENERIC);
+    EXPECT_FALSE(compile_result.planProfile().parameter_sensitive);
+    const auto& bytecode = compile_result.bytecode();
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto& relation = plan.relations.front();
+    EXPECT_FALSE(plan.parameter_sensitive);
+    EXPECT_FALSE(relation.partition_pruned);
+    EXPECT_TRUE(relation.runtime_partition_pruning_eligible);
+    ASSERT_EQ(relation.runtime_partition_pruning_sources.size(), 1u);
+    EXPECT_EQ(relation.runtime_partition_pruning_sources.front(), "PARAMETER");
+    ASSERT_EQ(relation.partition_predicates.size(), 2u);
+
+    auto result = executeBytecodeWithParameters(bytecode,
+                                                {"2", "40"},
+                                                {false, false});
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    CatalogManager::TableInfo p1_info;
+    CatalogManager::TableInfo p2_info;
+    ErrorContext table_ctx;
+    ASSERT_EQ(db_->catalog_manager()->getTable(connection_ctx_->getCurrentSchemaId(),
+                                               "measurement_mc_p1",
+                                               p1_info,
+                                               &table_ctx),
+              Status::OK)
+        << table_ctx.message;
+    ASSERT_EQ(db_->catalog_manager()->getTable(connection_ctx_->getCurrentSchemaId(),
+                                               "measurement_mc_p2",
+                                               p2_info,
+                                               &table_ctx),
+              Status::OK)
+        << table_ctx.message;
+
+    const auto& touched_tables = executor_->getLastSelectTableIds();
+    EXPECT_EQ(touched_tables.count(p1_info.table_id), 0u);
+    EXPECT_EQ(touched_tables.count(p2_info.table_id), 1u);
     ASSERT_EQ(result.resultSet()->rowCount(), 1u);
     EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "2");
     EXPECT_EQ(result.resultSet()->getValue(0, 1).toString(), "east");

@@ -698,6 +698,7 @@ parser::v3::Expression* Parser::parsePrimaryExpr() {
         emit(sblr::Opcode::EXTENDED_OPCODE);
         emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_PLACEHOLDER));
         emitU16(static_cast<uint16_t>(position));
+        emitU16(0);  // type hint unknown at parse time
         advance();
         return param;
     }

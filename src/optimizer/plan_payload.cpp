@@ -35,7 +35,14 @@ namespace scratchbird::optimizer
             out["partition_pruned"] = relation.partition_pruned;
             out["partition_strategy"] = relation.partition_strategy;
             out["partition_key_column"] = relation.partition_key_column;
+            out["partition_key_columns"] = relation.partition_key_columns;
             out["partition_targets"] = relation.partition_targets;
+            out["partition_targets_pruned_at_plan"] =
+                relation.partition_targets_pruned_at_plan;
+            out["runtime_partition_pruning_eligible"] =
+                relation.runtime_partition_pruning_eligible;
+            out["runtime_partition_pruning_sources"] =
+                relation.runtime_partition_pruning_sources;
             out["runtime_filter_enabled"] = relation.runtime_filter_enabled;
             out["runtime_filter_column"] = relation.runtime_filter_column;
             out["runtime_filter_index_name"] = relation.runtime_filter_index_name;
@@ -68,6 +75,19 @@ namespace scratchbird::optimizer
                 pred["literal_kind"] = entry.literal_kind;
                 pred["literal_text"] = entry.literal_text;
                 out["index_predicates"].push_back(std::move(pred));
+            }
+            out["partition_predicates"] = nlohmann::json::array();
+            for (const auto &entry : relation.partition_predicates)
+            {
+                nlohmann::json pred;
+                pred["valid"] = entry.valid;
+                pred["index_name"] = entry.index_name;
+                pred["index_id_text"] = entry.index_id_text;
+                pred["column_name"] = entry.column_name;
+                pred["operator_name"] = entry.operator_name;
+                pred["literal_kind"] = entry.literal_kind;
+                pred["literal_text"] = entry.literal_text;
+                out["partition_predicates"].push_back(std::move(pred));
             }
             return out;
         }
@@ -163,6 +183,21 @@ namespace scratchbird::optimizer
                 json_in.value("partition_strategy", std::string());
             relation_out.partition_key_column =
                 json_in.value("partition_key_column", std::string());
+            relation_out.partition_key_columns.clear();
+            const auto partition_key_columns_it =
+                json_in.find("partition_key_columns");
+            if (partition_key_columns_it != json_in.end() &&
+                partition_key_columns_it->is_array())
+            {
+                for (const auto &entry : *partition_key_columns_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.partition_key_columns.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
             relation_out.partition_targets.clear();
             const auto partition_targets_it = json_in.find("partition_targets");
             if (partition_targets_it != json_in.end() && partition_targets_it->is_array())
@@ -172,6 +207,38 @@ namespace scratchbird::optimizer
                     if (entry.is_string())
                     {
                         relation_out.partition_targets.push_back(entry.get<std::string>());
+                    }
+                }
+            }
+            relation_out.partition_targets_pruned_at_plan.clear();
+            const auto partition_targets_pruned_it =
+                json_in.find("partition_targets_pruned_at_plan");
+            if (partition_targets_pruned_it != json_in.end() &&
+                partition_targets_pruned_it->is_array())
+            {
+                for (const auto &entry : *partition_targets_pruned_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.partition_targets_pruned_at_plan.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
+            relation_out.runtime_partition_pruning_eligible =
+                json_in.value("runtime_partition_pruning_eligible", false);
+            relation_out.runtime_partition_pruning_sources.clear();
+            const auto runtime_partition_sources_it =
+                json_in.find("runtime_partition_pruning_sources");
+            if (runtime_partition_sources_it != json_in.end() &&
+                runtime_partition_sources_it->is_array())
+            {
+                for (const auto &entry : *runtime_partition_sources_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.runtime_partition_pruning_sources.push_back(
+                            entry.get<std::string>());
                     }
                 }
             }
@@ -226,6 +293,28 @@ namespace scratchbird::optimizer
                     pred.literal_kind = entry.value("literal_kind", std::string());
                     pred.literal_text = entry.value("literal_text", std::string());
                     relation_out.index_predicates.push_back(std::move(pred));
+                }
+            }
+
+            relation_out.partition_predicates.clear();
+            const auto partition_preds_it = json_in.find("partition_predicates");
+            if (partition_preds_it != json_in.end() && partition_preds_it->is_array())
+            {
+                for (const auto &entry : *partition_preds_it)
+                {
+                    if (!entry.is_object())
+                    {
+                        continue;
+                    }
+                    RuntimePlanIndexPredicate pred;
+                    pred.valid = entry.value("valid", false);
+                    pred.index_name = entry.value("index_name", std::string());
+                    pred.index_id_text = entry.value("index_id_text", std::string());
+                    pred.column_name = entry.value("column_name", std::string());
+                    pred.operator_name = entry.value("operator_name", std::string());
+                    pred.literal_kind = entry.value("literal_kind", std::string());
+                    pred.literal_text = entry.value("literal_text", std::string());
+                    relation_out.partition_predicates.push_back(std::move(pred));
                 }
             }
             return true;

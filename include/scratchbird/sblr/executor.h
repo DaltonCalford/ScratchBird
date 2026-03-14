@@ -263,6 +263,10 @@ namespace scratchbird
             void resetIndexStats() { index_stats_.reset(); }
 
             int64_t getLastAffectedRows() const { return last_affected_rows_; }
+            const std::unordered_set<core::ID, core::IDHash>& getLastSelectTableIds() const
+            {
+                return last_select_table_ids_;
+            }
 
             // NET-M1: Query cancellation support
             // Request cancellation of the currently executing query
@@ -622,6 +626,7 @@ namespace scratchbird
             void setStackValueAtOffset(uint16_t offset, const Value& value);
             Value resolvePlaceholderValue(uint16_t position, uint16_t type_hint);
             Value parsePlaceholderValue(const std::string& raw, uint16_t type_hint) const;
+            bool tryResolveParameterVariable(const std::string& var_name, Value& value_out);
 
             // Statement execution
             void executeCreateTable();

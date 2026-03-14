@@ -8,8 +8,8 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 2;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v2";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 3;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v3";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -53,7 +53,12 @@ namespace scratchbird::optimizer
         bool partition_pruned = false;
         std::string partition_strategy;
         std::string partition_key_column;
+        std::vector<std::string> partition_key_columns;
         std::vector<std::string> partition_targets;
+        std::vector<std::string> partition_targets_pruned_at_plan;
+        bool runtime_partition_pruning_eligible = false;
+        std::vector<std::string> runtime_partition_pruning_sources;
+        std::vector<RuntimePlanIndexPredicate> partition_predicates;
         bool runtime_filter_enabled = false;
         std::string runtime_filter_column;
         std::string runtime_filter_index_name;

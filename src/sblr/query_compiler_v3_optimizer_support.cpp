@@ -639,13 +639,17 @@ namespace scratchbird::sblr::detail
                                             db != nullptr ? db->statistics_manager() : nullptr);
             optimizer::PlannedSelectQuery planned;
             core::ErrorContext plan_ctx;
+            const optimizer::ParameterBindings *planner_parameter_bindings =
+                plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM
+                    ? parameter_bindings
+                    : nullptr;
             const auto status = planner.buildSelectPlan(select_stmt,
                                                        pool,
                                                        planned,
                                                        &plan_ctx,
                                                        core::ConnectionContext::getCurrent(),
                                                        current_schema_id,
-                                                       parameter_bindings);
+                                                       planner_parameter_bindings);
             if (status != core::Status::OK)
             {
                 if (status == core::Status::INVALID_ARGUMENT ||

@@ -1975,6 +1975,9 @@ namespace scratchbird
             std::string normalizePartitionLiteral(const std::string& input);
             bool parseNumericLiteral(const std::string& input, int64_t& out);
             bool parseDoubleLiteral(const std::string& input, double& out);
+            int comparePartitionLiteral(const std::string& left,
+                                        const std::string& right,
+                                        core::DataType type);
             bool parseSblrExpressionList(const std::vector<uint8_t>& data,
                                          std::vector<std::vector<uint8_t>>& expressions_out);
             bool userHasRole(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx,
@@ -4040,6 +4043,48 @@ namespace scratchbird
                 return false;
             }
             return parsed;
+        }
+
+        static bool getPsqlVarNameFromObject(
+            const scratchbird::sblr::v3::Value::Object& payload,
+            std::string& out_name)
+        {
+            auto extract_name =
+                [&](const scratchbird::sblr::v3::Value::Object& obj) -> bool {
+                    auto it_name = obj.find("name");
+                    if (it_name == obj.end())
+                    {
+                        return false;
+                    }
+                    const auto* name =
+                        std::get_if<std::string>(&it_name->second.data);
+                    if (name == nullptr)
+                    {
+                        return false;
+                    }
+                    out_name = *name;
+                    return true;
+                };
+
+            if (extract_name(payload))
+            {
+                return true;
+            }
+
+            auto it_var = payload.find("var");
+            if (it_var == payload.end())
+            {
+                return false;
+            }
+
+            const auto* var_obj =
+                std::get_if<scratchbird::sblr::v3::Value::Object>(&it_var->second.data);
+            if (var_obj == nullptr)
+            {
+                return false;
+            }
+
+            return extract_name(*var_obj);
         }
 
         enum class ParallelSettingValueType : uint8_t
@@ -8145,6 +8190,39 @@ namespace scratchbird
             }
 
             return parsePlaceholderValue(parameter_values_[index], type_hint);
+        }
+
+        bool Executor::tryResolveParameterVariable(const std::string& var_name, Value& value_out)
+        {
+            if (var_name.size() < 2 || var_name.front() != '$')
+            {
+                return false;
+            }
+
+            const std::string_view suffix(var_name.c_str() + 1, var_name.size() - 1);
+            if (suffix.empty() ||
+                !std::all_of(suffix.begin(), suffix.end(), [](unsigned char ch) {
+                    return std::isdigit(ch) != 0;
+                }))
+            {
+                return false;
+            }
+
+            try
+            {
+                const unsigned long position = std::stoul(std::string(suffix));
+                if (position == 0 ||
+                    position > std::numeric_limits<uint16_t>::max())
+                {
+                    return false;
+                }
+                value_out = resolvePlaceholderValue(static_cast<uint16_t>(position), 0);
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
         }
 
         Value Executor::parsePlaceholderValue(const std::string& raw, uint16_t type_hint) const
@@ -45927,13 +46005,19 @@ namespace scratchbird
                             return Value::makeNull();
                         }
                         std::string var_name;
-                        if (!getString(*obj, "name", var_name))
+                        if (!getPsqlVarNameFromObject(*obj, var_name))
                         {
                             return Value::makeNull();
                         }
                         if (variable_stack_ && variable_stack_->hasVariable(var_name))
                         {
                             return variable_stack_->getVariable(var_name);
+                        }
+
+                        Value parameter_value = Value::makeNull();
+                        if (tryResolveParameterVariable(var_name, parameter_value))
+                        {
+                            return parameter_value;
                         }
 
                         auto lookup_session_var = [&](const std::string& name, std::string& out) -> bool {
@@ -61497,6 +61581,453 @@ namespace scratchbird
                                 target_tables.push_back(info);
                             }
 
+                            struct RuntimePartitionConstraint {
+                                bool valid = false;
+                                bool has_lower = false;
+                                std::string lower;
+                                bool has_upper = false;
+                                std::string upper;
+                            };
+
+                            auto resolveRuntimePartitionLiteral =
+                                [&](const optimizer::RuntimePlanIndexPredicate& predicate,
+                                    std::string& literal_out) -> bool {
+                                    literal_out.clear();
+                                    const std::string kind_upper =
+                                        core::IdentifierUtils::toUpper(predicate.literal_kind);
+                                    if (kind_upper == "PARAMETER")
+                                    {
+                                        if (predicate.literal_text.size() < 2 ||
+                                            predicate.literal_text.front() != '$')
+                                        {
+                                            return false;
+                                        }
+                                        try
+                                        {
+                                            const size_t index = static_cast<size_t>(
+                                                std::stoul(predicate.literal_text.substr(1)));
+                                            if (index == 0 ||
+                                                index > parameter_values_.size())
+                                            {
+                                                return false;
+                                            }
+                                            const size_t zero_based = index - 1;
+                                            if (zero_based < parameter_nulls_.size() &&
+                                                parameter_nulls_[zero_based])
+                                            {
+                                                return false;
+                                            }
+                                            literal_out = parameter_values_[zero_based];
+                                            return !literal_out.empty();
+                                        }
+                                        catch (...)
+                                        {
+                                            return false;
+                                        }
+                                    }
+
+                                    literal_out = predicate.literal_text;
+                                    return !literal_out.empty();
+                                };
+
+                            auto applyRuntimePartitionPredicate =
+                                [&](RuntimePartitionConstraint& constraint,
+                                    const optimizer::RuntimePlanIndexPredicate& predicate,
+                                    core::DataType type) -> bool {
+                                    std::string literal_text;
+                                    if (!resolveRuntimePartitionLiteral(predicate, literal_text))
+                                    {
+                                        return false;
+                                    }
+
+                                    auto strengthen_lower =
+                                        [&](const std::string& candidate) {
+                                            if (!constraint.has_lower ||
+                                                comparePartitionLiteral(candidate,
+                                                                        constraint.lower,
+                                                                        type) > 0)
+                                            {
+                                                constraint.has_lower = true;
+                                                constraint.lower = candidate;
+                                            }
+                                        };
+                                    auto strengthen_upper =
+                                        [&](const std::string& candidate) {
+                                            if (!constraint.has_upper ||
+                                                comparePartitionLiteral(candidate,
+                                                                        constraint.upper,
+                                                                        type) < 0)
+                                            {
+                                                constraint.has_upper = true;
+                                                constraint.upper = candidate;
+                                            }
+                                        };
+
+                                    const std::string op =
+                                        core::IdentifierUtils::toUpper(
+                                            predicate.operator_name);
+                                    if (op == "=")
+                                    {
+                                        strengthen_lower(literal_text);
+                                        strengthen_upper(literal_text);
+                                        constraint.valid = true;
+                                        return true;
+                                    }
+                                    if (op == ">=" || op == ">")
+                                    {
+                                        strengthen_lower(literal_text);
+                                        constraint.valid = true;
+                                        return true;
+                                    }
+                                    if (op == "<=" || op == "<")
+                                    {
+                                        strengthen_upper(literal_text);
+                                        constraint.valid = true;
+                                        return true;
+                                    }
+                                    return false;
+                                };
+
+                            auto runtimeListValueMatches =
+                                [&](const std::string& value,
+                                    const RuntimePartitionConstraint& constraint,
+                                    core::DataType type) -> bool {
+                                    if (constraint.has_lower &&
+                                        comparePartitionLiteral(value,
+                                                                constraint.lower,
+                                                                type) < 0)
+                                    {
+                                        return false;
+                                    }
+                                    if (constraint.has_upper &&
+                                        comparePartitionLiteral(value,
+                                                                constraint.upper,
+                                                                type) > 0)
+                                    {
+                                        return false;
+                                    }
+                                    return true;
+                                };
+
+                            auto runtimeListTupleMatchesConstraints =
+                                [&](const std::vector<std::string>& tuple_values,
+                                    const std::vector<RuntimePartitionConstraint>& constraints,
+                                    const std::vector<core::DataType>& types) -> bool {
+                                    if (tuple_values.size() != constraints.size() ||
+                                        tuple_values.size() != types.size())
+                                    {
+                                        return false;
+                                    }
+                                    for (size_t tuple_index = 0;
+                                         tuple_index < tuple_values.size();
+                                         ++tuple_index)
+                                    {
+                                        if (!runtimeListValueMatches(
+                                                tuple_values[tuple_index],
+                                                constraints[tuple_index],
+                                                types[tuple_index]))
+                                        {
+                                            return false;
+                                        }
+                                    }
+                                    return true;
+                                };
+
+                            auto runtimeCompareConstraintTupleToLiteralTuple =
+                                [&](const std::vector<RuntimePartitionConstraint>& constraints,
+                                    bool use_upper,
+                                    const std::vector<std::string>& tuple_values,
+                                    const std::vector<core::DataType>& types) -> int {
+                                    const size_t count =
+                                        std::min(constraints.size(),
+                                                 std::min(tuple_values.size(),
+                                                          types.size()));
+                                    for (size_t tuple_index = 0;
+                                         tuple_index < count;
+                                         ++tuple_index)
+                                    {
+                                        const auto& constraint =
+                                            constraints[tuple_index];
+                                        if (use_upper && !constraint.has_upper)
+                                        {
+                                            return 1;
+                                        }
+                                        if (!use_upper && !constraint.has_lower)
+                                        {
+                                            return -1;
+                                        }
+                                        const std::string& left_value =
+                                            use_upper ? constraint.upper
+                                                      : constraint.lower;
+                                        const int cmp = comparePartitionLiteral(
+                                            left_value,
+                                            tuple_values[tuple_index],
+                                            types[tuple_index]);
+                                        if (cmp != 0)
+                                        {
+                                            return cmp;
+                                        }
+                                    }
+                                    return 0;
+                                };
+
+                            auto runtimeRangeMatchesConstraints =
+                                [&](const PartitionBound& bound,
+                                    const std::vector<RuntimePartitionConstraint>& constraints,
+                                    const std::vector<core::DataType>& types) -> bool {
+                                    bool have_any = false;
+                                    for (const auto& constraint : constraints)
+                                    {
+                                        have_any = have_any || constraint.valid;
+                                    }
+                                    if (!have_any)
+                                    {
+                                        return true;
+                                    }
+                                    if (bound.has_end && !bound.range_end.empty())
+                                    {
+                                        if (runtimeCompareConstraintTupleToLiteralTuple(
+                                                constraints,
+                                                false,
+                                                bound.range_end,
+                                                types) >= 0)
+                                        {
+                                            return false;
+                                        }
+                                    }
+                                    if (bound.has_start && !bound.range_start.empty())
+                                    {
+                                        if (runtimeCompareConstraintTupleToLiteralTuple(
+                                                constraints,
+                                                true,
+                                                bound.range_start,
+                                                types) < 0)
+                                        {
+                                            return false;
+                                        }
+                                    }
+                                    return true;
+                                };
+
+                            auto pruneRuntimePartitionTargets =
+                                [&](std::vector<core::CatalogManager::TableInfo>& tables_inout) {
+                                    if (runtime_relation == nullptr ||
+                                        !runtime_relation
+                                             ->runtime_partition_pruning_eligible ||
+                                        db_ == nullptr ||
+                                        db_->catalog_manager() == nullptr)
+                                    {
+                                        return;
+                                    }
+
+                                    json parent_meta;
+                                    core::ErrorContext partition_ctx;
+                                    if (!loadTableMetadata(db_->catalog_manager(),
+                                                           info,
+                                                           parent_meta,
+                                                           &partition_ctx) ||
+                                        !parent_meta.contains("partition") ||
+                                        !parent_meta["partition"].is_object())
+                                    {
+                                        return;
+                                    }
+
+                                    std::vector<std::string> key_columns =
+                                        runtime_relation->partition_key_columns;
+                                    if (key_columns.empty())
+                                    {
+                                        const auto& partition =
+                                            parent_meta["partition"];
+                                        if (partition.contains("columns") &&
+                                            partition["columns"].is_array())
+                                        {
+                                            for (const auto& entry :
+                                                 partition["columns"])
+                                            {
+                                                if (entry.is_string())
+                                                {
+                                                    key_columns.push_back(
+                                                        entry.get<std::string>());
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if (key_columns.empty())
+                                    {
+                                        return;
+                                    }
+
+                                    std::vector<core::DataType> key_types;
+                                    std::vector<RuntimePartitionConstraint> constraints(
+                                        key_columns.size());
+                                    for (const auto& column_name : key_columns)
+                                    {
+                                        const auto column_it =
+                                            std::find_if(cols.begin(),
+                                                         cols.end(),
+                                                         [&](const auto& column) {
+                                                             return core::IdentifierUtils::namesMatch(
+                                                                 column.column_name,
+                                                                 false,
+                                                                 column_name,
+                                                                 false);
+                                                         });
+                                        if (column_it == cols.end())
+                                        {
+                                            return;
+                                        }
+                                        key_types.push_back(
+                                            static_cast<core::DataType>(
+                                                column_it->data_type));
+                                    }
+
+                                    bool have_runtime_constraint = false;
+                                    for (const auto& predicate :
+                                         runtime_relation->partition_predicates)
+                                    {
+                                        const auto key_it =
+                                            std::find_if(key_columns.begin(),
+                                                         key_columns.end(),
+                                                         [&](const std::string& column_name) {
+                                                             return core::IdentifierUtils::namesMatch(
+                                                                 column_name,
+                                                                 false,
+                                                                 predicate.column_name,
+                                                                 false);
+                                                         });
+                                        if (key_it == key_columns.end())
+                                        {
+                                            continue;
+                                        }
+                                        const size_t key_index = static_cast<size_t>(
+                                            std::distance(key_columns.begin(),
+                                                          key_it));
+                                        have_runtime_constraint =
+                                            applyRuntimePartitionPredicate(
+                                                constraints[key_index],
+                                                predicate,
+                                                key_types[key_index]) ||
+                                            have_runtime_constraint;
+                                    }
+
+                                    if (!have_runtime_constraint)
+                                    {
+                                        return;
+                                    }
+
+                                    struct RuntimePartitionChild {
+                                        core::CatalogManager::TableInfo table_info;
+                                        PartitionBound bound;
+                                        bool has_bound = false;
+                                        bool is_default = false;
+                                    };
+
+                                    std::vector<RuntimePartitionChild> child_specs;
+                                    const auto& partition = parent_meta["partition"];
+                                    if (!partition.contains("children") ||
+                                        !partition["children"].is_array())
+                                    {
+                                        return;
+                                    }
+
+                                    for (const auto& entry : partition["children"])
+                                    {
+                                        if (!entry.is_object() ||
+                                            !entry.contains("name") ||
+                                            !entry["name"].is_string())
+                                        {
+                                            continue;
+                                        }
+                                        RuntimePartitionChild child;
+                                        core::ErrorContext child_ctx;
+                                        if (!resolveTableByQualifiedName(
+                                                db_->catalog_manager(),
+                                                info.schema_id,
+                                                entry["name"].get<std::string>(),
+                                                child.table_info,
+                                                &child_ctx))
+                                        {
+                                            continue;
+                                        }
+                                        if (entry.contains("bounds") &&
+                                            entry["bounds"].is_string())
+                                        {
+                                            child.has_bound = parsePartitionBounds(
+                                                entry["bounds"].get<std::string>(),
+                                                child.bound);
+                                            child.is_default =
+                                                child.has_bound &&
+                                                child.bound.kind ==
+                                                    PartitionBound::Kind::DEFAULT;
+                                        }
+                                        child_specs.push_back(std::move(child));
+                                    }
+
+                                    if (child_specs.empty())
+                                    {
+                                        return;
+                                    }
+
+                                    std::vector<core::CatalogManager::TableInfo> kept_tables;
+                                    kept_tables.reserve(tables_inout.size());
+                                    for (const auto& target_table : tables_inout)
+                                    {
+                                        const auto child_it =
+                                            std::find_if(child_specs.begin(),
+                                                         child_specs.end(),
+                                                         [&](const auto& child) {
+                                                             return child.table_info.table_id ==
+                                                                    target_table.table_id;
+                                                         });
+                                        if (child_it == child_specs.end() ||
+                                            child_it->is_default ||
+                                            !child_it->has_bound)
+                                        {
+                                            kept_tables.push_back(target_table);
+                                            continue;
+                                        }
+
+                                        bool matches = true;
+                                        if (child_it->bound.kind == PartitionBound::Kind::LIST)
+                                        {
+                                            matches = false;
+                                            for (const auto& tuple_values :
+                                                 child_it->bound.list_values)
+                                            {
+                                                if (runtimeListTupleMatchesConstraints(
+                                                        tuple_values,
+                                                        constraints,
+                                                        key_types))
+                                                {
+                                                    matches = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        else if (child_it->bound.kind ==
+                                                 PartitionBound::Kind::RANGE)
+                                        {
+                                            matches = runtimeRangeMatchesConstraints(
+                                                child_it->bound,
+                                                constraints,
+                                                key_types);
+                                        }
+
+                                        if (matches)
+                                        {
+                                            kept_tables.push_back(target_table);
+                                        }
+                                    }
+
+                                    if (!kept_tables.empty() &&
+                                        kept_tables.size() < tables_inout.size())
+                                    {
+                                        tables_inout = std::move(kept_tables);
+                                    }
+                                };
+
+                            pruneRuntimePartitionTargets(target_tables);
+
                             std::unordered_set<std::string> runtime_filter_keys;
                             if (runtime_filter != nullptr && runtime_filter->enabled)
                             {
@@ -65088,6 +65619,39 @@ namespace scratchbird
                                 {
                                     line << " partition_pruned=true";
                                 }
+                                if (!relation.partition_targets_pruned_at_plan.empty())
+                                {
+                                    line << " pruned_at_plan=";
+                                    for (size_t i = 0;
+                                         i < relation.partition_targets_pruned_at_plan.size();
+                                         ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            line << ",";
+                                        }
+                                        line << relation.partition_targets_pruned_at_plan[i];
+                                    }
+                                }
+                                if (relation.runtime_partition_pruning_eligible)
+                                {
+                                    line << " runtime_partition_pruning=true";
+                                    if (!relation.runtime_partition_pruning_sources.empty())
+                                    {
+                                        line << " runtime_sources=";
+                                        for (size_t i = 0;
+                                             i <
+                                             relation.runtime_partition_pruning_sources.size();
+                                             ++i)
+                                        {
+                                            if (i > 0)
+                                            {
+                                                line << ",";
+                                            }
+                                            line << relation.runtime_partition_pruning_sources[i];
+                                        }
+                                    }
+                                }
                                 return line.str();
                             };
 
@@ -65369,6 +65933,94 @@ namespace scratchbird
                                     out << "]"
                                         << ",\"partition_pruned\":"
                                         << (entry.partition_pruned ? "true" : "false")
+                                        << ",\"partition_key_columns\":[";
+                                    for (size_t key_index = 0;
+                                         key_index < entry.partition_key_columns.size();
+                                         ++key_index)
+                                    {
+                                        if (key_index > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(
+                                                   entry.partition_key_columns[key_index])
+                                            << "\"";
+                                    }
+                                    out << "]"
+                                        << ",\"partition_targets_pruned_at_plan\":[";
+                                    for (size_t target_index = 0;
+                                         target_index <
+                                         entry.partition_targets_pruned_at_plan.size();
+                                         ++target_index)
+                                    {
+                                        if (target_index > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(
+                                                   entry.partition_targets_pruned_at_plan[target_index])
+                                            << "\"";
+                                    }
+                                    out << "]"
+                                        << ",\"runtime_partition_pruning_eligible\":"
+                                        << (entry.runtime_partition_pruning_eligible
+                                                ? "true"
+                                                : "false")
+                                        << ",\"runtime_partition_pruning_sources\":[";
+                                    for (size_t source_index = 0;
+                                         source_index <
+                                         entry.runtime_partition_pruning_sources.size();
+                                         ++source_index)
+                                    {
+                                        if (source_index > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(entry
+                                                   .runtime_partition_pruning_sources[source_index])
+                                            << "\"";
+                                    }
+                                    out << "]"
+                                        << ",\"partition_targets\":[";
+                                    for (size_t target_index = 0;
+                                         target_index < entry.partition_targets.size();
+                                         ++target_index)
+                                    {
+                                        if (target_index > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(entry.partition_targets[target_index])
+                                            << "\"";
+                                    }
+                                    out << "]"
+                                        << ",\"partition_predicates\":[";
+                                    for (size_t pred_index = 0;
+                                         pred_index < entry.partition_predicates.size();
+                                         ++pred_index)
+                                    {
+                                        if (pred_index > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        const auto &pred =
+                                            entry.partition_predicates[pred_index];
+                                        out << "{"
+                                            << "\"column_name\":\""
+                                            << escape_json(pred.column_name) << "\""
+                                            << ",\"operator_name\":\""
+                                            << escape_json(pred.operator_name) << "\""
+                                            << ",\"literal_kind\":\""
+                                            << escape_json(pred.literal_kind) << "\""
+                                            << ",\"literal_text\":\""
+                                            << escape_json(pred.literal_text) << "\""
+                                            << "}";
+                                    }
+                                    out << "]"
                                         << "}";
                                 }
                                 out << "]";
@@ -90720,6 +91372,13 @@ namespace scratchbird
                 return;
             }
 
+            Value parameter_value = Value::makeNull();
+            if (tryResolveParameterVariable(var_name, parameter_value))
+            {
+                push(parameter_value);
+                return;
+            }
+
             auto lookup_session_var = [&](const std::string& name, std::string& out) -> bool {
                 if (!conn_ctx_)
                 {
@@ -108989,6 +109648,51 @@ namespace scratchbird
                 {
                     return false;
                 }
+            }
+
+            int comparePartitionLiteral(const std::string& left,
+                                        const std::string& right,
+                                        core::DataType type)
+            {
+                if (type == core::DataType::INT8 ||
+                    type == core::DataType::INT16 ||
+                    type == core::DataType::INT32 ||
+                    type == core::DataType::INT64 ||
+                    type == core::DataType::UINT8 ||
+                    type == core::DataType::UINT16 ||
+                    type == core::DataType::UINT32 ||
+                    type == core::DataType::UINT64)
+                {
+                    int64_t left_value = 0;
+                    int64_t right_value = 0;
+                    if (parseNumericLiteral(left, left_value) &&
+                        parseNumericLiteral(right, right_value))
+                    {
+                        if (left_value < right_value) return -1;
+                        if (left_value > right_value) return 1;
+                        return 0;
+                    }
+                }
+                if (type == core::DataType::FLOAT32 ||
+                    type == core::DataType::FLOAT64 ||
+                    type == core::DataType::DECIMAL)
+                {
+                    double left_value = 0.0;
+                    double right_value = 0.0;
+                    if (parseDoubleLiteral(left, left_value) &&
+                        parseDoubleLiteral(right, right_value))
+                    {
+                        if (left_value < right_value) return -1;
+                        if (left_value > right_value) return 1;
+                        return 0;
+                    }
+                }
+
+                const std::string normalized_left = normalizePartitionLiteral(left);
+                const std::string normalized_right = normalizePartitionLiteral(right);
+                if (normalized_left < normalized_right) return -1;
+                if (normalized_left > normalized_right) return 1;
+                return 0;
             }
 
             std::vector<std::string> splitTopLevel(const std::string& text)

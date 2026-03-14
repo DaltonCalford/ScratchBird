@@ -107,9 +107,14 @@ namespace scratchbird::optimizer
         {
             bool available = false;
             bool pruned = false;
+            bool runtime_pruning_eligible = false;
             std::string strategy;
             std::string key_column;
+            std::vector<std::string> key_columns;
             std::vector<std::string> targets;
+            std::vector<std::string> pruned_targets_at_plan;
+            std::vector<std::string> runtime_pruning_sources;
+            std::vector<RuntimePlanIndexPredicate> predicates;
             uint64_t rows = 0;
             uint64_t pages = 0;
         };
@@ -123,6 +128,20 @@ namespace scratchbird::optimizer
             bool has_upper = false;
             std::string upper;
             bool upper_inclusive = true;
+        };
+
+        enum class PartitionConstraintValueKind : uint8_t
+        {
+            NEGATIVE_INFINITY = 0,
+            FINITE = 1,
+            POSITIVE_INFINITY = 2
+        };
+
+        struct PartitionConstraintValue
+        {
+            PartitionConstraintValueKind kind =
+                PartitionConstraintValueKind::FINITE;
+            std::string value;
         };
 
         auto renderSchemaPath(const parser::v3::SchemaPath &path,
@@ -1199,12 +1218,54 @@ namespace scratchbird::optimizer
             return 0;
         }
 
+        auto resolvePredicateLiteralText(const ResolvedScanPredicate &predicate,
+                                         const ParameterBindings *parameter_bindings,
+                                         std::string &literal_out) -> bool
+        {
+            literal_out.clear();
+            if (predicate.literal_kind == "PARAMETER")
+            {
+                if (parameter_bindings == nullptr ||
+                    predicate.literal_text.size() < 2 ||
+                    predicate.literal_text.front() != '$')
+                {
+                    return false;
+                }
+                try
+                {
+                    const uint32_t index =
+                        static_cast<uint32_t>(std::stoul(predicate.literal_text.substr(1)));
+                    BoundParameterValue value;
+                    if (!parameter_bindings->getPositional(index, value) || value.is_null)
+                    {
+                        return false;
+                    }
+                    literal_out = value.text;
+                    return !literal_out.empty();
+                }
+                catch (...)
+                {
+                    return false;
+                }
+            }
+
+            if (predicate.literal_text.empty())
+            {
+                return false;
+            }
+            literal_out = predicate.literal_text;
+            return true;
+        }
+
         auto applyPredicateConstraint(PredicateConstraint &constraint,
                                       const ResolvedScanPredicate &predicate,
-                                      core::DataType type) -> bool
+                                      core::DataType type,
+                                      const ParameterBindings *parameter_bindings) -> bool
         {
-            if (predicate.literal_kind == "PARAMETER" ||
-                predicate.literal_text.empty())
+            std::string literal_text;
+            if (!resolvePredicateLiteralText(predicate,
+                                             parameter_bindings,
+                                             literal_text))
             {
                 return false;
             }
@@ -1253,36 +1314,173 @@ namespace scratchbird::optimizer
                 core::IdentifierUtils::toUpper(predicate.operator_name);
             if (op == "=")
             {
-                strengthenLower(predicate.literal_text, true);
-                strengthenUpper(predicate.literal_text, true);
+                strengthenLower(literal_text, true);
+                strengthenUpper(literal_text, true);
                 constraint.valid = true;
                 return true;
             }
             if (op == ">")
             {
-                strengthenLower(predicate.literal_text, false);
+                strengthenLower(literal_text, false);
                 constraint.valid = true;
                 return true;
             }
             if (op == ">=")
             {
-                strengthenLower(predicate.literal_text, true);
+                strengthenLower(literal_text, true);
                 constraint.valid = true;
                 return true;
             }
             if (op == "<")
             {
-                strengthenUpper(predicate.literal_text, false);
+                strengthenUpper(literal_text, false);
                 constraint.valid = true;
                 return true;
             }
             if (op == "<=")
             {
-                strengthenUpper(predicate.literal_text, true);
+                strengthenUpper(literal_text, true);
                 constraint.valid = true;
                 return true;
             }
             return false;
+        }
+
+        auto makeConstraintTuple(const std::vector<PredicateConstraint> &constraints,
+                                 bool lower_bound)
+            -> std::vector<PartitionConstraintValue>
+        {
+            std::vector<PartitionConstraintValue> tuple;
+            tuple.reserve(constraints.size());
+            for (const auto &constraint : constraints)
+            {
+                PartitionConstraintValue entry;
+                if (lower_bound)
+                {
+                    if (constraint.has_lower)
+                    {
+                        entry.kind = PartitionConstraintValueKind::FINITE;
+                        entry.value = constraint.lower;
+                    }
+                    else
+                    {
+                        entry.kind =
+                            PartitionConstraintValueKind::NEGATIVE_INFINITY;
+                    }
+                }
+                else if (constraint.has_upper)
+                {
+                    entry.kind = PartitionConstraintValueKind::FINITE;
+                    entry.value = constraint.upper;
+                }
+                else
+                {
+                    entry.kind = PartitionConstraintValueKind::POSITIVE_INFINITY;
+                }
+                tuple.push_back(std::move(entry));
+            }
+            return tuple;
+        }
+
+        auto compareConstraintTupleToLiteralTuple(
+            const std::vector<PartitionConstraintValue> &left,
+            const std::vector<std::string> &right,
+            const std::vector<core::DataType> &types) -> int
+        {
+            const size_t count =
+                std::min(left.size(), std::min(right.size(), types.size()));
+            for (size_t i = 0; i < count; ++i)
+            {
+                if (left[i].kind == PartitionConstraintValueKind::NEGATIVE_INFINITY)
+                {
+                    return -1;
+                }
+                if (left[i].kind == PartitionConstraintValueKind::POSITIVE_INFINITY)
+                {
+                    return 1;
+                }
+                const int cmp =
+                    comparePartitionLiteral(left[i].value, right[i], types[i]);
+                if (cmp != 0)
+                {
+                    return cmp;
+                }
+            }
+            if (left.size() < right.size()) return -1;
+            if (left.size() > right.size()) return 1;
+            return 0;
+        }
+
+        auto rangeMatchesConstraints(
+            const PlannerPartitionBound &bound,
+            const std::vector<PredicateConstraint> &constraints,
+            const std::vector<core::DataType> &types) -> bool
+        {
+            bool has_any_constraint = false;
+            for (const auto &constraint : constraints)
+            {
+                if (constraint.valid)
+                {
+                    has_any_constraint = true;
+                    break;
+                }
+            }
+            if (!has_any_constraint)
+            {
+                return true;
+            }
+
+            const auto lower_tuple = makeConstraintTuple(constraints, true);
+            const auto upper_tuple = makeConstraintTuple(constraints, false);
+            if (bound.has_end && !bound.range_end.empty())
+            {
+                if (compareConstraintTupleToLiteralTuple(lower_tuple,
+                                                        bound.range_end,
+                                                        types) >= 0)
+                {
+                    return false;
+                }
+            }
+            if (bound.has_start && !bound.range_start.empty())
+            {
+                if (compareConstraintTupleToLiteralTuple(upper_tuple,
+                                                        bound.range_start,
+                                                        types) < 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto constraintsDescribePointTuple(const std::vector<PredicateConstraint> &constraints,
+                                           const std::vector<core::DataType> &types,
+                                           std::vector<std::string> &tuple_out) -> bool
+        {
+            if (constraints.size() != types.size())
+            {
+                return false;
+            }
+            tuple_out.clear();
+            tuple_out.reserve(constraints.size());
+            for (size_t i = 0; i < constraints.size(); ++i)
+            {
+                const auto &constraint = constraints[i];
+                if (!constraint.valid ||
+                    !constraint.has_lower ||
+                    !constraint.has_upper ||
+                    !constraint.lower_inclusive ||
+                    !constraint.upper_inclusive ||
+                    comparePartitionLiteral(constraint.lower,
+                                            constraint.upper,
+                                            types[i]) != 0)
+                {
+                    tuple_out.clear();
+                    return false;
+                }
+                tuple_out.push_back(constraint.lower);
+            }
+            return true;
         }
 
         auto listValueMatchesConstraint(const std::string &value,
@@ -1303,6 +1501,26 @@ namespace scratchbird::optimizer
                 const int cmp =
                     comparePartitionLiteral(value, constraint.upper, type);
                 if (cmp > 0 || (cmp == 0 && !constraint.upper_inclusive))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto listTupleMatchesConstraints(
+            const std::vector<std::string> &values,
+            const std::vector<PredicateConstraint> &constraints,
+            const std::vector<core::DataType> &types) -> bool
+        {
+            if (values.size() != constraints.size() || values.size() != types.size())
+            {
+                return false;
+            }
+
+            for (size_t i = 0; i < values.size(); ++i)
+            {
+                if (!listValueMatchesConstraint(values[i], constraints[i], types[i]))
                 {
                     return false;
                 }
@@ -1458,7 +1676,9 @@ namespace scratchbird::optimizer
         }
 
         auto analyzePartitionPruning(core::CatalogManager *catalog,
-                                     const ResolvedRelation &relation) -> PartitionPruningResult
+                                     const ResolvedRelation &relation,
+                                     const ParameterBindings *parameter_bindings)
+            -> PartitionPruningResult
         {
             PartitionPruningResult result;
             if (catalog == nullptr ||
@@ -1484,49 +1704,97 @@ namespace scratchbird::optimizer
                 result.strategy = partition["strategy"].get<std::string>();
             }
             if (!partition.contains("columns") || !partition["columns"].is_array() ||
-                partition["columns"].size() != 1 || !partition.contains("children") ||
+                partition["columns"].empty() || !partition.contains("children") ||
                 !partition["children"].is_array())
             {
                 return result;
             }
 
-            result.key_column = partition["columns"][0].get<std::string>();
-            const auto column_it =
-                std::find_if(relation.columns.begin(),
-                             relation.columns.end(),
-                             [&](const core::CatalogManager::ColumnInfo &column) {
-                                 return core::IdentifierUtils::namesMatch(
-                                     column.column_name,
-                                     false,
-                                     result.key_column,
-                                     false);
-                             });
-            if (column_it == relation.columns.end())
+            std::vector<core::DataType> partition_key_types;
+            std::vector<PredicateConstraint> constraints;
+            for (const auto &column_entry : partition["columns"])
             {
-                return result;
+                if (!column_entry.is_string())
+                {
+                    return result;
+                }
+                const std::string key_column = column_entry.get<std::string>();
+                result.key_columns.push_back(key_column);
+                const auto column_it =
+                    std::find_if(relation.columns.begin(),
+                                 relation.columns.end(),
+                                 [&](const core::CatalogManager::ColumnInfo &column) {
+                                     return core::IdentifierUtils::namesMatch(
+                                         column.column_name,
+                                         false,
+                                         key_column,
+                                         false);
+                                 });
+                if (column_it == relation.columns.end())
+                {
+                    return result;
+                }
+                partition_key_types.push_back(
+                    static_cast<core::DataType>(column_it->data_type));
+                constraints.emplace_back();
             }
+            result.key_column =
+                result.key_columns.empty() ? std::string() : result.key_columns.front();
 
-            PredicateConstraint constraint;
+            bool has_static_constraint = false;
             for (const auto &predicate : relation.local_predicates)
             {
-                if (!core::IdentifierUtils::namesMatch(predicate.column_name,
-                                                       false,
-                                                       result.key_column,
-                                                       false))
+                const auto key_it =
+                    std::find_if(result.key_columns.begin(),
+                                 result.key_columns.end(),
+                                 [&](const std::string &column_name) {
+                                     return core::IdentifierUtils::namesMatch(
+                                         predicate.column_name,
+                                         false,
+                                         column_name,
+                                         false);
+                                 });
+                if (key_it == result.key_columns.end())
                 {
                     continue;
                 }
-                (void)applyPredicateConstraint(
-                    constraint,
+
+                result.predicates.push_back(RuntimePlanIndexPredicate{
+                    true,
+                    std::string(),
+                    std::string(),
+                    predicate.column_name,
+                    predicate.operator_name,
+                    predicate.literal_kind,
+                    predicate.literal_text});
+
+                const size_t key_index =
+                    static_cast<size_t>(std::distance(result.key_columns.begin(),
+                                                     key_it));
+                const bool applied = applyPredicateConstraint(
+                    constraints[key_index],
                     predicate,
-                    static_cast<core::DataType>(column_it->data_type));
-            }
-            if (!constraint.valid)
-            {
-                return result;
+                    partition_key_types[key_index],
+                    parameter_bindings);
+                has_static_constraint = has_static_constraint || applied;
+
+                if (predicate.literal_kind == "PARAMETER" && !applied)
+                {
+                    result.runtime_pruning_eligible = true;
+                    if (std::find(result.runtime_pruning_sources.begin(),
+                                  result.runtime_pruning_sources.end(),
+                                  "PARAMETER") ==
+                        result.runtime_pruning_sources.end())
+                    {
+                        result.runtime_pruning_sources.push_back("PARAMETER");
+                    }
+                }
             }
 
             bool matched_any = false;
+            bool has_default_child = false;
+            std::string default_child_name;
+            core::CatalogManager::TableInfo default_child_info;
             for (const auto &entry : partition["children"])
             {
                 if (!entry.is_object() ||
@@ -1546,38 +1814,6 @@ namespace scratchbird::optimizer
                     }
                 }
 
-                bool matches = false;
-                if (bound.kind == PlannerPartitionBound::Kind::LIST)
-                {
-                    for (const auto &values : bound.list_values)
-                    {
-                        if (values.empty())
-                        {
-                            continue;
-                        }
-                        if (listValueMatchesConstraint(
-                                values.front(),
-                                constraint,
-                                static_cast<core::DataType>(column_it->data_type)))
-                        {
-                            matches = true;
-                            break;
-                        }
-                    }
-                }
-                else if (bound.kind == PlannerPartitionBound::Kind::RANGE)
-                {
-                    matches = rangeMatchesConstraint(
-                        bound,
-                        constraint,
-                        static_cast<core::DataType>(column_it->data_type));
-                }
-
-                if (!matches)
-                {
-                    continue;
-                }
-
                 core::CatalogManager::TableInfo child_info;
                 core::ErrorContext child_ctx;
                 if (!resolveQualifiedTable(catalog,
@@ -1586,6 +1822,45 @@ namespace scratchbird::optimizer
                                            child_info,
                                            &child_ctx))
                 {
+                    continue;
+                }
+
+                if (bound.kind == PlannerPartitionBound::Kind::DEFAULT)
+                {
+                    has_default_child = true;
+                    default_child_name = child_name;
+                    default_child_info = child_info;
+                    continue;
+                }
+
+                bool matches = !has_static_constraint;
+                if (has_static_constraint)
+                {
+                    matches = false;
+                    if (bound.kind == PlannerPartitionBound::Kind::LIST)
+                    {
+                        for (const auto &values : bound.list_values)
+                        {
+                            if (listTupleMatchesConstraints(values,
+                                                            constraints,
+                                                            partition_key_types))
+                            {
+                                matches = true;
+                                break;
+                            }
+                        }
+                    }
+                    else if (bound.kind == PlannerPartitionBound::Kind::RANGE)
+                    {
+                        matches = rangeMatchesConstraints(bound,
+                                                         constraints,
+                                                         partition_key_types);
+                    }
+                }
+
+                if (!matches)
+                {
+                    result.pruned_targets_at_plan.push_back(child_name);
                     continue;
                 }
 
@@ -1600,7 +1875,36 @@ namespace scratchbird::optimizer
                 matched_any = true;
             }
 
-            result.pruned = matched_any && !result.targets.empty();
+            std::vector<std::string> point_tuple;
+            const bool point_tuple_known =
+                constraintsDescribePointTuple(constraints,
+                                             partition_key_types,
+                                             point_tuple);
+            if (has_default_child)
+            {
+                if (!point_tuple_known || !matched_any)
+                {
+                    result.targets.push_back(default_child_name);
+                    result.rows += default_child_info.row_count == 0
+                        ? 0
+                        : default_child_info.row_count;
+                    result.pages +=
+                        std::max<uint64_t>(1,
+                                           (default_child_info.row_count == 0
+                                                ? 0
+                                                : default_child_info.row_count) /
+                                               100);
+                }
+                else
+                {
+                    result.pruned_targets_at_plan.push_back(default_child_name);
+                }
+            }
+
+            result.pruned =
+                has_static_constraint &&
+                !result.targets.empty() &&
+                !result.pruned_targets_at_plan.empty();
             return result;
         }
 
@@ -3909,7 +4213,8 @@ namespace scratchbird::optimizer
 
             const PartitionPruningResult pruning =
                 analyzePartitionPruning(db_ ? db_->catalog_manager() : nullptr,
-                                        relation);
+                                        relation,
+                                        parameter_bindings);
             const uint64_t unpruned_base_rows =
                 relation.estimated_rows == 0 ? 1000 : relation.estimated_rows;
             const uint64_t unpruned_base_pages =
@@ -4667,7 +4972,15 @@ namespace scratchbird::optimizer
             choice.runtime_relation.partition_pruned = pruning.pruned;
             choice.runtime_relation.partition_strategy = pruning.strategy;
             choice.runtime_relation.partition_key_column = pruning.key_column;
+            choice.runtime_relation.partition_key_columns = pruning.key_columns;
             choice.runtime_relation.partition_targets = pruning.targets;
+            choice.runtime_relation.partition_targets_pruned_at_plan =
+                pruning.pruned_targets_at_plan;
+            choice.runtime_relation.runtime_partition_pruning_eligible =
+                pruning.runtime_pruning_eligible;
+            choice.runtime_relation.runtime_partition_pruning_sources =
+                pruning.runtime_pruning_sources;
+            choice.runtime_relation.partition_predicates = pruning.predicates;
             choice.runtime_relation.startup_cost = best_cost.startup_cost;
             choice.runtime_relation.total_cost = best_cost.total_cost;
             choice.runtime_relation.estimated_rows = best_cost.rows;
@@ -5890,6 +6203,35 @@ namespace scratchbird::optimizer
                             best_join.runtime_filter_index_name;
                         runtime_relation_it->runtime_filter_index_id_text =
                             best_join.runtime_filter_index_id_text;
+                        const auto partition_key_it =
+                            std::find_if(runtime_relation_it->partition_key_columns.begin(),
+                                         runtime_relation_it->partition_key_columns.end(),
+                                         [&](const std::string &column_name) {
+                                             return core::IdentifierUtils::namesMatch(
+                                                 column_name,
+                                                 false,
+                                                 best_join.runtime_filter_column,
+                                                 false);
+                                         });
+                        if (partition_key_it !=
+                            runtime_relation_it->partition_key_columns.end())
+                        {
+                            runtime_relation_it->runtime_partition_pruning_eligible =
+                                true;
+                            if (std::find(
+                                    runtime_relation_it
+                                        ->runtime_partition_pruning_sources.begin(),
+                                    runtime_relation_it
+                                        ->runtime_partition_pruning_sources.end(),
+                                    "RUNTIME_FILTER") ==
+                                runtime_relation_it
+                                    ->runtime_partition_pruning_sources.end())
+                            {
+                                runtime_relation_it
+                                    ->runtime_partition_pruning_sources.push_back(
+                                        "RUNTIME_FILTER");
+                            }
+                        }
                     }
                 }
                 if (best_join.runtime_join.parameterized_dependency)
