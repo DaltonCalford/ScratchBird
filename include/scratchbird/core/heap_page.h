@@ -323,7 +323,7 @@ namespace scratchbird::core
         {
             VersionMaturityState state = VersionMaturityState::LIVE_CURRENT;
             bool reclaim_heap = false;
-            bool emit_dead_tid = false;
+            bool emit_logical_dead_root_tid = false;
         };
 
         struct VersionMaturityScan

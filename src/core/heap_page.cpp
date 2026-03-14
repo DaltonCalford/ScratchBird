@@ -1060,6 +1060,7 @@ namespace scratchbird::core
                                uint16_t *new_item_id_out, ErrorContext *ctx,
                                bool defer_old_toast_cleanup) -> Status
     {
+        (void)defer_old_toast_cleanup;
         // ====================================================================
         // FIREBIRD MGA BACK VERSIONING ALGORITHM
         // ====================================================================
@@ -1116,31 +1117,11 @@ namespace scratchbird::core
             stable_row_uuid = generateUuidV7();
         }
 
-        // ====================================================================
-        // TOAST CLEANUP: Delete old TOAST data if present
-        // ====================================================================
-        // This prevents TOAST storage leaks on UPDATE operations
-        if (!defer_old_toast_cleanup && (toast_mgr_ != nullptr) && (db_ != nullptr))
-        {
-            if (primary_length >= sizeof(TupleHeader) + sizeof(ToastPointer))
-            {
-                const uint8_t *old_data_ptr = page_data_ + primary_offset + sizeof(TupleHeader);
-
-                if (isToastPointer(old_data_ptr, sizeof(ToastPointer)))
-                {
-                    const auto *old_toast_ptr =
-                        reinterpret_cast<const ToastPointer *>(old_data_ptr);
-
-                    Status toast_status =
-                        toast_mgr_->deleteToastValue(old_toast_ptr->lob_uuid, xmax, ctx);
-
-                    if (toast_status != Status::OK && toast_status != Status::NOT_FOUND)
-                    {
-                        return toast_status;
-                    }
-                }
-            }
-        }
+        // Preserve old TOAST payloads across UPDATE. The old version becomes a
+        // back version in the MGA chain, so eagerly deleting its TOAST value
+        // breaks version traversal, savepoint restore, and cross-page fallback.
+        // Old TOAST payload cleanup must happen only when the owning version is
+        // physically reclaimed by GC.
 
         // ====================================================================
         // PHASE 2: CREATE BACK VERSION USING CANONICAL SLOT ENCODING
@@ -2376,7 +2357,7 @@ namespace scratchbird::core
 
         decision_out->state = VersionMaturityState::RECLAIMABLE_ROOT_TOMBSTONE;
         decision_out->reclaim_heap = true;
-        decision_out->emit_dead_tid = true;
+        decision_out->emit_logical_dead_root_tid = true;
         return Status::OK;
     }
 
@@ -2440,7 +2421,7 @@ namespace scratchbird::core
                 reclaimable_item_ids_out->push_back(item_id);
             }
 
-            if (dead_tids_out != nullptr && decision.emit_dead_tid)
+            if (dead_tids_out != nullptr && decision.emit_logical_dead_root_tid)
             {
                 auto *tuple_hdr =
                     reinterpret_cast<TupleHeader *>(page_data_ + items[item_id].offset);

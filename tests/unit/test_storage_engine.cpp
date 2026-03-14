@@ -324,6 +324,73 @@ protected:
         return buildFilledTuple(chosen_total - sizeof(TupleHeader), fill);
     }
 
+    std::vector<uint8_t> buildCrossPageTriggerLargeRowTuple(int32_t value,
+                                                            uint32_t page_id,
+                                                            uint16_t item_id,
+                                                            uint8_t fill)
+    {
+        auto tuple = buildCrossPageTriggerTuple(page_id, item_id, fill);
+        EXPECT_GE(tuple.size(), sizeof(TupleHeader) + sizeof(value));
+        std::memcpy(tuple.data() + sizeof(TupleHeader), &value, sizeof(value));
+        return tuple;
+    }
+
+    std::vector<uint8_t> buildLargeIntTuple(int32_t value, uint8_t fill, size_t payload_size = 5000)
+    {
+        auto tuple = buildFilledTuple(sizeof(value) + payload_size, fill);
+        std::memcpy(tuple.data() + sizeof(TupleHeader), &value, sizeof(value));
+        return tuple;
+    }
+
+    void expectIndexSeekFindsTid(const ID &index_id, int32_t value, const TID &expected_tid)
+    {
+        ErrorContext ctx;
+        auto scan = engine_->createIndexScan(index_id, &ctx);
+        ASSERT_NE(scan, nullptr) << ctx.message;
+
+        auto key = encodeIntKey(value);
+        ASSERT_EQ(scan->seek(key, &ctx), Status::OK) << ctx.message;
+
+        Tuple found{};
+        ASSERT_EQ(scan->next(&found, &ctx), Status::OK) << ctx.message;
+        EXPECT_EQ(found.tid, expected_tid);
+        EXPECT_EQ(scan->next(&found, &ctx), Status::NOT_FOUND);
+    }
+
+    void expectIndexSeekNotFound(const ID &index_id, int32_t value)
+    {
+        ErrorContext ctx;
+        auto scan = engine_->createIndexScan(index_id, &ctx);
+        ASSERT_NE(scan, nullptr) << ctx.message;
+
+        auto key = encodeIntKey(value);
+        ASSERT_EQ(scan->seek(key, &ctx), Status::OK) << ctx.message;
+
+        Tuple found{};
+        EXPECT_EQ(scan->next(&found, &ctx), Status::NOT_FOUND);
+    }
+
+    std::vector<TID> rawBTreeSearch(const ID &index_id, int32_t value, uint64_t current_xid)
+    {
+        ErrorContext ctx;
+        CatalogManager::IndexInfo index_info;
+        EXPECT_EQ(db_->catalog_manager()->getIndex(index_id, index_info, &ctx), Status::OK)
+            << ctx.message;
+
+        auto btree = BTree::open(db_.get(), index_id, index_info.root_gpid, &ctx);
+        EXPECT_NE(btree, nullptr) << ctx.message;
+
+        std::vector<TID> tids;
+        auto key = encodeIntKey(value);
+        Status status = btree->search(key, current_xid, &tids, &ctx);
+        if (status == Status::NOT_FOUND)
+        {
+            return {};
+        }
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return tids;
+    }
+
     std::string test_db_path_;
     std::unique_ptr<Database> db_;
     std::unique_ptr<ConnectionContext> conn_ctx_;
@@ -524,6 +591,139 @@ TEST_F(StorageEngineTest, UniqueInsertIgnoresStaleIndexEntryWithMismatchedHeapKe
     EXPECT_EQ(found.tid, TID(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(second_page_id)),
                              second_item_id));
     EXPECT_EQ(scan->next(&found, &ctx), Status::NOT_FOUND);
+}
+
+TEST_F(StorageEngineTest, StableRootIndexUpdateReplacesVisibleKeySamePage)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("stable_root_same_page");
+    ID index_id = createSingleIntIndex(table_id, "idx_stable_root_same_page", false);
+
+    auto original_tuple = buildIntTuple(10);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    TID stable_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+    expectIndexSeekFindsTid(index_id, 10, stable_tid);
+
+    auto updated_tuple = buildIntTuple(20, conn_ctx_->getCurrentXid());
+    uint32_t updated_page_id = 0;
+    uint16_t updated_item_id = 0;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   &updated_page_id,
+                                   &updated_item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(updated_page_id, page_id);
+    EXPECT_EQ(updated_item_id, item_id);
+
+    auto raw_old = rawBTreeSearch(index_id, 10, engine_->getCurrentXid());
+    auto raw_new = rawBTreeSearch(index_id, 20, engine_->getCurrentXid());
+    EXPECT_TRUE(raw_old.empty());
+    ASSERT_EQ(raw_new.size(), 1u);
+    EXPECT_EQ(raw_new.front(), stable_tid);
+
+    expectIndexSeekNotFound(index_id, 10);
+    expectIndexSeekFindsTid(index_id, 20, stable_tid);
+}
+
+TEST_F(StorageEngineTest, StableRootIndexUpdateReplacesVisibleKeyAcrossPage)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("stable_root_cross_page");
+    ID index_id = createSingleIntIndex(table_id, "idx_stable_root_cross_page", false);
+
+    auto original_tuple = buildLargeIntTuple(10, 'A');
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    TID stable_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+    expectIndexSeekFindsTid(index_id, 10, stable_tid);
+
+    fillPageAlmostFull(page_id);
+    auto updated_tuple = buildCrossPageTriggerLargeRowTuple(20, page_id, item_id, 0x44);
+
+    uint32_t updated_page_id = 0;
+    uint16_t updated_item_id = 0;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   &updated_page_id,
+                                   &updated_item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(updated_page_id, page_id);
+    EXPECT_EQ(updated_item_id, item_id);
+
+    auto raw_old = rawBTreeSearch(index_id, 10, engine_->getCurrentXid());
+    auto raw_new = rawBTreeSearch(index_id, 20, engine_->getCurrentXid());
+    EXPECT_TRUE(raw_old.empty());
+    ASSERT_EQ(raw_new.size(), 1u);
+    EXPECT_EQ(raw_new.front(), stable_tid);
+
+    expectIndexSeekNotFound(index_id, 10);
+    expectIndexSeekFindsTid(index_id, 20, stable_tid);
+}
+
+TEST_F(StorageEngineTest, SavepointRollbackRestoresIndexedKeyVisibility)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("savepoint_index_restore");
+    ID index_id = createSingleIntIndex(table_id, "idx_savepoint_index_restore", false);
+
+    auto original_tuple = buildIntTuple(30);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    TID stable_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_index_restore", &ctx), Status::OK) << ctx.message;
+
+    auto updated_tuple = buildIntTuple(40, conn_ctx_->getCurrentXid());
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    expectIndexSeekFindsTid(index_id, 40, stable_tid);
+
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_index_restore", &ctx), Status::OK) << ctx.message;
+
+    db_->garbage_collector()->markPageDirty(page_id);
+    db_->garbage_collector()->processPageCooperative(page_id, &ctx);
+
+    expectIndexSeekFindsTid(index_id, 30, stable_tid);
+    expectIndexSeekNotFound(index_id, 40);
 }
 
 TEST_F(StorageEngineTest, ReadConsistencyNoWaitUpdateRequiresRestart)

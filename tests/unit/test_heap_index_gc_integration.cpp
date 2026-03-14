@@ -28,6 +28,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/gc_manager.h"
+#include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/gpid.h"
@@ -37,8 +38,42 @@
 #include <filesystem>
 #include <vector>
 #include <cstring>
+#include <string>
 
 using namespace scratchbird::core;
+
+namespace
+{
+class RecordingIndexGc : public IndexGCInterface
+{
+public:
+    Status removeDeadEntries(const std::vector<TID> &dead_tids,
+                             uint64_t *entries_removed_out,
+                             uint64_t *pages_modified_out,
+                             ErrorContext *ctx) override
+    {
+        forwarded_tids = dead_tids;
+        last_ctx_message = ctx ? ctx->message : std::string{};
+        if (entries_removed_out)
+        {
+            *entries_removed_out = dead_tids.size();
+        }
+        if (pages_modified_out)
+        {
+            *pages_modified_out = 1;
+        }
+        return Status::OK;
+    }
+
+    const char *indexTypeName() const override
+    {
+        return "RecordingIndexGc";
+    }
+
+    std::vector<TID> forwarded_tids;
+    std::string last_ctx_message;
+};
+} // namespace
 
 class HeapIndexGCIntegrationTest : public ::testing::Test
 {
@@ -169,6 +204,42 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_EmptyPage)
 
     // Free page
     releasePage(page_id, true, &ctx);
+}
+
+TEST(IndexGcInterfaceContractTest, LifecycleWrapperForwardsStableRootTids)
+{
+    RecordingIndexGc index;
+    ErrorContext ctx;
+    std::vector<IndexGcCandidate> candidates{
+        {makeTID(PRIMARY_TABLESPACE_ID, 111, 3), IndexGcLifecycleState::LOGICAL_DEAD_ROOT},
+        {makeTID(PRIMARY_TABLESPACE_ID, 222, 5), IndexGcLifecycleState::LOGICAL_DEAD_ROOT},
+    };
+    uint64_t entries_removed = 0;
+    uint64_t pages_modified = 0;
+
+    ASSERT_EQ(index.removeDeadEntriesWithLifecycle(candidates,
+                                                   &entries_removed,
+                                                   &pages_modified,
+                                                   &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(entries_removed, 2u);
+    ASSERT_EQ(pages_modified, 1u);
+    ASSERT_EQ(index.forwarded_tids.size(), 2u);
+    EXPECT_EQ(index.forwarded_tids[0], candidates[0].stable_root_tid);
+    EXPECT_EQ(index.forwarded_tids[1], candidates[1].stable_root_tid);
+}
+
+TEST(IndexGcInterfaceContractTest, LifecycleWrapperRejectsInvalidStableRootTid)
+{
+    RecordingIndexGc index;
+    ErrorContext ctx;
+    std::vector<IndexGcCandidate> candidates{
+        {INVALID_TID, IndexGcLifecycleState::LOGICAL_DEAD_ROOT},
+    };
+
+    ASSERT_EQ(index.removeDeadEntriesWithLifecycle(candidates, nullptr, nullptr, &ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_NE(ctx.message.find("invalid stable root TID"), std::string::npos);
 }
 
 TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_LiveTuplesOnly)

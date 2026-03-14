@@ -1271,12 +1271,20 @@ namespace scratchbird::core
                     continue;
                 }
 
-                // Call removeDeadEntries() on this index
+                std::vector<IndexGcCandidate> dead_candidates;
+                dead_candidates.reserve(dead_tids.size());
+                for (const auto &dead_tid : dead_tids)
+                {
+                    dead_candidates.push_back(
+                        IndexGcCandidate{dead_tid, IndexGcLifecycleState::LOGICAL_DEAD_ROOT});
+                }
+
+                // Call lifecycle-aware index cleanup on this index.
                 uint64_t entries_removed = 0;
                 uint64_t pages_modified = 0;
 
-                Status remove_status = index->removeDeadEntries(dead_tids, &entries_removed,
-                                                               &pages_modified, ctx);
+                Status remove_status = index->removeDeadEntriesWithLifecycle(
+                    dead_candidates, &entries_removed, &pages_modified, ctx);
 
                 if (remove_status == Status::OK)
                 {

@@ -807,6 +807,85 @@ namespace scratchbird::core
             return Status::OK;
         }
 
+        auto materializeTupleForKeyExtraction(const uint8_t *tuple_data,
+                                              uint32_t tuple_size,
+                                              ToastManager *toast_mgr,
+                                              uint64_t xid,
+                                              std::vector<uint8_t> &owned_tuple,
+                                              const uint8_t **materialized_data,
+                                              uint32_t *materialized_size,
+                                              ErrorContext *ctx) -> Status
+        {
+            if (materialized_data == nullptr || materialized_size == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Invalid materialized tuple outputs");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            *materialized_data = tuple_data;
+            *materialized_size = tuple_size;
+            owned_tuple.clear();
+
+            if (tuple_data == nullptr || tuple_size < sizeof(TupleHeader))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Tuple data is invalid");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+            const uint8_t *payload = tuple_data + sizeof(TupleHeader);
+            size_t payload_size = tuple_size - sizeof(TupleHeader);
+            bool has_toast_payload =
+                payload_size == sizeof(ToastPointer) &&
+                (tuple_hdr->hasRecordFlag(TupleHeader::RHD_TOAST_PTR) ||
+                 ToastManager::isToastPointer(payload, payload_size));
+
+            if (!has_toast_payload)
+            {
+                return Status::OK;
+            }
+
+            if (toast_mgr == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "TOAST manager not available for key extraction");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            std::vector<uint8_t> detoasted_payload;
+            Status detoast_status =
+                toast_mgr->detoastIfNeeded(payload, payload_size, &detoasted_payload, xid, ctx);
+            if (detoast_status != Status::OK)
+            {
+                return detoast_status;
+            }
+
+            try
+            {
+                owned_tuple.resize(sizeof(TupleHeader) + detoasted_payload.size());
+            }
+            catch (const std::bad_alloc &)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "Failed to allocate detoasted key-extraction buffer");
+                return Status::OOM;
+            }
+
+            std::memcpy(owned_tuple.data(), tuple_data, sizeof(TupleHeader));
+            std::memcpy(owned_tuple.data() + sizeof(TupleHeader),
+                        detoasted_payload.data(),
+                        detoasted_payload.size());
+
+            auto *owned_hdr = reinterpret_cast<TupleHeader *>(owned_tuple.data());
+            owned_hdr->setRecordFlag(TupleHeader::RHD_TOAST_PTR, false);
+            owned_hdr->payload_len = static_cast<uint32_t>(detoasted_payload.size());
+
+            *materialized_data = owned_tuple.data();
+            *materialized_size = static_cast<uint32_t>(owned_tuple.size());
+            return Status::OK;
+        }
+
         bool isZeroId(const ID &id)
         {
             for (uint8_t byte : id.bytes)
@@ -981,7 +1060,24 @@ namespace scratchbird::core
 
         std::vector<size_t> column_offsets;
         std::vector<size_t> column_sizes;
-        Status layout_status = computeColumnLayout(tuple.data, tuple.data_size, columns,
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        std::vector<uint8_t> materialized_tuple;
+        const uint8_t *materialized_data = nullptr;
+        uint32_t materialized_size = 0;
+        Status materialize_status = materializeTupleForKeyExtraction(tuple.data,
+                                                                     tuple.data_size,
+                                                                     toast_mgr,
+                                                                     getCurrentXid(),
+                                                                     materialized_tuple,
+                                                                     &materialized_data,
+                                                                     &materialized_size,
+                                                                     ctx);
+        if (materialize_status != Status::OK)
+        {
+            return materialize_status;
+        }
+
+        Status layout_status = computeColumnLayout(materialized_data, materialized_size, columns,
                                                    db_->domain_manager(),
                                                    column_offsets, column_sizes, ctx);
         if (layout_status != Status::OK)
@@ -990,10 +1086,10 @@ namespace scratchbird::core
         }
 
         IndexKeyExtractor extractor;
-        return extractor.extractKey(tuple.data, tuple.data_size,
+        return extractor.extractKey(materialized_data, materialized_size,
                                     column_offsets, column_sizes,
                                     column_indices,
-                                    getOrCreateToastManager(table_id, ctx),
+                                    toast_mgr,
                                     getCurrentXid(),
                                     key_out, ctx);
     }
@@ -3191,19 +3287,54 @@ namespace scratchbird::core
         TID tid(makeGPID(tablespace_id, static_cast<uint64_t>(stable_page_id)), stable_item_id);
         IndexKeyExtractor extractor;
 
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        std::vector<uint8_t> materialized_old_tuple;
+        std::vector<uint8_t> materialized_new_tuple;
+        const uint8_t *old_key_tuple_data = nullptr;
+        const uint8_t *new_key_tuple_data = nullptr;
+        uint32_t old_key_tuple_size = 0;
+        uint32_t new_key_tuple_size = 0;
+
+        Status old_materialize_status = materializeTupleForKeyExtraction(old_tuple_data,
+                                                                         old_tuple_size,
+                                                                         toast_mgr,
+                                                                         current_xid,
+                                                                         materialized_old_tuple,
+                                                                         &old_key_tuple_data,
+                                                                         &old_key_tuple_size,
+                                                                         ctx);
+        Status new_materialize_status = materializeTupleForKeyExtraction(new_tuple_data,
+                                                                         new_tuple_size,
+                                                                         toast_mgr,
+                                                                         current_xid,
+                                                                         materialized_new_tuple,
+                                                                         &new_key_tuple_data,
+                                                                         &new_key_tuple_size,
+                                                                         ctx);
+        if (old_materialize_status != Status::OK || new_materialize_status != Status::OK)
+        {
+            LOG_WARNING(STORAGE,
+                        "Skipping index updates due to tuple materialization failure "
+                        "(old=%d new=%d msg=%s)",
+                        static_cast<int>(old_materialize_status),
+                        static_cast<int>(new_materialize_status),
+                        ctx ? ctx->message.c_str() : "unknown error");
+            return Status::OK;
+        }
+
         std::vector<size_t> old_offsets;
         std::vector<size_t> old_sizes;
         std::vector<size_t> new_offsets;
         std::vector<size_t> new_sizes;
-        Status old_layout_status = computeColumnLayout(old_tuple_data,
-                                                       old_tuple_size,
+        Status old_layout_status = computeColumnLayout(old_key_tuple_data,
+                                                       old_key_tuple_size,
                                                        columns,
                                                        db_->domain_manager(),
                                                        old_offsets,
                                                        old_sizes,
                                                        ctx);
-        Status new_layout_status = computeColumnLayout(new_tuple_data,
-                                                       new_tuple_size,
+        Status new_layout_status = computeColumnLayout(new_key_tuple_data,
+                                                       new_key_tuple_size,
                                                        columns,
                                                        db_->domain_manager(),
                                                        new_offsets,
@@ -3282,16 +3413,16 @@ namespace scratchbird::core
             std::vector<uint8_t> old_key;
             std::vector<uint8_t> new_key;
             Status extract_status = extractor.extractKeyForUpdate(
-                old_tuple_data,
-                old_tuple_size,
+                old_key_tuple_data,
+                old_key_tuple_size,
                 old_offsets,
                 old_sizes,
-                new_tuple_data,
-                new_tuple_size,
+                new_key_tuple_data,
+                new_key_tuple_size,
                 new_offsets,
                 new_sizes,
                 column_indices,
-                getOrCreateToastManager(table_id, ctx),
+                toast_mgr,
                 current_xid,
                 &old_key,
                 &new_key,
