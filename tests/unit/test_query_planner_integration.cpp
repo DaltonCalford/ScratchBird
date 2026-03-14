@@ -1919,6 +1919,36 @@ TEST_F(QueryPlannerIntegrationTest, ExplainJsonFormatsRuntimePlan)
     EXPECT_NE(lines.front().find("\"analyze\":{\"rows\":"), std::string::npos);
 }
 
+TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesFormulaProfileAndExpandedCostTerms)
+{
+    ASSERT_TRUE(createDatabase());
+
+    auto result = executeSQL("EXPLAIN (FORMAT JSON) "
+                             "SELECT id FROM users WHERE id = 42");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    const auto lines = resultStrings(result);
+    ASSERT_EQ(lines.size(), 1u);
+    const auto parsed = nlohmann::json::parse(lines.front());
+
+    ASSERT_TRUE(parsed.contains("plan_root"));
+    const auto &plan_root = parsed.at("plan_root");
+    EXPECT_TRUE(plan_root.contains("formula_profile_id"));
+    EXPECT_TRUE(plan_root.contains("formula_profile_version"));
+    EXPECT_TRUE(plan_root.contains("calibration_profile_id"));
+    EXPECT_TRUE(plan_root.contains("resource_governance_outcome"));
+    EXPECT_TRUE(plan_root.contains("input_estimates"));
+    EXPECT_TRUE(plan_root.contains("expanded_cost_terms"));
+    ASSERT_TRUE(plan_root.at("input_estimates").is_array());
+    ASSERT_TRUE(plan_root.at("expanded_cost_terms").is_array());
+    EXPECT_FALSE(plan_root.at("formula_profile_id").get<std::string>().empty());
+    EXPECT_GT(plan_root.at("formula_profile_version").get<uint32_t>(), 0u);
+    EXPECT_FALSE(plan_root.at("calibration_profile_id").get<std::string>().empty());
+    EXPECT_FALSE(plan_root.at("input_estimates").empty());
+    EXPECT_FALSE(plan_root.at("expanded_cost_terms").empty());
+}
+
 TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesJoinGraphContractFields)
 {
     ASSERT_TRUE(createDatabase());

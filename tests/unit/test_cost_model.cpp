@@ -3,6 +3,7 @@
 #include "scratchbird/optimizer/cost_model.h"
 
 using scratchbird::optimizer::CostEstimate;
+using scratchbird::optimizer::CostFormulaProfile;
 using scratchbird::optimizer::CostModel;
 using scratchbird::optimizer::CostParameters;
 
@@ -57,6 +58,73 @@ TEST(CostModelTest, AccessMethodCostsProduceDeterministicOutputs)
     EXPECT_GT(sort.total_cost, aggregate.total_cost);
     EXPECT_GT(limit.total_cost, 0.0);
     EXPECT_GT(window.total_cost, 0.0);
+}
+
+TEST(CostModelTest, CostEstimatesCarryGovernedFormulaProfileAndExpandedTerms)
+{
+    auto model = defaultModel();
+
+    const auto sort = model.costSort(3200, 64, 2);
+
+    EXPECT_FALSE(sort.formula_profile_id.empty());
+    EXPECT_GT(sort.formula_profile_version, 0u);
+    EXPECT_FALSE(sort.calibration_profile_id.empty());
+    EXPECT_EQ(sort.storage_profile, "heap_btree");
+    EXPECT_EQ(sort.workload_profile, "mixed_oltp");
+    EXPECT_FALSE(sort.resource_governance_outcome.empty());
+    EXPECT_FALSE(sort.input_estimates.empty());
+    EXPECT_FALSE(sort.expanded_terms.empty());
+
+    double summed_terms = 0.0;
+    for (const auto &term : sort.expanded_terms)
+    {
+        summed_terms += term.contribution;
+        EXPECT_FALSE(term.name.empty());
+        EXPECT_FALSE(term.unit.empty());
+    }
+    EXPECT_NEAR(summed_terms, sort.total_cost, 1e-9);
+}
+
+TEST(CostModelTest, ExplicitFormulaProfilesDriveCostIdentityAndCoefficientChoices)
+{
+    CostFormulaProfile oltp_profile;
+    oltp_profile.profile_id = "sb_cost_formula/test_oltp";
+    oltp_profile.profile_version = 7;
+    oltp_profile.calibration_profile_id = "sb_cost_calibration/test_oltp";
+    oltp_profile.storage_profile = "heap_btree";
+    oltp_profile.workload_profile = "oltp";
+    oltp_profile.parameters.seq_page_cost = 1.0;
+    oltp_profile.parameters.random_page_cost = 4.0;
+    oltp_profile.parameters.cpu_tuple_cost = 0.01;
+
+    CostFormulaProfile analytics_profile = oltp_profile;
+    analytics_profile.profile_id = "sb_cost_formula/test_analytics";
+    analytics_profile.calibration_profile_id = "sb_cost_calibration/test_analytics";
+    analytics_profile.workload_profile = "analytics";
+    analytics_profile.parameters.random_page_cost = 2.0;
+    analytics_profile.parameters.cpu_tuple_cost = 0.02;
+
+    CostModel oltp_model(oltp_profile);
+    CostModel analytics_model(analytics_profile);
+
+    const auto oltp_index =
+        oltp_model.costIndexScan(3, 12, 500, 64, 500, oltp_model.operatorCost("="), 0.3);
+    const auto analytics_index =
+        analytics_model.costIndexScan(3,
+                                      12,
+                                      500,
+                                      64,
+                                      500,
+                                      analytics_model.operatorCost("="),
+                                      0.3);
+
+    EXPECT_EQ(oltp_index.formula_profile_id, "sb_cost_formula/test_oltp");
+    EXPECT_EQ(oltp_index.formula_profile_version, 7u);
+    EXPECT_EQ(oltp_index.calibration_profile_id, "sb_cost_calibration/test_oltp");
+    EXPECT_EQ(analytics_index.formula_profile_id, "sb_cost_formula/test_analytics");
+    EXPECT_EQ(analytics_index.calibration_profile_id,
+              "sb_cost_calibration/test_analytics");
+    EXPECT_NE(analytics_index.total_cost, oltp_index.total_cost);
 }
 
 TEST(CostModelTest, EffectiveRandomPageCostUsesCacheModel)

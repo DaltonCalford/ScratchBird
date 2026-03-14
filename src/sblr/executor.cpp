@@ -65225,6 +65225,34 @@ namespace scratchbird
                                         line << " spill_policy=" << node.spill_policy;
                                     }
                                 }
+                                if (!node.formula_profile_id.empty())
+                                {
+                                    line << " formula_profile=" << node.formula_profile_id;
+                                    if (node.formula_profile_version > 0)
+                                    {
+                                        line << "@" << node.formula_profile_version;
+                                    }
+                                }
+                                if (!node.calibration_profile_id.empty())
+                                {
+                                    line << " calibration_profile="
+                                         << node.calibration_profile_id;
+                                }
+                                if (!node.resource_governance_outcome.empty())
+                                {
+                                    line << " governance="
+                                         << node.resource_governance_outcome;
+                                }
+                                if (!node.input_estimates.empty())
+                                {
+                                    line << " input_estimates="
+                                         << node.input_estimates.size();
+                                }
+                                if (!node.expanded_cost_terms.empty())
+                                {
+                                    line << " cost_terms="
+                                         << node.expanded_cost_terms.size();
+                                }
                                 if (costs)
                                 {
                                     line << " rows=" << node.estimated_rows
@@ -65298,6 +65326,70 @@ namespace scratchbird
                                         out << ",\"spill_policy\":\""
                                             << escape_json(node.spill_policy) << "\"";
                                     }
+                                }
+                                if (!node.formula_profile_id.empty())
+                                {
+                                    out << ",\"formula_profile_id\":\""
+                                        << escape_json(node.formula_profile_id) << "\"";
+                                    out << ",\"formula_profile_version\":"
+                                        << node.formula_profile_version;
+                                }
+                                if (!node.calibration_profile_id.empty())
+                                {
+                                    out << ",\"calibration_profile_id\":\""
+                                        << escape_json(node.calibration_profile_id) << "\"";
+                                }
+                                if (!node.storage_profile.empty())
+                                {
+                                    out << ",\"storage_profile\":\""
+                                        << escape_json(node.storage_profile) << "\"";
+                                }
+                                if (!node.workload_profile.empty())
+                                {
+                                    out << ",\"workload_profile\":\""
+                                        << escape_json(node.workload_profile) << "\"";
+                                }
+                                if (!node.resource_governance_outcome.empty())
+                                {
+                                    out << ",\"resource_governance_outcome\":\""
+                                        << escape_json(node.resource_governance_outcome)
+                                        << "\"";
+                                }
+                                if (!node.input_estimates.empty())
+                                {
+                                    out << ",\"input_estimates\":[";
+                                    for (size_t i = 0; i < node.input_estimates.size(); ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        const auto &entry = node.input_estimates[i];
+                                        out << "{\"name\":\"" << escape_json(entry.name)
+                                            << "\",\"value\":" << entry.value
+                                            << ",\"unit\":\"" << escape_json(entry.unit)
+                                            << "\"}";
+                                    }
+                                    out << "]";
+                                }
+                                if (!node.expanded_cost_terms.empty())
+                                {
+                                    out << ",\"expanded_cost_terms\":[";
+                                    for (size_t i = 0; i < node.expanded_cost_terms.size(); ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        const auto &entry = node.expanded_cost_terms[i];
+                                        out << "{\"name\":\"" << escape_json(entry.name)
+                                            << "\",\"coefficient\":" << entry.coefficient
+                                            << ",\"input_value\":" << entry.input_value
+                                            << ",\"contribution\":" << entry.contribution
+                                            << ",\"unit\":\"" << escape_json(entry.unit)
+                                            << "\"}";
+                                    }
+                                    out << "]";
                                 }
                                 out << ",\"estimated_rows\":" << node.estimated_rows
                                     << ",\"startup_cost\":" << node.startup_cost

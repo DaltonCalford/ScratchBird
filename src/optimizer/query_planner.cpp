@@ -2692,6 +2692,10 @@ namespace scratchbird::optimizer
             {
                 return CostEstimate{};
             }
+            if (plan->costEvidence().has_value())
+            {
+                return *plan->costEvidence();
+            }
             const double startup = plan->startupCost();
             const double total = plan->totalCost();
             return CostEstimate(startup,
@@ -2761,6 +2765,30 @@ namespace scratchbird::optimizer
             node.spill_passes = cost.spill_passes;
             node.spill_bytes = cost.spill_bytes;
             node.spill_policy = spill_policy_text;
+            node.formula_profile_id = cost.formula_profile_id;
+            node.formula_profile_version = cost.formula_profile_version;
+            node.calibration_profile_id = cost.calibration_profile_id;
+            node.storage_profile = cost.storage_profile;
+            node.workload_profile = cost.workload_profile;
+            node.resource_governance_outcome = cost.resource_governance_outcome;
+            node.input_estimates.clear();
+            node.expanded_cost_terms.clear();
+            for (const auto &input : cost.input_estimates)
+            {
+                node.input_estimates.push_back(RuntimePlanCostInputEstimate{
+                    input.name,
+                    input.value,
+                    input.unit});
+            }
+            for (const auto &term : cost.expanded_terms)
+            {
+                node.expanded_cost_terms.push_back(RuntimePlanCostTerm{
+                    term.name,
+                    term.coefficient,
+                    term.input_value,
+                    term.contribution,
+                    term.unit});
+            }
         }
 
         auto stablePlanHash(const std::string &text) -> std::string
@@ -3147,6 +3175,10 @@ namespace scratchbird::optimizer
             node.startup_cost = plan->startupCost();
             node.total_cost = plan->totalCost();
             node.estimated_rows = plan->rows();
+            if (plan->costEvidence().has_value())
+            {
+                applyResourceMetadata(node, *plan->costEvidence(), std::string());
+            }
 
             switch (plan->type())
             {
@@ -4575,7 +4607,7 @@ namespace scratchbird::optimizer
                                                           relation_name);
             seq_plan->setQualCost(qual_cost);
             seq_plan->setFilter(buildPredicateText());
-            seq_plan->setCost(best_cost.startup_cost, best_cost.total_cost, best_cost.rows);
+            seq_plan->setCost(best_cost);
             best_plan = seq_plan;
 
             std::string best_scan_kind = "SEQ_SCAN";
@@ -4880,9 +4912,7 @@ namespace scratchbird::optimizer
                                                             index.index_name);
                     index_plan->setIndexCond(predicate.predicate_text);
                     index_plan->setFilter(buildPredicateText(predicate_index));
-                    index_plan->setCost(candidate_cost.startup_cost,
-                                        candidate_cost.total_cost,
-                                        candidate_cost.rows);
+                    index_plan->setCost(candidate_cost);
                     best_plan = index_plan;
                 }
                 else
@@ -4908,9 +4938,7 @@ namespace scratchbird::optimizer
                     index_plan->setCorrelation(correlation);
                     index_plan->setIndexCond(predicate.predicate_text);
                     index_plan->setFilter(buildPredicateText(predicate_index));
-                    index_plan->setCost(candidate_cost.startup_cost,
-                                        candidate_cost.total_cost,
-                                        candidate_cost.rows);
+                    index_plan->setCost(candidate_cost);
                     best_plan = index_plan;
                 }
             }
@@ -5044,9 +5072,7 @@ namespace scratchbird::optimizer
                 index_plan->setCorrelation(0.15);
                 index_plan->setIndexCond(skip_predicate_it->predicate_text);
                 index_plan->setFilter(buildPredicateText());
-                index_plan->setCost(skip_cost.startup_cost,
-                                    skip_cost.total_cost,
-                                    skip_cost.rows);
+                index_plan->setCost(skip_cost);
                 best_plan = index_plan;
             }
 
@@ -5204,9 +5230,7 @@ namespace scratchbird::optimizer
                         best_bitmap_op);
                     bitmap_plan->setIndexConds(bitmap_predicate_texts);
                     bitmap_plan->setFilter(buildPredicateText());
-                    bitmap_plan->setCost(bitmap_cost.startup_cost,
-                                         bitmap_cost.total_cost,
-                                         bitmap_cost.rows);
+                    bitmap_plan->setCost(bitmap_cost);
                     best_plan = bitmap_plan;
                 }
                 else
@@ -6051,9 +6075,7 @@ namespace scratchbird::optimizer
                         hash_keys_outer,
                         hash_keys_inner);
                     hash_plan->setJoinCondString(decision.runtime_join.condition_text);
-                    hash_plan->setCost(hash_cost.startup_cost,
-                                       hash_cost.total_cost,
-                                       hash_cost.rows);
+                    hash_plan->setCost(hash_cost);
                     decision.plan = hash_plan;
                     decision.path = std::make_shared<HashJoinPath>(
                         join_type,
@@ -6079,9 +6101,7 @@ namespace scratchbird::optimizer
                         outer_presorted,
                         inner_presorted);
                     merge_plan->setJoinCondString(decision.runtime_join.condition_text);
-                    merge_plan->setCost(merge_cost.startup_cost,
-                                        merge_cost.total_cost,
-                                        merge_cost.rows);
+                    merge_plan->setCost(merge_cost);
                     decision.plan = merge_plan;
                     decision.path = std::make_shared<MergeJoinPath>(
                         join_type,
@@ -6103,9 +6123,7 @@ namespace scratchbird::optimizer
                         right_tree.plan,
                         const_cast<parser::v3::Expression *>(join.condition));
                     nested_plan->setJoinCondString(decision.runtime_join.condition_text);
-                    nested_plan->setCost(nl_cost.startup_cost,
-                                         nl_cost.total_cost,
-                                         nl_cost.rows);
+                    nested_plan->setCost(nl_cost);
                     decision.plan = nested_plan;
                     decision.path = std::make_shared<NestedLoopJoinPath>(
                         join_type,
@@ -6909,9 +6927,7 @@ namespace scratchbird::optimizer
                                                                   select_stmt->having,
                                                                   select_stmt->grouping_type,
                                                                   select_stmt->grouping_sets);
-            aggregate_plan->setCost(aggregate_cost.startup_cost,
-                                    aggregate_cost.total_cost,
-                                    aggregate_cost.rows);
+            aggregate_plan->setCost(aggregate_cost);
             current_plan = aggregate_plan;
             current_rows = aggregate_cost.rows;
         }
@@ -7053,9 +7069,7 @@ namespace scratchbird::optimizer
                 current_path->setAccessDescriptor(std::move(window_descriptor));
             }
             auto window_plan = std::make_shared<WindowNode>(current_plan, window_functions);
-            window_plan->setCost(window_cost.startup_cost,
-                                 window_cost.total_cost,
-                                 window_cost.rows);
+            window_plan->setCost(window_cost);
             current_plan = window_plan;
             current_rows = window_cost.rows;
         }
@@ -7192,9 +7206,7 @@ namespace scratchbird::optimizer
                     nullptr,
                     parser::GroupingType::STANDARD,
                     std::vector<std::vector<parser::v3::Expression *>>{});
-                distinct_plan->setCost(distinct_cost.startup_cost,
-                                       distinct_cost.total_cost,
-                                       distinct_cost.rows);
+                distinct_plan->setCost(distinct_cost);
                 current_plan = distinct_plan;
                 current_rows = distinct_cost.rows;
             }
@@ -7373,9 +7385,7 @@ namespace scratchbird::optimizer
                 }
                 auto sort_plan =
                     std::make_shared<SortNode>(current_plan, select_stmt->order_by);
-                sort_plan->setCost(sort_cost.startup_cost,
-                                   sort_cost.total_cost,
-                                   sort_cost.rows);
+                sort_plan->setCost(sort_cost);
                 current_plan = sort_plan;
                 current_rows = sort_cost.rows;
             }
@@ -7403,9 +7413,7 @@ namespace scratchbird::optimizer
             auto limit_plan = std::make_shared<LimitNode>(current_plan,
                                                           has_limit ? limit_count : -1,
                                                           has_offset ? offset_count : -1);
-            limit_plan->setCost(limit_cost.startup_cost,
-                                limit_cost.total_cost,
-                                limit_cost.rows);
+            limit_plan->setCost(limit_cost);
             current_plan = limit_plan;
             current_rows = limit_cost.rows;
         }

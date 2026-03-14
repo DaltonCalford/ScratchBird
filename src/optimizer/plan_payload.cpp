@@ -645,6 +645,32 @@ namespace scratchbird::optimizer
             out["spill_passes"] = node.spill_passes;
             out["spill_bytes"] = node.spill_bytes;
             out["spill_policy"] = node.spill_policy;
+            out["formula_profile_id"] = node.formula_profile_id;
+            out["formula_profile_version"] = node.formula_profile_version;
+            out["calibration_profile_id"] = node.calibration_profile_id;
+            out["storage_profile"] = node.storage_profile;
+            out["workload_profile"] = node.workload_profile;
+            out["resource_governance_outcome"] = node.resource_governance_outcome;
+            out["input_estimates"] = nlohmann::json::array();
+            for (const auto &entry : node.input_estimates)
+            {
+                out["input_estimates"].push_back({
+                    {"name", entry.name},
+                    {"value", entry.value},
+                    {"unit", entry.unit},
+                });
+            }
+            out["expanded_cost_terms"] = nlohmann::json::array();
+            for (const auto &entry : node.expanded_cost_terms)
+            {
+                out["expanded_cost_terms"].push_back({
+                    {"name", entry.name},
+                    {"coefficient", entry.coefficient},
+                    {"input_value", entry.input_value},
+                    {"contribution", entry.contribution},
+                    {"unit", entry.unit},
+                });
+            }
             out["children"] = nlohmann::json::array();
             for (const auto &child : node.children)
             {
@@ -681,6 +707,60 @@ namespace scratchbird::optimizer
             node_out.spill_passes = json_in.value("spill_passes", 0U);
             node_out.spill_bytes = json_in.value("spill_bytes", 0ULL);
             node_out.spill_policy = json_in.value("spill_policy", std::string());
+            node_out.formula_profile_id =
+                json_in.value("formula_profile_id", std::string());
+            node_out.formula_profile_version =
+                json_in.value("formula_profile_version", 0U);
+            node_out.calibration_profile_id =
+                json_in.value("calibration_profile_id", std::string());
+            node_out.storage_profile =
+                json_in.value("storage_profile", std::string());
+            node_out.workload_profile =
+                json_in.value("workload_profile", std::string());
+            node_out.resource_governance_outcome =
+                json_in.value("resource_governance_outcome", std::string());
+
+            node_out.input_estimates.clear();
+            const auto input_estimates_it = json_in.find("input_estimates");
+            if (input_estimates_it != json_in.end() && input_estimates_it->is_array())
+            {
+                for (const auto &entry : *input_estimates_it)
+                {
+                    if (!entry.is_object())
+                    {
+                        error_out =
+                            "runtime plan node input estimate must be an object";
+                        return false;
+                    }
+                    RuntimePlanCostInputEstimate parsed;
+                    parsed.name = entry.value("name", std::string());
+                    parsed.value = entry.value("value", 0.0);
+                    parsed.unit = entry.value("unit", std::string());
+                    node_out.input_estimates.push_back(std::move(parsed));
+                }
+            }
+
+            node_out.expanded_cost_terms.clear();
+            const auto expanded_terms_it = json_in.find("expanded_cost_terms");
+            if (expanded_terms_it != json_in.end() && expanded_terms_it->is_array())
+            {
+                for (const auto &entry : *expanded_terms_it)
+                {
+                    if (!entry.is_object())
+                    {
+                        error_out =
+                            "runtime plan node expanded cost term must be an object";
+                        return false;
+                    }
+                    RuntimePlanCostTerm parsed;
+                    parsed.name = entry.value("name", std::string());
+                    parsed.coefficient = entry.value("coefficient", 0.0);
+                    parsed.input_value = entry.value("input_value", 0.0);
+                    parsed.contribution = entry.value("contribution", 0.0);
+                    parsed.unit = entry.value("unit", std::string());
+                    node_out.expanded_cost_terms.push_back(std::move(parsed));
+                }
+            }
 
             const auto children_it = json_in.find("children");
             node_out.children.clear();

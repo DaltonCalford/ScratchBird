@@ -11,6 +11,7 @@
 #include "scratchbird/core/debug.h"
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 
 namespace scratchbird::optimizer
 {
@@ -87,15 +88,157 @@ namespace scratchbird::optimizer
             cost.spill_expected = spill.spill_expected;
             cost.spill_passes = spill.spill_passes;
             cost.spill_bytes = spill.spill_bytes;
+            if (spill.working_set_bytes == 0)
+            {
+                cost.resource_governance_outcome = "NO_MEMORY_GOVERNANCE";
+            }
+            else if (spill.spill_expected)
+            {
+                cost.resource_governance_outcome = "SPILL_EXPECTED";
+            }
+            else
+            {
+                cost.resource_governance_outcome = "IN_MEMORY";
+            }
+        }
+
+        auto profileSignatureSuffix(const CostParameters &params) -> std::string
+        {
+            uint64_t hash = 1469598103934665603ULL;
+            auto mix = [&](double value) {
+                const auto scaled = static_cast<uint64_t>(std::llround(value * 1000000.0));
+                hash ^= scaled;
+                hash *= 1099511628211ULL;
+            };
+            auto mix_u64 = [&](uint64_t value) {
+                hash ^= value;
+                hash *= 1099511628211ULL;
+            };
+
+            mix(params.seq_page_cost);
+            mix(params.random_page_cost);
+            mix(params.cpu_tuple_cost);
+            mix(params.cpu_index_tuple_cost);
+            mix(params.cpu_operator_cost);
+            mix(params.sort_mem_cost);
+            mix_u64(params.work_mem_bytes);
+            mix_u64(params.planner_page_size_bytes);
+            mix(params.spill_page_cost);
+            mix(params.spill_cpu_tuple_cost);
+            mix(params.hash_mem_multiplier);
+            mix(params.merge_mem_multiplier);
+            mix(params.aggregate_mem_multiplier);
+            mix_u64(params.default_row_width_bytes);
+            mix_u64(params.hash_tuple_overhead_bytes);
+            mix_u64(params.sort_tuple_overhead_bytes);
+            mix(params.parallel_setup_cost);
+            mix(params.parallel_tuple_cost);
+            mix(params.effective_cache_size);
+
+            std::ostringstream out;
+            out << std::hex << hash;
+            return out.str();
+        }
+
+        auto deriveFormulaProfile(const CostParameters &params) -> CostFormulaProfile
+        {
+            CostFormulaProfile profile;
+            profile.profile_id =
+                "sb_cost_formula/heap_btree/mixed_oltp/" +
+                profileSignatureSuffix(params);
+            profile.profile_version = 1;
+            profile.calibration_profile_id =
+                "sb_cost_calibration/fixed_seed_alpha_v1";
+            profile.storage_profile = "heap_btree";
+            profile.workload_profile = "mixed_oltp";
+            profile.parameters = params;
+            return profile;
+        }
+
+        auto normalizeFormulaProfile(CostFormulaProfile profile) -> CostFormulaProfile
+        {
+            if (profile.profile_id.empty())
+            {
+                profile.profile_id =
+                    "sb_cost_formula/heap_btree/mixed_oltp/" +
+                    profileSignatureSuffix(profile.parameters);
+            }
+            if (profile.profile_version == 0)
+            {
+                profile.profile_version = 1;
+            }
+            if (profile.calibration_profile_id.empty())
+            {
+                profile.calibration_profile_id =
+                    "sb_cost_calibration/fixed_seed_alpha_v1";
+            }
+            if (profile.storage_profile.empty())
+            {
+                profile.storage_profile = "heap_btree";
+            }
+            if (profile.workload_profile.empty())
+            {
+                profile.workload_profile = "mixed_oltp";
+            }
+            return profile;
+        }
+
+        auto initializeCostEvidence(CostEstimate &cost,
+                                    const CostFormulaProfile &profile,
+                                    const std::string &operator_name) -> void
+        {
+            cost.operator_name = operator_name;
+            cost.formula_profile_id = profile.profile_id;
+            cost.formula_profile_version = profile.profile_version;
+            cost.calibration_profile_id = profile.calibration_profile_id;
+            cost.storage_profile = profile.storage_profile;
+            cost.workload_profile = profile.workload_profile;
+            cost.resource_governance_outcome = "NO_MEMORY_GOVERNANCE";
+            cost.input_estimates.clear();
+            cost.expanded_terms.clear();
+        }
+
+        auto appendInputEstimate(CostEstimate &cost,
+                                 const std::string &name,
+                                 double value,
+                                 const std::string &unit) -> void
+        {
+            cost.input_estimates.push_back(
+                CostInputEstimate{name, value, unit});
+        }
+
+        auto appendFormulaTerm(CostEstimate &cost,
+                               const std::string &name,
+                               double coefficient,
+                               double input_value,
+                               double contribution,
+                               const std::string &unit) -> void
+        {
+            cost.expanded_terms.push_back(CostFormulaTerm{
+                name,
+                coefficient,
+                input_value,
+                contribution,
+                unit});
         }
     } // namespace
 
     CostModel::CostModel(const CostParameters &params)
-        : params_(params)
+        : params_(params),
+          formula_profile_(deriveFormulaProfile(params))
     {
         DEBUG_LOG_DB("CostModel created with seq_page_cost=" +
                      std::to_string(params_.seq_page_cost) +
                      ", random_page_cost=" + std::to_string(params_.random_page_cost));
+    }
+
+    CostModel::CostModel(const CostFormulaProfile &profile)
+        : params_(profile.parameters),
+          formula_profile_(normalizeFormulaProfile(profile))
+    {
+        params_ = formula_profile_.parameters;
+        DEBUG_LOG_DB("CostModel created with profile=" + formula_profile_.profile_id +
+                     " version=" + std::to_string(formula_profile_.profile_version));
     }
 
     auto CostModel::costSeqScan(uint64_t num_pages, uint64_t num_tuples,
@@ -106,6 +249,10 @@ namespace scratchbird::optimizer
                      ", tuples=" + std::to_string(num_tuples));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "SEQ_SCAN");
+        appendInputEstimate(cost, "num_pages", static_cast<double>(num_pages), "pages");
+        appendInputEstimate(cost, "num_tuples", static_cast<double>(num_tuples), "rows");
+        appendInputEstimate(cost, "qual_cost", qual_cost, "cpu_per_row");
 
         // Sequential scan has no startup cost (no index to traverse, no setup needed)
         cost.startup_cost = 0.0;
@@ -119,6 +266,24 @@ namespace scratchbird::optimizer
         // qual_cost = cost of evaluating WHERE predicates per tuple
         double cpu_cost = static_cast<double>(num_tuples) * params_.cpu_tuple_cost +
                           static_cast<double>(num_tuples) * qual_cost;
+        appendFormulaTerm(cost,
+                          "run.disk.sequential_pages",
+                          params_.seq_page_cost,
+                          static_cast<double>(num_pages),
+                          disk_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.cpu.tuple_scan",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(num_tuples),
+                          static_cast<double>(num_tuples) * params_.cpu_tuple_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.cpu.qual_eval",
+                          qual_cost,
+                          static_cast<double>(num_tuples),
+                          static_cast<double>(num_tuples) * qual_cost,
+                          "cost");
 
         cost.run_cost = disk_cost + cpu_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
@@ -143,15 +308,41 @@ namespace scratchbird::optimizer
                      ", correlation=" + std::to_string(correlation));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "INDEX_SCAN");
+        appendInputEstimate(cost, "index_height", static_cast<double>(index_height), "levels");
+        appendInputEstimate(cost, "index_pages", static_cast<double>(index_pages), "pages");
+        appendInputEstimate(cost, "index_tuples", static_cast<double>(index_tuples), "rows");
+        appendInputEstimate(cost, "heap_pages", static_cast<double>(heap_pages), "pages");
+        appendInputEstimate(cost, "heap_tuples", static_cast<double>(heap_tuples), "rows");
+        appendInputEstimate(cost, "qual_cost", qual_cost, "cpu_per_row");
+        appendInputEstimate(cost, "correlation", correlation, "ratio");
 
         // Startup cost: traverse B-tree from root to first matching entry
         // For a B-tree of height H, we need to read H pages (root to leaf)
         cost.startup_cost = static_cast<double>(index_height) * params_.cpu_operator_cost;
+        appendFormulaTerm(cost,
+                          "startup.index_traversal",
+                          params_.cpu_operator_cost,
+                          static_cast<double>(index_height),
+                          cost.startup_cost,
+                          "cost");
 
         // Index scan cost: read index pages and process index tuples
         // Index pages are typically accessed randomly (not sequential)
         double index_io_cost = static_cast<double>(index_pages) * params_.random_page_cost;
         double index_cpu_cost = static_cast<double>(index_tuples) * params_.cpu_index_tuple_cost;
+        appendFormulaTerm(cost,
+                          "run.index_io",
+                          params_.random_page_cost,
+                          static_cast<double>(index_pages),
+                          index_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.index_tuple_cpu",
+                          params_.cpu_index_tuple_cost,
+                          static_cast<double>(index_tuples),
+                          index_cpu_cost,
+                          "cost");
 
         // Heap fetch cost: depends on physical ordering correlation
         // If index and heap are well-correlated, heap access is more sequential
@@ -179,10 +370,33 @@ namespace scratchbird::optimizer
         // Apply cache effect to heap I/O cost
         double effective_random_cost = effectiveRandomPageCost(heap_pages);
         double heap_io_cost = effective_heap_pages * effective_random_cost;
+        appendInputEstimate(cost, "effective_heap_pages", effective_heap_pages, "pages");
+        appendInputEstimate(cost,
+                            "effective_random_page_cost",
+                            effective_random_cost,
+                            "cost_per_page");
 
         // CPU cost for heap tuples
         double heap_cpu_cost = static_cast<double>(heap_tuples) * params_.cpu_tuple_cost +
                                static_cast<double>(heap_tuples) * qual_cost;
+        appendFormulaTerm(cost,
+                          "run.heap_io",
+                          effective_random_cost,
+                          effective_heap_pages,
+                          heap_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.heap_tuple_cpu",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(heap_tuples),
+                          static_cast<double>(heap_tuples) * params_.cpu_tuple_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.heap_qual_cpu",
+                          qual_cost,
+                          static_cast<double>(heap_tuples),
+                          static_cast<double>(heap_tuples) * qual_cost,
+                          "cost");
 
         cost.run_cost = index_io_cost + index_cpu_cost + heap_io_cost + heap_cpu_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
@@ -212,7 +426,19 @@ namespace scratchbird::optimizer
                      ", correlation=" + std::to_string(correlation));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "INDEX_ONLY_SCAN");
+        appendInputEstimate(cost, "index_height", static_cast<double>(index_height), "levels");
+        appendInputEstimate(cost, "index_pages", static_cast<double>(index_pages), "pages");
+        appendInputEstimate(cost, "index_tuples", static_cast<double>(index_tuples), "rows");
+        appendInputEstimate(cost, "qual_cost", qual_cost, "cpu_per_row");
+        appendInputEstimate(cost, "correlation", correlation, "ratio");
         cost.startup_cost = static_cast<double>(index_height) * params_.cpu_operator_cost;
+        appendFormulaTerm(cost,
+                          "startup.index_traversal",
+                          params_.cpu_operator_cost,
+                          static_cast<double>(index_height),
+                          cost.startup_cost,
+                          "cost");
 
         const double locality_discount =
             std::abs(correlation) > 0.8 ? 0.65 : (std::abs(correlation) > 0.4 ? 0.8 : 1.0);
@@ -224,6 +450,30 @@ namespace scratchbird::optimizer
             static_cast<double>(index_tuples) * params_.cpu_tuple_cost * 0.25;
         const double qual_cpu_cost =
             static_cast<double>(index_tuples) * qual_cost;
+        appendFormulaTerm(cost,
+                          "run.index_io",
+                          params_.random_page_cost * locality_discount,
+                          static_cast<double>(index_pages),
+                          index_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.index_tuple_cpu",
+                          params_.cpu_index_tuple_cost,
+                          static_cast<double>(index_tuples),
+                          index_cpu_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.visibility_cpu",
+                          params_.cpu_tuple_cost * 0.25,
+                          static_cast<double>(index_tuples),
+                          visibility_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.qual_cpu",
+                          qual_cost,
+                          static_cast<double>(index_tuples),
+                          qual_cpu_cost,
+                          "cost");
 
         cost.run_cost = index_io_cost + index_cpu_cost + visibility_cost + qual_cpu_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
@@ -247,6 +497,15 @@ namespace scratchbird::optimizer
                      ", bitmap_op=" + bitmap_op);
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "BITMAP_INDEX_SCAN");
+        appendInputEstimate(cost, "num_indexes", static_cast<double>(num_indexes), "count");
+        appendInputEstimate(cost,
+                            "total_index_pages",
+                            static_cast<double>(total_index_pages),
+                            "pages");
+        appendInputEstimate(cost, "heap_pages", static_cast<double>(heap_pages), "pages");
+        appendInputEstimate(cost, "heap_tuples", static_cast<double>(heap_tuples), "rows");
+        appendInputEstimate(cost, "qual_cost", qual_cost, "cpu_per_row");
         const double bitmap_build_cost =
             static_cast<double>(heap_tuples) *
             (params_.cpu_index_tuple_cost + params_.cpu_operator_cost * 0.5);
@@ -255,6 +514,19 @@ namespace scratchbird::optimizer
             static_cast<double>(heap_tuples) * params_.cpu_operator_cost * 0.35;
 
         cost.startup_cost = bitmap_build_cost + bitmap_merge_cost;
+        appendFormulaTerm(cost,
+                          "startup.bitmap_build",
+                          params_.cpu_index_tuple_cost + params_.cpu_operator_cost * 0.5,
+                          static_cast<double>(heap_tuples),
+                          bitmap_build_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "startup.bitmap_merge",
+                          params_.cpu_operator_cost * 0.35,
+                          static_cast<double>(std::max<uint64_t>(1, num_indexes - 1)) *
+                              static_cast<double>(heap_tuples),
+                          bitmap_merge_cost,
+                          "cost");
 
         const double index_io_cost =
             static_cast<double>(total_index_pages) * params_.random_page_cost;
@@ -264,11 +536,37 @@ namespace scratchbird::optimizer
                      params_.seq_page_cost + effectiveRandomPageCost(heap_pages) * 0.5);
         const double qual_cpu_cost =
             static_cast<double>(heap_tuples) * (params_.cpu_tuple_cost + qual_cost);
+        appendFormulaTerm(cost,
+                          "run.index_io",
+                          params_.random_page_cost,
+                          static_cast<double>(total_index_pages),
+                          index_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.heap_io",
+                          heap_pages == 0 ? 0.0
+                                          : heap_io_cost / static_cast<double>(heap_pages),
+                          static_cast<double>(heap_pages),
+                          heap_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.heap_tuple_cpu",
+                          params_.cpu_tuple_cost + qual_cost,
+                          static_cast<double>(heap_tuples),
+                          qual_cpu_cost,
+                          "cost");
 
-        cost.run_cost = index_io_cost + heap_io_cost + qual_cpu_cost;
+        const double base_run_cost = index_io_cost + heap_io_cost + qual_cpu_cost;
+        cost.run_cost = base_run_cost;
         if (bitmap_op == "OR")
         {
             cost.run_cost *= 1.08;
+            appendFormulaTerm(cost,
+                              "run.bitmap_or_penalty",
+                              0.08,
+                              base_run_cost,
+                              cost.run_cost - base_run_cost,
+                              "cost");
         }
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = heap_tuples;
@@ -287,6 +585,17 @@ namespace scratchbird::optimizer
                      ", correlation=" + std::to_string(correlation));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "LSM_SCAN");
+        appendInputEstimate(cost, "num_levels", static_cast<double>(num_levels), "count");
+        appendInputEstimate(cost,
+                            "avg_sstables_per_level",
+                            static_cast<double>(avg_sstables_per_level),
+                            "count");
+        appendInputEstimate(cost, "index_tuples", static_cast<double>(index_tuples), "rows");
+        appendInputEstimate(cost, "heap_pages", static_cast<double>(heap_pages), "pages");
+        appendInputEstimate(cost, "heap_tuples", static_cast<double>(heap_tuples), "rows");
+        appendInputEstimate(cost, "qual_cost", qual_cost, "cpu_per_row");
+        appendInputEstimate(cost, "correlation", correlation, "ratio");
 
         // Startup cost: LSM-Tree read path
         // 1. Check memtable (in-memory, very cheap)
@@ -301,6 +610,24 @@ namespace scratchbird::optimizer
         double bloom_filter_cost = static_cast<double>(total_sstables) * 4.0 * params_.cpu_operator_cost;
 
         cost.startup_cost = memtable_cost + immutable_memtable_cost + bloom_filter_cost;
+        appendFormulaTerm(cost,
+                          "startup.memtable_lookup",
+                          params_.cpu_operator_cost,
+                          10.0,
+                          memtable_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "startup.immutable_memtable_lookup",
+                          params_.cpu_operator_cost,
+                          10.0,
+                          immutable_memtable_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "startup.bloom_filter_checks",
+                          4.0 * params_.cpu_operator_cost,
+                          static_cast<double>(total_sstables),
+                          bloom_filter_cost,
+                          "cost");
 
         // Index scan cost: read SSTable pages
         // Key insight: LSM-Tree may need to read from multiple SSTables per level
@@ -315,6 +642,10 @@ namespace scratchbird::optimizer
 
         double index_io_cost = static_cast<double>(estimated_index_pages) * params_.random_page_cost;
         double index_cpu_cost = static_cast<double>(index_tuples) * params_.cpu_index_tuple_cost;
+        appendInputEstimate(cost,
+                            "estimated_index_pages",
+                            static_cast<double>(estimated_index_pages),
+                            "pages");
 
         // OPT-M7: Additional CPU cost for k-way merge if range scan
         // K-way merge is needed when range scans must merge results from multiple SSTables
@@ -350,6 +681,45 @@ namespace scratchbird::optimizer
         double heap_io_cost = effective_heap_pages * effective_random_cost;
         double heap_cpu_cost = static_cast<double>(heap_tuples) * params_.cpu_tuple_cost +
                                static_cast<double>(heap_tuples) * qual_cost;
+        appendInputEstimate(cost, "effective_heap_pages", effective_heap_pages, "pages");
+        appendInputEstimate(cost,
+                            "effective_random_page_cost",
+                            effective_random_cost,
+                            "cost_per_page");
+        appendFormulaTerm(cost,
+                          "run.sstable_io",
+                          params_.random_page_cost,
+                          static_cast<double>(estimated_index_pages),
+                          index_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.index_tuple_cpu",
+                          params_.cpu_index_tuple_cost,
+                          static_cast<double>(index_tuples),
+                          index_cpu_cost,
+                          "cost");
+        if (merge_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.sstable_merge_cpu",
+                              params_.cpu_operator_cost,
+                              static_cast<double>(index_tuples) *
+                                  std::log2(static_cast<double>(total_sstables)),
+                              merge_cost,
+                              "cost");
+        }
+        appendFormulaTerm(cost,
+                          "run.heap_io",
+                          effective_random_cost,
+                          effective_heap_pages,
+                          heap_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.heap_tuple_cpu",
+                          params_.cpu_tuple_cost + qual_cost,
+                          static_cast<double>(heap_tuples),
+                          heap_cpu_cost,
+                          "cost");
 
         cost.run_cost = index_io_cost + index_cpu_cost + merge_cost + heap_io_cost + heap_cpu_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
@@ -483,10 +853,23 @@ namespace scratchbird::optimizer
                      ", selectivity=" + std::to_string(selectivity));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "NESTED_LOOP_JOIN");
+        appendInputEstimate(cost, "outer_rows", static_cast<double>(outer_rows), "rows");
+        appendInputEstimate(cost, "inner_rows", static_cast<double>(inner_rows), "rows");
+        appendInputEstimate(cost, "selectivity", selectivity, "ratio");
 
         // Startup cost: just the outer relation startup
         // Inner relation is re-scanned for each outer row, so no one-time startup
         cost.startup_cost = outer_cost.startup_cost;
+        if (cost.startup_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.outer_startup",
+                              1.0,
+                              outer_cost.startup_cost,
+                              cost.startup_cost,
+                              "cost");
+        }
 
         // Run cost breakdown:
         // 1. Scan outer relation completely
@@ -538,6 +921,31 @@ namespace scratchbird::optimizer
         // Cost of materializing output tuples (after selectivity filtering)
         double output_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
 
+        appendFormulaTerm(cost,
+                          "run.outer_scan",
+                          1.0,
+                          outer_scan_cost,
+                          outer_scan_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.inner_rescan",
+                          static_cast<double>(outer_rows),
+                          inner_cost.total_cost,
+                          inner_scan_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.join_qual",
+                          params_.cpu_operator_cost,
+                          static_cast<double>(outer_rows) *
+                              static_cast<double>(inner_rows),
+                          join_qual_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.output_materialization",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(output_rows),
+                          output_cost,
+                          "cost");
         cost.run_cost = outer_scan_cost + inner_scan_cost + join_qual_cost + output_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = output_rows;
@@ -567,6 +975,10 @@ namespace scratchbird::optimizer
                      ", selectivity=" + std::to_string(selectivity));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "HASH_JOIN");
+        appendInputEstimate(cost, "outer_rows", static_cast<double>(outer_rows), "rows");
+        appendInputEstimate(cost, "inner_rows", static_cast<double>(inner_rows), "rows");
+        appendInputEstimate(cost, "selectivity", selectivity, "ratio");
 
         // Hash join phases:
         // Phase 1 (Build): Scan outer relation and build hash table
@@ -596,6 +1008,36 @@ namespace scratchbird::optimizer
         // Startup cost = build entire hash table
         cost.startup_cost =
             outer_scan_cost + hash_build_cost + spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
+        appendFormulaTerm(cost,
+                          "startup.outer_scan",
+                          1.0,
+                          outer_scan_cost,
+                          outer_scan_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "startup.hash_build_cpu",
+                          params_.cpu_tuple_cost * HASH_BUILD_FACTOR,
+                          static_cast<double>(outer_rows),
+                          hash_build_cost,
+                          "cost");
+        if (spill.io_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.hash_spill_io",
+                              0.5,
+                              spill.io_cost,
+                              spill.io_cost * 0.5,
+                              "cost");
+        }
+        if (spill.cpu_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.hash_spill_cpu",
+                              0.5,
+                              spill.cpu_cost,
+                              spill.cpu_cost * 0.5,
+                              "cost");
+        }
 
         // Probe phase cost:
         // 1. Scan inner relation completely
@@ -651,6 +1093,49 @@ namespace scratchbird::optimizer
         // Cost of materializing output tuples
         double output_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
 
+        appendFormulaTerm(cost,
+                          "run.inner_scan",
+                          1.0,
+                          inner_scan_cost,
+                          inner_scan_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.hash_probe_cpu",
+                          params_.cpu_tuple_cost * HASH_PROBE_FACTOR,
+                          static_cast<double>(inner_rows),
+                          hash_probe_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.join_qual",
+                          params_.cpu_operator_cost,
+                          static_cast<double>(outer_rows) *
+                              static_cast<double>(inner_rows) * selectivity * 10.0,
+                          join_qual_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.output_materialization",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(output_rows),
+                          output_cost,
+                          "cost");
+        if (spill.io_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.hash_spill_io",
+                              0.5,
+                              spill.io_cost,
+                              spill.io_cost * 0.5,
+                              "cost");
+        }
+        if (spill.cpu_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.hash_spill_cpu",
+                              0.5,
+                              spill.cpu_cost,
+                              spill.cpu_cost * 0.5,
+                              "cost");
+        }
         cost.run_cost = inner_scan_cost + hash_probe_cost + join_qual_cost +
                         output_cost + spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
         cost.total_cost = cost.startup_cost + cost.run_cost;
@@ -687,6 +1172,18 @@ namespace scratchbird::optimizer
                      ", inner_presorted=" + std::to_string(inner_presorted));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "MERGE_JOIN");
+        appendInputEstimate(cost, "outer_rows", static_cast<double>(outer_rows), "rows");
+        appendInputEstimate(cost, "inner_rows", static_cast<double>(inner_rows), "rows");
+        appendInputEstimate(cost, "selectivity", selectivity, "ratio");
+        appendInputEstimate(cost,
+                            "outer_presorted",
+                            outer_presorted ? 1.0 : 0.0,
+                            "flag");
+        appendInputEstimate(cost,
+                            "inner_presorted",
+                            inner_presorted ? 1.0 : 0.0,
+                            "flag");
 
         CostEstimate outer_sort_cost;
         CostEstimate inner_sort_cost;
@@ -704,6 +1201,36 @@ namespace scratchbird::optimizer
             inner_cost.total_cost +
             outer_sort_cost.total_cost +
             inner_sort_cost.total_cost;
+        appendFormulaTerm(cost,
+                          "startup.outer_input",
+                          1.0,
+                          outer_cost.total_cost,
+                          outer_cost.total_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "startup.inner_input",
+                          1.0,
+                          inner_cost.total_cost,
+                          inner_cost.total_cost,
+                          "cost");
+        if (outer_sort_cost.total_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.outer_sort",
+                              1.0,
+                              outer_sort_cost.total_cost,
+                              outer_sort_cost.total_cost,
+                              "cost");
+        }
+        if (inner_sort_cost.total_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.inner_sort",
+                              1.0,
+                              inner_sort_cost.total_cost,
+                              inner_sort_cost.total_cost,
+                              "cost");
+        }
 
         uint64_t output_rows = 0;
         if (join_type == parser::JoinType::CROSS)
@@ -754,6 +1281,36 @@ namespace scratchbird::optimizer
             outer_rows + inner_rows,
             0.25);
 
+        appendFormulaTerm(cost,
+                          "run.merge_compare_cpu",
+                          params_.cpu_operator_cost * MERGE_COMPARE_FACTOR,
+                          static_cast<double>(outer_rows + inner_rows),
+                          merge_compare_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.output_materialization",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(output_rows),
+                          output_cost,
+                          "cost");
+        if (merge_buffer.io_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.merge_buffer_io",
+                              1.0,
+                              merge_buffer.io_cost,
+                              merge_buffer.io_cost,
+                              "cost");
+        }
+        if (merge_buffer.cpu_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.merge_buffer_cpu",
+                              1.0,
+                              merge_buffer.cpu_cost,
+                              merge_buffer.cpu_cost,
+                              "cost");
+        }
         cost.run_cost = merge_compare_cost + output_cost +
                         merge_buffer.io_cost + merge_buffer.cpu_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
@@ -775,6 +1332,9 @@ namespace scratchbird::optimizer
         cost.spill_bytes =
             merge_buffer.spill_bytes + outer_sort_cost.spill_bytes +
             inner_sort_cost.spill_bytes;
+        cost.resource_governance_outcome = cost.spill_expected
+            ? "SPILL_EXPECTED"
+            : (cost.memory_bytes > 0 ? "IN_MEMORY" : "NO_MEMORY_GOVERNANCE");
 
         DEBUG_LOG_DB("MergeJoin cost: startup=" + std::to_string(cost.startup_cost) +
                      ", run=" + std::to_string(cost.run_cost) +
@@ -799,6 +1359,13 @@ namespace scratchbird::optimizer
                      ", num_aggregates=" + std::to_string(num_aggregates));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "HASH_AGGREGATE");
+        appendInputEstimate(cost, "input_rows", static_cast<double>(input_rows), "rows");
+        appendInputEstimate(cost, "num_groups", static_cast<double>(num_groups), "rows");
+        appendInputEstimate(cost,
+                            "num_aggregates",
+                            static_cast<double>(num_aggregates),
+                            "count");
 
         // Hash-based aggregation uses a hash table to group rows
         // For simple aggregation (no GROUP BY), num_groups = 1
@@ -823,6 +1390,30 @@ namespace scratchbird::optimizer
             1.1);
 
         cost.startup_cost = hash_build_cost + spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
+        appendFormulaTerm(cost,
+                          "startup.hash_build_cpu",
+                          params_.cpu_tuple_cost * HASH_AGG_FACTOR,
+                          static_cast<double>(input_rows),
+                          hash_build_cost,
+                          "cost");
+        if (spill.io_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.aggregate_spill_io",
+                              0.5,
+                              spill.io_cost,
+                              spill.io_cost * 0.5,
+                              "cost");
+        }
+        if (spill.cpu_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.aggregate_spill_cpu",
+                              0.5,
+                              spill.cpu_cost,
+                              spill.cpu_cost * 0.5,
+                              "cost");
+        }
 
         // Run cost: finalize aggregates for each group
         // For each group, we need to compute final aggregate values
@@ -834,6 +1425,37 @@ namespace scratchbird::optimizer
         // Output cost: materialize result rows
         double output_cost = static_cast<double>(num_groups) * params_.cpu_tuple_cost;
 
+        appendFormulaTerm(cost,
+                          "run.finalize_cpu",
+                          params_.cpu_operator_cost,
+                          static_cast<double>(num_groups) *
+                              static_cast<double>(num_aggregates),
+                          finalize_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.output_materialization",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(num_groups),
+                          output_cost,
+                          "cost");
+        if (spill.io_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.aggregate_spill_io",
+                              0.5,
+                              spill.io_cost,
+                              spill.io_cost * 0.5,
+                              "cost");
+        }
+        if (spill.cpu_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.aggregate_spill_cpu",
+                              0.5,
+                              spill.cpu_cost,
+                              spill.cpu_cost * 0.5,
+                              "cost");
+        }
         cost.run_cost = finalize_cost + output_cost + spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = num_groups;
@@ -861,6 +1483,13 @@ namespace scratchbird::optimizer
                      std::to_string(num_aggregates));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "GROUP_AGGREGATE");
+        appendInputEstimate(cost, "input_rows", static_cast<double>(input_rows), "rows");
+        appendInputEstimate(cost, "num_groups", static_cast<double>(num_groups), "rows");
+        appendInputEstimate(cost,
+                            "num_aggregates",
+                            static_cast<double>(num_aggregates),
+                            "count");
         const double transition_cost =
             static_cast<double>(input_rows) *
             (params_.cpu_tuple_cost * 0.35 +
@@ -877,6 +1506,36 @@ namespace scratchbird::optimizer
 
         cost.startup_cost = static_cast<double>(input_rows) *
                             params_.cpu_tuple_cost * 0.05;
+        appendFormulaTerm(cost,
+                          "startup.group_stream_setup",
+                          params_.cpu_tuple_cost * 0.05,
+                          static_cast<double>(input_rows),
+                          cost.startup_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.transition_cpu",
+                          1.0,
+                          transition_cost,
+                          transition_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.group_boundary_cpu",
+                          1.0,
+                          group_boundary_cost,
+                          group_boundary_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.finalize_cpu",
+                          1.0,
+                          finalize_cost,
+                          finalize_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.output_materialization",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(num_groups),
+                          output_cost,
+                          "cost");
         cost.run_cost = transition_cost + group_boundary_cost + finalize_cost +
                         output_cost;
         cost.total_cost = cost.startup_cost + cost.run_cost;
@@ -900,6 +1559,19 @@ namespace scratchbird::optimizer
                      std::to_string(presorted ? 1 : 0));
 
         CostEstimate cost;
+        initializeCostEvidence(cost,
+                               formula_profile_,
+                               presorted ? "STREAM_DISTINCT" : "HASH_DISTINCT");
+        appendInputEstimate(cost, "input_rows", static_cast<double>(input_rows), "rows");
+        appendInputEstimate(cost,
+                            "num_distinct_rows",
+                            static_cast<double>(num_distinct_rows),
+                            "rows");
+        appendInputEstimate(cost,
+                            "num_distinct_keys",
+                            static_cast<double>(num_distinct_keys),
+                            "count");
+        appendInputEstimate(cost, "presorted", presorted ? 1.0 : 0.0, "flag");
         if (input_rows == 0)
         {
             return cost;
@@ -918,6 +1590,27 @@ namespace scratchbird::optimizer
             cost.total_cost = cost.startup_cost + cost.run_cost;
             cost.rows = num_distinct_rows;
             cost.memory_budget_bytes = safeBudgetBytes(params_.work_mem_bytes);
+            appendFormulaTerm(cost,
+                              "startup.stream_distinct_setup",
+                              params_.cpu_tuple_cost * 0.05,
+                              static_cast<double>(input_rows),
+                              cost.startup_cost,
+                              "cost");
+            appendFormulaTerm(cost,
+                              "run.stream_distinct_cpu",
+                              1.0,
+                              cost.run_cost - static_cast<double>(num_distinct_rows) *
+                                  params_.cpu_tuple_cost,
+                              cost.run_cost - static_cast<double>(num_distinct_rows) *
+                                  params_.cpu_tuple_cost,
+                              "cost");
+            appendFormulaTerm(cost,
+                              "run.output_materialization",
+                              params_.cpu_tuple_cost,
+                              static_cast<double>(num_distinct_rows),
+                              static_cast<double>(num_distinct_rows) *
+                                  params_.cpu_tuple_cost,
+                              "cost");
             return cost;
         }
 
@@ -937,12 +1630,67 @@ namespace scratchbird::optimizer
             static_cast<double>(input_rows) * params_.cpu_tuple_cost *
                 HASH_DISTINCT_FACTOR +
             spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
+        appendFormulaTerm(cost,
+                          "startup.hash_distinct_cpu",
+                          params_.cpu_tuple_cost * HASH_DISTINCT_FACTOR,
+                          static_cast<double>(input_rows),
+                          static_cast<double>(input_rows) * params_.cpu_tuple_cost *
+                              HASH_DISTINCT_FACTOR,
+                          "cost");
+        if (spill.io_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.distinct_spill_io",
+                              0.5,
+                              spill.io_cost,
+                              spill.io_cost * 0.5,
+                              "cost");
+        }
+        if (spill.cpu_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.distinct_spill_cpu",
+                              0.5,
+                              spill.cpu_cost,
+                              spill.cpu_cost * 0.5,
+                              "cost");
+        }
         cost.run_cost =
             static_cast<double>(num_distinct_rows) *
                 (params_.cpu_tuple_cost +
                  static_cast<double>(std::max<uint64_t>(1, num_distinct_keys)) *
                      params_.cpu_operator_cost * 0.2) +
             spill.io_cost * 0.5 + spill.cpu_cost * 0.5;
+        appendFormulaTerm(cost,
+                          "run.distinct_finalize_cpu",
+                          1.0,
+                          static_cast<double>(num_distinct_rows) *
+                              (params_.cpu_tuple_cost +
+                               static_cast<double>(std::max<uint64_t>(1, num_distinct_keys)) *
+                                   params_.cpu_operator_cost * 0.2),
+                          static_cast<double>(num_distinct_rows) *
+                              (params_.cpu_tuple_cost +
+                               static_cast<double>(std::max<uint64_t>(1, num_distinct_keys)) *
+                                   params_.cpu_operator_cost * 0.2),
+                          "cost");
+        if (spill.io_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.distinct_spill_io",
+                              0.5,
+                              spill.io_cost,
+                              spill.io_cost * 0.5,
+                              "cost");
+        }
+        if (spill.cpu_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "run.distinct_spill_cpu",
+                              0.5,
+                              spill.cpu_cost,
+                              spill.cpu_cost * 0.5,
+                              "cost");
+        }
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = num_distinct_rows;
         applyResourceEstimate(cost, spill);
@@ -971,6 +1719,18 @@ namespace scratchbird::optimizer
                      ", top_n=" + std::to_string(top_n_count));
 
         CostEstimate cost;
+        initializeCostEvidence(cost,
+                               formula_profile_,
+                               top_n_count > 0 && top_n_count < num_rows
+                                   ? "TOPN_SORT"
+                                   : "SORT");
+        appendInputEstimate(cost, "num_rows", static_cast<double>(num_rows), "rows");
+        appendInputEstimate(cost, "row_width", static_cast<double>(row_width), "bytes");
+        appendInputEstimate(cost,
+                            "num_sort_keys",
+                            static_cast<double>(num_sort_keys),
+                            "count");
+        appendInputEstimate(cost, "top_n_count", static_cast<double>(top_n_count), "rows");
 
         if (num_rows == 0)
         {
@@ -1018,9 +1778,45 @@ namespace scratchbird::optimizer
 
         // Startup cost: perform the sort
         cost.startup_cost = sort_cost + memory_cost + spill.io_cost + spill.cpu_cost;
+        appendFormulaTerm(cost,
+                          "startup.sort_compare_cpu",
+                          comparison_cost,
+                          num_comparisons,
+                          sort_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "startup.sort_memory",
+                          params_.sort_mem_cost,
+                          static_cast<double>(std::min<uint64_t>(memory_bytes, spill.budget_bytes)),
+                          memory_cost,
+                          "cost");
+        if (spill.io_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.sort_spill_io",
+                              1.0,
+                              spill.io_cost,
+                              spill.io_cost,
+                              "cost");
+        }
+        if (spill.cpu_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.sort_spill_cpu",
+                              1.0,
+                              spill.cpu_cost,
+                              spill.cpu_cost,
+                              "cost");
+        }
 
         // Run cost: output sorted rows (sequential scan)
         cost.run_cost = static_cast<double>(num_rows) * params_.cpu_tuple_cost;
+        appendFormulaTerm(cost,
+                          "run.output_materialization",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(num_rows),
+                          cost.run_cost,
+                          "cost");
 
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = num_rows;
@@ -1050,6 +1846,10 @@ namespace scratchbird::optimizer
                      ", offset=" + std::to_string(offset_count));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "LIMIT");
+        appendInputEstimate(cost, "input_rows", static_cast<double>(input_rows), "rows");
+        appendInputEstimate(cost, "limit_count", static_cast<double>(limit_count), "rows");
+        appendInputEstimate(cost, "offset_count", static_cast<double>(offset_count), "rows");
 
         // Handle offset
         uint64_t offset = 0;
@@ -1061,6 +1861,15 @@ namespace scratchbird::optimizer
         // OFFSET requires scanning and discarding rows
         double offset_cost = static_cast<double>(offset) * params_.cpu_tuple_cost;
         cost.startup_cost = offset_cost;
+        if (offset_cost > 0.0)
+        {
+            appendFormulaTerm(cost,
+                              "startup.offset_skip_cpu",
+                              params_.cpu_tuple_cost,
+                              static_cast<double>(offset),
+                              offset_cost,
+                              "cost");
+        }
 
         // Calculate output rows after offset
         uint64_t rows_after_offset = (offset >= input_rows) ? 0 : (input_rows - offset);
@@ -1075,6 +1884,12 @@ namespace scratchbird::optimizer
         // Run cost: materialize limited output rows
         // LIMIT allows early termination, so we only process output_rows
         cost.run_cost = static_cast<double>(output_rows) * params_.cpu_tuple_cost;
+        appendFormulaTerm(cost,
+                          "run.output_materialization",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(output_rows),
+                          cost.run_cost,
+                          "cost");
 
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = output_rows;
@@ -1106,6 +1921,25 @@ namespace scratchbird::optimizer
                      ", presorted=" + std::to_string(input_presorted ? 1 : 0));
 
         CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "WINDOW");
+        appendInputEstimate(cost, "input_rows", static_cast<double>(input_rows), "rows");
+        appendInputEstimate(cost, "row_width", static_cast<double>(row_width), "bytes");
+        appendInputEstimate(cost,
+                            "num_partition_keys",
+                            static_cast<double>(num_partition_keys),
+                            "count");
+        appendInputEstimate(cost,
+                            "num_order_keys",
+                            static_cast<double>(num_order_keys),
+                            "count");
+        appendInputEstimate(cost,
+                            "num_window_functions",
+                            static_cast<double>(num_window_functions),
+                            "count");
+        appendInputEstimate(cost,
+                            "input_presorted",
+                            input_presorted ? 1.0 : 0.0,
+                            "flag");
         if (input_rows == 0)
         {
             return cost;
@@ -1126,6 +1960,12 @@ namespace scratchbird::optimizer
             cost.spill_expected = sort.spill_expected;
             cost.spill_passes = sort.spill_passes;
             cost.spill_bytes = sort.spill_bytes;
+            appendFormulaTerm(cost,
+                              "startup.window_sort",
+                              1.0,
+                              sort.total_cost,
+                              sort.total_cost,
+                              "cost");
         }
 
         const double partition_cpu =
@@ -1138,12 +1978,30 @@ namespace scratchbird::optimizer
             (params_.cpu_operator_cost + params_.cpu_tuple_cost * 0.5);
 
         cost.startup_cost = sort_cost;
+        appendFormulaTerm(cost,
+                          "run.partition_cpu",
+                          1.0,
+                          partition_cpu,
+                          partition_cpu,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.window_function_cpu",
+                          1.0,
+                          function_cpu,
+                          function_cpu,
+                          "cost");
         cost.run_cost = partition_cpu + function_cpu;
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = input_rows;
         if (cost.memory_budget_bytes == 0)
         {
             cost.memory_budget_bytes = safeBudgetBytes(params_.work_mem_bytes);
+        }
+        if (cost.resource_governance_outcome.empty() ||
+            cost.resource_governance_outcome == "NO_MEMORY_GOVERNANCE")
+        {
+            cost.resource_governance_outcome =
+                cost.spill_expected ? "SPILL_EXPECTED" : "IN_MEMORY";
         }
         return cost;
     }

@@ -14,6 +14,7 @@
 #include "scratchbird/parser/shared_types.h"
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace scratchbird::optimizer
 {
@@ -58,6 +59,32 @@ namespace scratchbird::optimizer
         double effective_cache_size = 16384.0; // Estimated OS cache size in pages (128MB @ 8KB/page)
     };
 
+    struct CostInputEstimate
+    {
+        std::string name;
+        double value = 0.0;
+        std::string unit;
+    };
+
+    struct CostFormulaTerm
+    {
+        std::string name;
+        double coefficient = 0.0;
+        double input_value = 0.0;
+        double contribution = 0.0;
+        std::string unit;
+    };
+
+    struct CostFormulaProfile
+    {
+        std::string profile_id = "sb_cost_formula/default";
+        uint32_t profile_version = 1;
+        std::string calibration_profile_id = "sb_cost_calibration/default";
+        std::string storage_profile = "heap_btree";
+        std::string workload_profile = "mixed_oltp";
+        CostParameters parameters;
+    };
+
     /**
      * Cost Estimate - Result of cost estimation for a query plan
      *
@@ -74,6 +101,15 @@ namespace scratchbird::optimizer
         bool spill_expected = false; // Whether temp spill is expected
         uint32_t spill_passes = 0;   // Estimated spill/repartition passes
         uint64_t spill_bytes = 0;    // Estimated temp footprint written to disk
+        std::string operator_name;
+        std::string formula_profile_id;
+        uint32_t formula_profile_version = 0;
+        std::string calibration_profile_id;
+        std::string storage_profile;
+        std::string workload_profile;
+        std::string resource_governance_outcome;
+        std::vector<CostInputEstimate> input_estimates;
+        std::vector<CostFormulaTerm> expanded_terms;
 
         // Constructor for convenience
         CostEstimate() = default;
@@ -104,6 +140,7 @@ namespace scratchbird::optimizer
          * @param params Cost parameters (uses PostgreSQL defaults if not provided)
          */
         explicit CostModel(const CostParameters &params = CostParameters{});
+        explicit CostModel(const CostFormulaProfile &profile);
 
         /**
          * costSeqScan - Estimate cost of sequential table scan
@@ -490,9 +527,11 @@ namespace scratchbird::optimizer
          * Get current cost parameters
          */
         const CostParameters &parameters() const { return params_; }
+        const CostFormulaProfile &formulaProfile() const { return formula_profile_; }
 
     private:
         CostParameters params_;
+        CostFormulaProfile formula_profile_;
     };
 
 } // namespace scratchbird::optimizer

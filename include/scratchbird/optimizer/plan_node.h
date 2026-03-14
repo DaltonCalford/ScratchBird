@@ -29,6 +29,7 @@
 #include "scratchbird/parser/shared_types.h"      // For JoinType, WindowFunc, etc.
 #include "scratchbird/parser/ast_v3.h"
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <cmath>  // For std::log2
@@ -138,6 +139,15 @@ namespace scratchbird::optimizer
             startup_cost_ = startup_cost;
             total_cost_ = total_cost;
             rows_ = rows;
+            cost_evidence_.reset();
+        }
+
+        void setCost(const CostEstimate &cost)
+        {
+            startup_cost_ = cost.startup_cost;
+            total_cost_ = cost.total_cost;
+            rows_ = cost.rows;
+            cost_evidence_ = cost;
         }
 
         /**
@@ -146,6 +156,11 @@ namespace scratchbird::optimizer
         const std::vector<std::shared_ptr<PlanNode>> &children() const
         {
             return children_;
+        }
+
+        const std::optional<CostEstimate> &costEvidence() const
+        {
+            return cost_evidence_;
         }
 
         /**
@@ -170,6 +185,7 @@ namespace scratchbird::optimizer
         double total_cost_;
         uint64_t rows_;
         std::vector<std::shared_ptr<PlanNode>> children_;
+        std::optional<CostEstimate> cost_evidence_;
     };
 
     /**

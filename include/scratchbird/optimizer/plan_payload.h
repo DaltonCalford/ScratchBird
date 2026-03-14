@@ -8,8 +8,8 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 4;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v4";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 5;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v5";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -215,6 +215,22 @@ namespace scratchbird::optimizer
         bool enforced = true;
     };
 
+    struct RuntimePlanCostInputEstimate
+    {
+        std::string name;
+        double value = 0.0;
+        std::string unit;
+    };
+
+    struct RuntimePlanCostTerm
+    {
+        std::string name;
+        double coefficient = 0.0;
+        double input_value = 0.0;
+        double contribution = 0.0;
+        std::string unit;
+    };
+
     struct RuntimePlanNode
     {
         std::string node_type;
@@ -233,6 +249,14 @@ namespace scratchbird::optimizer
         uint32_t spill_passes = 0;
         uint64_t spill_bytes = 0;
         std::string spill_policy;
+        std::string formula_profile_id;
+        uint32_t formula_profile_version = 0;
+        std::string calibration_profile_id;
+        std::string storage_profile;
+        std::string workload_profile;
+        std::string resource_governance_outcome;
+        std::vector<RuntimePlanCostInputEstimate> input_estimates;
+        std::vector<RuntimePlanCostTerm> expanded_cost_terms;
         std::vector<RuntimePlanNode> children;
     };
 
