@@ -934,6 +934,7 @@ TEST_F(QueryPlannerIntegrationTest, RepeatedSelectHitsPlanCache)
     ASSERT_TRUE(createDatabase());
 
     QueryCompilerV3::resetPlanCacheStats();
+    const auto baseline = QueryCompilerV3::planCacheStats();
 
     auto first = compileSQL("SELECT id FROM users WHERE id = 42");
     ASSERT_FALSE(first.empty()) << last_compile_errors_;
@@ -941,7 +942,7 @@ TEST_F(QueryPlannerIntegrationTest, RepeatedSelectHitsPlanCache)
     EXPECT_EQ(after_first.hits, 0u);
     EXPECT_EQ(after_first.misses, 1u);
     EXPECT_EQ(after_first.inserts, 1u);
-    EXPECT_EQ(after_first.entries, 1u);
+    EXPECT_EQ(after_first.entries, baseline.entries + 1u);
 
     auto second = compileSQL("SELECT id FROM users WHERE id = 42");
     ASSERT_FALSE(second.empty()) << last_compile_errors_;
@@ -949,7 +950,7 @@ TEST_F(QueryPlannerIntegrationTest, RepeatedSelectHitsPlanCache)
     EXPECT_EQ(after_second.hits, 1u);
     EXPECT_EQ(after_second.misses, 1u);
     EXPECT_EQ(after_second.inserts, 1u);
-    EXPECT_EQ(after_second.entries, 1u);
+    EXPECT_EQ(after_second.entries, baseline.entries + 1u);
     EXPECT_EQ(first, second);
 }
 
