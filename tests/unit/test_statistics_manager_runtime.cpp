@@ -12,6 +12,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/table_stats_manager.h"
+#include "scratchbird/optimizer/selectivity_estimator.h"
 #include "scratchbird/optimizer/statistics_manager.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
@@ -41,6 +42,26 @@ namespace
             }
         }
         return {};
+    }
+
+    auto encodeLengthPrefixedValue(const std::string &text) -> std::vector<uint8_t>
+    {
+        std::vector<uint8_t> out(sizeof(uint32_t) + text.size());
+        const uint32_t len = static_cast<uint32_t>(text.size());
+        std::memcpy(out.data(), &len, sizeof(len));
+        if (!text.empty())
+        {
+            std::memcpy(out.data() + sizeof(uint32_t), text.data(), text.size());
+        }
+        return out;
+    }
+
+    template <typename T>
+    auto encodeScalarValue(T value) -> std::vector<uint8_t>
+    {
+        std::vector<uint8_t> out(sizeof(T));
+        std::memcpy(out.data(), &value, sizeof(T));
+        return out;
     }
 }
 
@@ -288,4 +309,147 @@ TEST_F(StatisticsManagerRuntimeTest, AutoAnalyzeBuildsCorrelationAndExpressionSt
                   missing_expression_stats,
                   &stats_ctx),
               Status::OK);
+}
+
+TEST_F(StatisticsManagerRuntimeTest, LongStringStatsPersistWithoutTruncationAndEstimateEquality)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE TABLE stats_long_strings (payload VARCHAR(1024))").success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON stats_long_strings TO PUBLIC").success());
+
+    const std::string prefix(300, 'a');
+    const std::string long_a = prefix + "A_tail";
+    const std::string long_b = prefix + "B_tail";
+    for (int i = 0; i < 60; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO stats_long_strings (payload) VALUES ('" + long_a + "')")
+                        .success());
+    }
+    for (int i = 0; i < 40; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO stats_long_strings (payload) VALUES ('" + long_b + "')")
+                        .success());
+    }
+
+    CatalogManager::TableInfo table_info;
+    std::vector<CatalogManager::ColumnInfo> columns;
+    ASSERT_TRUE(lookupTable("stats_long_strings", table_info, columns));
+
+    ErrorContext stats_ctx;
+    ASSERT_EQ(db_->statistics_manager()->analyzeTable(table_info.table_id, 1.0f, &stats_ctx),
+              Status::OK)
+        << stats_ctx.message;
+
+    const ID payload_column = findColumnId(columns, "payload");
+    ASSERT_NE(payload_column, ID{});
+
+    ASSERT_TRUE(reopenDatabase());
+    ASSERT_TRUE(lookupTable("stats_long_strings", table_info, columns));
+
+    const ID reopened_payload_column = findColumnId(columns, "payload");
+    ASSERT_NE(reopened_payload_column, ID{});
+
+    ColumnStatistics payload_stats;
+    ASSERT_EQ(db_->statistics_manager()->getColumnStatistics(table_info.table_id,
+                                                             reopened_payload_column,
+                                                             payload_stats,
+                                                             &stats_ctx),
+              Status::OK)
+        << stats_ctx.message;
+    EXPECT_EQ(payload_stats.comparator_family, StatisticsComparatorFamily::STRING);
+    EXPECT_EQ(payload_stats.value_encoding,
+              StatisticsValueEncoding::PLAIN_LENGTH_PREFIXED);
+    ASSERT_GE(payload_stats.mcv_list.size(), 2u);
+
+    const auto encoded_a = encodeLengthPrefixedValue(long_a);
+    const auto encoded_b = encodeLengthPrefixedValue(long_b);
+    bool found_a = false;
+    bool found_b = false;
+    for (const auto &mcv : payload_stats.mcv_list)
+    {
+        if (mcv.value_data == encoded_a)
+        {
+            found_a = true;
+            EXPECT_NEAR(mcv.frequency, 0.60, 0.01);
+            EXPECT_GT(mcv.value_data.size(), 256u);
+        }
+        else if (mcv.value_data == encoded_b)
+        {
+            found_b = true;
+            EXPECT_NEAR(mcv.frequency, 0.40, 0.01);
+            EXPECT_GT(mcv.value_data.size(), 256u);
+        }
+    }
+    EXPECT_TRUE(found_a);
+    EXPECT_TRUE(found_b);
+
+    SelectivityEstimator estimator(db_->statistics_manager(), db_.get());
+    EXPECT_NEAR(estimator.estimateEquality(table_info.table_id,
+                                           reopened_payload_column,
+                                           encoded_a,
+                                           &stats_ctx),
+                0.60,
+                0.01);
+    EXPECT_NEAR(estimator.estimateEquality(table_info.table_id,
+                                           reopened_payload_column,
+                                           encoded_b,
+                                           &stats_ctx),
+                0.40,
+                0.01);
+}
+
+TEST_F(StatisticsManagerRuntimeTest, TypedNumericHistogramRangeEstimationTracksActualDistribution)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE TABLE stats_numbers (value INTEGER)").success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON stats_numbers TO PUBLIC").success());
+
+    for (int i = 1; i <= 100; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO stats_numbers (value) VALUES (" + std::to_string(i) +
+                               ")")
+                        .success());
+    }
+
+    CatalogManager::TableInfo table_info;
+    std::vector<CatalogManager::ColumnInfo> columns;
+    ASSERT_TRUE(lookupTable("stats_numbers", table_info, columns));
+
+    ErrorContext stats_ctx;
+    ASSERT_EQ(db_->statistics_manager()->analyzeTable(table_info.table_id, 1.0f, &stats_ctx),
+              Status::OK)
+        << stats_ctx.message;
+
+    const ID value_column = findColumnId(columns, "value");
+    ASSERT_NE(value_column, ID{});
+
+    ColumnStatistics value_stats;
+    ASSERT_EQ(db_->statistics_manager()->getColumnStatistics(table_info.table_id,
+                                                             value_column,
+                                                             value_stats,
+                                                             &stats_ctx),
+              Status::OK)
+        << stats_ctx.message;
+    EXPECT_EQ(value_stats.comparator_family,
+              StatisticsComparatorFamily::SIGNED_INTEGER);
+    ASSERT_FALSE(value_stats.histogram_buckets.empty());
+
+    SelectivityEstimator estimator(db_->statistics_manager(), db_.get());
+    const double ge_fifty =
+        estimator.estimateRange(table_info.table_id,
+                                value_column,
+                                ">=",
+                                encodeScalarValue<int32_t>(50),
+                                &stats_ctx);
+    const double lt_twenty =
+        estimator.estimateRange(table_info.table_id,
+                                value_column,
+                                "<",
+                                encodeScalarValue<int32_t>(20),
+                                &stats_ctx);
+
+    EXPECT_NEAR(ge_fifty, 0.51, 0.08);
+    EXPECT_NEAR(lt_twenty, 0.19, 0.08);
 }

@@ -174,13 +174,394 @@ namespace scratchbird::optimizer
         }
     }
 
+    template <typename T>
+    auto readScalarValue(const std::vector<uint8_t> &value, T &out) -> bool
+    {
+        if (value.size() < sizeof(T))
+        {
+            return false;
+        }
+        std::memcpy(&out, value.data(), sizeof(T));
+        return true;
+    }
+
+    auto hexEncodeBytes(const std::vector<uint8_t> &bytes) -> std::string
+    {
+        static constexpr char HEX[] = "0123456789abcdef";
+        std::string out;
+        out.reserve(bytes.size() * 2);
+        for (uint8_t byte : bytes)
+        {
+            out.push_back(HEX[(byte >> 4) & 0x0F]);
+            out.push_back(HEX[byte & 0x0F]);
+        }
+        return out;
+    }
+
+    auto hexDecodeBytes(const std::string &text, std::vector<uint8_t> &out) -> bool
+    {
+        auto nibble = [](char ch) -> int {
+            if (ch >= '0' && ch <= '9')
+            {
+                return ch - '0';
+            }
+            if (ch >= 'a' && ch <= 'f')
+            {
+                return 10 + (ch - 'a');
+            }
+            if (ch >= 'A' && ch <= 'F')
+            {
+                return 10 + (ch - 'A');
+            }
+            return -1;
+        };
+
+        if (text.size() % 2 != 0)
+        {
+            return false;
+        }
+
+        out.clear();
+        out.reserve(text.size() / 2);
+        for (size_t i = 0; i < text.size(); i += 2)
+        {
+            int high = nibble(text[i]);
+            int low = nibble(text[i + 1]);
+            if (high < 0 || low < 0)
+            {
+                return false;
+            }
+            out.push_back(static_cast<uint8_t>((high << 4) | low));
+        }
+        return true;
+    }
+
+    auto compareByteVectors(const std::vector<uint8_t> &lhs,
+                            const std::vector<uint8_t> &rhs) -> int
+    {
+        const size_t shared = std::min(lhs.size(), rhs.size());
+        for (size_t i = 0; i < shared; ++i)
+        {
+            if (lhs[i] < rhs[i])
+            {
+                return -1;
+            }
+            if (lhs[i] > rhs[i])
+            {
+                return 1;
+            }
+        }
+        if (lhs.size() < rhs.size())
+        {
+            return -1;
+        }
+        if (lhs.size() > rhs.size())
+        {
+            return 1;
+        }
+        return 0;
+    }
+
+    auto decodeLengthPrefixedPayload(const std::vector<uint8_t> &value,
+                                     std::vector<uint8_t> &payload_out) -> bool
+    {
+        if (value.empty())
+        {
+            payload_out.clear();
+            return true;
+        }
+
+        size_t offset = 0;
+        uint32_t len = 0;
+        if (!core::readUint32LE(value.data(), value.size(), offset, len) ||
+            offset + len > value.size())
+        {
+            return false;
+        }
+
+        payload_out.assign(value.begin() + static_cast<std::ptrdiff_t>(offset),
+                           value.begin() + static_cast<std::ptrdiff_t>(offset + len));
+        return true;
+    }
+
+    auto isLengthPrefixedType(core::DataType type) -> bool;
+
+    auto comparatorFamilyForType(core::DataType type) -> StatisticsComparatorFamily
+    {
+        switch (type)
+        {
+            case core::DataType::INT8:
+            case core::DataType::INT16:
+            case core::DataType::INT32:
+            case core::DataType::INT64:
+            case core::DataType::INT128:
+            case core::DataType::MEDIUMINT:
+                return StatisticsComparatorFamily::SIGNED_INTEGER;
+            case core::DataType::UINT8:
+            case core::DataType::UINT16:
+            case core::DataType::UINT32:
+            case core::DataType::UINT64:
+            case core::DataType::UINT128:
+                return StatisticsComparatorFamily::UNSIGNED_INTEGER;
+            case core::DataType::FLOAT32:
+            case core::DataType::FLOAT64:
+            case core::DataType::DECIMAL:
+            case core::DataType::MONEY:
+            case core::DataType::DECFLOAT16:
+            case core::DataType::DECFLOAT34:
+                return StatisticsComparatorFamily::NUMERIC;
+            case core::DataType::CHAR:
+            case core::DataType::VARCHAR:
+            case core::DataType::TEXT:
+            case core::DataType::JSON:
+            case core::DataType::JSONB:
+            case core::DataType::XML:
+            case core::DataType::BLOB_SUB_TYPE_TEXT:
+                return StatisticsComparatorFamily::STRING;
+            case core::DataType::DATE:
+            case core::DataType::TIME:
+            case core::DataType::TIMESTAMP:
+            case core::DataType::TIMESTAMP_WITH_ZONE:
+            case core::DataType::TIME_WITH_ZONE:
+            case core::DataType::DATETIME:
+            case core::DataType::YEAR:
+                return StatisticsComparatorFamily::TEMPORAL;
+            case core::DataType::UUID:
+                return StatisticsComparatorFamily::UUID;
+            case core::DataType::BOOLEAN:
+            case core::DataType::BIT:
+                return StatisticsComparatorFamily::BOOLEAN;
+            case core::DataType::BINARY:
+            case core::DataType::VARBINARY:
+            case core::DataType::BLOB:
+            case core::DataType::BYTEA:
+            case core::DataType::VECTOR:
+            case core::DataType::BSON:
+                return StatisticsComparatorFamily::BINARY;
+            default:
+                return StatisticsComparatorFamily::UNKNOWN;
+        }
+    }
+
+    auto valueEncodingForType(core::DataType type) -> StatisticsValueEncoding
+    {
+        if (type == core::DataType::UUID)
+        {
+            return StatisticsValueEncoding::UUID_BYTES;
+        }
+        if (isLengthPrefixedType(type))
+        {
+            return StatisticsValueEncoding::PLAIN_LENGTH_PREFIXED;
+        }
+        return StatisticsValueEncoding::PLAIN_FIXED;
+    }
+
+    auto applyDerivedMetadata(ColumnStatistics &stats) -> void
+    {
+        if (stats.comparator_family == StatisticsComparatorFamily::UNKNOWN)
+        {
+            stats.comparator_family = comparatorFamilyForType(stats.data_type);
+        }
+        if (stats.value_encoding == StatisticsValueEncoding::UNKNOWN)
+        {
+            stats.value_encoding = valueEncodingForType(stats.data_type);
+        }
+    }
+
+    auto applyColumnMetadata(const core::CatalogManager::ColumnInfo &column,
+                             ColumnStatistics &stats) -> void
+    {
+        stats.comparator_family =
+            comparatorFamilyForType(static_cast<core::DataType>(column.data_type));
+        stats.value_encoding =
+            valueEncodingForType(static_cast<core::DataType>(column.data_type));
+        stats.collation_id = column.collation_id;
+        stats.type_precision =
+            column.type_precision != 0 ? column.type_precision : column.max_length;
+        stats.type_scale = column.type_scale;
+    }
+
+    auto buildStatsMetadataJson(const ColumnStatistics &stats) -> nlohmann::json
+    {
+        return nlohmann::json{
+            {"comparator_family", static_cast<uint32_t>(stats.comparator_family)},
+            {"value_encoding", static_cast<uint32_t>(stats.value_encoding)},
+            {"collation_id", stats.collation_id},
+            {"type_precision", stats.type_precision},
+            {"type_scale", stats.type_scale}};
+    }
+
+    auto applyStatsMetadataJson(const nlohmann::json &metadata,
+                                ColumnStatistics &stats) -> void
+    {
+        if (!metadata.is_object())
+        {
+            return;
+        }
+        stats.comparator_family = static_cast<StatisticsComparatorFamily>(
+            metadata.value("comparator_family",
+                           static_cast<uint32_t>(stats.comparator_family)));
+        stats.value_encoding = static_cast<StatisticsValueEncoding>(
+            metadata.value("value_encoding",
+                           static_cast<uint32_t>(stats.value_encoding)));
+        stats.collation_id = metadata.value("collation_id", stats.collation_id);
+        stats.type_precision = metadata.value("type_precision", stats.type_precision);
+        stats.type_scale = metadata.value("type_scale", stats.type_scale);
+        applyDerivedMetadata(stats);
+    }
+
+    auto decodeComparableScalar(const std::vector<uint8_t> &value,
+                                core::DataType type,
+                                long double &out) -> bool
+    {
+        switch (type)
+        {
+            case core::DataType::INT8: {
+                int8_t decoded = 0;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::INT16: {
+                int16_t decoded = 0;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::INT32:
+            case core::DataType::MEDIUMINT:
+            case core::DataType::DATE:
+            case core::DataType::YEAR: {
+                int32_t decoded = 0;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::INT64:
+            case core::DataType::TIME:
+            case core::DataType::TIMESTAMP:
+            case core::DataType::TIMESTAMP_WITH_ZONE:
+            case core::DataType::TIME_WITH_ZONE:
+            case core::DataType::DATETIME: {
+                int64_t decoded = 0;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::UINT8:
+            case core::DataType::BOOLEAN:
+            case core::DataType::BIT: {
+                uint8_t decoded = 0;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::UINT16: {
+                uint16_t decoded = 0;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::UINT32: {
+                uint32_t decoded = 0;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::UINT64: {
+                uint64_t decoded = 0;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::FLOAT32: {
+                float decoded = 0.0f;
+                if (!readScalarValue(value, decoded)) return false;
+                out = static_cast<long double>(decoded);
+                return true;
+            }
+            case core::DataType::FLOAT64:
+            case core::DataType::DECIMAL:
+            case core::DataType::MONEY:
+            case core::DataType::DECFLOAT16:
+            case core::DataType::DECFLOAT34: {
+                if (value.size() >= sizeof(double))
+                {
+                    double decoded = 0.0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                if (value.size() >= sizeof(float))
+                {
+                    float decoded = 0.0f;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                return false;
+            }
+            default:
+                return false;
+        }
+    }
+
+    auto compareTypedStatisticValues(core::DataType type,
+                                     const std::vector<uint8_t> &lhs,
+                                     const std::vector<uint8_t> &rhs) -> int
+    {
+        const StatisticsComparatorFamily family = comparatorFamilyForType(type);
+
+        if (family == StatisticsComparatorFamily::STRING)
+        {
+            std::string lhs_text;
+            std::string rhs_text;
+            if (readStringValue(lhs, lhs_text) && readStringValue(rhs, rhs_text))
+            {
+                if (lhs_text < rhs_text) return -1;
+                if (lhs_text > rhs_text) return 1;
+                return 0;
+            }
+        }
+        else if (family == StatisticsComparatorFamily::BINARY &&
+                 valueEncodingForType(type) == StatisticsValueEncoding::PLAIN_LENGTH_PREFIXED)
+        {
+            std::vector<uint8_t> lhs_payload;
+            std::vector<uint8_t> rhs_payload;
+            if (decodeLengthPrefixedPayload(lhs, lhs_payload) &&
+                decodeLengthPrefixedPayload(rhs, rhs_payload))
+            {
+                return compareByteVectors(lhs_payload, rhs_payload);
+            }
+        }
+        else if (family == StatisticsComparatorFamily::UUID ||
+                 family == StatisticsComparatorFamily::BINARY)
+        {
+            return compareByteVectors(lhs, rhs);
+        }
+        else
+        {
+            long double lhs_scalar = 0.0;
+            long double rhs_scalar = 0.0;
+            if (decodeComparableScalar(lhs, type, lhs_scalar) &&
+                decodeComparableScalar(rhs, type, rhs_scalar))
+            {
+                if (lhs_scalar < rhs_scalar) return -1;
+                if (lhs_scalar > rhs_scalar) return 1;
+                return 0;
+            }
+        }
+
+        return compareByteVectors(lhs, rhs);
+    }
+
     auto canonicalExpressionKey(const std::string &func_name,
                                 const std::string &column_name) -> std::string
     {
         return func_name + "(" + core::IdentifierUtils::toUpper(column_name) + ")";
     }
 
-    bool isLengthPrefixedType(core::DataType type)
+    auto isLengthPrefixedType(core::DataType type) -> bool
     {
         switch (type)
         {
@@ -328,6 +709,7 @@ namespace scratchbird::optimizer
             status = generateHistogram(column_values,
                                        100,
                                        HistogramType::EQUAL_HEIGHT,
+                                       col_stats.data_type,
                                        col_stats.histogram_buckets,
                                        ctx);
             if (status == Status::OK)
@@ -461,6 +843,7 @@ namespace scratchbird::optimizer
                 if (it != column_stats_cache_.end())
                 {
                     stats = it->second;
+                    applyDerivedMetadata(stats);
                     return Status::OK;
                 }
             }
@@ -468,6 +851,7 @@ namespace scratchbird::optimizer
             Status status = loadColumnStatistics(table_id, column_id, stats, ctx);
             if (status == Status::OK)
             {
+                applyDerivedMetadata(stats);
                 std::lock_guard<std::mutex> lock(cache_mutex_);
                 column_stats_cache_[getCacheKey(table_id, column_id)] = stats;
             }
@@ -1311,6 +1695,7 @@ namespace scratchbird::optimizer
         stats.column_id = column_id;
         stats.column_name = target_column_info.column_name;
         stats.data_type = static_cast<core::DataType>(target_column_info.data_type);
+        applyColumnMetadata(target_column_info, stats);
 
         stats.num_rows = sample_rows.size();
         stats.num_nulls = null_count;
@@ -1346,6 +1731,7 @@ namespace scratchbird::optimizer
     auto StatisticsManager::generateHistogram(const std::vector<std::vector<uint8_t>> &values,
                                                uint32_t bucket_count,
                                                HistogramType histogram_type,
+                                               core::DataType data_type,
                                                std::vector<HistogramBucket> &buckets,
                                                ErrorContext *ctx) -> Status
     {
@@ -1393,7 +1779,12 @@ namespace scratchbird::optimizer
 
             // Sort values
             std::vector<std::vector<uint8_t>> sorted_values = non_null_values;
-            std::sort(sorted_values.begin(), sorted_values.end());
+            std::sort(sorted_values.begin(),
+                      sorted_values.end(),
+                      [data_type](const std::vector<uint8_t> &lhs,
+                                  const std::vector<uint8_t> &rhs) {
+                          return compareTypedStatisticValues(data_type, lhs, rhs) < 0;
+                      });
 
             // Calculate values per bucket
             size_t values_per_bucket = sorted_values.size() / bucket_count;
@@ -1414,23 +1805,11 @@ namespace scratchbird::optimizer
 
                 // Set lower bound (first value in bucket)
                 const auto &lower = sorted_values[idx];
-                size_t lower_size = std::min(lower.size(), sizeof(bucket.lower_bound));
-                std::memcpy(bucket.lower_bound, lower.data(), lower_size);
-                if (lower_size < sizeof(bucket.lower_bound))
-                {
-                    std::memset(bucket.lower_bound + lower_size, 0,
-                                sizeof(bucket.lower_bound) - lower_size);
-                }
+                bucket.lower_bound = lower;
 
                 // Set upper bound (last value in bucket)
                 const auto &upper = sorted_values[idx + bucket_size - 1];
-                size_t upper_size = std::min(upper.size(), sizeof(bucket.upper_bound));
-                std::memcpy(bucket.upper_bound, upper.data(), upper_size);
-                if (upper_size < sizeof(bucket.upper_bound))
-                {
-                    std::memset(bucket.upper_bound + upper_size, 0,
-                                sizeof(bucket.upper_bound) - upper_size);
-                }
+                bucket.upper_bound = upper;
 
                 // Set row count and frequency
                 bucket.row_count = bucket_size;
@@ -1452,25 +1831,24 @@ namespace scratchbird::optimizer
             // Divide value range into equal intervals
 
             // Find min and max values
-            auto min_value = *std::min_element(non_null_values.begin(), non_null_values.end());
-            auto max_value = *std::max_element(non_null_values.begin(), non_null_values.end());
+            auto comparator = [data_type](const std::vector<uint8_t> &lhs,
+                                          const std::vector<uint8_t> &rhs) {
+                return compareTypedStatisticValues(data_type, lhs, rhs) < 0;
+            };
+            auto min_value = *std::min_element(non_null_values.begin(),
+                                               non_null_values.end(),
+                                               comparator);
+            auto max_value = *std::max_element(non_null_values.begin(),
+                                               non_null_values.end(),
+                                               comparator);
 
             // For discrete types or single-value columns, fall back to equal-height
             if (min_value == max_value)
             {
                 HistogramBucket bucket;
 
-                size_t value_size = std::min(min_value.size(), sizeof(bucket.lower_bound));
-                std::memcpy(bucket.lower_bound, min_value.data(), value_size);
-                std::memcpy(bucket.upper_bound, min_value.data(), value_size);
-
-                if (value_size < sizeof(bucket.lower_bound))
-                {
-                    std::memset(bucket.lower_bound + value_size, 0,
-                                sizeof(bucket.lower_bound) - value_size);
-                    std::memset(bucket.upper_bound + value_size, 0,
-                                sizeof(bucket.upper_bound) - value_size);
-                }
+                bucket.lower_bound = min_value;
+                bucket.upper_bound = min_value;
 
                 bucket.row_count = non_null_values.size();
                 bucket.frequency = 1.0f;
@@ -1486,7 +1864,12 @@ namespace scratchbird::optimizer
             // For complex types, we fall back to equal-height
             // Phase 4 Enhancement: Implement proper equal-width for numeric types with range calculation
             DEBUG_LOG_DB("Equal-width histogram for complex types not yet implemented, using equal-height");
-            return generateHistogram(values, bucket_count, HistogramType::EQUAL_HEIGHT, buckets, ctx);
+            return generateHistogram(values,
+                                     bucket_count,
+                                     HistogramType::EQUAL_HEIGHT,
+                                     data_type,
+                                     buckets,
+                                     ctx);
         }
         else
         {
@@ -1567,15 +1950,7 @@ namespace scratchbird::optimizer
             MCVEntry mcv;
 
             // Copy value data
-            size_t value_size = std::min(value.size(), sizeof(mcv.value_data));
-            std::memcpy(mcv.value_data, value.data(), value_size);
-
-            // Zero out remaining bytes
-            if (value_size < sizeof(mcv.value_data))
-            {
-                std::memset(mcv.value_data + value_size, 0,
-                            sizeof(mcv.value_data) - value_size);
-            }
+            mcv.value_data = value;
 
             // Compute frequency as fraction
             mcv.frequency = static_cast<float>(count) / static_cast<float>(total_non_null);
@@ -1684,7 +2059,7 @@ namespace scratchbird::optimizer
         info.num_distinct = stats.num_distinct;
         info.avg_width = stats.avg_width;
         info.histogram_type = static_cast<uint8_t>(stats.histogram_type);
-        info.histogram_bucket_count = stats.histogram_bucket_count;
+        info.histogram_bucket_count = static_cast<uint32_t>(stats.histogram_buckets.size());
         info.last_analyzed_time = stats.last_analyzed_time;
         info.sample_size = stats.sample_size;
         info.sample_rate = stats.sample_rate;
@@ -1696,32 +2071,26 @@ namespace scratchbird::optimizer
         info.created_time = now_time;
         info.last_modified_time = now_time;
 
-        // Serialize MCVs to JSON format for TOAST storage
-        // Format: [{"value":"base64","freq":0.5}, ...]
+        ColumnStatistics persisted_stats = stats;
+        applyDerivedMetadata(persisted_stats);
+
+        // Serialize MCVs to JSON format for TOAST storage.
         if (!stats.mcv_list.empty())
         {
-            std::string mcv_json = "[";
-            for (size_t i = 0; i < stats.mcv_list.size(); ++i)
+            nlohmann::json payload;
+            payload["version"] = 2;
+            payload["metadata"] = buildStatsMetadataJson(persisted_stats);
+            payload["entries"] = nlohmann::json::array();
+            for (const auto &mcv : persisted_stats.mcv_list)
             {
-                if (i > 0) mcv_json += ",";
-                const auto& mcv = stats.mcv_list[i];
-
-                // Convert value_data to hex string (simpler than base64)
-                std::string hex_value;
-                for (size_t j = 0; j < 256 && mcv.value_data[j] != 0; ++j)
-                {
-                    char buf[3];
-                    snprintf(buf, sizeof(buf), "%02x", mcv.value_data[j]);
-                    hex_value += buf;
-                }
-
-                mcv_json += "{\"v\":\"" + hex_value + "\",\"f\":" +
-                           std::to_string(mcv.frequency) + "}";
+                payload["entries"].push_back({
+                    {"value", hexEncodeBytes(mcv.value_data)},
+                    {"frequency", mcv.frequency},
+                    {"value_oid", mcv.value_oid.toString()}});
             }
-            mcv_json += "]";
 
             // Store via TOAST and get OID (xmin=0 for catalog operations)
-            Status status = catalog_->storeStringInToast(mcv_json, 0, info.mcv_oid, ctx);
+            Status status = catalog_->storeStringInToast(payload.dump(), 0, info.mcv_oid, ctx);
             if (status != Status::OK)
             {
                 DEBUG_LOG_DB("Failed to store MCV list via TOAST");
@@ -1730,41 +2099,26 @@ namespace scratchbird::optimizer
             }
         }
 
-        // Serialize histogram to JSON format for TOAST storage
-        // Format: [{"lo":"hex","hi":"hex","cnt":100,"freq":0.1}, ...]
+        // Serialize histogram to JSON format for TOAST storage.
         if (!stats.histogram_buckets.empty())
         {
-            std::string hist_json = "[";
-            for (size_t i = 0; i < stats.histogram_buckets.size(); ++i)
+            nlohmann::json payload;
+            payload["version"] = 2;
+            payload["metadata"] = buildStatsMetadataJson(persisted_stats);
+            payload["buckets"] = nlohmann::json::array();
+            for (const auto &bucket : persisted_stats.histogram_buckets)
             {
-                if (i > 0) hist_json += ",";
-                const auto& bucket = stats.histogram_buckets[i];
-
-                // Convert bounds to hex strings
-                std::string lo_hex, hi_hex;
-                for (size_t j = 0; j < 256; ++j)
-                {
-                    if (bucket.lower_bound[j] == 0 && j > 0) break;
-                    char buf[3];
-                    snprintf(buf, sizeof(buf), "%02x", bucket.lower_bound[j]);
-                    lo_hex += buf;
-                }
-                for (size_t j = 0; j < 256; ++j)
-                {
-                    if (bucket.upper_bound[j] == 0 && j > 0) break;
-                    char buf[3];
-                    snprintf(buf, sizeof(buf), "%02x", bucket.upper_bound[j]);
-                    hi_hex += buf;
-                }
-
-                hist_json += "{\"lo\":\"" + lo_hex + "\",\"hi\":\"" + hi_hex +
-                            "\",\"cnt\":" + std::to_string(bucket.row_count) +
-                            ",\"f\":" + std::to_string(bucket.frequency) + "}";
+                payload["buckets"].push_back({
+                    {"lower", hexEncodeBytes(bucket.lower_bound)},
+                    {"upper", hexEncodeBytes(bucket.upper_bound)},
+                    {"row_count", bucket.row_count},
+                    {"frequency", bucket.frequency},
+                    {"lower_oid", bucket.lower_oid.toString()},
+                    {"upper_oid", bucket.upper_oid.toString()}});
             }
-            hist_json += "]";
 
             // Store via TOAST and get OID (xmin=0 for catalog operations)
-            Status status = catalog_->storeStringInToast(hist_json, 0, info.histogram_oid, ctx);
+            Status status = catalog_->storeStringInToast(payload.dump(), 0, info.histogram_oid, ctx);
             if (status != Status::OK)
             {
                 DEBUG_LOG_DB("Failed to store histogram via TOAST");
@@ -1785,7 +2139,7 @@ namespace scratchbird::optimizer
         {
             std::lock_guard<std::mutex> lock(cache_mutex_);
             uint64_t cache_key = getCacheKey(stats.table_id, stats.column_id);
-            column_stats_cache_[cache_key] = stats;
+            column_stats_cache_[cache_key] = persisted_stats;
         }
 
         DEBUG_LOG_DB("Stored column statistics to catalog for table_id=" +
@@ -1838,6 +2192,21 @@ namespace scratchbird::optimizer
         stats.last_analyzed_time = info.last_analyzed_time;
         stats.sample_size = info.sample_size;
         stats.sample_rate = info.sample_rate;
+        applyDerivedMetadata(stats);
+
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        if (catalog_->getColumns(table_id, columns, ctx) == Status::OK)
+        {
+            for (const auto &column : columns)
+            {
+                if (column.column_id == column_id)
+                {
+                    stats.column_name = column.column_name;
+                    applyColumnMetadata(column, stats);
+                    break;
+                }
+            }
+        }
 
         // Load MCVs from TOAST if available
         if (!isZeroId(info.mcv_oid))
@@ -1846,43 +2215,47 @@ namespace scratchbird::optimizer
             status = catalog_->loadStringFromToast(info.mcv_oid, 0, json, ctx);
             if (status == Status::OK && !json.empty())
             {
-                // Parse JSON: [{"v":"hex","f":0.5}, ...]
                 stats.mcv_list.clear();
-
-                // Simple JSON parser for MCV entries
-                size_t pos = 0;
-                while ((pos = json.find("{\"v\":\"", pos)) != std::string::npos)
+                try
                 {
-                    pos += 6; // Skip {"v":"
-                    size_t end = json.find("\"", pos);
-                    if (end == std::string::npos) break;
-
-                    std::string hex_value = json.substr(pos, end - pos);
-                    pos = end;
-
-                    // Find frequency
-                    size_t freq_pos = json.find("\"f\":", pos);
-                    if (freq_pos == std::string::npos) break;
-                    freq_pos += 4; // Skip "f":
-
-                    size_t freq_end = json.find_first_of(",}", freq_pos);
-                    if (freq_end == std::string::npos) break;
-
-                    float freq = std::stof(json.substr(freq_pos, freq_end - freq_pos));
-
-                    // Convert hex to bytes
-                    MCVEntry entry;
-                    size_t byte_idx = 0;
-                    for (size_t i = 0; i < hex_value.size() && byte_idx < 256; i += 2)
+                    const auto payload = nlohmann::json::parse(json);
+                    const auto *entries = payload.is_array()
+                                              ? &payload
+                                              : (payload.contains("entries")
+                                                     ? &payload["entries"]
+                                                     : nullptr);
+                    if (payload.is_object())
                     {
-                        unsigned int byte_val;
-                        sscanf(hex_value.c_str() + i, "%02x", &byte_val);
-                        entry.value_data[byte_idx++] = static_cast<uint8_t>(byte_val);
+                        applyStatsMetadataJson(payload.value("metadata", nlohmann::json::object()),
+                                               stats);
                     }
-                    entry.frequency = freq;
-                    stats.mcv_list.push_back(entry);
-
-                    pos = freq_end;
+                    if (entries != nullptr && entries->is_array())
+                    {
+                        for (const auto &item : *entries)
+                        {
+                            if (!item.is_object())
+                            {
+                                continue;
+                            }
+                            MCVEntry entry;
+                            const std::string hex_value =
+                                item.value("value", item.value("v", std::string()));
+                            if (!hexDecodeBytes(hex_value, entry.value_data))
+                            {
+                                continue;
+                            }
+                            entry.frequency = item.value("frequency",
+                                                         item.value("f", 0.0f));
+                            stats.mcv_list.push_back(entry);
+                        }
+                    }
+                }
+                catch (const nlohmann::json::exception &)
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::PAGE_CORRUPT,
+                                      "Failed to parse persisted MCV statistics");
+                    return Status::PAGE_CORRUPT;
                 }
             }
         }
@@ -1894,78 +2267,58 @@ namespace scratchbird::optimizer
             status = catalog_->loadStringFromToast(info.histogram_oid, 0, json, ctx);
             if (status == Status::OK && !json.empty())
             {
-                // Parse JSON: [{"lo":"hex","hi":"hex","cnt":100,"f":0.1}, ...]
                 stats.histogram_buckets.clear();
-
-                // Simple JSON parser for histogram entries
-                size_t pos = 0;
-                while ((pos = json.find("{\"lo\":\"", pos)) != std::string::npos)
+                try
                 {
-                    pos += 7; // Skip {"lo":"
-                    size_t end = json.find("\"", pos);
-                    if (end == std::string::npos) break;
-
-                    std::string lo_hex = json.substr(pos, end - pos);
-                    pos = end;
-
-                    // Find hi
-                    size_t hi_pos = json.find("\"hi\":\"", pos);
-                    if (hi_pos == std::string::npos) break;
-                    hi_pos += 6;
-                    size_t hi_end = json.find("\"", hi_pos);
-                    if (hi_end == std::string::npos) break;
-
-                    std::string hi_hex = json.substr(hi_pos, hi_end - hi_pos);
-                    pos = hi_end;
-
-                    // Find cnt
-                    size_t cnt_pos = json.find("\"cnt\":", pos);
-                    if (cnt_pos == std::string::npos) break;
-                    cnt_pos += 6;
-                    size_t cnt_end = json.find(",", cnt_pos);
-                    if (cnt_end == std::string::npos) break;
-
-                    uint64_t cnt = std::stoull(json.substr(cnt_pos, cnt_end - cnt_pos));
-                    pos = cnt_end;
-
-                    // Find f
-                    size_t f_pos = json.find("\"f\":", pos);
-                    if (f_pos == std::string::npos) break;
-                    f_pos += 4;
-                    size_t f_end = json.find_first_of(",}", f_pos);
-                    if (f_end == std::string::npos) break;
-
-                    float freq = std::stof(json.substr(f_pos, f_end - f_pos));
-
-                    // Create bucket
-                    HistogramBucket bucket;
-
-                    // Convert hex to bytes for lower bound
-                    size_t byte_idx = 0;
-                    for (size_t i = 0; i < lo_hex.size() && byte_idx < 256; i += 2)
+                    const auto payload = nlohmann::json::parse(json);
+                    const auto *buckets = payload.is_array()
+                                              ? &payload
+                                              : (payload.contains("buckets")
+                                                     ? &payload["buckets"]
+                                                     : nullptr);
+                    if (payload.is_object())
                     {
-                        unsigned int byte_val;
-                        sscanf(lo_hex.c_str() + i, "%02x", &byte_val);
-                        bucket.lower_bound[byte_idx++] = static_cast<uint8_t>(byte_val);
+                        applyStatsMetadataJson(payload.value("metadata", nlohmann::json::object()),
+                                               stats);
                     }
-
-                    // Convert hex to bytes for upper bound
-                    byte_idx = 0;
-                    for (size_t i = 0; i < hi_hex.size() && byte_idx < 256; i += 2)
+                    if (buckets != nullptr && buckets->is_array())
                     {
-                        unsigned int byte_val;
-                        sscanf(hi_hex.c_str() + i, "%02x", &byte_val);
-                        bucket.upper_bound[byte_idx++] = static_cast<uint8_t>(byte_val);
+                        for (const auto &item : *buckets)
+                        {
+                            if (!item.is_object())
+                            {
+                                continue;
+                            }
+                            HistogramBucket bucket;
+                            const std::string lo_hex =
+                                item.value("lower", item.value("lo", std::string()));
+                            const std::string hi_hex =
+                                item.value("upper", item.value("hi", std::string()));
+                            if (!hexDecodeBytes(lo_hex, bucket.lower_bound) ||
+                                !hexDecodeBytes(hi_hex, bucket.upper_bound))
+                            {
+                                continue;
+                            }
+                            bucket.row_count =
+                                item.value("row_count", item.value("cnt", uint64_t{0}));
+                            bucket.frequency = item.value("frequency",
+                                                          item.value("f", 0.0f));
+                            stats.histogram_buckets.push_back(bucket);
+                        }
                     }
-
-                    bucket.row_count = cnt;
-                    bucket.frequency = freq;
-                    stats.histogram_buckets.push_back(bucket);
-
-                    pos = f_end;
+                }
+                catch (const nlohmann::json::exception &)
+                {
+                    SET_ERROR_CONTEXT(ctx,
+                                      Status::PAGE_CORRUPT,
+                                      "Failed to parse persisted histogram statistics");
+                    return Status::PAGE_CORRUPT;
                 }
             }
         }
+        stats.histogram_bucket_count =
+            static_cast<uint32_t>(stats.histogram_buckets.size());
+        applyDerivedMetadata(stats);
 
         // Cache for fast access
         {
@@ -2366,6 +2719,7 @@ namespace scratchbird::optimizer
                 expr_stats.column_id = column.column_id;
                 expr_stats.column_name = column.column_name;
                 expr_stats.data_type = type;
+                applyColumnMetadata(column, expr_stats);
                 expr_stats.num_rows = expr_values.size();
                 expr_stats.sample_size = expr_values.size();
                 expr_stats.sample_rate = 0.0f;
@@ -2397,6 +2751,7 @@ namespace scratchbird::optimizer
                 (void)generateHistogram(expr_values,
                                         32,
                                         HistogramType::EQUAL_HEIGHT,
+                                        expr_stats.data_type,
                                         expr_stats.histogram_buckets,
                                         nullptr);
                 expr_stats.histogram_type = expr_stats.histogram_buckets.empty()

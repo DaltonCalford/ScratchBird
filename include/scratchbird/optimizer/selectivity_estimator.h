@@ -355,14 +355,16 @@ namespace scratchbird::optimizer
          * @param value_two Second value
          * @return -1 if v1 < value_two, 0 if equal, 1 if v1 > value_two
          */
-        auto compareValues(const std::vector<uint8_t> &v1,
+        auto compareValues(const ColumnStatistics &stats,
+                           const std::vector<uint8_t> &v1,
                            const std::vector<uint8_t> &value_two) const
             -> int;
 
         /**
          * valueEquals - Check if two byte vectors are equal
          */
-        auto valueEquals(const uint8_t *v1, const std::vector<uint8_t> &value_two) const
+        auto valueEquals(const std::vector<uint8_t> &v1,
+                         const std::vector<uint8_t> &value_two) const
             -> bool;
 
         /**
@@ -376,9 +378,10 @@ namespace scratchbird::optimizer
          * @param bucket_max Bucket upper bound
          * @return Fraction (0.0 to 1.0)
          */
-        auto interpolateBucket(const std::vector<uint8_t> &value,
-                               const uint8_t *bucket_min,
-                               const uint8_t *bucket_max) const
+        auto interpolateBucket(const ColumnStatistics &stats,
+                               const std::vector<uint8_t> &value,
+                               const std::vector<uint8_t> &bucket_min,
+                               const std::vector<uint8_t> &bucket_max) const
             -> double;
 
         // Default selectivity values when statistics unavailable

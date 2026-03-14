@@ -11,6 +11,7 @@
 #include "scratchbird/parser/ast_v3.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/core/plain_value_reader.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -87,6 +88,334 @@ namespace scratchbird::optimizer
                 return true;
             }
             return false;
+        }
+
+        auto isLengthPrefixedType(core::DataType type) -> bool
+        {
+            switch (type)
+            {
+                case core::DataType::CHAR:
+                case core::DataType::VARCHAR:
+                case core::DataType::TEXT:
+                case core::DataType::JSON:
+                case core::DataType::JSONB:
+                case core::DataType::XML:
+                case core::DataType::BINARY:
+                case core::DataType::VARBINARY:
+                case core::DataType::BLOB:
+                case core::DataType::BYTEA:
+                case core::DataType::VECTOR:
+                case core::DataType::BSON:
+                case core::DataType::BLOB_SUB_TYPE_TEXT:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        template <typename T>
+        auto readScalarValue(const std::vector<uint8_t> &value, T &out) -> bool
+        {
+            if (value.size() < sizeof(T))
+            {
+                return false;
+            }
+            std::memcpy(&out, value.data(), sizeof(T));
+            return true;
+        }
+
+        auto encodeLengthPrefixedBytes(std::string_view text,
+                                       std::vector<uint8_t> &value_out) -> void
+        {
+            value_out.resize(sizeof(uint32_t) + text.size());
+            const uint32_t len = static_cast<uint32_t>(text.size());
+            std::memcpy(value_out.data(), &len, sizeof(len));
+            if (!text.empty())
+            {
+                std::memcpy(value_out.data() + sizeof(uint32_t), text.data(), text.size());
+            }
+        }
+
+        auto decodeLengthPrefixedBytes(const std::vector<uint8_t> &value,
+                                       std::vector<uint8_t> &payload_out) -> bool
+        {
+            if (value.empty())
+            {
+                payload_out.clear();
+                return true;
+            }
+
+            size_t offset = 0;
+            uint32_t len = 0;
+            if (!core::readUint32LE(value.data(), value.size(), offset, len) ||
+                offset + len > value.size())
+            {
+                return false;
+            }
+
+            payload_out.assign(value.begin() + static_cast<std::ptrdiff_t>(offset),
+                               value.begin() + static_cast<std::ptrdiff_t>(offset + len));
+            return true;
+        }
+
+        auto decodeLengthPrefixedString(const std::vector<uint8_t> &value,
+                                        std::string &text_out) -> bool
+        {
+            std::vector<uint8_t> payload;
+            if (!decodeLengthPrefixedBytes(value, payload))
+            {
+                return false;
+            }
+            text_out.assign(payload.begin(), payload.end());
+            return true;
+        }
+
+        auto compareByteVectors(const std::vector<uint8_t> &lhs,
+                                const std::vector<uint8_t> &rhs) -> int
+        {
+            const size_t shared = std::min(lhs.size(), rhs.size());
+            for (size_t i = 0; i < shared; ++i)
+            {
+                if (lhs[i] < rhs[i])
+                {
+                    return -1;
+                }
+                if (lhs[i] > rhs[i])
+                {
+                    return 1;
+                }
+            }
+            if (lhs.size() < rhs.size())
+            {
+                return -1;
+            }
+            if (lhs.size() > rhs.size())
+            {
+                return 1;
+            }
+            return 0;
+        }
+
+        auto comparatorFamilyForType(core::DataType type) -> StatisticsComparatorFamily
+        {
+            switch (type)
+            {
+                case core::DataType::INT8:
+                case core::DataType::INT16:
+                case core::DataType::INT32:
+                case core::DataType::INT64:
+                case core::DataType::INT128:
+                case core::DataType::MEDIUMINT:
+                    return StatisticsComparatorFamily::SIGNED_INTEGER;
+                case core::DataType::UINT8:
+                case core::DataType::UINT16:
+                case core::DataType::UINT32:
+                case core::DataType::UINT64:
+                case core::DataType::UINT128:
+                    return StatisticsComparatorFamily::UNSIGNED_INTEGER;
+                case core::DataType::FLOAT32:
+                case core::DataType::FLOAT64:
+                case core::DataType::DECIMAL:
+                case core::DataType::MONEY:
+                case core::DataType::DECFLOAT16:
+                case core::DataType::DECFLOAT34:
+                    return StatisticsComparatorFamily::NUMERIC;
+                case core::DataType::CHAR:
+                case core::DataType::VARCHAR:
+                case core::DataType::TEXT:
+                case core::DataType::JSON:
+                case core::DataType::JSONB:
+                case core::DataType::XML:
+                case core::DataType::BLOB_SUB_TYPE_TEXT:
+                    return StatisticsComparatorFamily::STRING;
+                case core::DataType::DATE:
+                case core::DataType::TIME:
+                case core::DataType::TIMESTAMP:
+                case core::DataType::TIMESTAMP_WITH_ZONE:
+                case core::DataType::TIME_WITH_ZONE:
+                case core::DataType::DATETIME:
+                case core::DataType::YEAR:
+                    return StatisticsComparatorFamily::TEMPORAL;
+                case core::DataType::UUID:
+                    return StatisticsComparatorFamily::UUID;
+                case core::DataType::BOOLEAN:
+                case core::DataType::BIT:
+                    return StatisticsComparatorFamily::BOOLEAN;
+                case core::DataType::BINARY:
+                case core::DataType::VARBINARY:
+                case core::DataType::BLOB:
+                case core::DataType::BYTEA:
+                case core::DataType::VECTOR:
+                case core::DataType::BSON:
+                    return StatisticsComparatorFamily::BINARY;
+                default:
+                    return StatisticsComparatorFamily::UNKNOWN;
+            }
+        }
+
+        auto valueEncodingForType(core::DataType type) -> StatisticsValueEncoding
+        {
+            if (type == core::DataType::UUID)
+            {
+                return StatisticsValueEncoding::UUID_BYTES;
+            }
+            if (isLengthPrefixedType(type))
+            {
+                return StatisticsValueEncoding::PLAIN_LENGTH_PREFIXED;
+            }
+            return StatisticsValueEncoding::PLAIN_FIXED;
+        }
+
+        auto effectiveComparatorFamily(const ColumnStatistics &stats)
+            -> StatisticsComparatorFamily
+        {
+            if (stats.comparator_family != StatisticsComparatorFamily::UNKNOWN)
+            {
+                return stats.comparator_family;
+            }
+            return comparatorFamilyForType(stats.data_type);
+        }
+
+        auto effectiveValueEncoding(const ColumnStatistics &stats)
+            -> StatisticsValueEncoding
+        {
+            if (stats.value_encoding != StatisticsValueEncoding::UNKNOWN)
+            {
+                return stats.value_encoding;
+            }
+            return valueEncodingForType(stats.data_type);
+        }
+
+        auto decodeComparableScalar(const std::vector<uint8_t> &value,
+                                    core::DataType type,
+                                    long double &out) -> bool
+        {
+            switch (type)
+            {
+                case core::DataType::INT8: {
+                    int8_t decoded = 0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::INT16: {
+                    int16_t decoded = 0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::INT32:
+                case core::DataType::MEDIUMINT:
+                case core::DataType::DATE:
+                case core::DataType::YEAR: {
+                    int32_t decoded = 0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::INT64:
+                case core::DataType::TIME:
+                case core::DataType::TIMESTAMP:
+                case core::DataType::TIMESTAMP_WITH_ZONE:
+                case core::DataType::TIME_WITH_ZONE:
+                case core::DataType::DATETIME: {
+                    int64_t decoded = 0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::UINT8:
+                case core::DataType::BOOLEAN:
+                case core::DataType::BIT: {
+                    uint8_t decoded = 0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::UINT16: {
+                    uint16_t decoded = 0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::UINT32: {
+                    uint32_t decoded = 0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::UINT64: {
+                    uint64_t decoded = 0;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::FLOAT32: {
+                    float decoded = 0.0f;
+                    if (!readScalarValue(value, decoded)) return false;
+                    out = static_cast<long double>(decoded);
+                    return true;
+                }
+                case core::DataType::FLOAT64:
+                case core::DataType::DECIMAL:
+                case core::DataType::MONEY:
+                case core::DataType::DECFLOAT16:
+                case core::DataType::DECFLOAT34: {
+                    if (value.size() >= sizeof(double))
+                    {
+                        double decoded = 0.0;
+                        if (!readScalarValue(value, decoded)) return false;
+                        out = static_cast<long double>(decoded);
+                        return true;
+                    }
+                    if (value.size() >= sizeof(float))
+                    {
+                        float decoded = 0.0f;
+                        if (!readScalarValue(value, decoded)) return false;
+                        out = static_cast<long double>(decoded);
+                        return true;
+                    }
+                    return false;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        auto prefixRank(std::string_view text) -> long double
+        {
+            constexpr long double BASE = 257.0L;
+            constexpr size_t LIMIT = 8;
+            long double rank = 0.0L;
+            long double factor = 1.0L;
+            const size_t count = std::min(LIMIT, text.size());
+            for (size_t i = 0; i < count; ++i)
+            {
+                factor /= BASE;
+                rank += factor *
+                        static_cast<long double>(
+                            static_cast<unsigned char>(text[i]) + 1u);
+            }
+            factor /= BASE;
+            rank += factor * static_cast<long double>(count);
+            return rank;
+        }
+
+        auto prefixRank(const std::vector<uint8_t> &bytes) -> long double
+        {
+            constexpr long double BASE = 257.0L;
+            constexpr size_t LIMIT = 8;
+            long double rank = 0.0L;
+            long double factor = 1.0L;
+            const size_t count = std::min(LIMIT, bytes.size());
+            for (size_t i = 0; i < count; ++i)
+            {
+                factor /= BASE;
+                rank += factor * static_cast<long double>(bytes[i] + 1u);
+            }
+            factor /= BASE;
+            rank += factor * static_cast<long double>(count);
+            return rank;
         }
 
         auto parameterValueToBytes(const BoundParameterValue &binding,
@@ -167,7 +496,14 @@ namespace scratchbird::optimizer
                         return true;
                     }
                     default:
-                        value_out.assign(text.begin(), text.end());
+                        if (isLengthPrefixedType(static_cast<core::DataType>(data_type)))
+                        {
+                            encodeLengthPrefixedBytes(text, value_out);
+                        }
+                        else
+                        {
+                            value_out.assign(text.begin(), text.end());
+                        }
                         return true;
                 }
             }
@@ -252,7 +588,14 @@ namespace scratchbird::optimizer
                             }
                             {
                                 const std::string text(pool->get(literal->string_value));
-                                value_out.assign(text.begin(), text.end());
+                                if (isLengthPrefixedType(static_cast<core::DataType>(data_type)))
+                                {
+                                    encodeLengthPrefixedBytes(text, value_out);
+                                }
+                                else
+                                {
+                                    value_out.assign(text.begin(), text.end());
+                                }
                             }
                             return true;
                         case parser::v3::LiteralType::NULL_VALUE:
@@ -914,10 +1257,8 @@ namespace scratchbird::optimizer
         // Iterate through histogram buckets
         for (const auto &bucket : col_stats.histogram_buckets)
         {
-            int cmp_lower = compareValues(value, std::vector<uint8_t>(
-                bucket.lower_bound, bucket.lower_bound + 256));
-            int cmp_upper = compareValues(value, std::vector<uint8_t>(
-                bucket.upper_bound, bucket.upper_bound + 256));
+            int cmp_lower = compareValues(col_stats, value, bucket.lower_bound);
+            int cmp_upper = compareValues(col_stats, value, bucket.upper_bound);
 
             if (op == ">")
             {
@@ -937,7 +1278,7 @@ namespace scratchbird::optimizer
                         // bucket.lower_bound <= value < bucket.upper_bound
                         // Interpolate: fraction of bucket that is > value
                         double fraction = interpolateBucket(
-                            value, bucket.lower_bound, bucket.upper_bound);
+                            col_stats, value, bucket.lower_bound, bucket.upper_bound);
                         selectivity += bucket.frequency * fraction;
                     }
                 }
@@ -963,7 +1304,7 @@ namespace scratchbird::optimizer
                         // bucket.lower_bound < value < bucket.upper_bound
                         // Interpolate: fraction of bucket that is >= value
                         double fraction = interpolateBucket(
-                            value, bucket.lower_bound, bucket.upper_bound);
+                            col_stats, value, bucket.lower_bound, bucket.upper_bound);
                         selectivity += bucket.frequency * fraction;
                     }
                 }
@@ -989,7 +1330,7 @@ namespace scratchbird::optimizer
                         // bucket.lower_bound < value <= bucket.upper_bound
                         // Interpolate: fraction of bucket that is < value
                         double fraction = 1.0 - interpolateBucket(
-                            value, bucket.lower_bound, bucket.upper_bound);
+                            col_stats, value, bucket.lower_bound, bucket.upper_bound);
                         selectivity += bucket.frequency * fraction;
                     }
                 }
@@ -1015,7 +1356,7 @@ namespace scratchbird::optimizer
                         // bucket.lower_bound < value < bucket.upper_bound
                         // Interpolate: fraction of bucket that is <= value
                         double fraction = 1.0 - interpolateBucket(
-                            value, bucket.lower_bound, bucket.upper_bound);
+                            col_stats, value, bucket.lower_bound, bucket.upper_bound);
                         selectivity += bucket.frequency * fraction;
                     }
                 }
@@ -1106,7 +1447,19 @@ namespace scratchbird::optimizer
             // Exact match: 'John' (no wildcards)
             // Treat as equality
             DEBUG_LOG_DB("Exact LIKE, treating as equality");
-            std::vector<uint8_t> value(pattern.begin(), pattern.end());
+            std::vector<uint8_t> value;
+            ColumnStatistics col_stats;
+            if (stats_manager_ != nullptr &&
+                stats_manager_->getColumnStatistics(table_id, column_id, col_stats, ctx) ==
+                    core::Status::OK &&
+                effectiveValueEncoding(col_stats) == StatisticsValueEncoding::PLAIN_LENGTH_PREFIXED)
+            {
+                encodeLengthPrefixedBytes(pattern, value);
+            }
+            else
+            {
+                value.assign(pattern.begin(), pattern.end());
+            }
             return estimateEquality(table_id, column_id, value, ctx);
         }
     }
@@ -1182,81 +1535,122 @@ namespace scratchbird::optimizer
     // Private helper methods
 
     auto SelectivityEstimator::compareValues(
+        const ColumnStatistics &stats,
         const std::vector<uint8_t> &v1,
         const std::vector<uint8_t> &value_two) const
         -> int
     {
-        // Lexicographic comparison
-        size_t min_len = std::min(v1.size(), value_two.size());
+        const StatisticsComparatorFamily family = effectiveComparatorFamily(stats);
+        const StatisticsValueEncoding encoding = effectiveValueEncoding(stats);
 
-        for (size_t i = 0; i < min_len; i++)
+        if (family == StatisticsComparatorFamily::STRING)
         {
-            if (v1[i] < value_two[i])
-                return -1;
-            if (v1[i] > value_two[i])
-                return 1;
+            std::string lhs;
+            std::string rhs;
+            if (decodeLengthPrefixedString(v1, lhs) && decodeLengthPrefixedString(value_two, rhs))
+            {
+                if (lhs < rhs) return -1;
+                if (lhs > rhs) return 1;
+                return 0;
+            }
+        }
+        else if (family == StatisticsComparatorFamily::BINARY &&
+                 encoding == StatisticsValueEncoding::PLAIN_LENGTH_PREFIXED)
+        {
+            std::vector<uint8_t> lhs;
+            std::vector<uint8_t> rhs;
+            if (decodeLengthPrefixedBytes(v1, lhs) && decodeLengthPrefixedBytes(value_two, rhs))
+            {
+                return compareByteVectors(lhs, rhs);
+            }
+        }
+        else if (family == StatisticsComparatorFamily::UUID ||
+                 family == StatisticsComparatorFamily::BINARY)
+        {
+            return compareByteVectors(v1, value_two);
+        }
+        else
+        {
+            long double lhs_scalar = 0.0L;
+            long double rhs_scalar = 0.0L;
+            if (decodeComparableScalar(v1, stats.data_type, lhs_scalar) &&
+                decodeComparableScalar(value_two, stats.data_type, rhs_scalar))
+            {
+                if (lhs_scalar < rhs_scalar) return -1;
+                if (lhs_scalar > rhs_scalar) return 1;
+                return 0;
+            }
         }
 
-        // Prefixes are equal, compare lengths
-        if (v1.size() < value_two.size())
-            return -1;
-        if (v1.size() > value_two.size())
-            return 1;
-
-        return 0;
+        return compareByteVectors(v1, value_two);
     }
 
     auto SelectivityEstimator::valueEquals(
-        const uint8_t *v1,
+        const std::vector<uint8_t> &v1,
         const std::vector<uint8_t> &value_two) const
         -> bool
     {
-        // Compare up to value_two size (v1 is assumed to be at least as long)
-        // For MCVs, we stored values in fixed 256-byte arrays
-        size_t len = value_two.size();
-        if (len > 256)
-            len = 256;
-
-        return std::memcmp(v1, value_two.data(), len) == 0;
+        return v1 == value_two;
     }
 
     auto SelectivityEstimator::interpolateBucket(
+        const ColumnStatistics &stats,
         const std::vector<uint8_t> &value,
-        const uint8_t *bucket_min,
-        const uint8_t *bucket_max) const
+        const std::vector<uint8_t> &bucket_min,
+        const std::vector<uint8_t> &bucket_max) const
         -> double
     {
-        // Linear interpolation within bucket
-        // Returns fraction of bucket that is ABOVE value (for > queries)
-
-        // For simplicity, assume numeric values
-        // In a real implementation, this would need type-aware interpolation
-
-        // Convert first 8 bytes to double for interpolation
-        // (This is a simplification - real implementation needs type awareness)
-
-        if (value.size() < sizeof(double))
+        const StatisticsComparatorFamily family = effectiveComparatorFamily(stats);
+        if (family == StatisticsComparatorFamily::STRING)
         {
-            // Default to middle of bucket
+            std::string current;
+            std::string lower;
+            std::string upper;
+            if (decodeLengthPrefixedString(value, current) &&
+                decodeLengthPrefixedString(bucket_min, lower) &&
+                decodeLengthPrefixedString(bucket_max, upper))
+            {
+                const long double lower_rank = prefixRank(lower);
+                const long double upper_rank = prefixRank(upper);
+                const long double current_rank = prefixRank(current);
+                if (upper_rank <= lower_rank)
+                {
+                    return 0.5;
+                }
+                const long double fraction =
+                    (upper_rank - current_rank) / (upper_rank - lower_rank);
+                return std::max(0.0, std::min(1.0, static_cast<double>(fraction)));
+            }
+        }
+        else if (family == StatisticsComparatorFamily::UUID ||
+                 family == StatisticsComparatorFamily::BINARY)
+        {
+            const long double lower_rank = prefixRank(bucket_min);
+            const long double upper_rank = prefixRank(bucket_max);
+            const long double current_rank = prefixRank(value);
+            if (upper_rank <= lower_rank)
+            {
+                return 0.5;
+            }
+            const long double fraction =
+                (upper_rank - current_rank) / (upper_rank - lower_rank);
+            return std::max(0.0, std::min(1.0, static_cast<double>(fraction)));
+        }
+
+        long double current_value = 0.0L;
+        long double min_value = 0.0L;
+        long double max_value = 0.0L;
+        if (!decodeComparableScalar(value, stats.data_type, current_value) ||
+            !decodeComparableScalar(bucket_min, stats.data_type, min_value) ||
+            !decodeComparableScalar(bucket_max, stats.data_type, max_value) ||
+            max_value <= min_value)
+        {
             return 0.5;
         }
 
-        double val, b_min, b_max;
-        std::memcpy(&val, value.data(), sizeof(double));
-        std::memcpy(&b_min, bucket_min, sizeof(double));
-        std::memcpy(&b_max, bucket_max, sizeof(double));
-
-        if (b_max <= b_min)
-        {
-            // Invalid bucket
-            return 0.5;
-        }
-
-        // Fraction of bucket above value
-        double fraction = (b_max - val) / (b_max - b_min);
-
-        // Clamp to [0, 1]
-        return std::max(0.0, std::min(1.0, fraction));
+        const long double fraction =
+            (max_value - current_value) / (max_value - min_value);
+        return std::max(0.0, std::min(1.0, static_cast<double>(fraction)));
     }
 
     auto SelectivityEstimator::estimateJoinSelectivity(

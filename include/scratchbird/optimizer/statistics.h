@@ -40,6 +40,27 @@ namespace scratchbird::optimizer
         NONE = 255         // No histogram (column has too few distinct values)
     };
 
+    enum class StatisticsComparatorFamily : uint32_t
+    {
+        UNKNOWN = 0,
+        SIGNED_INTEGER = 1,
+        UNSIGNED_INTEGER = 2,
+        NUMERIC = 3,
+        STRING = 4,
+        TEMPORAL = 5,
+        UUID = 6,
+        BOOLEAN = 7,
+        BINARY = 8
+    };
+
+    enum class StatisticsValueEncoding : uint32_t
+    {
+        UNKNOWN = 0,
+        PLAIN_FIXED = 1,
+        PLAIN_LENGTH_PREFIXED = 2,
+        UUID_BYTES = 3
+    };
+
     /**
      * Most Common Values (MCV) Entry
      *
@@ -48,13 +69,12 @@ namespace scratchbird::optimizer
      */
     struct MCVEntry
     {
-        uint8_t value_data[256];  // Serialized value (TOAST ref if larger)
+        std::vector<uint8_t> value_data;  // Serialized plain value bytes
         ID value_oid;             // TOAST reference for large values (UUID v7, zero if inline)
         float frequency;          // Fraction of rows with this value (0.0-1.0)
 
         MCVEntry() : value_oid(), frequency(0.0f)
         {
-            std::memset(value_data, 0, sizeof(value_data));
         }
     };
 
@@ -67,8 +87,8 @@ namespace scratchbird::optimizer
      */
     struct HistogramBucket
     {
-        uint8_t lower_bound[256];  // Lower bound value (serialized)
-        uint8_t upper_bound[256];  // Upper bound value (serialized)
+        std::vector<uint8_t> lower_bound;  // Lower bound value (serialized)
+        std::vector<uint8_t> upper_bound;  // Upper bound value (serialized)
         ID lower_oid;              // TOAST reference for large lower bound (UUID v7, zero if inline)
         ID upper_oid;              // TOAST reference for large upper bound (UUID v7, zero if inline)
         uint64_t row_count;        // Number of rows in this bucket (equal-width)
@@ -76,8 +96,6 @@ namespace scratchbird::optimizer
 
         HistogramBucket() : lower_oid(), upper_oid(), row_count(0), frequency(0.0f)
         {
-            std::memset(lower_bound, 0, sizeof(lower_bound));
-            std::memset(upper_bound, 0, sizeof(upper_bound));
         }
     };
 
@@ -100,6 +118,13 @@ namespace scratchbird::optimizer
         uint64_t num_distinct;      // Number of distinct non-NULL values (or estimate)
         float avg_width;            // Average width in bytes (for variable-length types)
 
+        // Typed statistics metadata
+        StatisticsComparatorFamily comparator_family;
+        StatisticsValueEncoding value_encoding;
+        uint32_t collation_id;
+        uint32_t type_precision;
+        uint32_t type_scale;
+
         // Most Common Values (MCV)
         std::vector<MCVEntry> mcv_list;  // Most common values (up to 100)
 
@@ -120,6 +145,11 @@ namespace scratchbird::optimizer
               null_fraction(0.0f),
               num_distinct(0),
               avg_width(0.0f),
+              comparator_family(StatisticsComparatorFamily::UNKNOWN),
+              value_encoding(StatisticsValueEncoding::UNKNOWN),
+              collation_id(0),
+              type_precision(0),
+              type_scale(0),
               histogram_type(HistogramType::NONE),
               histogram_bucket_count(0),
               last_analyzed_time(0),

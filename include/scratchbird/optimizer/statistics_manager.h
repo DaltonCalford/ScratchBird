@@ -244,6 +244,7 @@ namespace scratchbird::optimizer
          */
         auto generateHistogram(const std::vector<std::vector<uint8_t>> &values, uint32_t bucket_count,
                                HistogramType histogram_type,
+                               core::DataType data_type,
                                std::vector<HistogramBucket> &buckets,
                                ErrorContext *ctx = nullptr) -> Status;
 

@@ -49,6 +49,11 @@ TEST_F(StatisticsCRUDTest, ColumnStatisticsDefaults) {
     EXPECT_FLOAT_EQ(stats.null_fraction, 0.0f);
     EXPECT_EQ(stats.num_distinct, 0);
     EXPECT_FLOAT_EQ(stats.avg_width, 0.0f);
+    EXPECT_EQ(stats.comparator_family, StatisticsComparatorFamily::UNKNOWN);
+    EXPECT_EQ(stats.value_encoding, StatisticsValueEncoding::UNKNOWN);
+    EXPECT_EQ(stats.collation_id, 0u);
+    EXPECT_EQ(stats.type_precision, 0u);
+    EXPECT_EQ(stats.type_scale, 0u);
     EXPECT_TRUE(stats.mcv_list.empty());
     EXPECT_EQ(stats.histogram_type, HistogramType::NONE);
     EXPECT_EQ(stats.histogram_bucket_count, 0);
@@ -81,37 +86,21 @@ TEST_F(StatisticsCRUDTest, HistogramTypes) {
 TEST_F(StatisticsCRUDTest, MCVEntryDefaults) {
     MCVEntry mcv;
 
+    EXPECT_TRUE(mcv.value_data.empty());
     EXPECT_EQ(mcv.value_oid, ID{});
     EXPECT_FLOAT_EQ(mcv.frequency, 0.0f);
-    // value_data should be zeroed
-    bool all_zero = true;
-    for (size_t i = 0; i < 256; ++i) {
-        if (mcv.value_data[i] != 0) {
-            all_zero = false;
-            break;
-        }
-    }
-    EXPECT_TRUE(all_zero);
 }
 
 // Test HistogramBucket structure
 TEST_F(StatisticsCRUDTest, HistogramBucketDefaults) {
     HistogramBucket bucket;
 
+    EXPECT_TRUE(bucket.lower_bound.empty());
+    EXPECT_TRUE(bucket.upper_bound.empty());
     EXPECT_EQ(bucket.lower_oid, ID{});
     EXPECT_EQ(bucket.upper_oid, ID{});
     EXPECT_EQ(bucket.row_count, 0);
     EXPECT_FLOAT_EQ(bucket.frequency, 0.0f);
-
-    // Bounds should be zeroed
-    bool lower_zero = true;
-    bool upper_zero = true;
-    for (size_t i = 0; i < 256; ++i) {
-        if (bucket.lower_bound[i] != 0) lower_zero = false;
-        if (bucket.upper_bound[i] != 0) upper_zero = false;
-    }
-    EXPECT_TRUE(lower_zero);
-    EXPECT_TRUE(upper_zero);
 }
 
 // Test basic statistics calculation
