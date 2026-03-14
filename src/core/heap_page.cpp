@@ -2138,60 +2138,179 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto HeapPage::classifyVersionMaturity(uint16_t item_id, uint64_t horizon,
+                                           VersionMaturityDecision *decision_out,
+                                           ErrorContext *ctx) -> Status
+    {
+        if (decision_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "decision_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        *decision_out = {};
+
+        if (item_id >= getItemCount())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Item ID out of range");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ItemPointer *items = getItemArray();
+        ItemPointer *item_ptr = &items[item_id];
+
+        if (item_ptr->isUnused())
+        {
+            decision_out->state = VersionMaturityState::LIVE_CURRENT;
+            return Status::OK;
+        }
+
+        if (!item_ptr->isValid(page_size_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Item pointer out of bounds or invalid");
+            return Status::PAGE_CORRUPT;
+        }
+
+        if (item_ptr->isDeleted())
+        {
+            decision_out->state = VersionMaturityState::RECLAIMABLE_SLOT_TOMBSTONE;
+            decision_out->reclaim_heap = true;
+            return Status::OK;
+        }
+
+        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + item_ptr->offset);
+        const bool history_member =
+            (tuple_hdr->infomask & TupleHeader::HEAP_CHAIN) != 0u;
+
+        if (tuple_hdr->xmax == 0)
+        {
+            decision_out->state = VersionMaturityState::LIVE_CURRENT;
+            return Status::OK;
+        }
+
+        bool xmax_committed = false;
+        Status resolve_status = resolveCommittedDeleteState(db_, tuple_hdr, &xmax_committed, ctx);
+        if (resolve_status != Status::OK)
+        {
+            return resolve_status;
+        }
+
+        if (!xmax_committed || tuple_hdr->xmax >= horizon)
+        {
+            decision_out->state = history_member
+                                      ? VersionMaturityState::LIVE_HISTORY_PENDING
+                                      : VersionMaturityState::LIVE_DELETE_PENDING;
+            return Status::OK;
+        }
+
+        if (history_member)
+        {
+            decision_out->state = VersionMaturityState::RECLAIMABLE_HISTORY;
+            decision_out->reclaim_heap = true;
+            return Status::OK;
+        }
+
+        decision_out->state = VersionMaturityState::RECLAIMABLE_ROOT_TOMBSTONE;
+        decision_out->reclaim_heap = true;
+        decision_out->emit_dead_tid = true;
+        return Status::OK;
+    }
+
+    auto HeapPage::scanVersionMaturity(uint64_t horizon, VersionMaturityScan *scan_out,
+                                       std::vector<uint16_t> *reclaimable_item_ids_out,
+                                       std::vector<TID> *dead_tids_out,
+                                       ErrorContext *ctx) -> Status
+    {
+        if (scan_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "scan_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        *scan_out = {};
+        if (reclaimable_item_ids_out != nullptr)
+        {
+            reclaimable_item_ids_out->clear();
+        }
+        if (dead_tids_out != nullptr)
+        {
+            dead_tids_out->clear();
+        }
+
+        ItemPointer *items = getItemArray();
+        const uint16_t item_count = getItemCount();
+
+        for (uint16_t item_id = 0; item_id < item_count; ++item_id)
+        {
+            if (items[item_id].isUnused() || !items[item_id].isValid(page_size_))
+            {
+                continue;
+            }
+
+            VersionMaturityDecision decision{};
+            Status classify_status = classifyVersionMaturity(item_id, horizon, &decision, ctx);
+            if (classify_status != Status::OK)
+            {
+                return classify_status;
+            }
+
+            if (!decision.reclaim_heap)
+            {
+                continue;
+            }
+
+            ++scan_out->reclaimable_item_count;
+            scan_out->reclaimable_bytes += items[item_id].length;
+
+            if (decision.state == VersionMaturityState::RECLAIMABLE_HISTORY)
+            {
+                ++scan_out->prune_only_item_count;
+            }
+            else if (decision.state == VersionMaturityState::RECLAIMABLE_ROOT_TOMBSTONE)
+            {
+                ++scan_out->logical_dead_root_count;
+            }
+
+            if (reclaimable_item_ids_out != nullptr)
+            {
+                reclaimable_item_ids_out->push_back(item_id);
+            }
+
+            if (dead_tids_out != nullptr && decision.emit_dead_tid)
+            {
+                auto *tuple_hdr =
+                    reinterpret_cast<TupleHeader *>(page_data_ + items[item_id].offset);
+                dead_tids_out->push_back(tuple_hdr->getTID());
+            }
+        }
+
+        return Status::OK;
+    }
+
     auto HeapPage::prunePage(uint64_t oit, uint32_t *tuples_pruned_out,
                              uint32_t *space_reclaimed_out, ErrorContext *ctx) -> Status
     {
         ItemPointer *items = getItemArray();
-        uint16_t item_count = getItemCount();
-
         uint32_t tuples_pruned = 0;
-
-        // Scan all tuples and mark garbage as unused
-        for (uint16_t i = 0; i < item_count; i++)
+        VersionMaturityScan scan{};
+        std::vector<uint16_t> reclaimable_item_ids;
+        Status scan_status = scanVersionMaturity(oit, &scan, &reclaimable_item_ids, nullptr, ctx);
+        if (scan_status != Status::OK)
         {
-            // Skip already unused items
-            if (items[i].isUnused())
+            return scan_status;
+        }
+
+        // Scan all reclaimable versions and reclaim them through one shared
+        // maturity model instead of separate prune heuristics.
+        for (uint16_t item_id : reclaimable_item_ids)
+        {
+            if (item_id >= getItemCount() || items[item_id].isUnused())
             {
                 continue;
             }
 
-            // Skip deleted items (they can't be accessed anyway)
-            if (items[i].isDeleted())
-            {
-                continue;
-            }
-
-            // Validate item pointer bounds
-            if (!items[i].isValid(page_size_))
-            {
-                continue; // Skip corrupt items
-            }
-
-            // Get tuple header
-            auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[i].offset);
-
-            // Check if tuple is garbage
-            // Tuple is garbage if:
-            // 1. xmax != 0 (deleted/updated)
-            // 2. xmax < OIT (deleting transaction is old)
-            // 3. xmax is committed
-            if (tuple_hdr->xmax != 0 && tuple_hdr->xmax < oit)
-            {
-                bool xmax_committed = false;
-                Status resolve_status =
-                    resolveCommittedDeleteState(db_, tuple_hdr, &xmax_committed, ctx);
-                if (resolve_status != Status::OK)
-                {
-                    return resolve_status;
-                }
-
-                if (xmax_committed)
-                {
-                    // Tuple is garbage - mark as unused
-                    items[i].setUnused();
-                    tuples_pruned++;
-                }
-            }
+            items[item_id].setUnused();
+            ++tuples_pruned;
         }
 
         if (tuples_pruned_out != nullptr)
@@ -2229,58 +2348,8 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Get page header
-        auto *pg_header = header();
-
-        // Get item pointer array
-        auto *items = reinterpret_cast<ItemPointer *>(page_data_ + sizeof(PageHeader));
-        uint16_t item_count =
-            static_cast<uint16_t>((pageLower(*pg_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
-
-        dead_tids_out->clear();
-
-        // Scan all items looking for dead tuples
-        for (uint16_t i = 0; i < item_count; i++)
-        {
-            // Skip unused items
-            if (items[i].isUnused())
-            {
-                continue;
-            }
-
-            // Deleted line pointers still contain tuple headers; we need them for index cleanup.
-
-            // Get tuple header
-            if (!items[i].isValid(page_size_))
-            {
-                continue;
-            }
-            auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[i].offset);
-
-            // Tuple is dead if:
-            // 1. xmax != 0 (deleted/updated)
-            // 2. xmax < OIT (deleting transaction is old enough)
-            // 3. xmax is committed
-            if (tuple_hdr->xmax != 0 && tuple_hdr->xmax < oit)
-            {
-                bool xmax_committed = false;
-                Status resolve_status =
-                    resolveCommittedDeleteState(db_, tuple_hdr, &xmax_committed, ctx);
-                if (resolve_status != Status::OK)
-                {
-                    return resolve_status;
-                }
-
-                if (xmax_committed)
-                {
-                    // PHASE 1.5: Create TID struct (already using GPID internally)
-                    TID tid = tuple_hdr->getTID();
-                    dead_tids_out->push_back(tid);
-                }
-            }
-        }
-
-        return Status::OK;
+        VersionMaturityScan scan{};
+        return scanVersionMaturity(oit, &scan, nullptr, dead_tids_out, ctx);
     }
 
 } // namespace scratchbird::core

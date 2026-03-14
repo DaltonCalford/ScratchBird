@@ -341,13 +341,21 @@ namespace scratchbird::core
             {
                 oldest_interesting_txid = tuple_hdr->xmax;
             }
-            if (isTupleDead(tuple_data, horizon))
-            {
-                dead_items.push_back(item_id);
-                reclaimable_bytes += tuple_size;
-                ++stats.dead_tuples_found;
-            }
         }
+
+        HeapPage::VersionMaturityScan maturity_scan{};
+        status = heap.scanVersionMaturity(horizon, &maturity_scan, &dead_items, nullptr, ctx);
+        if (status != Status::OK)
+        {
+            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            if (stats_out != nullptr)
+            {
+                *stats_out = stats;
+            }
+            return status;
+        }
+        reclaimable_bytes = maturity_scan.reclaimable_bytes;
+        stats.dead_tuples_found += maturity_scan.reclaimable_item_count;
 
         BufferPool::MgaFrameHints hints{};
         hints.page_class = !dead_items.empty()
@@ -490,16 +498,25 @@ namespace scratchbird::core
                     oldest_interesting_txid = tuple_hdr->xmax;
                 }
 
-                // Check if dead
-                if (isTupleDead(tuple_data, horizon))
+            }
+
+            HeapPage::VersionMaturityScan maturity_scan{};
+            std::vector<uint16_t> reclaimable_item_ids;
+            Status maturity_status = heap.scanVersionMaturity(horizon,
+                                                              &maturity_scan,
+                                                              &reclaimable_item_ids,
+                                                              nullptr,
+                                                              ctx);
+            if (maturity_status == Status::OK)
+            {
+                reclaimable_bytes = maturity_scan.reclaimable_bytes;
+                for (uint16_t item_id : reclaimable_item_ids)
                 {
-                    // Build TID: (page_id << 32) | (item_id << 16)
                     uint64_t tid = (static_cast<uint64_t>(page_id) << 32) |
                                    (static_cast<uint64_t>(item_id) << 16);
                     dead_tids_out->push_back(tid);
-                    reclaimable_bytes += tuple_size;
-                    stats->dead_tuples_found++;
                 }
+                stats->dead_tuples_found += reclaimable_item_ids.size();
             }
 
             BufferPool::MgaFrameHints hints{};
@@ -566,12 +583,16 @@ namespace scratchbird::core
                 ++chain_depth_hint;
             }
 
-            // Check if this version is prunable
-            if (isVersionPrunable(tuple_data, horizon))
-            {
-                stats->version_chains_pruned++;
-            }
         }
+
+        HeapPage::VersionMaturityScan maturity_scan{};
+        Status maturity_status = heap.scanVersionMaturity(horizon, &maturity_scan, nullptr, nullptr, ctx);
+        if (maturity_status != Status::OK)
+        {
+            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            return maturity_status;
+        }
+        stats->version_chains_pruned += maturity_scan.prune_only_item_count;
 
         BufferPool::MgaFrameHints hints{};
         hints.page_class = (chain_depth_hint >= 4) ? BufferPool::MgaPageClass::CHAIN_HEAVY
@@ -732,69 +753,6 @@ namespace scratchbird::core
         db_->buffer_pool()->unpinPage(page_id, page_dirty, ctx);
 
         return Status::OK;
-    }
-
-    bool GcManager::isTupleDead(const uint8_t *tuple_data, uint64_t horizon) const
-    {
-        auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
-
-        // Tuple is dead if:
-        // 1. xmax is set (tuple was deleted or updated)
-        // 2. xmax < horizon (delete/update is committed and visible to all)
-        // 3. Not the head of a version chain (has no next version or is updated)
-
-        if (header->xmax == 0)
-        {
-            return false; // Still alive
-        }
-
-        if (header->xmax >= horizon)
-        {
-            return false; // Delete not visible to all transactions yet
-        }
-
-        // xmax < horizon means all active transactions can see the delete
-        // However, if this tuple was updated (not deleted), we need to check
-        // if it's part of a version chain
-
-        if ((header->infomask & TupleHeader::HEAP_UPDATED) != 0)
-        {
-            // Tuple was updated, not deleted
-            // It's dead only if no transaction needs it for version chain traversal
-            // For simplicity, if it has a next version and xmax < horizon, it's dead
-            return header->hasNextVersion();
-        }
-
-        // Tuple was deleted (not updated)
-        return (header->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0;
-    }
-
-    bool GcManager::isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon) const
-    {
-        auto *header = reinterpret_cast<const TupleHeader *>(tuple_data);
-
-        // A version is prunable if:
-        // 1. It was updated (not the latest version)
-        // 2. The update is committed and visible to all transactions
-        // 3. No active transaction might traverse to this version
-
-        if ((header->infomask & TupleHeader::HEAP_UPDATED) == 0)
-        {
-            return false; // Not updated, can't prune
-        }
-
-        if (!header->hasNextVersion())
-        {
-            return false; // No next version, this is the latest
-        }
-
-        if (header->xmax == 0 || header->xmax >= horizon)
-        {
-            return false; // Update not visible to all yet
-        }
-
-        // Update is committed and old enough to be invisible to all transactions
-        return true;
     }
 
     auto GcManager::freezeTable(const ID &table_id, uint64_t freeze_limit, GcStats *stats_out,

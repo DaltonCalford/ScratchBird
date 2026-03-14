@@ -339,6 +339,165 @@ TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_MixedLiveAndDead)
     releasePage(page_id, true, &ctx);
 }
 
+TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_HistoricalBackVersionsArePruneOnly)
+{
+    ErrorContext ctx;
+
+    uint32_t page_id = 0;
+    uint8_t *page_data = nullptr;
+    Status status = allocatePage(page_id, &page_data, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    HeapPage heap_page(page_data, db_.page_size(), nullptr, &db_, ID{});
+    status = heap_page.initialize(page_id, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    uint8_t payload_v1[8] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17};
+    auto tuple_v1 = buildTuple(payload_v1, sizeof(payload_v1));
+    uint16_t head_item_id = 0;
+    status = heap_page.insertTuple(tuple_v1.data(),
+                                   static_cast<uint32_t>(tuple_v1.size()),
+                                   100,
+                                   &head_item_id,
+                                   &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    uint8_t payload_v2[8] = {0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28};
+    auto tuple_v2 = buildTuple(payload_v2, sizeof(payload_v2));
+    uint16_t stable_item_id = 0;
+    status = heap_page.updateTuple(head_item_id,
+                                   tuple_v2.data(),
+                                   static_cast<uint32_t>(tuple_v2.size()),
+                                   500,
+                                   600,
+                                   &stable_item_id,
+                                   &ctx);
+    ASSERT_EQ(status, Status::OK);
+    ASSERT_EQ(stable_item_id, head_item_id);
+
+    const uint8_t *head_tuple = nullptr;
+    uint32_t head_tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(head_item_id, &head_tuple, &head_tuple_size, &ctx), Status::OK);
+    auto *head_hdr = reinterpret_cast<const TupleHeader *>(head_tuple);
+    ASSERT_TRUE(head_hdr->hasBackVersion());
+
+    const uint16_t back_item_id = head_hdr->back_version_slot;
+    const uint8_t *back_tuple = nullptr;
+    uint32_t back_tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(back_item_id, &back_tuple, &back_tuple_size, &ctx), Status::OK);
+    auto *back_hdr = reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(back_tuple));
+    back_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+
+    std::vector<TID> dead_tids;
+    status = heap_page.collectDeadTuples(1000, &dead_tids, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_TRUE(dead_tids.empty())
+        << "Historical back versions must be prune-only and must not emit logical dead TIDs";
+
+    uint32_t tuples_pruned = 0;
+    uint32_t space_reclaimed = 0;
+    status = heap_page.prunePage(1000, &tuples_pruned, &space_reclaimed, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    EXPECT_EQ(tuples_pruned, 1u);
+    EXPECT_GT(space_reclaimed, 0u);
+
+    const uint8_t *visible_tuple = nullptr;
+    uint32_t visible_tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(head_item_id, &visible_tuple, &visible_tuple_size, &ctx),
+              Status::OK);
+    EXPECT_EQ(visible_tuple_size, tuple_v2.size());
+    EXPECT_EQ(std::memcmp(visible_tuple + sizeof(TupleHeader),
+                          tuple_v2.data() + sizeof(TupleHeader),
+                          tuple_v2.size() - sizeof(TupleHeader)),
+              0);
+
+    releasePage(page_id, true, &ctx);
+}
+
+TEST_F(HeapIndexGCIntegrationTest, ScanVersionMaturitySeparatesDeadRootsFromHistory)
+{
+    ErrorContext ctx;
+
+    uint32_t page_id = 0;
+    uint8_t *page_data = nullptr;
+    Status status = allocatePage(page_id, &page_data, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    HeapPage heap_page(page_data, db_.page_size(), nullptr, &db_, ID{});
+    status = heap_page.initialize(page_id, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    uint8_t payload[8] = {0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38};
+    auto tuple = buildTuple(payload, sizeof(payload));
+
+    uint16_t deleted_root_item_id = 0;
+    status = heap_page.insertTuple(tuple.data(),
+                                   static_cast<uint32_t>(tuple.size()),
+                                   100,
+                                   &deleted_root_item_id,
+                                   &ctx);
+    ASSERT_EQ(status, Status::OK);
+    status = heap_page.deleteTuple(deleted_root_item_id, 500, &ctx);
+    ASSERT_EQ(status, Status::OK);
+    markXmaxCommitted(page_data, deleted_root_item_id);
+
+    uint16_t updated_root_item_id = 0;
+    status = heap_page.insertTuple(tuple.data(),
+                                   static_cast<uint32_t>(tuple.size()),
+                                   200,
+                                   &updated_root_item_id,
+                                   &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    uint8_t payload_v2[8] = {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48};
+    auto tuple_v2 = buildTuple(payload_v2, sizeof(payload_v2));
+    uint16_t stable_item_id = 0;
+    status = heap_page.updateTuple(updated_root_item_id,
+                                   tuple_v2.data(),
+                                   static_cast<uint32_t>(tuple_v2.size()),
+                                   600,
+                                   700,
+                                   &stable_item_id,
+                                   &ctx);
+    ASSERT_EQ(status, Status::OK);
+    ASSERT_EQ(stable_item_id, updated_root_item_id);
+
+    const uint8_t *head_tuple = nullptr;
+    uint32_t head_tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(updated_root_item_id, &head_tuple, &head_tuple_size, &ctx),
+              Status::OK);
+    auto *head_hdr = reinterpret_cast<const TupleHeader *>(head_tuple);
+    ASSERT_TRUE(head_hdr->hasBackVersion());
+
+    const uint8_t *back_tuple = nullptr;
+    uint32_t back_tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(head_hdr->back_version_slot, &back_tuple, &back_tuple_size, &ctx),
+              Status::OK);
+    auto *back_hdr = reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(back_tuple));
+    back_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+
+    HeapPage::VersionMaturityScan scan{};
+    std::vector<uint16_t> reclaimable_items;
+    std::vector<TID> dead_tids;
+    status = heap_page.scanVersionMaturity(1000, &scan, &reclaimable_items, &dead_tids, &ctx);
+    ASSERT_EQ(status, Status::OK);
+
+    EXPECT_EQ(scan.reclaimable_item_count, 2u);
+    EXPECT_EQ(scan.prune_only_item_count, 1u);
+    EXPECT_EQ(scan.logical_dead_root_count, 1u);
+    ASSERT_EQ(dead_tids.size(), 1u);
+    EXPECT_EQ(dead_tids.front().slot, deleted_root_item_id);
+
+    EXPECT_EQ(reclaimable_items.size(), 2u);
+    EXPECT_NE(std::find(reclaimable_items.begin(), reclaimable_items.end(), deleted_root_item_id),
+              reclaimable_items.end());
+    EXPECT_NE(std::find(reclaimable_items.begin(), reclaimable_items.end(),
+                        head_hdr->back_version_slot),
+              reclaimable_items.end());
+
+    releasePage(page_id, true, &ctx);
+}
+
 TEST_F(HeapIndexGCIntegrationTest, CollectDeadTuples_NullPointer)
 {
     ErrorContext ctx;

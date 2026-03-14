@@ -26,9 +26,11 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <cstring>
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/gc_manager.h"
+#include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/sweep_manager.h"
 #include "scratchbird/core/transaction_manager.h"
@@ -45,6 +47,19 @@ namespace
     constexpr size_t kSweepProgressSlotActive = 1;
     constexpr size_t kSweepProgressSlotStartHorizon = 2;
     constexpr size_t kSweepProgressSlotPageCursor = 5;
+
+    auto buildTuple(const uint8_t *payload, size_t payload_size) -> std::vector<uint8_t>
+    {
+        std::vector<uint8_t> tuple(sizeof(TupleHeader) + payload_size, 0);
+        TupleHeader header{};
+        header.session_id = ID{};
+        std::memcpy(tuple.data(), &header, sizeof(TupleHeader));
+        if (payload_size > 0)
+        {
+            std::memcpy(tuple.data() + sizeof(TupleHeader), payload, payload_size);
+        }
+        return tuple;
+    }
 }
 
 class GarbageCollectorTest : public ::testing::Test
@@ -338,6 +353,135 @@ TEST_F(GarbageCollectorTest, DirtyPagePriority)
 
     // Page 100 should have higher priority due to mark_count
     // (This is tested indirectly through statistics after GC runs)
+}
+
+TEST_F(GarbageCollectorTest, CooperativeGcPrunesMatureHistoryWithoutKillingLiveRoot)
+{
+    Config &config = Config::getInstance();
+    const std::string previous_enabled =
+        config.getString("garbage_collection", "enabled", "true");
+    const std::string previous_policy =
+        config.getString("garbage_collection", "policy", "COMBINED");
+    const std::string previous_rate =
+        config.getString("garbage_collection", "cooperative_rate", "100");
+    struct GarbageCollectionConfigRestore
+    {
+        Config &config;
+        std::string enabled;
+        std::string policy;
+        std::string rate;
+
+        ~GarbageCollectionConfigRestore()
+        {
+            config.set("garbage_collection", "enabled", enabled);
+            config.set("garbage_collection", "policy", policy);
+            config.set("garbage_collection", "cooperative_rate", rate);
+        }
+    } restore{config, previous_enabled, previous_policy, previous_rate};
+
+    config.set("garbage_collection", "enabled", "true");
+    config.set("garbage_collection", "policy", "COMBINED");
+    config.set("garbage_collection", "cooperative_rate", "1");
+
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    ErrorContext ctx;
+    auto *txn_manager = db.transaction_manager();
+    ASSERT_NE(txn_manager, nullptr);
+
+    uint64_t reclaim_horizon = txn_manager->getOldestSnapshot();
+    for (int i = 0; reclaim_horizon <= 1 && i < 4; ++i)
+    {
+        ID tx_uuid{};
+        uint64_t txid = 0;
+        ASSERT_TRUE(createCommittedRetainedTransaction(db, tx_uuid, txid));
+        reclaim_horizon = txn_manager->getOldestSnapshot();
+    }
+    ASSERT_GT(reclaim_horizon, 1u);
+
+    uint32_t page_id = 0;
+    ASSERT_EQ(db.page_manager()->allocatePage(page_id, &ctx), Status::OK) << ctx.message;
+
+    void *page_buffer = nullptr;
+    ASSERT_EQ(db.buffer_pool()->pinPage(page_id, &page_buffer, &ctx), Status::OK) << ctx.message;
+
+    auto *page_data = static_cast<uint8_t *>(page_buffer);
+    HeapPage heap_page(page_data, db.page_size(), nullptr, &db, ID{});
+    ASSERT_EQ(heap_page.initialize(page_id, &ctx), Status::OK) << ctx.message;
+
+    uint8_t payload_v1[8] = {0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58};
+    auto tuple_v1 = buildTuple(payload_v1, sizeof(payload_v1));
+    uint16_t head_item_id = 0;
+    ASSERT_EQ(heap_page.insertTuple(tuple_v1.data(),
+                                    static_cast<uint32_t>(tuple_v1.size()),
+                                    100,
+                                    &head_item_id,
+                                    &ctx),
+              Status::OK) << ctx.message;
+
+    uint8_t payload_v2[8] = {0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68};
+    auto tuple_v2 = buildTuple(payload_v2, sizeof(payload_v2));
+    const uint64_t delete_xid = reclaim_horizon - 1;
+    const uint64_t new_xmin = reclaim_horizon + 1;
+    uint16_t stable_item_id = 0;
+    ASSERT_EQ(heap_page.updateTuple(head_item_id,
+                                    tuple_v2.data(),
+                                    static_cast<uint32_t>(tuple_v2.size()),
+                                    delete_xid,
+                                    new_xmin,
+                                    &stable_item_id,
+                                    &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(stable_item_id, head_item_id);
+
+    const uint8_t *head_tuple = nullptr;
+    uint32_t head_tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(head_item_id, &head_tuple, &head_tuple_size, &ctx), Status::OK)
+        << ctx.message;
+    auto *head_hdr = reinterpret_cast<const TupleHeader *>(head_tuple);
+    ASSERT_TRUE(head_hdr->hasBackVersion());
+
+    const uint8_t *back_tuple = nullptr;
+    uint32_t back_tuple_size = 0;
+    ASSERT_EQ(heap_page.getTuple(head_hdr->back_version_slot, &back_tuple, &back_tuple_size, &ctx),
+              Status::OK) << ctx.message;
+    auto *back_hdr = reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(back_tuple));
+    back_hdr->infomask |= TupleHeader::HEAP_XMAX_COMMITTED;
+
+    HeapPage::VersionMaturityScan maturity_scan{};
+    ASSERT_EQ(heap_page.scanVersionMaturity(reclaim_horizon, &maturity_scan, nullptr, nullptr, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_GT(maturity_scan.reclaimable_item_count, 0u);
+    EXPECT_GT(maturity_scan.prune_only_item_count, 0u);
+
+    db.buffer_pool()->unpinPage(page_id, true, &ctx);
+
+    auto gc = db.garbage_collector();
+    ASSERT_NE(gc, nullptr);
+    const auto stats_before = gc->getStatistics();
+    gc->markPageDirty(page_id);
+    gc->processPageCooperative(page_id, &ctx);
+
+    auto stats = gc->getStatistics();
+    EXPECT_GT(stats.cooperative_runs, stats_before.cooperative_runs);
+    EXPECT_GT(stats.tuples_removed, 0u);
+
+    ASSERT_EQ(db.buffer_pool()->pinPage(page_id, &page_buffer, &ctx), Status::OK) << ctx.message;
+    page_data = static_cast<uint8_t *>(page_buffer);
+    HeapPage reloaded_page(page_data, db.page_size(), nullptr, &db, ID{});
+
+    const uint8_t *visible_tuple = nullptr;
+    uint32_t visible_tuple_size = 0;
+    ASSERT_EQ(reloaded_page.getTuple(head_item_id, &visible_tuple, &visible_tuple_size, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(visible_tuple_size, tuple_v2.size());
+    EXPECT_EQ(std::memcmp(visible_tuple + sizeof(TupleHeader),
+                          tuple_v2.data() + sizeof(TupleHeader),
+                          tuple_v2.size() - sizeof(TupleHeader)),
+              0);
+
+    db.buffer_pool()->unpinPage(page_id, false, &ctx);
 }
 
 // ========== Statistics Tests ==========

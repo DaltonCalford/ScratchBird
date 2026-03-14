@@ -614,15 +614,28 @@ namespace scratchbird::core
         uint32_t tuples_pruned = 0;
         uint32_t space_reclaimed = 0;
 
-        // PHASE 2 TASK 2.6: Collect dead TIDs before pruning (for index cleanup)
-        // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
+        HeapPage::VersionMaturityScan maturity_scan{};
+        std::vector<uint16_t> reclaimable_item_ids;
         std::vector<TID> dead_tids;
-        Status collect_status = heap_page.collectDeadTuples(reclaim_horizon, &dead_tids, ctx);
+        Status collect_status = heap_page.scanVersionMaturity(reclaim_horizon,
+                                                              &maturity_scan,
+                                                              &reclaimable_item_ids,
+                                                              &dead_tids,
+                                                              ctx);
         if (collect_status != Status::OK)
         {
-            LOG_WARNING(VACUUM, "Failed to collect dead TIDs from page %u: %d", page_id,
+            LOG_WARNING(VACUUM, "Failed to classify version maturity on page %u: %d", page_id,
                        static_cast<int>(collect_status));
-            // Continue with pruning even if collection failed
+            db_->buffer_pool()->unpinPage(page_id, repairs != 0, ctx);
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
+            {
+                std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
+                dirty_pages_.erase(page_id);
+            }
+            return 0;
         }
 
         uint16_t chain_depth_hint = 0;
@@ -654,15 +667,14 @@ namespace scratchbird::core
         }
 
         BufferPool::MgaFrameHints page_hints{};
-        page_hints.page_class = !dead_tids.empty()
+        page_hints.page_class = (maturity_scan.reclaimable_item_count != 0)
                                     ? BufferPool::MgaPageClass::GC_CANDIDATE
                                     : (chain_depth_hint >= 4
                                            ? BufferPool::MgaPageClass::CHAIN_HEAVY
                                            : BufferPool::MgaPageClass::VERSION_ROOT);
         page_hints.oldest_interesting_txid = oldest_interesting_txid;
         page_hints.prune_safe_horizon_hint = reclaim_horizon;
-        page_hints.dead_version_bytes =
-            static_cast<uint32_t>(std::min<size_t>(dead_tids.size() * sizeof(TID), UINT32_MAX));
+        page_hints.dead_version_bytes = maturity_scan.reclaimable_bytes;
         page_hints.chain_depth_hint = chain_depth_hint;
         (void)db_->buffer_pool()->publishMgaFrameHintsGlobal(convertPageIDtoGPID(page_id),
                                                              page_hints,
@@ -776,43 +788,6 @@ namespace scratchbird::core
 
         return garbage_tuples_found;
     }
-
-    bool GarbageCollector::isTupleGarbage(uint64_t xmax, uint64_t oit) const
-    {
-        // Tuple is garbage if:
-        // 1. It has been deleted/updated (xmax != INVALID_XID)
-        // 2. The deleting transaction is old (xmax < OIT)
-        // 3. The transaction committed
-
-        constexpr uint64_t INVALID_XID = 0;
-
-        // Not deleted/updated - still visible
-        if (xmax == INVALID_XID)
-        {
-            return false;
-        }
-
-        // Deleting transaction too new - not yet garbage
-        if (xmax >= oit)
-        {
-            return false;
-        }
-
-        // Check if deleting transaction committed
-        TransactionState state;
-        Status s = txn_manager_->getTransactionState(xmax, state, nullptr);
-
-        if (s != Status::OK)
-        {
-            // Can't determine state - assume not garbage (conservative)
-            return false;
-        }
-
-        // Only garbage if the deleting transaction committed
-        // If it aborted, the tuple is still visible
-        return (state == TransactionState::COMMITTED);
-    }
-
     void GarbageCollector::updateCooperativeStats(uint64_t tuples_removed, uint64_t pages_cleaned,
                                                   uint64_t space_reclaimed)
     {

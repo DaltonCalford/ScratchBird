@@ -94,12 +94,6 @@ namespace scratchbird::core
         // Compact page to reclaim free space
         Status compactPage(const ID &table_id, uint32_t page_id, GcStats *stats,
                            ErrorContext *ctx);
-
-        // Check if tuple is dead (not visible to any transaction)
-        bool isTupleDead(const uint8_t *tuple_data, uint64_t horizon) const;
-
-        // Check if tuple version is prunable
-        bool isVersionPrunable(const uint8_t *tuple_data, uint64_t horizon) const;
     };
 
 } // namespace scratchbird::core

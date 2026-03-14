@@ -309,6 +309,31 @@ namespace scratchbird::core
             bool rewrite_threshold = false;
         };
 
+        enum class VersionMaturityState
+        {
+            LIVE_CURRENT,
+            LIVE_DELETE_PENDING,
+            LIVE_HISTORY_PENDING,
+            RECLAIMABLE_ROOT_TOMBSTONE,
+            RECLAIMABLE_HISTORY,
+            RECLAIMABLE_SLOT_TOMBSTONE,
+        };
+
+        struct VersionMaturityDecision
+        {
+            VersionMaturityState state = VersionMaturityState::LIVE_CURRENT;
+            bool reclaim_heap = false;
+            bool emit_dead_tid = false;
+        };
+
+        struct VersionMaturityScan
+        {
+            uint32_t reclaimable_item_count = 0;
+            uint32_t reclaimable_bytes = 0;
+            uint32_t prune_only_item_count = 0;
+            uint32_t logical_dead_root_count = 0;
+        };
+
         // Constructor wraps an existing page buffer
         explicit HeapPage(uint8_t *page_data, uint32_t page_size);
 
@@ -407,6 +432,19 @@ namespace scratchbird::core
         // Inspect reclaimable dead space without mutating slot identity.
         auto analyzeFragmentation(FragmentationMetrics *metrics_out,
                                   ErrorContext *ctx = nullptr) const -> Status;
+
+        // Canonical version maturity classifier for GC, sweep, and version-chain cleanup.
+        auto classifyVersionMaturity(uint16_t item_id, uint64_t horizon,
+                                     VersionMaturityDecision *decision_out,
+                                     ErrorContext *ctx = nullptr) -> Status;
+
+        // Canonical page-level maturity scan. Reclaimable item IDs cover both prune-only
+        // history versions and fully dead logical roots, while dead_tids_out is reserved
+        // for logical roots whose index entries can be removed safely.
+        auto scanVersionMaturity(uint64_t horizon, VersionMaturityScan *scan_out,
+                                 std::vector<uint16_t> *reclaimable_item_ids_out = nullptr,
+                                 std::vector<TID> *dead_tids_out = nullptr,
+                                 ErrorContext *ctx = nullptr) -> Status;
 
         // Prune dead tuples from page (GC helper)
         // Marks garbage tuples as LP_UNUSED based on provided OIT

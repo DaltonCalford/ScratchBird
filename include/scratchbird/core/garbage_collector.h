@@ -230,7 +230,6 @@ namespace scratchbird::core
         // Internal methods
         void backgroundGCLoop();
         uint64_t cleanPage(uint32_t page_id, uint64_t *space_reclaimed_out, ErrorContext *ctx);
-        bool isTupleGarbage(uint64_t xmax, uint64_t oit) const;
         void readConfiguration();
 
         // PHASE 2 TASK 2.6: Clean indexes for dead tuples
