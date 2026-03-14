@@ -44044,6 +44044,7 @@ namespace scratchbird
 
             return_requested_ = false;
             return_value_ = Value();
+            std::optional<optimizer::RuntimePlan> observed_runtime_plan_for_analyze;
 
             std::vector<scratchbird::sblr::v3::Instruction> instructions;
             size_t offset = 0;
@@ -60114,6 +60115,415 @@ namespace scratchbird
                                         runtime_plan.root.estimated_rows,
                                         actual_rows);
                             };
+                        struct RelationActualObservation
+                        {
+                            uint64_t actual_rows = 0;
+                            uint64_t rows_examined = 0;
+                            uint64_t rows_filtered = 0;
+                            uint64_t loop_count = 0;
+                        };
+                        struct JoinActualObservation
+                        {
+                            uint64_t actual_rows = 0;
+                            uint64_t rows_examined = 0;
+                            uint64_t rows_filtered = 0;
+                            uint64_t loop_count = 0;
+                        };
+                        struct SelectExecutionObservation
+                        {
+                            std::unordered_map<size_t, RelationActualObservation>
+                                relation_observations;
+                            std::unordered_map<size_t, JoinActualObservation>
+                                join_observations;
+                            uint64_t filtered_rows = 0;
+                            uint64_t grouped_rows = 0;
+                            uint64_t sorted_rows = 0;
+                            uint64_t pre_limit_rows = 0;
+                            uint64_t final_rows = 0;
+                            uint64_t startup_time_us = 0;
+                            uint64_t execution_time_us = 0;
+                            bool has_grouped_rows = false;
+                            bool has_sorted_rows = false;
+                            bool has_pre_limit_rows = false;
+                        } execution_observation;
+                        const auto select_start_time =
+                            std::chrono::steady_clock::now();
+
+                        auto recordRelationObservation =
+                            [&](size_t relation_index,
+                                uint64_t actual_rows,
+                                uint64_t rows_examined,
+                                uint64_t rows_filtered,
+                                uint64_t loop_count,
+                                bool accumulate) {
+                                auto& observation =
+                                    execution_observation.relation_observations
+                                        [relation_index];
+                                if (accumulate)
+                                {
+                                    observation.actual_rows += actual_rows;
+                                    observation.rows_examined += rows_examined;
+                                    observation.rows_filtered += rows_filtered;
+                                    observation.loop_count += loop_count;
+                                }
+                                else
+                                {
+                                    observation.actual_rows = actual_rows;
+                                    observation.rows_examined = rows_examined;
+                                    observation.rows_filtered = rows_filtered;
+                                    observation.loop_count = loop_count;
+                                }
+                            };
+
+                        auto recordJoinObservation =
+                            [&](size_t join_index,
+                                uint64_t actual_rows,
+                                uint64_t rows_examined,
+                                uint64_t rows_filtered,
+                                uint64_t loop_count) {
+                                execution_observation.join_observations[join_index] =
+                                    JoinActualObservation{
+                                        actual_rows,
+                                        rows_examined,
+                                        rows_filtered,
+                                        loop_count};
+                            };
+
+                        auto applyObservedActualsToNode =
+                            [&](auto&& self,
+                                optimizer::RuntimePlanNode& node,
+                                size_t& join_cursor) -> void {
+                                for (auto& child : node.children)
+                                {
+                                    self(self, child, join_cursor);
+                                }
+
+                                auto set_actuals =
+                                    [&](uint64_t actual_rows,
+                                        uint64_t rows_examined,
+                                        uint64_t rows_filtered,
+                                        uint64_t loop_count) {
+                                        node.actuals_available = true;
+                                        node.actual_rows = actual_rows;
+                                        node.rows_examined = rows_examined;
+                                        node.rows_filtered = rows_filtered;
+                                        node.loop_count = loop_count;
+                                    };
+
+                                if (node.node_type == "SeqScan" ||
+                                    node.node_type == "IndexScan" ||
+                                    node.node_type == "IndexOnlyScan" ||
+                                    node.node_type == "BitmapIndexScan")
+                                {
+                                    const auto relation_it =
+                                        std::find_if(runtime_plan.relations.begin(),
+                                                     runtime_plan.relations.end(),
+                                                     [&](const auto& relation) {
+                                                         return (!relation.alias.empty() &&
+                                                                 relation.alias ==
+                                                                     node.table_path) ||
+                                                                relation.table_path ==
+                                                                    node.table_path;
+                                                     });
+                                    if (relation_it != runtime_plan.relations.end() &&
+                                        (relation_it->actual_rows > 0 ||
+                                         relation_it->rows_examined > 0 ||
+                                         relation_it->rows_filtered > 0 ||
+                                         relation_it->loop_count > 0))
+                                    {
+                                        set_actuals(relation_it->actual_rows,
+                                                    relation_it->rows_examined,
+                                                    relation_it->rows_filtered,
+                                                    relation_it->loop_count);
+                                    }
+                                    return;
+                                }
+
+                                if (node.node_type == "NestedLoopJoin" ||
+                                    node.node_type == "HashJoin" ||
+                                    node.node_type == "MergeJoin")
+                                {
+                                    while (join_cursor <
+                                           runtime_plan.join_steps.size())
+                                    {
+                                        const auto& join_step =
+                                            runtime_plan.join_steps[join_cursor++];
+                                        const bool method_match =
+                                            (node.node_type ==
+                                                 "NestedLoopJoin" &&
+                                             join_step.method ==
+                                                 "NESTED_LOOP") ||
+                                            (node.node_type == "HashJoin" &&
+                                             join_step.method ==
+                                                 "HASH_JOIN") ||
+                                            (node.node_type == "MergeJoin" &&
+                                             join_step.method ==
+                                                 "MERGE_JOIN");
+                                        if (!method_match)
+                                        {
+                                            continue;
+                                        }
+                                        if (join_step.actual_rows > 0 ||
+                                            join_step.rows_examined > 0 ||
+                                            join_step.rows_filtered > 0 ||
+                                            join_step.loop_count > 0)
+                                        {
+                                            set_actuals(join_step.actual_rows,
+                                                        join_step.rows_examined,
+                                                        join_step.rows_filtered,
+                                                        join_step.loop_count);
+                                        }
+                                        break;
+                                    }
+                                    return;
+                                }
+
+                                if (node.node_type == "Aggregate")
+                                {
+                                    const uint64_t actual_rows =
+                                        execution_observation.has_grouped_rows
+                                            ? execution_observation.grouped_rows
+                                            : execution_observation.filtered_rows;
+                                    set_actuals(actual_rows,
+                                                execution_observation.filtered_rows,
+                                                execution_observation.filtered_rows >
+                                                        actual_rows
+                                                    ? execution_observation
+                                                              .filtered_rows -
+                                                          actual_rows
+                                                    : 0,
+                                                1);
+                                    return;
+                                }
+
+                                if (node.node_type == "Sort")
+                                {
+                                    const uint64_t actual_rows =
+                                        execution_observation.has_sorted_rows
+                                            ? execution_observation.sorted_rows
+                                            : execution_observation.filtered_rows;
+                                    set_actuals(actual_rows,
+                                                actual_rows,
+                                                0,
+                                                1);
+                                    return;
+                                }
+
+                                if (node.node_type == "Window")
+                                {
+                                    const uint64_t actual_rows =
+                                        execution_observation.has_sorted_rows
+                                            ? execution_observation.sorted_rows
+                                            : execution_observation.filtered_rows;
+                                    set_actuals(actual_rows,
+                                                actual_rows,
+                                                0,
+                                                1);
+                                    return;
+                                }
+
+                                if (node.node_type == "Limit")
+                                {
+                                    const uint64_t pre_limit_rows =
+                                        execution_observation.has_pre_limit_rows
+                                            ? execution_observation.pre_limit_rows
+                                            : execution_observation.final_rows;
+                                    set_actuals(execution_observation.final_rows,
+                                                pre_limit_rows,
+                                                pre_limit_rows >
+                                                        execution_observation
+                                                            .final_rows
+                                                    ? pre_limit_rows -
+                                                          execution_observation
+                                                              .final_rows
+                                                    : 0,
+                                                1);
+                                    return;
+                                }
+
+                                if (node.node_type == "Gather" ||
+                                    node.node_type == "GatherMerge")
+                                {
+                                    if (!node.children.empty())
+                                    {
+                                        const auto& child = node.children.front();
+                                        if (child.actuals_available)
+                                        {
+                                            set_actuals(child.actual_rows,
+                                                        child.rows_examined,
+                                                        child.rows_filtered,
+                                                        child.loop_count);
+                                        }
+                                    }
+                                    return;
+                                }
+
+                                if (node.node_type == "Result")
+                                {
+                                    set_actuals(execution_observation.final_rows,
+                                                execution_observation.final_rows,
+                                                0,
+                                                1);
+                                }
+                            };
+
+                        auto finalizeObservedRuntimePlan =
+                            [&]() {
+                                if (!has_runtime_plan)
+                                {
+                                    return;
+                                }
+
+                                for (auto& relation : runtime_plan.relations)
+                                {
+                                    auto it =
+                                        execution_observation.relation_observations
+                                            .find(relation.source_relation_index);
+                                    if (it != execution_observation
+                                                  .relation_observations.end())
+                                    {
+                                        relation.actual_rows =
+                                            it->second.actual_rows;
+                                        relation.rows_examined =
+                                            it->second.rows_examined;
+                                        relation.rows_filtered =
+                                            it->second.rows_filtered;
+                                        relation.loop_count =
+                                            it->second.loop_count;
+                                    }
+                                }
+
+                                for (auto& join_step : runtime_plan.join_steps)
+                                {
+                                    auto it =
+                                        execution_observation.join_observations
+                                            .find(join_step.source_join_index);
+                                    if (it != execution_observation
+                                                  .join_observations.end())
+                                    {
+                                        join_step.actual_rows =
+                                            it->second.actual_rows;
+                                        join_step.rows_examined =
+                                            it->second.rows_examined;
+                                        join_step.rows_filtered =
+                                            it->second.rows_filtered;
+                                        join_step.loop_count =
+                                            it->second.loop_count;
+                                    }
+                                }
+
+                                size_t join_cursor = 0;
+                                applyObservedActualsToNode(
+                                    applyObservedActualsToNode,
+                                    runtime_plan.root,
+                                    join_cursor);
+                                runtime_plan.root.actuals_available = true;
+                                runtime_plan.root.actual_rows =
+                                    execution_observation.final_rows;
+                                runtime_plan.root.rows_examined =
+                                    execution_observation.filtered_rows;
+                                runtime_plan.root.rows_filtered =
+                                    execution_observation.filtered_rows >
+                                            execution_observation.final_rows
+                                        ? execution_observation.filtered_rows -
+                                              execution_observation.final_rows
+                                        : 0;
+                                runtime_plan.root.loop_count = 1;
+                                runtime_plan.root.startup_time_us =
+                                    execution_observation.startup_time_us;
+                                runtime_plan.root.execution_time_us =
+                                    execution_observation.execution_time_us;
+
+                                if (execution_observation.final_rows > 0)
+                                {
+                                    runtime_plan.considered_paths.push_back(
+                                        optimizer::RuntimePlanTraceEntry{
+                                            "EXPLAIN_ANALYZE",
+                                            "query",
+                                            "PER_NODE_ACTUALS",
+                                            "CAPTURED",
+                                            "per-node actual rows captured for runtime plan",
+                                            runtime_plan.root.startup_cost,
+                                            runtime_plan.root.total_cost,
+                                            execution_observation.final_rows});
+                                }
+
+                                const auto latest_feedback =
+                                    optimizer::QueryProfiler::getInstance()
+                                        .latestCardinalityFeedback(
+                                            runtime_plan.query_feedback_key);
+                                if (latest_feedback.has_value())
+                                {
+                                    runtime_plan.adaptive_feedback.available =
+                                        latest_feedback->available;
+                                    runtime_plan.adaptive_feedback.replan_required =
+                                        latest_feedback->replan_required;
+                                    runtime_plan.adaptive_feedback
+                                        .stats_refresh_requested =
+                                        latest_feedback->stats_refresh_requested;
+                                    runtime_plan.adaptive_feedback
+                                        .stats_refresh_applied =
+                                        latest_feedback->stats_refresh_applied;
+                                    runtime_plan.adaptive_feedback
+                                        .observation_count =
+                                        latest_feedback->observation_count;
+                                    runtime_plan.adaptive_feedback
+                                        .replan_action_count =
+                                        latest_feedback->replan_action_count;
+                                    runtime_plan.adaptive_feedback
+                                        .last_estimated_rows =
+                                        latest_feedback->last_estimated_rows;
+                                    runtime_plan.adaptive_feedback.last_actual_rows =
+                                        latest_feedback->last_actual_rows;
+                                    runtime_plan.adaptive_feedback
+                                        .estimation_error_ratio =
+                                        latest_feedback->estimation_error_ratio;
+                                    runtime_plan.adaptive_feedback
+                                        .correction_factor =
+                                        latest_feedback->correction_factor;
+                                    runtime_plan.adaptive_feedback.last_plan_hash =
+                                        latest_feedback->last_plan_hash;
+
+                                    bool have_misestimate_signal = false;
+                                    for (const auto& signal :
+                                         runtime_plan.advisor_signals)
+                                    {
+                                        if (signal.signal_name ==
+                                            "MIS_ESTIMATE")
+                                        {
+                                            have_misestimate_signal = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!have_misestimate_signal &&
+                                        latest_feedback->available &&
+                                        latest_feedback->estimation_error_ratio >
+                                            1.0)
+                                    {
+                                        std::ostringstream detail;
+                                        detail << "estimated_rows="
+                                               << latest_feedback
+                                                      ->last_estimated_rows
+                                               << ", actual_rows="
+                                               << latest_feedback
+                                                      ->last_actual_rows
+                                               << ", error_ratio="
+                                               << latest_feedback
+                                                      ->estimation_error_ratio;
+                                        runtime_plan.advisor_signals.push_back(
+                                            optimizer::RuntimePlanAdvisorSignal{
+                                                "MIS_ESTIMATE",
+                                                latest_feedback
+                                                            ->replan_required
+                                                    ? "HIGH"
+                                                    : "MEDIUM",
+                                                "ADAPTIVE_CARDINALITY_FEEDBACK",
+                                                detail.str()});
+                                    }
+                                }
+
+                                observed_runtime_plan_for_analyze = runtime_plan;
+                            };
                         last_select_table_ids_.clear();
                         last_select_cacheable_ = true;
                         if (has_locking)
@@ -62548,6 +62958,12 @@ namespace scratchbird
                         {
                             return base_res;
                         }
+                        recordRelationObservation(from_source_relation_index,
+                                                  base_table.rows.size(),
+                                                  base_table.rows.size(),
+                                                  0,
+                                                  1,
+                                                  false);
 
                         auto normalize_name = [](const std::string& name) {
                             return core::IdentifierUtils::toUpper(name);
@@ -62682,6 +63098,7 @@ namespace scratchbird
                             std::optional<scratchbird::sblr::v3::Instruction> query;
                             std::optional<scratchbird::sblr::v3::Instruction> function;
                             size_t source_relation_index = std::numeric_limits<size_t>::max();
+                            size_t source_join_index = std::numeric_limits<size_t>::max();
                             parser::JoinType type = parser::JoinType::INNER;
                             scratchbird::sblr::v3::Instruction condition;
                             bool has_condition = false;
@@ -62830,6 +63247,7 @@ namespace scratchbird
                                 spec.query = right_query;
                                 spec.function = right_function;
                                 spec.source_relation_index = right_source_relation_index;
+                                spec.source_join_index = joins.size();
                                 spec.type = join_type;
                                 spec.condition = cond_inst;
                                 spec.has_condition = has_cond;
@@ -62840,6 +63258,8 @@ namespace scratchbird
                                 if (has_runtime_plan && joins.size() < runtime_plan.join_steps.size())
                                 {
                                     const auto& runtime_join = runtime_plan.join_steps[joins.size()];
+                                    spec.source_join_index =
+                                        runtime_join.source_join_index;
                                     spec.method = runtime_join.method;
                                     spec.has_hash_keys = runtime_join.has_hash_keys;
                                     spec.left_hash_qualifier = runtime_join.left_hash_key.qualifier;
@@ -62877,6 +63297,8 @@ namespace scratchbird
                                 std::vector<core::CatalogManager::ColumnInfo> right_columns;
                                 std::vector<SelectSourceBinding> parameterized_bindings;
                                 bool right_shape_known = false;
+                                uint64_t parameterized_rows_examined = 0;
+                                uint64_t parameterized_loop_count = 0;
 
                                 auto build_combined_row =
                                     [&](const std::vector<Value>& left_row,
@@ -62922,6 +63344,15 @@ namespace scratchbird
                                     {
                                         return right_res;
                                     }
+                                    parameterized_rows_examined += right_table.rows.size();
+                                    parameterized_loop_count += 1;
+                                    recordRelationObservation(
+                                        join.source_relation_index,
+                                        right_table.rows.size(),
+                                        right_table.rows.size(),
+                                        0,
+                                        1,
+                                        true);
 
                                     if (!right_shape_known)
                                     {
@@ -63066,6 +63497,16 @@ namespace scratchbird
                                 }
 
                                 combined_rows = std::move(new_rows);
+                                recordJoinObservation(
+                                    join.source_join_index,
+                                    combined_rows.size(),
+                                    parameterized_rows_examined,
+                                    parameterized_rows_examined >
+                                            combined_rows.size()
+                                        ? parameterized_rows_examined -
+                                              combined_rows.size()
+                                        : 0,
+                                    parameterized_loop_count);
                                 if (right_shape_known)
                                 {
                                     all_columns.insert(all_columns.end(),
@@ -63162,6 +63603,14 @@ namespace scratchbird
                             {
                                 return right_res;
                             }
+                            recordRelationObservation(join.source_relation_index,
+                                                      right.rows.size(),
+                                                      right.rows.size(),
+                                                      0,
+                                                      1,
+                                                      false);
+                            const uint64_t left_input_rows = combined_rows.size();
+                            const uint64_t right_input_rows = right.rows.size();
 
                             std::vector<std::vector<Value>> new_rows;
                             std::vector<core::CatalogManager::ColumnInfo> combined_columns = all_columns;
@@ -63624,6 +64073,23 @@ namespace scratchbird
                             }
 
                             combined_rows = std::move(new_rows);
+                            uint64_t join_rows_examined =
+                                left_input_rows * right_input_rows;
+                            uint64_t join_loop_count = left_input_rows;
+                            if (executed_hash_join || executed_merge_join)
+                            {
+                                join_rows_examined =
+                                    left_input_rows + right_input_rows;
+                                join_loop_count = 1;
+                            }
+                            recordJoinObservation(
+                                join.source_join_index,
+                                combined_rows.size(),
+                                join_rows_examined,
+                                join_rows_examined > combined_rows.size()
+                                    ? join_rows_examined - combined_rows.size()
+                                    : 0,
+                                join_loop_count);
                             all_columns = std::move(combined_columns);
                             source_bindings = std::move(join_bindings);
                         }
@@ -63865,6 +64331,22 @@ namespace scratchbird
                                 }
                             }
                             filtered_indices.push_back(i);
+                        }
+                        execution_observation.filtered_rows = filtered_indices.size();
+                        if (!has_joins)
+                        {
+                            auto& base_observation =
+                                execution_observation.relation_observations
+                                    [from_source_relation_index];
+                            base_observation.actual_rows =
+                                execution_observation.filtered_rows;
+                            if (base_observation.rows_examined >=
+                                execution_observation.filtered_rows)
+                            {
+                                base_observation.rows_filtered =
+                                    base_observation.rows_examined -
+                                    execution_observation.filtered_rows;
+                            }
                         }
 
                         std::vector<std::vector<scratchbird::sblr::v3::Instruction>> grouping_sets;
@@ -64748,6 +65230,13 @@ namespace scratchbird
                             }
                         }
 
+                        if (has_agg || !grouping_sets.empty())
+                        {
+                            execution_observation.grouped_rows =
+                                result_rows.size();
+                            execution_observation.has_grouped_rows = true;
+                        }
+
                         if (has_distinct)
                         {
                             std::unordered_set<std::string> seen;
@@ -64817,7 +65306,13 @@ namespace scratchbird
                                                  result_rows.end(),
                                                  row_less);
                             }
+                            execution_observation.sorted_rows =
+                                result_rows.size();
+                            execution_observation.has_sorted_rows = true;
                         }
+                        execution_observation.pre_limit_rows = result_rows.size();
+                        execution_observation.has_pre_limit_rows =
+                            (offset > 0 || limit >= 0);
 
                         if (has_setop)
                         {
@@ -64851,6 +65346,16 @@ namespace scratchbird
                         {
                             if (left_res.hasResultSet() && left_res.resultSet())
                             {
+                                execution_observation.final_rows =
+                                    left_res.resultSet()->rowCount();
+                                execution_observation.execution_time_us =
+                                    static_cast<uint64_t>(
+                                        std::chrono::duration_cast<
+                                            std::chrono::microseconds>(
+                                            std::chrono::steady_clock::now() -
+                                            select_start_time)
+                                            .count());
+                                finalizeObservedRuntimePlan();
                                 record_adaptive_feedback(left_res.resultSet()->rowCount());
                             }
                             return left_res;
@@ -65115,6 +65620,15 @@ namespace scratchbird
                         {
                             out_rs->addRow(std::move(row));
                         }
+                        execution_observation.final_rows = out_rs->rowCount();
+                        execution_observation.execution_time_us =
+                            static_cast<uint64_t>(
+                                std::chrono::duration_cast<
+                                    std::chrono::microseconds>(
+                                    std::chrono::steady_clock::now() -
+                                    select_start_time)
+                                    .count());
+                        finalizeObservedRuntimePlan();
                         record_adaptive_feedback(out_rs->rowCount());
                         return ExecutionResult(std::move(out_rs));
                     }
@@ -65284,6 +65798,21 @@ namespace scratchbird
                                          << " startup=" << node.startup_cost
                                          << " total=" << node.total_cost;
                                 }
+                                if (node.actuals_available)
+                                {
+                                    line << " actual_rows=" << node.actual_rows
+                                         << " rows_examined=" << node.rows_examined
+                                         << " rows_filtered=" << node.rows_filtered
+                                         << " loops=" << node.loop_count;
+                                    if (node.startup_time_us > 0 ||
+                                        node.execution_time_us > 0)
+                                    {
+                                        line << " startup_time_us="
+                                             << node.startup_time_us
+                                             << " execution_time_us="
+                                             << node.execution_time_us;
+                                    }
+                                }
                                 return line.str();
                             };
 
@@ -65444,6 +65973,22 @@ namespace scratchbird
                                 out << ",\"estimated_rows\":" << node.estimated_rows
                                     << ",\"startup_cost\":" << node.startup_cost
                                     << ",\"total_cost\":" << node.total_cost;
+                                out << ",\"actuals_available\":"
+                                    << (node.actuals_available ? "true" : "false");
+                                if (node.actuals_available)
+                                {
+                                    out << ",\"actual_rows\":" << node.actual_rows
+                                        << ",\"rows_examined\":"
+                                        << node.rows_examined
+                                        << ",\"rows_filtered\":"
+                                        << node.rows_filtered
+                                        << ",\"loop_count\":"
+                                        << node.loop_count
+                                        << ",\"startup_time_us\":"
+                                        << node.startup_time_us
+                                        << ",\"execution_time_us\":"
+                                        << node.execution_time_us;
+                                }
                                 out << ",\"children\":[";
                                 for (size_t i = 0; i < node.children.size(); ++i)
                                 {
@@ -65466,7 +66011,25 @@ namespace scratchbird
                                 out << indent << "<node type=\"" << escape_xml(node.node_type)
                                     << "\" rows=\"" << node.estimated_rows
                                     << "\" startup_cost=\"" << node.startup_cost
-                                    << "\" total_cost=\"" << node.total_cost << "\"";
+                                    << "\" total_cost=\"" << node.total_cost
+                                    << "\" actuals_available=\""
+                                    << (node.actuals_available ? "true" : "false")
+                                    << "\"";
+                                if (node.actuals_available)
+                                {
+                                    out << " actual_rows=\"" << node.actual_rows
+                                        << "\" rows_examined=\""
+                                        << node.rows_examined
+                                        << "\" rows_filtered=\""
+                                        << node.rows_filtered
+                                        << "\" loop_count=\""
+                                        << node.loop_count
+                                        << "\" startup_time_us=\""
+                                        << node.startup_time_us
+                                        << "\" execution_time_us=\""
+                                        << node.execution_time_us
+                                        << "\"";
+                                }
                                 if (!node.table_path.empty())
                                 {
                                     out << " table_path=\"" << escape_xml(node.table_path) << "\"";
@@ -65631,6 +66194,24 @@ namespace scratchbird
                                 out << indent << "estimated_rows: " << node.estimated_rows << "\n"
                                     << indent << "startup_cost: " << node.startup_cost << "\n"
                                     << indent << "total_cost: " << node.total_cost << "\n";
+                                out << indent << "actuals_available: "
+                                    << (node.actuals_available ? "true" : "false")
+                                    << "\n";
+                                if (node.actuals_available)
+                                {
+                                    out << indent << "actual_rows: "
+                                        << node.actual_rows << "\n"
+                                        << indent << "rows_examined: "
+                                        << node.rows_examined << "\n"
+                                        << indent << "rows_filtered: "
+                                        << node.rows_filtered << "\n"
+                                        << indent << "loop_count: "
+                                        << node.loop_count << "\n"
+                                        << indent << "startup_time_us: "
+                                        << node.startup_time_us << "\n"
+                                        << indent << "execution_time_us: "
+                                        << node.execution_time_us << "\n";
+                                }
                                 if (!node.children.empty())
                                 {
                                     out << indent << "children:\n";
@@ -65912,6 +66493,18 @@ namespace scratchbird
                                              << relation.parallel_rejection_reason;
                                     }
                                 }
+                                if (relation.actual_rows > 0 ||
+                                    relation.rows_examined > 0 ||
+                                    relation.rows_filtered > 0 ||
+                                    relation.loop_count > 0)
+                                {
+                                    line << " actual_rows=" << relation.actual_rows
+                                         << " rows_examined="
+                                         << relation.rows_examined
+                                         << " rows_filtered="
+                                         << relation.rows_filtered
+                                         << " loops=" << relation.loop_count;
+                                }
                                 return line.str();
                             };
 
@@ -66000,6 +66593,74 @@ namespace scratchbird
                                         line << " parallel_reason="
                                              << step.parallel_rejection_reason;
                                     }
+                                }
+                                if (step.actual_rows > 0 ||
+                                    step.rows_examined > 0 ||
+                                    step.rows_filtered > 0 ||
+                                    step.loop_count > 0)
+                                {
+                                    line << " actual_rows=" << step.actual_rows
+                                         << " rows_examined="
+                                         << step.rows_examined
+                                         << " rows_filtered="
+                                         << step.rows_filtered
+                                         << " loops=" << step.loop_count;
+                                }
+                                return line.str();
+                            };
+
+                        auto formatAdvisorSignalLine =
+                            [](const optimizer::RuntimePlanAdvisorSignal& signal) {
+                                std::ostringstream line;
+                                line << signal.signal_name
+                                     << " severity=" << signal.severity
+                                     << " provenance=" << signal.provenance_source;
+                                if (!signal.detail.empty())
+                                {
+                                    line << " detail=" << signal.detail;
+                                }
+                                return line.str();
+                            };
+
+                        auto formatAdvisorRecommendationLine =
+                            [](const optimizer::RuntimePlanAdvisorRecommendation& rec) {
+                                std::ostringstream line;
+                                line << "#" << rec.rank
+                                     << " type=" << rec.recommendation_type
+                                     << " table=" << rec.table_name
+                                     << " index=" << rec.index_name
+                                     << " provenance=" << rec.provenance_source
+                                     << " fingerprint=" << rec.query_fingerprint
+                                     << " net_benefit=" << rec.net_benefit
+                                     << " priority=" << rec.priority
+                                     << " confidence=" << rec.confidence;
+                                if (!rec.column_names.empty())
+                                {
+                                    line << " columns=";
+                                    for (size_t i = 0; i < rec.column_names.size(); ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            line << ",";
+                                        }
+                                        line << rec.column_names[i];
+                                    }
+                                }
+                                if (!rec.signal_names.empty())
+                                {
+                                    line << " signals=";
+                                    for (size_t i = 0; i < rec.signal_names.size(); ++i)
+                                    {
+                                        if (i > 0)
+                                        {
+                                            line << ",";
+                                        }
+                                        line << rec.signal_names[i];
+                                    }
+                                }
+                                if (!rec.reason.empty())
+                                {
+                                    line << " reason=" << rec.reason;
                                 }
                                 return line.str();
                             };
@@ -66111,6 +66772,106 @@ namespace scratchbird
                                         << ",\"source\":\"" << escape_json(entry.source) << "\""
                                         << ",\"enforced\":"
                                         << (entry.enforced ? "true" : "false")
+                                        << "}";
+                                }
+                                out << "]";
+                            };
+
+                        auto appendAdvisorSignalsJson =
+                            [&](const std::vector<optimizer::RuntimePlanAdvisorSignal>& entries,
+                                std::ostringstream& out) {
+                                out << "[";
+                                for (size_t i = 0; i < entries.size(); ++i)
+                                {
+                                    if (i > 0)
+                                    {
+                                        out << ",";
+                                    }
+                                    const auto& entry = entries[i];
+                                    out << "{"
+                                        << "\"signal_name\":\""
+                                        << escape_json(entry.signal_name) << "\""
+                                        << ",\"severity\":\""
+                                        << escape_json(entry.severity) << "\""
+                                        << ",\"provenance_source\":\""
+                                        << escape_json(entry.provenance_source) << "\""
+                                        << ",\"detail\":\""
+                                        << escape_json(entry.detail) << "\""
+                                        << "}";
+                                }
+                                out << "]";
+                            };
+
+                        auto appendAdvisorRecommendationsJson =
+                            [&](const std::vector<optimizer::RuntimePlanAdvisorRecommendation>& entries,
+                                std::ostringstream& out) {
+                                out << "[";
+                                for (size_t i = 0; i < entries.size(); ++i)
+                                {
+                                    if (i > 0)
+                                    {
+                                        out << ",";
+                                    }
+                                    const auto& entry = entries[i];
+                                    out << "{"
+                                        << "\"rank\":" << entry.rank
+                                        << ",\"recommendation_type\":\""
+                                        << escape_json(entry.recommendation_type)
+                                        << "\""
+                                        << ",\"table_name\":\""
+                                        << escape_json(entry.table_name) << "\""
+                                        << ",\"index_name\":\""
+                                        << escape_json(entry.index_name) << "\""
+                                        << ",\"column_names\":[";
+                                    for (size_t j = 0; j < entry.column_names.size(); ++j)
+                                    {
+                                        if (j > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(entry.column_names[j])
+                                            << "\"";
+                                    }
+                                    out << "]"
+                                        << ",\"create_sql\":\""
+                                        << escape_json(entry.create_sql) << "\""
+                                        << ",\"drop_sql\":\""
+                                        << escape_json(entry.drop_sql) << "\""
+                                        << ",\"reason\":\""
+                                        << escape_json(entry.reason) << "\""
+                                        << ",\"provenance_source\":\""
+                                        << escape_json(entry.provenance_source) << "\""
+                                        << ",\"query_fingerprint\":\""
+                                        << escape_json(entry.query_fingerprint) << "\""
+                                        << ",\"signal_names\":[";
+                                    for (size_t j = 0; j < entry.signal_names.size(); ++j)
+                                    {
+                                        if (j > 0)
+                                        {
+                                            out << ",";
+                                        }
+                                        out << "\""
+                                            << escape_json(entry.signal_names[j])
+                                            << "\"";
+                                    }
+                                    out << "]"
+                                        << ",\"benefit_score\":"
+                                        << entry.benefit_score
+                                        << ",\"cost_score\":"
+                                        << entry.cost_score
+                                        << ",\"net_benefit\":"
+                                        << entry.net_benefit
+                                        << ",\"affected_queries\":"
+                                        << entry.affected_queries
+                                        << ",\"estimated_size_mb\":"
+                                        << entry.estimated_size_mb
+                                        << ",\"estimated_speedup\":"
+                                        << entry.estimated_speedup
+                                        << ",\"priority\":"
+                                        << entry.priority
+                                        << ",\"confidence\":"
+                                        << entry.confidence
                                         << "}";
                                 }
                                 out << "]";
@@ -66322,6 +67083,14 @@ namespace scratchbird
                                             << "}";
                                     }
                                     out << "]"
+                                        << ",\"actual_rows\":"
+                                        << entry.actual_rows
+                                        << ",\"rows_examined\":"
+                                        << entry.rows_examined
+                                        << ",\"rows_filtered\":"
+                                        << entry.rows_filtered
+                                        << ",\"loop_count\":"
+                                        << entry.loop_count
                                         << ",\"parallel_eligible\":"
                                         << (entry.parallel_eligible ? "true"
                                                                     : "false")
@@ -66487,6 +67256,14 @@ namespace scratchbird
                                             << "\"";
                                     }
                                     out << "]"
+                                        << ",\"actual_rows\":"
+                                        << entry.actual_rows
+                                        << ",\"rows_examined\":"
+                                        << entry.rows_examined
+                                        << ",\"rows_filtered\":"
+                                        << entry.rows_filtered
+                                        << ",\"loop_count\":"
+                                        << entry.loop_count
                                         << ",\"parallel_eligible\":"
                                         << (entry.parallel_eligible ? "true"
                                                                     : "false")
@@ -66601,6 +67378,87 @@ namespace scratchbird
                                 out << "</optimizer_controls>";
                             };
 
+                        auto appendAdvisorSignalsXml =
+                            [&](const std::vector<optimizer::RuntimePlanAdvisorSignal>& entries,
+                                std::ostringstream& out) {
+                                out << "<advisor_signals>";
+                                for (const auto& entry : entries)
+                                {
+                                    out << "<signal name=\""
+                                        << escape_xml(entry.signal_name)
+                                        << "\" severity=\""
+                                        << escape_xml(entry.severity)
+                                        << "\" provenance_source=\""
+                                        << escape_xml(entry.provenance_source)
+                                        << "\">"
+                                        << escape_xml(entry.detail)
+                                        << "</signal>";
+                                }
+                                out << "</advisor_signals>";
+                            };
+
+                        auto appendAdvisorRecommendationsXml =
+                            [&](const std::vector<optimizer::RuntimePlanAdvisorRecommendation>& entries,
+                                std::ostringstream& out) {
+                                out << "<advisor_recommendations>";
+                                for (const auto& entry : entries)
+                                {
+                                    out << "<recommendation rank=\"" << entry.rank
+                                        << "\" type=\""
+                                        << escape_xml(entry.recommendation_type)
+                                        << "\" table_name=\""
+                                        << escape_xml(entry.table_name)
+                                        << "\" index_name=\""
+                                        << escape_xml(entry.index_name)
+                                        << "\" provenance_source=\""
+                                        << escape_xml(entry.provenance_source)
+                                        << "\" query_fingerprint=\""
+                                        << escape_xml(entry.query_fingerprint)
+                                        << "\" benefit_score=\""
+                                        << entry.benefit_score
+                                        << "\" cost_score=\""
+                                        << entry.cost_score
+                                        << "\" net_benefit=\""
+                                        << entry.net_benefit
+                                        << "\" affected_queries=\""
+                                        << entry.affected_queries
+                                        << "\" estimated_size_mb=\""
+                                        << entry.estimated_size_mb
+                                        << "\" estimated_speedup=\""
+                                        << entry.estimated_speedup
+                                        << "\" priority=\""
+                                        << entry.priority
+                                        << "\" confidence=\""
+                                        << entry.confidence << "\">";
+                                    out << "<column_names>";
+                                    for (const auto& column_name : entry.column_names)
+                                    {
+                                        out << "<column>"
+                                            << escape_xml(column_name)
+                                            << "</column>";
+                                    }
+                                    out << "</column_names>";
+                                    out << "<signal_names>";
+                                    for (const auto& signal_name : entry.signal_names)
+                                    {
+                                        out << "<signal_name>"
+                                            << escape_xml(signal_name)
+                                            << "</signal_name>";
+                                    }
+                                    out << "</signal_names>";
+                                    out << "<reason>" << escape_xml(entry.reason)
+                                        << "</reason>";
+                                    out << "<create_sql>"
+                                        << escape_xml(entry.create_sql)
+                                        << "</create_sql>";
+                                    out << "<drop_sql>"
+                                        << escape_xml(entry.drop_sql)
+                                        << "</drop_sql>";
+                                    out << "</recommendation>";
+                                }
+                                out << "</advisor_recommendations>";
+                            };
+
                         auto appendTraceYaml =
                             [&](const char* section_name,
                                 const std::vector<optimizer::RuntimePlanTraceEntry>& entries,
@@ -66686,6 +67544,81 @@ namespace scratchbird
                                 }
                             };
 
+                        auto appendAdvisorSignalsYaml =
+                            [&](const std::vector<optimizer::RuntimePlanAdvisorSignal>& entries,
+                                std::ostringstream& out) {
+                                out << "advisor_signals:\n";
+                                for (const auto& entry : entries)
+                                {
+                                    out << "  - signal_name: \""
+                                        << escape_json(entry.signal_name) << "\"\n"
+                                        << "    severity: \""
+                                        << escape_json(entry.severity) << "\"\n"
+                                        << "    provenance_source: \""
+                                        << escape_json(entry.provenance_source)
+                                        << "\"\n"
+                                        << "    detail: \""
+                                        << escape_json(entry.detail) << "\"\n";
+                                }
+                            };
+
+                        auto appendAdvisorRecommendationsYaml =
+                            [&](const std::vector<optimizer::RuntimePlanAdvisorRecommendation>& entries,
+                                std::ostringstream& out) {
+                                out << "advisor_recommendations:\n";
+                                for (const auto& entry : entries)
+                                {
+                                    out << "  - rank: " << entry.rank << "\n"
+                                        << "    recommendation_type: \""
+                                        << escape_json(entry.recommendation_type)
+                                        << "\"\n"
+                                        << "    table_name: \""
+                                        << escape_json(entry.table_name) << "\"\n"
+                                        << "    index_name: \""
+                                        << escape_json(entry.index_name) << "\"\n"
+                                        << "    provenance_source: \""
+                                        << escape_json(entry.provenance_source)
+                                        << "\"\n"
+                                        << "    query_fingerprint: \""
+                                        << escape_json(entry.query_fingerprint)
+                                        << "\"\n"
+                                        << "    column_names:\n";
+                                    for (const auto& column_name : entry.column_names)
+                                    {
+                                        out << "      - \"" << escape_json(column_name)
+                                            << "\"\n";
+                                    }
+                                    out << "    signal_names:\n";
+                                    for (const auto& signal_name : entry.signal_names)
+                                    {
+                                        out << "      - \"" << escape_json(signal_name)
+                                            << "\"\n";
+                                    }
+                                    out << "    reason: \""
+                                        << escape_json(entry.reason) << "\"\n"
+                                        << "    create_sql: \""
+                                        << escape_json(entry.create_sql) << "\"\n"
+                                        << "    drop_sql: \""
+                                        << escape_json(entry.drop_sql) << "\"\n"
+                                        << "    benefit_score: "
+                                        << entry.benefit_score << "\n"
+                                        << "    cost_score: "
+                                        << entry.cost_score << "\n"
+                                        << "    net_benefit: "
+                                        << entry.net_benefit << "\n"
+                                        << "    affected_queries: "
+                                        << entry.affected_queries << "\n"
+                                        << "    estimated_size_mb: "
+                                        << entry.estimated_size_mb << "\n"
+                                        << "    estimated_speedup: "
+                                        << entry.estimated_speedup << "\n"
+                                        << "    priority: "
+                                        << entry.priority << "\n"
+                                        << "    confidence: "
+                                        << entry.confidence << "\n";
+                                }
+                            };
+
                         std::vector<std::string> plan_lines;
                         std::string plan_hash;
                         optimizer::RuntimePlan runtime_plan;
@@ -66742,6 +67675,7 @@ namespace scratchbird
                         int64_t analyzed_rows = 0;
                         if (analyze)
                         {
+                            observed_runtime_plan_for_analyze.reset();
                             auto query_result = execStmt(query_inst);
                             if (!query_result.success())
                             {
@@ -66755,6 +67689,20 @@ namespace scratchbird
                             else
                             {
                                 analyzed_rows = last_affected_rows_;
+                            }
+                            if (has_runtime_plan &&
+                                observed_runtime_plan_for_analyze.has_value() &&
+                                observed_runtime_plan_for_analyze->plan_hash ==
+                                    runtime_plan.plan_hash)
+                            {
+                                runtime_plan = *observed_runtime_plan_for_analyze;
+                                analyzed_rows = static_cast<int64_t>(
+                                    runtime_plan.root.actual_rows);
+                                if (!runtime_plan.root.node_type.empty())
+                                {
+                                    plan_lines.clear();
+                                    appendPlanLines(runtime_plan.root, 0, plan_lines);
+                                }
                             }
                         }
 
@@ -66904,6 +67852,27 @@ namespace scratchbird
                                                                formatAdaptiveFeedbackLine(
                                                                    runtime_plan.adaptive_feedback))});
                             }
+                            if (has_runtime_plan && !runtime_plan.advisor_signals.empty())
+                            {
+                                rs->addRow({Value::makeVarchar("Advisor Signals:")});
+                                for (const auto& entry : runtime_plan.advisor_signals)
+                                {
+                                    rs->addRow({Value::makeVarchar(
+                                        "  " + formatAdvisorSignalLine(entry))});
+                                }
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.advisor_recommendations.empty())
+                            {
+                                rs->addRow(
+                                    {Value::makeVarchar("Advisor Recommendations:")});
+                                for (const auto& entry :
+                                     runtime_plan.advisor_recommendations)
+                                {
+                                    rs->addRow({Value::makeVarchar(
+                                        "  " + formatAdvisorRecommendationLine(entry))});
+                                }
+                            }
                             if (analyze)
                             {
                                 rs->addRow({Value::makeVarchar("Actual Rows: " +
@@ -66985,6 +67954,13 @@ namespace scratchbird
                                 formatted << ",\"adaptive_feedback\":";
                                 appendAdaptiveFeedbackJson(runtime_plan.adaptive_feedback,
                                                           formatted);
+                                formatted << ",\"advisor_signals\":";
+                                appendAdvisorSignalsJson(runtime_plan.advisor_signals,
+                                                        formatted);
+                                formatted << ",\"advisor_recommendations\":";
+                                appendAdvisorRecommendationsJson(
+                                    runtime_plan.advisor_recommendations,
+                                    formatted);
                                 formatted << "}";
                             }
                             if (analyze)
@@ -67047,6 +68023,11 @@ namespace scratchbird
                                                formatted);
                                 appendAdaptiveFeedbackXml(runtime_plan.adaptive_feedback,
                                                          formatted);
+                                appendAdvisorSignalsXml(runtime_plan.advisor_signals,
+                                                       formatted);
+                                appendAdvisorRecommendationsXml(
+                                    runtime_plan.advisor_recommendations,
+                                    formatted);
                                 formatted << "</optimizer_trace>";
                             }
                             if (analyze)
@@ -67106,6 +68087,11 @@ namespace scratchbird
                                                 formatted);
                                 appendAdaptiveFeedbackYaml(runtime_plan.adaptive_feedback,
                                                           formatted);
+                                appendAdvisorSignalsYaml(runtime_plan.advisor_signals,
+                                                        formatted);
+                                appendAdvisorRecommendationsYaml(
+                                    runtime_plan.advisor_recommendations,
+                                    formatted);
                             }
                             if (analyze)
                             {

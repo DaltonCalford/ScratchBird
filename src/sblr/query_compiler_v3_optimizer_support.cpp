@@ -3,6 +3,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/optimizer/index_advisor.h"
 #include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/query_profiler.h"
 #include "scratchbird/optimizer/query_planner.h"
@@ -1205,6 +1206,187 @@ namespace scratchbird::sblr::detail
             }
         }
 
+        auto indexRecommendationTypeName(
+            optimizer::IndexRecommendationType type) -> std::string
+        {
+            using optimizer::IndexRecommendationType;
+            switch (type)
+            {
+                case IndexRecommendationType::CREATE_BTREE:
+                    return "CREATE_BTREE";
+                case IndexRecommendationType::CREATE_HASH:
+                    return "CREATE_HASH";
+                case IndexRecommendationType::CREATE_LSM:
+                    return "CREATE_LSM";
+                case IndexRecommendationType::CREATE_COMPOSITE:
+                    return "CREATE_COMPOSITE";
+                case IndexRecommendationType::CREATE_PARTIAL:
+                    return "CREATE_PARTIAL";
+                case IndexRecommendationType::DROP_UNUSED:
+                    return "DROP_UNUSED";
+                case IndexRecommendationType::REINDEX:
+                    return "REINDEX";
+            }
+            return "UNKNOWN";
+        }
+
+        auto planHasSpillSignal(const optimizer::RuntimePlanNode &node) -> bool
+        {
+            if (node.spill_expected)
+            {
+                return true;
+            }
+            for (const auto &child : node.children)
+            {
+                if (planHasSpillSignal(child))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        auto appendAdvisorSignal(optimizer::RuntimePlan &plan,
+                                 std::string signal_name,
+                                 std::string severity,
+                                 std::string provenance_source,
+                                 std::string detail) -> void
+        {
+            for (const auto &existing : plan.advisor_signals)
+            {
+                if (existing.signal_name == signal_name &&
+                    existing.detail == detail)
+                {
+                    return;
+                }
+            }
+            plan.advisor_signals.push_back(
+                optimizer::RuntimePlanAdvisorSignal{
+                    std::move(signal_name),
+                    std::move(severity),
+                    std::move(provenance_source),
+                    std::move(detail)});
+        }
+
+        auto annotateAdvisorFeedback(core::Database *db,
+                                     const std::string &sql,
+                                     std::string_view query_fingerprint,
+                                     optimizer::RuntimePlan &plan) -> void
+        {
+            plan.advisor_signals.clear();
+            plan.advisor_recommendations.clear();
+
+            if (db == nullptr || sql.empty())
+            {
+                return;
+            }
+
+            size_t seq_scan_count = 0;
+            for (const auto &relation : plan.relations)
+            {
+                if (relation.scan_kind == "SEQ_SCAN")
+                {
+                    ++seq_scan_count;
+                }
+            }
+            if (seq_scan_count > 0)
+            {
+                appendAdvisorSignal(
+                    plan,
+                    "SEQ_SCAN",
+                    seq_scan_count > 1 ? "HIGH" : "MEDIUM",
+                    "PLANNER_ACCESS_PATH",
+                    "sequential scan selected for " +
+                        std::to_string(seq_scan_count) + " relation(s)");
+            }
+
+            if (planHasSpillSignal(plan.root))
+            {
+                appendAdvisorSignal(plan,
+                                    "SPILL_RISK",
+                                    "HIGH",
+                                    "PLANNER_RESOURCE_MODEL",
+                                    "spill expected on chosen operator path");
+            }
+
+            const auto feedback =
+                optimizer::QueryProfiler::getInstance().latestCardinalityFeedback(
+                    plan.query_feedback_key);
+            if (feedback.has_value() &&
+                feedback->available &&
+                feedback->estimation_error_ratio > 1.0)
+            {
+                std::ostringstream detail;
+                detail << "estimated_rows=" << feedback->last_estimated_rows
+                       << ", actual_rows=" << feedback->last_actual_rows
+                       << ", error_ratio=" << feedback->estimation_error_ratio;
+                appendAdvisorSignal(plan,
+                                    "MIS_ESTIMATE",
+                                    feedback->replan_required ? "HIGH" : "MEDIUM",
+                                    "ADAPTIVE_CARDINALITY_FEEDBACK",
+                                    detail.str());
+            }
+
+            optimizer::IndexAdvisor advisor(db);
+            std::vector<optimizer::IndexRecommendation> recommendations;
+            core::ErrorContext local_ctx;
+            if (advisor.suggestIndexesForQuery(sql, &recommendations, &local_ctx) !=
+                core::Status::OK)
+            {
+                return;
+            }
+
+            const std::vector<std::string> signal_names = [&]() {
+                std::vector<std::string> names;
+                names.reserve(plan.advisor_signals.size());
+                for (const auto &signal : plan.advisor_signals)
+                {
+                    names.push_back(signal.signal_name);
+                }
+                return names;
+            }();
+
+            plan.advisor_recommendations.reserve(recommendations.size());
+            for (size_t index = 0; index < recommendations.size(); ++index)
+            {
+                const auto &rec = recommendations[index];
+                plan.advisor_recommendations.push_back(
+                    optimizer::RuntimePlanAdvisorRecommendation{
+                        static_cast<uint32_t>(index + 1),
+                        indexRecommendationTypeName(rec.type),
+                        rec.table_name,
+                        rec.index_name,
+                        rec.column_names,
+                        rec.create_sql,
+                        rec.drop_sql,
+                        rec.reason,
+                        "INDEX_ADVISOR",
+                        std::string(query_fingerprint),
+                        signal_names,
+                        rec.benefit_score,
+                        rec.cost_score,
+                        rec.net_benefit,
+                        rec.affected_queries,
+                        rec.estimated_size_mb,
+                        rec.estimated_speedup,
+                        rec.priority,
+                        rec.confidence});
+            }
+
+            if (!plan.advisor_signals.empty() || !plan.advisor_recommendations.empty())
+            {
+                std::ostringstream detail;
+                detail << "signals=" << plan.advisor_signals.size()
+                       << ", recommendations="
+                       << plan.advisor_recommendations.size();
+                plan.statistics_provenance.push_back(
+                    optimizer::RuntimePlanStatisticsProvenance{
+                        "query",
+                        "ADVISOR_FEEDBACK",
+                        detail.str()});
+            }
+        }
+
         auto refreshAdaptiveStatistics(core::Database *db,
                                        const optimizer::RuntimePlan &plan,
                                        std::vector<std::string> &warnings) -> bool
@@ -1369,6 +1551,11 @@ namespace scratchbird::sblr::detail
                                          variant_out.stats_snapshot_signature,
                                          variant_out.cost_profile_id,
                                          variant_out.policy_snapshot_id);
+            annotateAdvisorFeedback(
+                db,
+                sql,
+                optimizer::QueryProfiler::getInstance().fingerprintQuery(sql),
+                variant_out.runtime_plan);
             variant_out.chooser_candidate =
                 buildReusablePlanCandidate(variant_out.runtime_plan,
                                            db != nullptr ? db->page_size() : 16384);

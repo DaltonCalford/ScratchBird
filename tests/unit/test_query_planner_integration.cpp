@@ -188,6 +188,20 @@ namespace
                 snapshot["optimizer_trace"]["statistics_provenance_count"] =
                     provenance_it->size();
             }
+            const auto signals_it = trace_it->find("advisor_signals");
+            if (signals_it != trace_it->end() && signals_it->is_array())
+            {
+                snapshot["optimizer_trace"]["advisor_signal_count"] =
+                    signals_it->size();
+            }
+            const auto recommendations_it =
+                trace_it->find("advisor_recommendations");
+            if (recommendations_it != trace_it->end() &&
+                recommendations_it->is_array())
+            {
+                snapshot["optimizer_trace"]["advisor_recommendation_count"] =
+                    recommendations_it->size();
+            }
         }
 
         const auto plan_root_it = explain_json.find("plan_root");
@@ -199,6 +213,10 @@ namespace
                 plan_root_it->value("join_type", "");
             snapshot["plan_root"]["estimated_rows"] =
                 plan_root_it->value("estimated_rows", 0u);
+            snapshot["plan_root"]["actuals_available"] =
+                plan_root_it->value("actuals_available", false);
+            snapshot["plan_root"]["actual_rows"] =
+                plan_root_it->value("actual_rows", 0u);
             snapshot["plan_root"]["spill_expected"] =
                 plan_root_it->value("spill_expected", false);
         }
@@ -2048,6 +2066,145 @@ TEST_F(QueryPlannerIntegrationTest, ExplainJsonFormatsRuntimePlan)
     EXPECT_NE(lines.front().find("\"statistics_provenance\":"), std::string::npos);
     EXPECT_NE(lines.front().find("\"adaptive_feedback\":"), std::string::npos);
     EXPECT_NE(lines.front().find("\"analyze\":{\"rows\":"), std::string::npos);
+}
+
+TEST_F(QueryPlannerIntegrationTest, ExplainAnalyzeJsonPublishesPerNodeActuals)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES "
+                    "(1, 'alice', 'a@example.com', 26)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES "
+                    "(2, 'bob', 'b@example.com', 31)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES "
+                    "(3, 'carol', 'c@example.com', 26)")
+                    .success());
+
+    auto result = executeSQL("EXPLAIN (FORMAT JSON, ANALYZE, VERBOSE) "
+                             "SELECT id FROM users WHERE age = 26 "
+                             "ORDER BY name LIMIT 1");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    const auto lines = resultStrings(result);
+    ASSERT_EQ(lines.size(), 1u);
+    const auto parsed = nlohmann::json::parse(lines.front());
+
+    ASSERT_TRUE(parsed.contains("plan_root"));
+    const auto& plan_root = parsed.at("plan_root");
+    EXPECT_TRUE(plan_root.at("actuals_available").get<bool>());
+    EXPECT_TRUE(plan_root.contains("actual_rows"));
+    EXPECT_TRUE(plan_root.contains("rows_examined"));
+    EXPECT_TRUE(plan_root.contains("rows_filtered"));
+    EXPECT_TRUE(plan_root.contains("loop_count"));
+
+    std::function<const nlohmann::json*(const nlohmann::json&)> find_scan_node;
+    find_scan_node = [&](const nlohmann::json& node) -> const nlohmann::json* {
+        const std::string node_type = node.value("node_type", "");
+        if (node_type == "SeqScan" || node_type == "IndexScan" ||
+            node_type == "IndexOnlyScan" || node_type == "BitmapIndexScan")
+        {
+            return &node;
+        }
+        const auto children_it = node.find("children");
+        if (children_it == node.end() || !children_it->is_array())
+        {
+            return nullptr;
+        }
+        for (const auto& child : *children_it)
+        {
+            if (const auto* match = find_scan_node(child))
+            {
+                return match;
+            }
+        }
+        return nullptr;
+    };
+
+    const auto* scan_node = find_scan_node(plan_root);
+    ASSERT_NE(scan_node, nullptr);
+    EXPECT_TRUE(scan_node->at("actuals_available").get<bool>());
+    EXPECT_TRUE(scan_node->contains("actual_rows"));
+    EXPECT_TRUE(scan_node->contains("rows_examined"));
+    EXPECT_TRUE(scan_node->contains("rows_filtered"));
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       ExplainAnalyzeJsonPublishesAdvisorRecommendationsWithProvenance)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES "
+                    "(1, 'alice', 'a@example.com', 26)")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES "
+                    "(2, 'bob', 'b@example.com', 31)")
+                    .success());
+
+    auto result = executeSQL("EXPLAIN (FORMAT JSON, ANALYZE, VERBOSE) "
+                             "SELECT u.id FROM users u "
+                             "WHERE u.age = 26 ORDER BY u.name");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    const auto lines = resultStrings(result);
+    ASSERT_EQ(lines.size(), 1u);
+    const auto parsed = nlohmann::json::parse(lines.front());
+
+    ASSERT_TRUE(parsed.contains("optimizer_trace"));
+    const auto& optimizer_trace = parsed.at("optimizer_trace");
+    ASSERT_TRUE(optimizer_trace.contains("advisor_signals"));
+    ASSERT_TRUE(optimizer_trace.contains("advisor_recommendations"));
+    ASSERT_TRUE(optimizer_trace.at("advisor_signals").is_array());
+    ASSERT_TRUE(optimizer_trace.at("advisor_recommendations").is_array());
+    EXPECT_FALSE(optimizer_trace.at("advisor_signals").empty());
+    EXPECT_FALSE(optimizer_trace.at("advisor_recommendations").empty());
+
+    const auto& recommendation =
+        optimizer_trace.at("advisor_recommendations").front();
+    EXPECT_EQ(recommendation.at("rank").get<uint32_t>(), 1u);
+    EXPECT_FALSE(recommendation.at("recommendation_type").get<std::string>().empty());
+    EXPECT_FALSE(recommendation.at("provenance_source").get<std::string>().empty());
+    EXPECT_FALSE(recommendation.at("query_fingerprint").get<std::string>().empty());
+    ASSERT_TRUE(recommendation.at("signal_names").is_array());
+
+    ASSERT_TRUE(optimizer_trace.contains("statistics_provenance"));
+    const auto& statistics_provenance =
+        optimizer_trace.at("statistics_provenance");
+    const auto advisor_stats_it = std::find_if(
+        statistics_provenance.begin(),
+        statistics_provenance.end(),
+        [](const auto& entry) {
+            return entry.value("source", std::string()) == "ADVISOR_FEEDBACK";
+        });
+    EXPECT_NE(advisor_stats_it, statistics_provenance.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest, CompiledRuntimePlanCarriesAdvisorRecommendations)
+{
+    ASSERT_TRUE(createDatabase());
+
+    auto bytecode = compileSQL(
+        "SELECT u.id FROM users u WHERE u.age = 26 ORDER BY u.name");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    EXPECT_FALSE(plan.advisor_signals.empty());
+    EXPECT_FALSE(plan.advisor_recommendations.empty());
+    ASSERT_FALSE(plan.advisor_recommendations.empty());
+    const auto& recommendation = plan.advisor_recommendations.front();
+    EXPECT_EQ(recommendation.rank, 1u);
+    EXPECT_FALSE(recommendation.recommendation_type.empty());
+    EXPECT_EQ(recommendation.provenance_source, "INDEX_ADVISOR");
+    EXPECT_FALSE(recommendation.query_fingerprint.empty());
 }
 
 TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesFormulaProfileAndExpandedCostTerms)

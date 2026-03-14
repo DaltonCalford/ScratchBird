@@ -8,8 +8,8 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 6;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v6";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 7;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v7";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -73,6 +73,10 @@ namespace scratchbird::optimizer
         double startup_cost = 0.0;
         double total_cost = 0.0;
         uint64_t estimated_rows = 0;
+        uint64_t actual_rows = 0;
+        uint64_t rows_examined = 0;
+        uint64_t rows_filtered = 0;
+        uint64_t loop_count = 0;
     };
 
     struct RuntimePlanHashKey
@@ -173,6 +177,10 @@ namespace scratchbird::optimizer
         uint32_t parallel_workers_planned = 0;
         std::string parallel_stage;
         std::string parallel_rejection_reason;
+        uint64_t actual_rows = 0;
+        uint64_t rows_examined = 0;
+        uint64_t rows_filtered = 0;
+        uint64_t loop_count = 0;
     };
 
     struct RuntimePlanTraceEntry
@@ -225,6 +233,37 @@ namespace scratchbird::optimizer
         bool enforced = true;
     };
 
+    struct RuntimePlanAdvisorSignal
+    {
+        std::string signal_name;
+        std::string severity;
+        std::string provenance_source;
+        std::string detail;
+    };
+
+    struct RuntimePlanAdvisorRecommendation
+    {
+        uint32_t rank = 0;
+        std::string recommendation_type;
+        std::string table_name;
+        std::string index_name;
+        std::vector<std::string> column_names;
+        std::string create_sql;
+        std::string drop_sql;
+        std::string reason;
+        std::string provenance_source;
+        std::string query_fingerprint;
+        std::vector<std::string> signal_names;
+        double benefit_score = 0.0;
+        double cost_score = 0.0;
+        double net_benefit = 0.0;
+        uint64_t affected_queries = 0;
+        double estimated_size_mb = 0.0;
+        double estimated_speedup = 0.0;
+        double priority = 0.0;
+        double confidence = 0.0;
+    };
+
     struct RuntimePlanCostInputEstimate
     {
         std::string name;
@@ -259,6 +298,13 @@ namespace scratchbird::optimizer
         double startup_cost = 0.0;
         double total_cost = 0.0;
         uint64_t estimated_rows = 0;
+        bool actuals_available = false;
+        uint64_t actual_rows = 0;
+        uint64_t rows_examined = 0;
+        uint64_t rows_filtered = 0;
+        uint64_t loop_count = 0;
+        uint64_t startup_time_us = 0;
+        uint64_t execution_time_us = 0;
         uint64_t estimated_memory_bytes = 0;
         uint64_t memory_budget_bytes = 0;
         bool spill_expected = false;
@@ -298,6 +344,8 @@ namespace scratchbird::optimizer
         std::vector<RuntimePlanStatisticsProvenance> statistics_provenance;
         RuntimePlanAdaptiveFeedback adaptive_feedback;
         std::vector<RuntimePlanControlEntry> optimizer_controls;
+        std::vector<RuntimePlanAdvisorSignal> advisor_signals;
+        std::vector<RuntimePlanAdvisorRecommendation> advisor_recommendations;
     };
 
     auto encodeRuntimePlan(const RuntimePlan &plan,

@@ -57,6 +57,10 @@ namespace scratchbird::optimizer
             out["startup_cost"] = relation.startup_cost;
             out["total_cost"] = relation.total_cost;
             out["estimated_rows"] = relation.estimated_rows;
+            out["actual_rows"] = relation.actual_rows;
+            out["rows_examined"] = relation.rows_examined;
+            out["rows_filtered"] = relation.rows_filtered;
+            out["loop_count"] = relation.loop_count;
 
             nlohmann::json predicate;
             predicate["valid"] = relation.index_predicate.valid;
@@ -270,6 +274,10 @@ namespace scratchbird::optimizer
             relation_out.startup_cost = json_in.value("startup_cost", 0.0);
             relation_out.total_cost = json_in.value("total_cost", 0.0);
             relation_out.estimated_rows = json_in.value("estimated_rows", 0ULL);
+            relation_out.actual_rows = json_in.value("actual_rows", 0ULL);
+            relation_out.rows_examined = json_in.value("rows_examined", 0ULL);
+            relation_out.rows_filtered = json_in.value("rows_filtered", 0ULL);
+            relation_out.loop_count = json_in.value("loop_count", 0ULL);
 
             const auto predicate_it = json_in.find("index_predicate");
             if (predicate_it != json_in.end() && predicate_it->is_object())
@@ -405,6 +413,10 @@ namespace scratchbird::optimizer
             out["parallel_stage"] = join_step.parallel_stage;
             out["parallel_rejection_reason"] =
                 join_step.parallel_rejection_reason;
+            out["actual_rows"] = join_step.actual_rows;
+            out["rows_examined"] = join_step.rows_examined;
+            out["rows_filtered"] = join_step.rows_filtered;
+            out["loop_count"] = join_step.loop_count;
 
             nlohmann::json left_hash;
             left_hash["qualifier"] = join_step.left_hash_key.qualifier;
@@ -605,6 +617,10 @@ namespace scratchbird::optimizer
                 json_in.value("parallel_stage", std::string());
             join_step_out.parallel_rejection_reason =
                 json_in.value("parallel_rejection_reason", std::string());
+            join_step_out.actual_rows = json_in.value("actual_rows", 0ULL);
+            join_step_out.rows_examined = json_in.value("rows_examined", 0ULL);
+            join_step_out.rows_filtered = json_in.value("rows_filtered", 0ULL);
+            join_step_out.loop_count = json_in.value("loop_count", 0ULL);
 
             const auto using_it = json_in.find("using_columns");
             if (using_it != json_in.end() && using_it->is_array())
@@ -676,6 +692,13 @@ namespace scratchbird::optimizer
             out["startup_cost"] = node.startup_cost;
             out["total_cost"] = node.total_cost;
             out["estimated_rows"] = node.estimated_rows;
+            out["actuals_available"] = node.actuals_available;
+            out["actual_rows"] = node.actual_rows;
+            out["rows_examined"] = node.rows_examined;
+            out["rows_filtered"] = node.rows_filtered;
+            out["loop_count"] = node.loop_count;
+            out["startup_time_us"] = node.startup_time_us;
+            out["execution_time_us"] = node.execution_time_us;
             out["estimated_memory_bytes"] = node.estimated_memory_bytes;
             out["memory_budget_bytes"] = node.memory_budget_bytes;
             out["spill_expected"] = node.spill_expected;
@@ -745,6 +768,15 @@ namespace scratchbird::optimizer
             node_out.startup_cost = json_in.value("startup_cost", 0.0);
             node_out.total_cost = json_in.value("total_cost", 0.0);
             node_out.estimated_rows = json_in.value("estimated_rows", 0ULL);
+            node_out.actuals_available =
+                json_in.value("actuals_available", false);
+            node_out.actual_rows = json_in.value("actual_rows", 0ULL);
+            node_out.rows_examined = json_in.value("rows_examined", 0ULL);
+            node_out.rows_filtered = json_in.value("rows_filtered", 0ULL);
+            node_out.loop_count = json_in.value("loop_count", 0ULL);
+            node_out.startup_time_us = json_in.value("startup_time_us", 0ULL);
+            node_out.execution_time_us =
+                json_in.value("execution_time_us", 0ULL);
             node_out.estimated_memory_bytes =
                 json_in.value("estimated_memory_bytes", 0ULL);
             node_out.memory_budget_bytes =
@@ -989,6 +1021,134 @@ namespace scratchbird::optimizer
             return true;
         }
 
+        auto advisorSignalToJson(const RuntimePlanAdvisorSignal &signal)
+            -> nlohmann::json
+        {
+            nlohmann::json out;
+            out["signal_name"] = signal.signal_name;
+            out["severity"] = signal.severity;
+            out["provenance_source"] = signal.provenance_source;
+            out["detail"] = signal.detail;
+            return out;
+        }
+
+        auto advisorSignalFromJson(const nlohmann::json &json_in,
+                                   RuntimePlanAdvisorSignal &signal_out,
+                                   std::string &error_out) -> bool
+        {
+            if (!json_in.is_object())
+            {
+                error_out = "runtime plan advisor signal must be an object";
+                return false;
+            }
+
+            signal_out.signal_name =
+                json_in.value("signal_name", std::string());
+            signal_out.severity = json_in.value("severity", std::string());
+            signal_out.provenance_source =
+                json_in.value("provenance_source", std::string());
+            signal_out.detail = json_in.value("detail", std::string());
+            return true;
+        }
+
+        auto advisorRecommendationToJson(
+            const RuntimePlanAdvisorRecommendation &recommendation)
+            -> nlohmann::json
+        {
+            nlohmann::json out;
+            out["rank"] = recommendation.rank;
+            out["recommendation_type"] = recommendation.recommendation_type;
+            out["table_name"] = recommendation.table_name;
+            out["index_name"] = recommendation.index_name;
+            out["column_names"] = recommendation.column_names;
+            out["create_sql"] = recommendation.create_sql;
+            out["drop_sql"] = recommendation.drop_sql;
+            out["reason"] = recommendation.reason;
+            out["provenance_source"] = recommendation.provenance_source;
+            out["query_fingerprint"] = recommendation.query_fingerprint;
+            out["signal_names"] = recommendation.signal_names;
+            out["benefit_score"] = recommendation.benefit_score;
+            out["cost_score"] = recommendation.cost_score;
+            out["net_benefit"] = recommendation.net_benefit;
+            out["affected_queries"] = recommendation.affected_queries;
+            out["estimated_size_mb"] = recommendation.estimated_size_mb;
+            out["estimated_speedup"] = recommendation.estimated_speedup;
+            out["priority"] = recommendation.priority;
+            out["confidence"] = recommendation.confidence;
+            return out;
+        }
+
+        auto advisorRecommendationFromJson(
+            const nlohmann::json &json_in,
+            RuntimePlanAdvisorRecommendation &recommendation_out,
+            std::string &error_out) -> bool
+        {
+            if (!json_in.is_object())
+            {
+                error_out =
+                    "runtime plan advisor recommendation must be an object";
+                return false;
+            }
+
+            recommendation_out.rank = json_in.value("rank", 0U);
+            recommendation_out.recommendation_type =
+                json_in.value("recommendation_type", std::string());
+            recommendation_out.table_name =
+                json_in.value("table_name", std::string());
+            recommendation_out.index_name =
+                json_in.value("index_name", std::string());
+            recommendation_out.column_names.clear();
+            const auto column_names_it = json_in.find("column_names");
+            if (column_names_it != json_in.end() && column_names_it->is_array())
+            {
+                for (const auto &entry : *column_names_it)
+                {
+                    if (entry.is_string())
+                    {
+                        recommendation_out.column_names.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
+            recommendation_out.create_sql =
+                json_in.value("create_sql", std::string());
+            recommendation_out.drop_sql =
+                json_in.value("drop_sql", std::string());
+            recommendation_out.reason =
+                json_in.value("reason", std::string());
+            recommendation_out.provenance_source =
+                json_in.value("provenance_source", std::string());
+            recommendation_out.query_fingerprint =
+                json_in.value("query_fingerprint", std::string());
+            recommendation_out.signal_names.clear();
+            const auto signal_names_it = json_in.find("signal_names");
+            if (signal_names_it != json_in.end() && signal_names_it->is_array())
+            {
+                for (const auto &entry : *signal_names_it)
+                {
+                    if (entry.is_string())
+                    {
+                        recommendation_out.signal_names.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
+            recommendation_out.benefit_score =
+                json_in.value("benefit_score", 0.0);
+            recommendation_out.cost_score = json_in.value("cost_score", 0.0);
+            recommendation_out.net_benefit =
+                json_in.value("net_benefit", 0.0);
+            recommendation_out.affected_queries =
+                json_in.value("affected_queries", 0ULL);
+            recommendation_out.estimated_size_mb =
+                json_in.value("estimated_size_mb", 0.0);
+            recommendation_out.estimated_speedup =
+                json_in.value("estimated_speedup", 0.0);
+            recommendation_out.priority = json_in.value("priority", 0.0);
+            recommendation_out.confidence = json_in.value("confidence", 0.0);
+            return true;
+        }
+
         auto searchSummaryToJson(const RuntimePlanSearchSummary &summary)
             -> nlohmann::json
         {
@@ -1107,6 +1267,17 @@ namespace scratchbird::optimizer
             for (const auto &entry : plan.optimizer_controls)
             {
                 root["optimizer_controls"].push_back(controlEntryToJson(entry));
+            }
+            root["advisor_signals"] = nlohmann::json::array();
+            for (const auto &entry : plan.advisor_signals)
+            {
+                root["advisor_signals"].push_back(advisorSignalToJson(entry));
+            }
+            root["advisor_recommendations"] = nlohmann::json::array();
+            for (const auto &entry : plan.advisor_recommendations)
+            {
+                root["advisor_recommendations"].push_back(
+                    advisorRecommendationToJson(entry));
             }
 
             const std::string dumped = root.dump();
@@ -1279,6 +1450,41 @@ namespace scratchbird::optimizer
                         return false;
                     }
                     plan_out.optimizer_controls.push_back(std::move(control_entry));
+                }
+            }
+
+            plan_out.advisor_signals.clear();
+            const auto advisor_signals_it = root.find("advisor_signals");
+            if (advisor_signals_it != root.end() && advisor_signals_it->is_array())
+            {
+                for (const auto &entry : *advisor_signals_it)
+                {
+                    RuntimePlanAdvisorSignal signal_entry;
+                    if (!advisorSignalFromJson(entry, signal_entry, error_out))
+                    {
+                        return false;
+                    }
+                    plan_out.advisor_signals.push_back(std::move(signal_entry));
+                }
+            }
+
+            plan_out.advisor_recommendations.clear();
+            const auto advisor_recommendations_it =
+                root.find("advisor_recommendations");
+            if (advisor_recommendations_it != root.end() &&
+                advisor_recommendations_it->is_array())
+            {
+                for (const auto &entry : *advisor_recommendations_it)
+                {
+                    RuntimePlanAdvisorRecommendation recommendation_entry;
+                    if (!advisorRecommendationFromJson(entry,
+                                                       recommendation_entry,
+                                                       error_out))
+                    {
+                        return false;
+                    }
+                    plan_out.advisor_recommendations.push_back(
+                        std::move(recommendation_entry));
                 }
             }
 
