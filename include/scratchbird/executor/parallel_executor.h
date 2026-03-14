@@ -52,16 +52,47 @@ using scratchbird::core::GPID;
 
 // Parallel execution configuration
 struct ParallelConfig {
+    bool enable_parallel = true;
     uint32_t max_workers = 4;               // Maximum worker threads
+    uint32_t max_workers_per_gather = 0;    // 0 => use max_workers
     uint32_t min_rows_per_worker = 10000;   // Minimum rows to parallelize
     uint32_t min_pages_per_worker = 100;    // Minimum pages per worker
+    uint64_t min_parallel_table_scan_size = 0; // Additional planner threshold
     size_t work_mem_per_worker = 64 * 1024 * 1024;  // 64MB per worker
     bool enable_parallel_scan = true;
+    bool enable_parallel_hash = true;
     bool enable_parallel_aggregate = true;
     bool enable_parallel_join = true;
+    bool parallel_leader_participation = true;
     double parallel_setup_cost = 1000.0;    // Cost penalty for going parallel
     double parallel_tuple_cost = 0.1;       // Extra cost per tuple for parallelism
 };
+
+enum class ParallelStageKind : uint8_t {
+    SCAN = 0,
+    HASH_JOIN = 1,
+    AGGREGATE = 2,
+    GATHER_MERGE = 3
+};
+
+struct ParallelPlanDecision {
+    bool eligible = false;
+    uint32_t workers_planned = 0;
+    bool use_gather_merge = false;
+    double skew_penalty = 0.0;
+    std::string rejection_reason;
+};
+
+auto parallelStageName(ParallelStageKind stage) -> const char *;
+
+auto evaluateParallelPlan(const ParallelConfig& config,
+                          ParallelStageKind stage,
+                          uint64_t num_rows,
+                          uint64_t num_pages,
+                          bool ordered_required,
+                          bool spill_expected,
+                          bool safety_ok = true)
+    -> ParallelPlanDecision;
 
 // Work unit for parallel execution
 struct WorkUnit {

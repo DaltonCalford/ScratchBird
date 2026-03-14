@@ -475,6 +475,32 @@ namespace scratchbird::optimizer
             -> CostEstimate;
 
         /**
+         * costGather - Estimate cost of parallel gather
+         *
+         * Models a guarded parallel wrapper over an existing serial child path.
+         * Worker startup penalty and tuple transfer cost are charged here.
+         */
+        auto costGather(const CostEstimate &input_cost,
+                        uint64_t input_rows,
+                        uint32_t workers_planned,
+                        bool leader_participates = true,
+                        core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costGatherMerge - Estimate cost of parallel gather merge
+         *
+         * Extends gather costing with an ordered merge fan-in across workers.
+         */
+        auto costGatherMerge(const CostEstimate &input_cost,
+                             uint64_t input_rows,
+                             uint64_t num_order_keys,
+                             uint32_t workers_planned,
+                             bool leader_participates = true,
+                             core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
          * costLimit - Estimate cost of LIMIT/OFFSET
          *
          * Cost formula:

@@ -65,6 +65,8 @@ namespace scratchbird::optimizer
         HASH_JOIN,     // Hash join (Phase 1, Task 3.2)
         MERGE_JOIN,    // Merge join (future)
         SORT,          // Sort operation (Phase 1, Task 5.1)
+        GATHER,        // Parallel gather (OPW-015)
+        GATHER_MERGE,  // Parallel gather merge (OPW-015)
         AGGREGATE,     // Aggregation (Phase 1, Task 4.2)
         LIMIT,         // Limit/offset (Phase 1, Task 5.2)
         WINDOW,        // Window function (Phase 1, Task 6.2)
@@ -171,6 +173,28 @@ namespace scratchbird::optimizer
             children_.push_back(std::move(child));
         }
 
+        void setParallelMetadata(bool parallel_aware,
+                                 bool parallel_enabled,
+                                 uint32_t workers_planned,
+                                 bool gather_merge,
+                                 std::string parallel_stage,
+                                 std::string parallel_reason)
+        {
+            parallel_aware_ = parallel_aware;
+            parallel_enabled_ = parallel_enabled;
+            workers_planned_ = workers_planned;
+            gather_merge_ = gather_merge;
+            parallel_stage_ = std::move(parallel_stage);
+            parallel_reason_ = std::move(parallel_reason);
+        }
+
+        bool parallelAware() const { return parallel_aware_; }
+        bool parallelEnabled() const { return parallel_enabled_; }
+        uint32_t workersPlanned() const { return workers_planned_; }
+        bool gatherMerge() const { return gather_merge_; }
+        const std::string &parallelStage() const { return parallel_stage_; }
+        const std::string &parallelReason() const { return parallel_reason_; }
+
         /**
          * Convert plan node to string for debugging/EXPLAIN
          *
@@ -186,6 +210,12 @@ namespace scratchbird::optimizer
         uint64_t rows_;
         std::vector<std::shared_ptr<PlanNode>> children_;
         std::optional<CostEstimate> cost_evidence_;
+        bool parallel_aware_ = false;
+        bool parallel_enabled_ = false;
+        uint32_t workers_planned_ = 0;
+        bool gather_merge_ = false;
+        std::string parallel_stage_;
+        std::string parallel_reason_;
     };
 
     /**
@@ -1484,6 +1514,48 @@ namespace scratchbird::optimizer
     private:
         std::shared_ptr<PlanNode> child_plan_;
         std::vector<parser::v3::OrderByItem*> order_by_items_;
+    };
+
+    class GatherNode : public PlanNode
+    {
+    public:
+        GatherNode(std::shared_ptr<PlanNode> child_plan,
+                   uint32_t workers_planned,
+                   bool leader_participates,
+                   bool merge_ordered)
+            : PlanNode(merge_ordered ? PlanNodeType::GATHER_MERGE
+                                     : PlanNodeType::GATHER),
+              child_plan_(std::move(child_plan)),
+              workers_planned_(workers_planned),
+              leader_participates_(leader_participates),
+              merge_ordered_(merge_ordered)
+        {
+        }
+
+        const std::shared_ptr<PlanNode>& childPlan() const { return child_plan_; }
+        uint32_t workersPlanned() const { return workers_planned_; }
+        bool leaderParticipates() const { return leader_participates_; }
+        bool mergeOrdered() const { return merge_ordered_; }
+
+        std::string toString(int indent = 0) const override
+        {
+            std::string result(indent, ' ');
+            result += merge_ordered_ ? "Gather Merge" : "Gather";
+            result += " (workers=" + std::to_string(workers_planned_) +
+                      " cost=" + std::to_string(total_cost_) +
+                      " rows=" + std::to_string(rows_) + ")\n";
+            if (child_plan_)
+            {
+                result += child_plan_->toString(indent + 2);
+            }
+            return result;
+        }
+
+    private:
+        std::shared_ptr<PlanNode> child_plan_;
+        uint32_t workers_planned_ = 0;
+        bool leader_participates_ = true;
+        bool merge_ordered_ = false;
     };
 
     /**

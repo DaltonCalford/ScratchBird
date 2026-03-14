@@ -152,6 +152,33 @@ TEST(CostModelTest, TopNSortCostsLessThanFullSort)
     EXPECT_LT(top_n_sort.startup_cost, full_sort.startup_cost);
 }
 
+TEST(CostModelTest, GatherCostPublishesParallelTermsAndCanBeatSerialRunCost)
+{
+    auto model = defaultModel();
+    const auto serial = model.costSort(16000, 64, 2);
+    const auto gather = model.costGather(serial, 16000, 4, true);
+
+    EXPECT_EQ(gather.rows, 16000u);
+    EXPECT_EQ(gather.operator_name, "GATHER");
+    EXPECT_FALSE(gather.expanded_terms.empty());
+    EXPECT_GT(gather.startup_cost, serial.startup_cost);
+    EXPECT_GT(gather.run_cost, 0.0);
+    EXPECT_DOUBLE_EQ(gather.total_cost, gather.startup_cost + gather.run_cost);
+}
+
+TEST(CostModelTest, GatherMergeCostsMoreThanGatherBecauseOfMergeFanIn)
+{
+    auto model = defaultModel();
+    const auto serial = model.costSort(16000, 64, 2);
+    const auto gather = model.costGather(serial, 16000, 4, true);
+    const auto gather_merge = model.costGatherMerge(serial, 16000, 2, 4, true);
+
+    EXPECT_EQ(gather_merge.rows, gather.rows);
+    EXPECT_EQ(gather_merge.operator_name, "GATHER_MERGE");
+    EXPECT_GT(gather_merge.total_cost, gather.total_cost);
+    EXPECT_FALSE(gather_merge.expanded_terms.empty());
+}
+
 TEST(CostModelTest, SortCostMarksSpillWhenWorkMemTooSmall)
 {
     CostParameters small_params;

@@ -20,6 +20,7 @@
 
 #include "scratchbird/optimizer/query_planner.h"
 #include "scratchbird/optimizer/join_ordering.h"
+#include "scratchbird/executor/parallel_executor.h"
 
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/observability_contract.h"
@@ -1972,6 +1973,18 @@ namespace scratchbird::optimizer
             size_t fallback_prune_level = 1;
             PlannerJoinMethodControl join_method =
                 PlannerJoinMethodControl::AUTO;
+            bool enable_parallel = false;
+            bool enable_parallel_scan = false;
+            bool enable_parallel_hash = false;
+            bool enable_parallel_aggregate = false;
+            bool enable_parallel_join = false;
+            bool parallel_leader_participation = true;
+            uint32_t max_parallel_workers = 0;
+            uint32_t max_parallel_workers_per_gather = 0;
+            uint32_t min_parallel_rows_per_worker = 1024;
+            uint32_t min_parallel_table_scan_size = 0;
+            double parallel_setup_cost = 1000.0;
+            double parallel_tuple_cost = 0.1;
             std::vector<RuntimePlanControlEntry> runtime_controls;
         };
 
@@ -2227,6 +2240,73 @@ namespace scratchbird::optimizer
             }
         }
 
+        auto parsePlannerBoolSetting(const std::string &value,
+                                     bool &value_out) -> bool
+        {
+            const std::string upper =
+                core::IdentifierUtils::toUpper(trimWhitespace(value));
+            if (upper == "1" || upper == "ON" || upper == "TRUE" ||
+                upper == "YES")
+            {
+                value_out = true;
+                return true;
+            }
+            if (upper == "0" || upper == "OFF" || upper == "FALSE" ||
+                upper == "NO" || upper.empty())
+            {
+                value_out = false;
+                return true;
+            }
+            return false;
+        }
+
+        auto parsePlannerUint32Setting(const std::string &value,
+                                       uint32_t &value_out) -> bool
+        {
+            const std::string trimmed = trimWhitespace(value);
+            if (trimmed.empty())
+            {
+                value_out = 0;
+                return true;
+            }
+            try
+            {
+                size_t index = 0;
+                const unsigned long parsed = std::stoul(trimmed, &index, 10);
+                if (index != trimmed.size())
+                {
+                    return false;
+                }
+                value_out = static_cast<uint32_t>(parsed);
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        auto parsePlannerDoubleSetting(const std::string &value,
+                                       double &value_out) -> bool
+        {
+            const std::string trimmed = trimWhitespace(value);
+            if (trimmed.empty())
+            {
+                value_out = 0.0;
+                return true;
+            }
+            try
+            {
+                size_t index = 0;
+                value_out = std::stod(trimmed, &index);
+                return index == trimmed.size();
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
         auto upsertPlannerControl(std::vector<RuntimePlanControlEntry> &controls,
                                   const std::string &name,
                                   const std::string &value,
@@ -2456,6 +2536,231 @@ namespace scratchbird::optimizer
 
             if (readPlannerSessionSetting(conn_ctx,
                                           value,
+                                          {"ENABLE_PARALLEL",
+                                           "enable_parallel"}))
+            {
+                if (!parsePlannerBoolSetting(value, controls_out.enable_parallel))
+                {
+                    error_out = "Invalid ENABLE_PARALLEL value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "ENABLE_PARALLEL",
+                                     controls_out.enable_parallel ? "ON" : "OFF",
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"ENABLE_PARALLEL_SCAN",
+                                           "enable_parallel_scan"}))
+            {
+                if (!parsePlannerBoolSetting(value,
+                                             controls_out.enable_parallel_scan))
+                {
+                    error_out = "Invalid ENABLE_PARALLEL_SCAN value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "ENABLE_PARALLEL_SCAN",
+                                     controls_out.enable_parallel_scan ? "ON"
+                                                                       : "OFF",
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"ENABLE_PARALLEL_HASH",
+                                           "enable_parallel_hash"}))
+            {
+                if (!parsePlannerBoolSetting(value,
+                                             controls_out.enable_parallel_hash))
+                {
+                    error_out = "Invalid ENABLE_PARALLEL_HASH value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "ENABLE_PARALLEL_HASH",
+                                     controls_out.enable_parallel_hash ? "ON"
+                                                                       : "OFF",
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"ENABLE_PARALLEL_AGGREGATE",
+                                           "enable_parallel_aggregate"}))
+            {
+                if (!parsePlannerBoolSetting(
+                        value, controls_out.enable_parallel_aggregate))
+                {
+                    error_out =
+                        "Invalid ENABLE_PARALLEL_AGGREGATE value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "ENABLE_PARALLEL_AGGREGATE",
+                                     controls_out.enable_parallel_aggregate
+                                         ? "ON"
+                                         : "OFF",
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"ENABLE_PARALLEL_JOIN",
+                                           "enable_parallel_join"}))
+            {
+                if (!parsePlannerBoolSetting(value,
+                                             controls_out.enable_parallel_join))
+                {
+                    error_out = "Invalid ENABLE_PARALLEL_JOIN value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "ENABLE_PARALLEL_JOIN",
+                                     controls_out.enable_parallel_join ? "ON"
+                                                                       : "OFF",
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"PARALLEL_LEADER_PARTICIPATION",
+                                           "parallel_leader_participation"}))
+            {
+                if (!parsePlannerBoolSetting(
+                        value, controls_out.parallel_leader_participation))
+                {
+                    error_out =
+                        "Invalid PARALLEL_LEADER_PARTICIPATION value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(
+                    controls_out.runtime_controls,
+                    "PARALLEL_LEADER_PARTICIPATION",
+                    controls_out.parallel_leader_participation ? "ON" : "OFF",
+                    "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"MAX_PARALLEL_WORKERS",
+                                           "max_parallel_workers"}))
+            {
+                if (!parsePlannerUint32Setting(value,
+                                               controls_out.max_parallel_workers))
+                {
+                    error_out = "Invalid MAX_PARALLEL_WORKERS value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "MAX_PARALLEL_WORKERS",
+                                     std::to_string(
+                                         controls_out.max_parallel_workers),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"MAX_PARALLEL_WORKERS_PER_GATHER",
+                                           "max_parallel_workers_per_gather"}))
+            {
+                if (!parsePlannerUint32Setting(
+                        value, controls_out.max_parallel_workers_per_gather))
+                {
+                    error_out =
+                        "Invalid MAX_PARALLEL_WORKERS_PER_GATHER value: " +
+                        value;
+                    return false;
+                }
+                upsertPlannerControl(
+                    controls_out.runtime_controls,
+                    "MAX_PARALLEL_WORKERS_PER_GATHER",
+                    std::to_string(
+                        controls_out.max_parallel_workers_per_gather),
+                    "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"MIN_PARALLEL_ROWS_PER_WORKER",
+                                           "min_parallel_rows_per_worker"}))
+            {
+                if (!parsePlannerUint32Setting(
+                        value, controls_out.min_parallel_rows_per_worker))
+                {
+                    error_out =
+                        "Invalid MIN_PARALLEL_ROWS_PER_WORKER value: " +
+                        value;
+                    return false;
+                }
+                upsertPlannerControl(
+                    controls_out.runtime_controls,
+                    "MIN_PARALLEL_ROWS_PER_WORKER",
+                    std::to_string(
+                        controls_out.min_parallel_rows_per_worker),
+                    "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"MIN_PARALLEL_TABLE_SCAN_SIZE",
+                                           "min_parallel_table_scan_size"}))
+            {
+                if (!parsePlannerUint32Setting(
+                        value, controls_out.min_parallel_table_scan_size))
+                {
+                    error_out =
+                        "Invalid MIN_PARALLEL_TABLE_SCAN_SIZE value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(
+                    controls_out.runtime_controls,
+                    "MIN_PARALLEL_TABLE_SCAN_SIZE",
+                    std::to_string(
+                        controls_out.min_parallel_table_scan_size),
+                    "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"PARALLEL_SETUP_COST",
+                                           "parallel_setup_cost"}))
+            {
+                if (!parsePlannerDoubleSetting(
+                        value, controls_out.parallel_setup_cost))
+                {
+                    error_out = "Invalid PARALLEL_SETUP_COST value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "PARALLEL_SETUP_COST",
+                                     std::to_string(
+                                         controls_out.parallel_setup_cost),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
+                                          {"PARALLEL_TUPLE_COST",
+                                           "parallel_tuple_cost"}))
+            {
+                if (!parsePlannerDoubleSetting(
+                        value, controls_out.parallel_tuple_cost))
+                {
+                    error_out = "Invalid PARALLEL_TUPLE_COST value: " + value;
+                    return false;
+                }
+                upsertPlannerControl(controls_out.runtime_controls,
+                                     "PARALLEL_TUPLE_COST",
+                                     std::to_string(
+                                         controls_out.parallel_tuple_cost),
+                                     "SESSION");
+            }
+
+            if (readPlannerSessionSetting(conn_ctx,
+                                          value,
                                           {"OPTIMIZER.PLAN_DIRECTIVES",
                                            "OPTIMIZER_PLAN_DIRECTIVES",
                                            "PLAN_DIRECTIVES"}))
@@ -2633,6 +2938,210 @@ namespace scratchbird::optimizer
                                                  controls_out.join_method),
                                              "DIRECTIVE");
                     }
+                    else if (key == "ENABLE_PARALLEL")
+                    {
+                        if (!parsePlannerBoolSetting(raw_value,
+                                                     controls_out.enable_parallel))
+                        {
+                            error_out =
+                                "Invalid optimizer directive ENABLE_PARALLEL: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "ENABLE_PARALLEL",
+                                             controls_out.enable_parallel
+                                                 ? "ON"
+                                                 : "OFF",
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "ENABLE_PARALLEL_SCAN")
+                    {
+                        if (!parsePlannerBoolSetting(
+                                raw_value, controls_out.enable_parallel_scan))
+                        {
+                            error_out =
+                                "Invalid optimizer directive ENABLE_PARALLEL_SCAN: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(
+                            controls_out.runtime_controls,
+                            "ENABLE_PARALLEL_SCAN",
+                            controls_out.enable_parallel_scan ? "ON" : "OFF",
+                            "DIRECTIVE");
+                    }
+                    else if (key == "ENABLE_PARALLEL_HASH")
+                    {
+                        if (!parsePlannerBoolSetting(
+                                raw_value, controls_out.enable_parallel_hash))
+                        {
+                            error_out =
+                                "Invalid optimizer directive ENABLE_PARALLEL_HASH: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(
+                            controls_out.runtime_controls,
+                            "ENABLE_PARALLEL_HASH",
+                            controls_out.enable_parallel_hash ? "ON" : "OFF",
+                            "DIRECTIVE");
+                    }
+                    else if (key == "ENABLE_PARALLEL_AGGREGATE")
+                    {
+                        if (!parsePlannerBoolSetting(
+                                raw_value,
+                                controls_out.enable_parallel_aggregate))
+                        {
+                            error_out =
+                                "Invalid optimizer directive ENABLE_PARALLEL_AGGREGATE: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(
+                            controls_out.runtime_controls,
+                            "ENABLE_PARALLEL_AGGREGATE",
+                            controls_out.enable_parallel_aggregate ? "ON"
+                                                                   : "OFF",
+                            "DIRECTIVE");
+                    }
+                    else if (key == "ENABLE_PARALLEL_JOIN")
+                    {
+                        if (!parsePlannerBoolSetting(
+                                raw_value, controls_out.enable_parallel_join))
+                        {
+                            error_out =
+                                "Invalid optimizer directive ENABLE_PARALLEL_JOIN: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(
+                            controls_out.runtime_controls,
+                            "ENABLE_PARALLEL_JOIN",
+                            controls_out.enable_parallel_join ? "ON" : "OFF",
+                            "DIRECTIVE");
+                    }
+                    else if (key == "PARALLEL_LEADER_PARTICIPATION")
+                    {
+                        if (!parsePlannerBoolSetting(
+                                raw_value,
+                                controls_out.parallel_leader_participation))
+                        {
+                            error_out =
+                                "Invalid optimizer directive PARALLEL_LEADER_PARTICIPATION: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(
+                            controls_out.runtime_controls,
+                            "PARALLEL_LEADER_PARTICIPATION",
+                            controls_out.parallel_leader_participation
+                                ? "ON"
+                                : "OFF",
+                            "DIRECTIVE");
+                    }
+                    else if (key == "MAX_PARALLEL_WORKERS")
+                    {
+                        if (!parsePlannerUint32Setting(
+                                raw_value, controls_out.max_parallel_workers))
+                        {
+                            error_out =
+                                "Invalid optimizer directive MAX_PARALLEL_WORKERS: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "MAX_PARALLEL_WORKERS",
+                                             std::to_string(
+                                                 controls_out.max_parallel_workers),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "MAX_PARALLEL_WORKERS_PER_GATHER")
+                    {
+                        if (!parsePlannerUint32Setting(
+                                raw_value,
+                                controls_out.max_parallel_workers_per_gather))
+                        {
+                            error_out =
+                                "Invalid optimizer directive MAX_PARALLEL_WORKERS_PER_GATHER: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(
+                            controls_out.runtime_controls,
+                            "MAX_PARALLEL_WORKERS_PER_GATHER",
+                            std::to_string(
+                                controls_out.max_parallel_workers_per_gather),
+                            "DIRECTIVE");
+                    }
+                    else if (key == "MIN_PARALLEL_TABLE_SCAN_SIZE")
+                    {
+                        if (!parsePlannerUint32Setting(
+                                raw_value,
+                                controls_out.min_parallel_table_scan_size))
+                        {
+                            error_out =
+                                "Invalid optimizer directive MIN_PARALLEL_TABLE_SCAN_SIZE: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(
+                            controls_out.runtime_controls,
+                            "MIN_PARALLEL_TABLE_SCAN_SIZE",
+                            std::to_string(
+                                controls_out.min_parallel_table_scan_size),
+                            "DIRECTIVE");
+                    }
+                    else if (key == "MIN_PARALLEL_ROWS_PER_WORKER")
+                    {
+                        if (!parsePlannerUint32Setting(
+                                raw_value,
+                                controls_out.min_parallel_rows_per_worker))
+                        {
+                            error_out =
+                                "Invalid optimizer directive MIN_PARALLEL_ROWS_PER_WORKER: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(
+                            controls_out.runtime_controls,
+                            "MIN_PARALLEL_ROWS_PER_WORKER",
+                            std::to_string(
+                                controls_out.min_parallel_rows_per_worker),
+                            "DIRECTIVE");
+                    }
+                    else if (key == "PARALLEL_SETUP_COST")
+                    {
+                        if (!parsePlannerDoubleSetting(
+                                raw_value, controls_out.parallel_setup_cost))
+                        {
+                            error_out =
+                                "Invalid optimizer directive PARALLEL_SETUP_COST: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "PARALLEL_SETUP_COST",
+                                             std::to_string(
+                                                 controls_out.parallel_setup_cost),
+                                             "DIRECTIVE");
+                    }
+                    else if (key == "PARALLEL_TUPLE_COST")
+                    {
+                        if (!parsePlannerDoubleSetting(
+                                raw_value, controls_out.parallel_tuple_cost))
+                        {
+                            error_out =
+                                "Invalid optimizer directive PARALLEL_TUPLE_COST: " +
+                                raw_value;
+                            return false;
+                        }
+                        upsertPlannerControl(controls_out.runtime_controls,
+                                             "PARALLEL_TUPLE_COST",
+                                             std::to_string(
+                                                 controls_out.parallel_tuple_cost),
+                                             "DIRECTIVE");
+                    }
                     else if (key != "PLAN_PROFILE")
                     {
                         error_out = "Unsupported optimizer directive: " + key;
@@ -2683,6 +3192,54 @@ namespace scratchbird::optimizer
                                         "JOIN_METHOD",
                                         plannerJoinMethodName(
                                             controls_out.join_method));
+            ensurePlannerControlDefault(controls_out.runtime_controls,
+                                        "ENABLE_PARALLEL",
+                                        controls_out.enable_parallel ? "ON"
+                                                                     : "OFF");
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "ENABLE_PARALLEL_SCAN",
+                controls_out.enable_parallel_scan ? "ON" : "OFF");
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "ENABLE_PARALLEL_HASH",
+                controls_out.enable_parallel_hash ? "ON" : "OFF");
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "ENABLE_PARALLEL_AGGREGATE",
+                controls_out.enable_parallel_aggregate ? "ON" : "OFF");
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "ENABLE_PARALLEL_JOIN",
+                controls_out.enable_parallel_join ? "ON" : "OFF");
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "PARALLEL_LEADER_PARTICIPATION",
+                controls_out.parallel_leader_participation ? "ON" : "OFF");
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "MAX_PARALLEL_WORKERS",
+                std::to_string(controls_out.max_parallel_workers));
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "MAX_PARALLEL_WORKERS_PER_GATHER",
+                std::to_string(controls_out.max_parallel_workers_per_gather));
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "MIN_PARALLEL_ROWS_PER_WORKER",
+                std::to_string(controls_out.min_parallel_rows_per_worker));
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "MIN_PARALLEL_TABLE_SCAN_SIZE",
+                std::to_string(controls_out.min_parallel_table_scan_size));
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "PARALLEL_SETUP_COST",
+                std::to_string(controls_out.parallel_setup_cost));
+            ensurePlannerControlDefault(
+                controls_out.runtime_controls,
+                "PARALLEL_TUPLE_COST",
+                std::to_string(controls_out.parallel_tuple_cost));
             return true;
         }
 
@@ -2837,6 +3394,7 @@ namespace scratchbird::optimizer
                 case PathType::INDEX_SCAN:
                 case PathType::INDEX_ONLY_SCAN:
                 case PathType::SORT:
+                case PathType::GATHER_MERGE:
                 case PathType::MERGE_JOIN:
                     return true;
                 default:
@@ -3175,6 +3733,12 @@ namespace scratchbird::optimizer
             node.startup_cost = plan->startupCost();
             node.total_cost = plan->totalCost();
             node.estimated_rows = plan->rows();
+            node.parallel_aware = plan->parallelAware();
+            node.parallel_enabled = plan->parallelEnabled();
+            node.parallel_workers_planned = plan->workersPlanned();
+            node.gather_merge = plan->gatherMerge();
+            node.parallel_stage = plan->parallelStage();
+            node.parallel_reason = plan->parallelReason();
             if (plan->costEvidence().has_value())
             {
                 applyResourceMetadata(node, *plan->costEvidence(), std::string());
@@ -3295,6 +3859,26 @@ namespace scratchbird::optimizer
                         node.detail_text =
                             std::to_string(sort->orderByItems().size()) + " keys";
                         node.children.push_back(toRuntimePlanNode(sort->childPlan()));
+                    }
+                    break;
+                }
+                case PlanNodeType::GATHER:
+                case PlanNodeType::GATHER_MERGE: {
+                    auto gather = std::dynamic_pointer_cast<GatherNode>(plan);
+                    node.node_type =
+                        plan->type() == PlanNodeType::GATHER_MERGE ? "GatherMerge"
+                                                                   : "Gather";
+                    if (gather)
+                    {
+                        std::ostringstream detail;
+                        detail << "workers=" << gather->workersPlanned()
+                               << " leader="
+                               << (gather->leaderParticipates() ? "true"
+                                                                : "false");
+                        node.detail_text = detail.str();
+                        node.gather_merge = gather->mergeOrdered();
+                        node.children.push_back(
+                            toRuntimePlanNode(gather->childPlan()));
                     }
                     break;
                 }
@@ -3505,6 +4089,49 @@ namespace scratchbird::optimizer
                                 std::max<uint64_t>(1, sort->orderByItems().size()),
                                 nullptr);
                         }
+                        have_resource_cost = true;
+                    }
+                    break;
+                }
+                case PlanNodeType::GATHER:
+                case PlanNodeType::GATHER_MERGE: {
+                    auto gather = std::dynamic_pointer_cast<GatherNode>(plan);
+                    if (gather)
+                    {
+                        if (node.children.size() >= 1)
+                        {
+                            annotateRuntimePlanResources(node.children[0],
+                                                         gather->childPlan(),
+                                                         cost_model,
+                                                         row_width,
+                                                         spill_policy_text);
+                        }
+                        const auto child_cost = planCostEstimate(gather->childPlan());
+                        uint64_t order_keys = 1;
+                        if (gather->mergeOrdered())
+                        {
+                            if (auto sort = std::dynamic_pointer_cast<SortNode>(
+                                    gather->childPlan()))
+                            {
+                                order_keys = std::max<uint64_t>(
+                                    1, sort->orderByItems().size());
+                            }
+                        }
+                        resource_cost =
+                            gather->mergeOrdered()
+                                ? cost_model.costGatherMerge(
+                                      child_cost,
+                                      child_cost.rows,
+                                      order_keys,
+                                      gather->workersPlanned(),
+                                      gather->leaderParticipates(),
+                                      nullptr)
+                                : cost_model.costGather(
+                                      child_cost,
+                                      child_cost.rows,
+                                      gather->workersPlanned(),
+                                      gather->leaderParticipates(),
+                                      nullptr);
                         have_resource_cost = true;
                     }
                     break;
@@ -3985,9 +4612,37 @@ namespace scratchbird::optimizer
             return core::Status::INVALID_ARGUMENT;
         }
         planner_params.work_mem_bytes = planner_controls.work_mem_bytes;
+        planner_params.parallel_setup_cost =
+            planner_controls.parallel_setup_cost;
+        planner_params.parallel_tuple_cost =
+            planner_controls.parallel_tuple_cost;
         const PlannerSpillPolicy spill_policy = planner_controls.spill_policy;
         const std::string spill_policy_text = plannerSpillPolicyName(spill_policy);
         CostModel active_cost_model(planner_params);
+        executor::ParallelConfig parallel_config;
+        parallel_config.enable_parallel = planner_controls.enable_parallel;
+        parallel_config.enable_parallel_scan =
+            planner_controls.enable_parallel_scan;
+        parallel_config.enable_parallel_hash =
+            planner_controls.enable_parallel_hash;
+        parallel_config.enable_parallel_aggregate =
+            planner_controls.enable_parallel_aggregate;
+        parallel_config.enable_parallel_join =
+            planner_controls.enable_parallel_join;
+        parallel_config.parallel_leader_participation =
+            planner_controls.parallel_leader_participation;
+        parallel_config.max_workers = planner_controls.max_parallel_workers;
+        parallel_config.max_workers_per_gather =
+            planner_controls.max_parallel_workers_per_gather;
+        parallel_config.min_rows_per_worker =
+            std::max<uint32_t>(1, planner_controls.min_parallel_rows_per_worker);
+        parallel_config.min_pages_per_worker = 1;
+        parallel_config.min_parallel_table_scan_size =
+            planner_controls.min_parallel_table_scan_size;
+        parallel_config.parallel_setup_cost =
+            planner_controls.parallel_setup_cost;
+        parallel_config.parallel_tuple_cost =
+            planner_controls.parallel_tuple_cost;
         const MgaCostingSnapshot mga_costing_snapshot = loadMgaCostingSnapshot(db_);
         upsertPlannerControl(planner_controls.runtime_controls,
                              "MGA_COSTING_CONTRACT",
@@ -7389,6 +8044,490 @@ namespace scratchbird::optimizer
                 current_plan = sort_plan;
                 current_rows = sort_cost.rows;
             }
+        }
+
+        auto estimateParallelPages = [&](uint64_t rows_estimate) -> uint64_t {
+            const uint64_t bytes =
+                std::max<uint64_t>(1, rows_estimate) *
+                std::max<uint64_t>(1, row_width);
+            return std::max<uint64_t>(
+                1,
+                (bytes + planner_params.planner_page_size_bytes - 1) /
+                    planner_params.planner_page_size_bytes);
+        };
+
+        auto applyRelationParallelDecision =
+            [&](size_t relation_index,
+                const executor::ParallelPlanDecision &decision,
+                const std::string &stage_name,
+                bool enabled,
+                const std::string &reason) -> void {
+                auto it = std::find_if(runtime_relations.begin(),
+                                       runtime_relations.end(),
+                                       [&](RuntimePlanRelation &relation) {
+                                           return relation.source_relation_index ==
+                                                  relation_index;
+                                       });
+                if (it == runtime_relations.end())
+                {
+                    return;
+                }
+                it->parallel_eligible = decision.eligible;
+                it->parallel_enabled = enabled;
+                it->parallel_workers_planned =
+                    enabled ? decision.workers_planned : 0U;
+                it->parallel_stage = stage_name;
+                it->parallel_rejection_reason = enabled ? std::string() : reason;
+            };
+
+        auto applyJoinParallelDecision =
+            [&](const executor::ParallelPlanDecision &decision,
+                const std::string &stage_name,
+                bool enabled,
+                const std::string &reason) -> void {
+                if (runtime_joins.empty())
+                {
+                    return;
+                }
+                auto &join = runtime_joins.back();
+                join.parallel_eligible = decision.eligible;
+                join.parallel_enabled = enabled;
+                join.parallel_workers_planned =
+                    enabled ? decision.workers_planned : 0U;
+                join.parallel_stage = stage_name;
+                join.parallel_rejection_reason = enabled ? std::string() : reason;
+            };
+
+        auto stageCandidateName =
+            [](executor::ParallelStageKind stage_kind,
+               bool ordered_required) -> std::string {
+                if (ordered_required)
+                {
+                    return "GATHER_MERGE";
+                }
+                switch (stage_kind)
+                {
+                    case executor::ParallelStageKind::SCAN:
+                        return "PARALLEL_SEQ_SCAN";
+                    case executor::ParallelStageKind::HASH_JOIN:
+                        return "PARALLEL_HASH_JOIN";
+                    case executor::ParallelStageKind::AGGREGATE:
+                        return "PARALLEL_AGGREGATE";
+                    case executor::ParallelStageKind::GATHER_MERGE:
+                        return "GATHER_MERGE";
+                }
+                return "PARALLEL_STAGE";
+            };
+
+        std::shared_ptr<PlanNode> parallel_subject_plan = current_plan;
+        executor::ParallelStageKind parallel_stage_kind =
+            executor::ParallelStageKind::GATHER_MERGE;
+        std::string parallel_stage_name = "UNSUPPORTED";
+        bool parallel_ordered_required = false;
+        uint64_t parallel_order_key_count = 1;
+        bool parallel_candidate_supported = false;
+        size_t parallel_scan_relation_index = std::numeric_limits<size_t>::max();
+
+        if (current_plan)
+        {
+            auto classifyParallelStage =
+                [&](const std::shared_ptr<PlanNode> &candidate) -> bool {
+                    if (!candidate)
+                    {
+                        return false;
+                    }
+                    switch (candidate->type())
+                    {
+                        case PlanNodeType::SEQ_SCAN:
+                            parallel_stage_kind = executor::ParallelStageKind::SCAN;
+                            parallel_stage_name = "SCAN";
+                            parallel_candidate_supported = true;
+                            if (!runtime_relations.empty())
+                            {
+                                parallel_scan_relation_index =
+                                    runtime_relations.front().source_relation_index;
+                            }
+                            return true;
+                        case PlanNodeType::HASH_JOIN:
+                            parallel_stage_kind =
+                                executor::ParallelStageKind::HASH_JOIN;
+                            parallel_stage_name = "HASH_JOIN";
+                            parallel_candidate_supported = true;
+                            return true;
+                        case PlanNodeType::AGGREGATE:
+                            parallel_stage_kind =
+                                executor::ParallelStageKind::AGGREGATE;
+                            parallel_stage_name = "AGGREGATE";
+                            parallel_candidate_supported = true;
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+
+            if (current_plan->type() == PlanNodeType::SORT)
+            {
+                parallel_ordered_required = true;
+                parallel_order_key_count = std::max<uint64_t>(
+                    1,
+                    select_stmt->order_by.empty()
+                        ? 1
+                        : select_stmt->order_by.size());
+                auto sort_plan = std::dynamic_pointer_cast<SortNode>(current_plan);
+                if (sort_plan)
+                {
+                    parallel_subject_plan = sort_plan->childPlan();
+                }
+                if (!classifyParallelStage(parallel_subject_plan))
+                {
+                    parallel_stage_kind =
+                        executor::ParallelStageKind::GATHER_MERGE;
+                    parallel_stage_name = "GATHER_MERGE";
+                    parallel_candidate_supported = true;
+                }
+            }
+            else
+            {
+                classifyParallelStage(current_plan);
+            }
+        }
+
+        if (current_plan && parallel_candidate_supported)
+        {
+            const CostEstimate serial_cost = planCostEstimate(current_plan);
+            uint64_t parallel_decision_rows = current_rows;
+            if (parallel_subject_plan)
+            {
+                parallel_decision_rows = std::max<uint64_t>(
+                    parallel_decision_rows,
+                    planCostEstimate(parallel_subject_plan).rows);
+
+                if (auto aggregate =
+                        std::dynamic_pointer_cast<AggregateNode>(
+                            parallel_subject_plan))
+                {
+                    parallel_decision_rows = std::max<uint64_t>(
+                        parallel_decision_rows,
+                        planCostEstimate(aggregate->childPlan()).rows);
+                }
+            }
+            if (parallel_scan_relation_index !=
+                std::numeric_limits<size_t>::max())
+            {
+                const auto relation_it =
+                    std::find_if(runtime_relations.begin(),
+                                 runtime_relations.end(),
+                                 [&](const RuntimePlanRelation &relation) {
+                                     return relation.source_relation_index ==
+                                            parallel_scan_relation_index;
+                                 });
+                if (relation_it != runtime_relations.end())
+                {
+                    parallel_decision_rows = std::max<uint64_t>(
+                        parallel_decision_rows,
+                        std::max(relation_it->estimated_rows,
+                                 relation_it->base_rows));
+                }
+            }
+            else if (runtime_relations.size() == 1)
+            {
+                parallel_decision_rows = std::max<uint64_t>(
+                    parallel_decision_rows,
+                    std::max(runtime_relations.front().estimated_rows,
+                             runtime_relations.front().base_rows));
+            }
+            const uint64_t parallel_pages =
+                estimateParallelPages(std::max<uint64_t>(1, parallel_decision_rows));
+            const auto decision = executor::evaluateParallelPlan(
+                parallel_config,
+                parallel_ordered_required
+                    ? executor::ParallelStageKind::GATHER_MERGE
+                    : parallel_stage_kind,
+                parallel_decision_rows,
+                parallel_pages,
+                parallel_ordered_required,
+                serial_cost.spill_expected,
+                true);
+
+            const std::string candidate_name =
+                stageCandidateName(parallel_stage_kind, parallel_ordered_required);
+            const std::string parallel_subject = "query:parallel";
+
+            if (parallel_subject_plan)
+            {
+                parallel_subject_plan->setParallelMetadata(
+                    true,
+                    false,
+                    0,
+                    false,
+                    parallel_stage_name,
+                    decision.eligible
+                        ? "parallel wrapper pending cost comparison"
+                        : decision.rejection_reason);
+            }
+
+            if (!decision.eligible)
+            {
+                appendRuntimeTrace(rejected_paths,
+                                   "PARALLEL",
+                                   parallel_subject,
+                                   candidate_name,
+                                   "REJECTED",
+                                   decision.rejection_reason,
+                                   serial_cost.startup_cost,
+                                   serial_cost.total_cost,
+                                   current_rows);
+                if (parallel_stage_kind == executor::ParallelStageKind::SCAN &&
+                    parallel_scan_relation_index !=
+                        std::numeric_limits<size_t>::max())
+                {
+                    applyRelationParallelDecision(parallel_scan_relation_index,
+                                                  decision,
+                                                  parallel_stage_name,
+                                                  false,
+                                                  decision.rejection_reason);
+                }
+                else if (parallel_stage_kind ==
+                         executor::ParallelStageKind::HASH_JOIN)
+                {
+                    applyJoinParallelDecision(decision,
+                                              parallel_stage_name,
+                                              false,
+                                              decision.rejection_reason);
+                }
+            }
+            else
+            {
+                CostEstimate gather_cost;
+                if (parallel_ordered_required)
+                {
+                    CostEstimate parallel_merge_input = serial_cost;
+                    if (parallel_subject_plan)
+                    {
+                        const CostEstimate subject_cost =
+                            planCostEstimate(parallel_subject_plan);
+                        const uint64_t participants =
+                            std::max<uint64_t>(
+                                1,
+                                static_cast<uint64_t>(decision.workers_planned) +
+                                    (planner_controls.parallel_leader_participation
+                                         ? 1ULL
+                                         : 0ULL));
+                        const uint64_t parallel_input_rows =
+                            std::max<uint64_t>(current_rows, subject_cost.rows);
+                        const uint64_t worker_rows =
+                            std::max<uint64_t>(
+                                1,
+                                (parallel_input_rows + participants - 1) /
+                                    participants);
+                        const CostEstimate local_sort_cost =
+                            active_cost_model.costSort(worker_rows,
+                                                       row_width,
+                                                       parallel_order_key_count,
+                                                       ctx);
+
+                        parallel_merge_input.startup_cost =
+                            subject_cost.startup_cost +
+                            (local_sort_cost.startup_cost *
+                             static_cast<double>(participants));
+                        parallel_merge_input.run_cost =
+                            subject_cost.run_cost +
+                            (local_sort_cost.run_cost *
+                             static_cast<double>(participants));
+                        parallel_merge_input.total_cost =
+                            parallel_merge_input.startup_cost +
+                            parallel_merge_input.run_cost;
+                        parallel_merge_input.rows = parallel_input_rows;
+                        parallel_merge_input.spill_expected =
+                            subject_cost.spill_expected ||
+                            local_sort_cost.spill_expected;
+                        parallel_merge_input.spill_passes =
+                            std::max(subject_cost.spill_passes,
+                                     local_sort_cost.spill_passes);
+                        parallel_merge_input.spill_bytes =
+                            subject_cost.spill_bytes +
+                            (local_sort_cost.spill_bytes * participants);
+                    }
+
+                    gather_cost = active_cost_model.costGatherMerge(
+                        parallel_merge_input,
+                        current_rows,
+                        parallel_order_key_count,
+                        decision.workers_planned,
+                        planner_controls.parallel_leader_participation,
+                        ctx);
+                }
+                else
+                {
+                    gather_cost = active_cost_model.costGather(
+                        serial_cost,
+                        current_rows,
+                        decision.workers_planned,
+                        planner_controls.parallel_leader_participation,
+                        ctx);
+                }
+                const double skew_penalty_cost =
+                    decision.skew_penalty *
+                    std::max(1.0, gather_cost.total_cost * 0.05);
+                if (skew_penalty_cost > 0.0)
+                {
+                    gather_cost.run_cost += skew_penalty_cost;
+                    gather_cost.total_cost =
+                        gather_cost.startup_cost + gather_cost.run_cost;
+                    gather_cost.expanded_terms.push_back(CostFormulaTerm{
+                        "run.parallel_skew_penalty",
+                        1.0,
+                        skew_penalty_cost,
+                        skew_penalty_cost,
+                        "cost"});
+                }
+
+                if (gather_cost.total_cost <= serial_cost.total_cost)
+                {
+                    appendRuntimeTrace(considered_paths,
+                                       "PARALLEL",
+                                       parallel_subject,
+                                       candidate_name,
+                                       "CHOSEN",
+                                       "workers=" +
+                                           std::to_string(
+                                               decision.workers_planned) +
+                                           " wrapper=" +
+                                           std::string(parallel_ordered_required
+                                                           ? "GATHER_MERGE"
+                                                           : "GATHER"),
+                                       gather_cost.startup_cost,
+                                       gather_cost.total_cost,
+                                       gather_cost.rows);
+
+                    auto gather_path = std::make_shared<GatherPath>(
+                        current_path,
+                        decision.workers_planned,
+                        planner_controls.parallel_leader_participation,
+                        parallel_ordered_required,
+                        gather_cost);
+                    if (gather_path)
+                    {
+                        AccessPathDescriptor gather_descriptor =
+                            current_path ? current_path->accessDescriptor()
+                                         : AccessPathDescriptor{};
+                        gather_descriptor.family =
+                            parallel_ordered_required ? "GATHER_MERGE"
+                                                      : "GATHER";
+                        if (!parallel_ordered_required)
+                        {
+                            gather_descriptor.ordered_output = false;
+                            gather_descriptor.order_complete = false;
+                            gather_descriptor.ordered_prefix_length = 0;
+                            gather_descriptor.ordering_keys.clear();
+                            gather_descriptor.interesting_order_score = 0.0;
+                        }
+                        gather_path->setAccessDescriptor(
+                            std::move(gather_descriptor));
+                    }
+                    current_path = gather_path;
+
+                    auto gather_plan = std::make_shared<GatherNode>(
+                        current_plan,
+                        decision.workers_planned,
+                        planner_controls.parallel_leader_participation,
+                        parallel_ordered_required);
+                    gather_plan->setCost(gather_cost);
+                    gather_plan->setParallelMetadata(
+                        true,
+                        true,
+                        decision.workers_planned,
+                        parallel_ordered_required,
+                        parallel_ordered_required ? "GATHER_MERGE" : "GATHER",
+                        "parallel wrapper selected");
+                    if (parallel_subject_plan)
+                    {
+                        parallel_subject_plan->setParallelMetadata(
+                            true,
+                            true,
+                            decision.workers_planned,
+                            false,
+                            parallel_stage_name,
+                            "parallel stage selected");
+                    }
+                    if (parallel_stage_kind ==
+                            executor::ParallelStageKind::SCAN &&
+                        parallel_scan_relation_index !=
+                            std::numeric_limits<size_t>::max())
+                    {
+                        applyRelationParallelDecision(parallel_scan_relation_index,
+                                                      decision,
+                                                      parallel_stage_name,
+                                                      true,
+                                                      std::string());
+                    }
+                    else if (parallel_stage_kind ==
+                             executor::ParallelStageKind::HASH_JOIN)
+                    {
+                        applyJoinParallelDecision(decision,
+                                                  parallel_stage_name,
+                                                  true,
+                                                  std::string());
+                    }
+                    current_plan = gather_plan;
+                    current_rows = gather_cost.rows;
+                }
+                else
+                {
+                    const std::string rejection_reason =
+                        "parallel wrapper cost exceeds serial path";
+                    appendRuntimeTrace(rejected_paths,
+                                       "PARALLEL",
+                                       parallel_subject,
+                                       candidate_name,
+                                       "REJECTED",
+                                       rejection_reason,
+                                       gather_cost.startup_cost,
+                                       gather_cost.total_cost,
+                                       gather_cost.rows);
+                    if (parallel_subject_plan)
+                    {
+                        parallel_subject_plan->setParallelMetadata(
+                            true,
+                            false,
+                            decision.workers_planned,
+                            false,
+                            parallel_stage_name,
+                            rejection_reason);
+                    }
+                    if (parallel_stage_kind ==
+                            executor::ParallelStageKind::SCAN &&
+                        parallel_scan_relation_index !=
+                            std::numeric_limits<size_t>::max())
+                    {
+                        applyRelationParallelDecision(parallel_scan_relation_index,
+                                                      decision,
+                                                      parallel_stage_name,
+                                                      false,
+                                                      rejection_reason);
+                    }
+                    else if (parallel_stage_kind ==
+                             executor::ParallelStageKind::HASH_JOIN)
+                    {
+                        applyJoinParallelDecision(decision,
+                                                  parallel_stage_name,
+                                                  false,
+                                                  rejection_reason);
+                    }
+                }
+            }
+        }
+        else if (current_plan && planner_controls.enable_parallel)
+        {
+            appendRuntimeTrace(rejected_paths,
+                               "PARALLEL",
+                               "query:parallel",
+                               "PARALLEL_STAGE",
+                               "REJECTED",
+                               "current root stage is not in the guarded parallel family set",
+                               current_plan->startupCost(),
+                               current_plan->totalCost(),
+                               current_rows);
         }
 
         if (has_limit || has_offset)

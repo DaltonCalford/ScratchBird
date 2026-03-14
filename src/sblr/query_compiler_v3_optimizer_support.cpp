@@ -169,7 +169,7 @@ namespace scratchbird::sblr::detail
                 std::array<const char *, 3> aliases;
             };
 
-            const std::array<SessionSettingAlias, 7> settings{{
+            const std::array<SessionSettingAlias, 19> settings{{
                 {"WORK_MEM", {"WORK_MEM", "OPTIMIZER.WORK_MEM", "OPTIMIZER_WORK_MEM"}},
                 {"SPILL_POLICY", {"OPTIMIZER.SPILL_POLICY", "OPTIMIZER_SPILL_POLICY", "SPILL_POLICY"}},
                 {"JOIN_SEARCH", {"OPTIMIZER.JOIN_SEARCH", "OPTIMIZER_JOIN_SEARCH", "JOIN_SEARCH"}},
@@ -177,6 +177,18 @@ namespace scratchbird::sblr::detail
                 {"JOIN_METHOD", {"OPTIMIZER.JOIN_METHOD", "OPTIMIZER_JOIN_METHOD", "JOIN_METHOD"}},
                 {"PLAN_PROFILE", {"OPTIMIZER.PLAN_PROFILE", "OPTIMIZER_PLAN_PROFILE", "PLAN_PROFILE"}},
                 {"PLAN_DIRECTIVES", {"OPTIMIZER.PLAN_DIRECTIVES", "OPTIMIZER_PLAN_DIRECTIVES", "PLAN_DIRECTIVES"}},
+                {"ENABLE_PARALLEL", {"ENABLE_PARALLEL", "enable_parallel", nullptr}},
+                {"ENABLE_PARALLEL_SCAN", {"ENABLE_PARALLEL_SCAN", "enable_parallel_scan", nullptr}},
+                {"ENABLE_PARALLEL_HASH", {"ENABLE_PARALLEL_HASH", "enable_parallel_hash", nullptr}},
+                {"ENABLE_PARALLEL_AGGREGATE", {"ENABLE_PARALLEL_AGGREGATE", "enable_parallel_aggregate", nullptr}},
+                {"ENABLE_PARALLEL_JOIN", {"ENABLE_PARALLEL_JOIN", "enable_parallel_join", nullptr}},
+                {"PARALLEL_LEADER_PARTICIPATION", {"PARALLEL_LEADER_PARTICIPATION", "parallel_leader_participation", nullptr}},
+                {"MAX_PARALLEL_WORKERS", {"MAX_PARALLEL_WORKERS", "max_parallel_workers", nullptr}},
+                {"MAX_PARALLEL_WORKERS_PER_GATHER", {"MAX_PARALLEL_WORKERS_PER_GATHER", "max_parallel_workers_per_gather", nullptr}},
+                {"MIN_PARALLEL_ROWS_PER_WORKER", {"MIN_PARALLEL_ROWS_PER_WORKER", "min_parallel_rows_per_worker", nullptr}},
+                {"MIN_PARALLEL_TABLE_SCAN_SIZE", {"MIN_PARALLEL_TABLE_SCAN_SIZE", "min_parallel_table_scan_size", nullptr}},
+                {"PARALLEL_SETUP_COST", {"PARALLEL_SETUP_COST", "parallel_setup_cost", nullptr}},
+                {"PARALLEL_TUPLE_COST", {"PARALLEL_TUPLE_COST", "parallel_tuple_cost", nullptr}},
             }};
 
             for (const auto &setting : settings)

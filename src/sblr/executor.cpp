@@ -65205,6 +65205,31 @@ namespace scratchbird
                                 {
                                     line << " detail=" << node.detail_text;
                                 }
+                                if (node.parallel_aware || node.parallel_enabled ||
+                                    node.parallel_workers_planned > 0 ||
+                                    !node.parallel_stage.empty())
+                                {
+                                    line << " parallel_aware="
+                                         << (node.parallel_aware ? "true" : "false")
+                                         << " parallel_enabled="
+                                         << (node.parallel_enabled ? "true" : "false")
+                                         << " parallel_workers="
+                                         << node.parallel_workers_planned;
+                                    if (node.gather_merge)
+                                    {
+                                        line << " gather_merge=true";
+                                    }
+                                    if (!node.parallel_stage.empty())
+                                    {
+                                        line << " parallel_stage="
+                                             << node.parallel_stage;
+                                    }
+                                    if (!node.parallel_reason.empty())
+                                    {
+                                        line << " parallel_reason="
+                                             << node.parallel_reason;
+                                    }
+                                }
                                 if (node.memory_budget_bytes > 0 ||
                                     node.estimated_memory_bytes > 0 ||
                                     node.spill_expected)
@@ -65306,6 +65331,31 @@ namespace scratchbird
                                 {
                                     out << ",\"detail\":\""
                                         << escape_json(node.detail_text) << "\"";
+                                }
+                                if (node.parallel_aware || node.parallel_enabled ||
+                                    node.parallel_workers_planned > 0 ||
+                                    !node.parallel_stage.empty())
+                                {
+                                    out << ",\"parallel_aware\":"
+                                        << (node.parallel_aware ? "true" : "false")
+                                        << ",\"parallel_enabled\":"
+                                        << (node.parallel_enabled ? "true" : "false")
+                                        << ",\"parallel_workers_planned\":"
+                                        << node.parallel_workers_planned
+                                        << ",\"gather_merge\":"
+                                        << (node.gather_merge ? "true" : "false");
+                                    if (!node.parallel_stage.empty())
+                                    {
+                                        out << ",\"parallel_stage\":\""
+                                            << escape_json(node.parallel_stage)
+                                            << "\"";
+                                    }
+                                    if (!node.parallel_reason.empty())
+                                    {
+                                        out << ",\"parallel_reason\":\""
+                                            << escape_json(node.parallel_reason)
+                                            << "\"";
+                                    }
                                 }
                                 if (node.memory_budget_bytes > 0 ||
                                     node.estimated_memory_bytes > 0 ||
@@ -65437,6 +65487,32 @@ namespace scratchbird
                                 {
                                     out << " detail=\"" << escape_xml(node.detail_text) << "\"";
                                 }
+                                if (node.parallel_aware || node.parallel_enabled ||
+                                    node.parallel_workers_planned > 0 ||
+                                    !node.parallel_stage.empty())
+                                {
+                                    out << " parallel_aware=\""
+                                        << (node.parallel_aware ? "true" : "false")
+                                        << "\" parallel_enabled=\""
+                                        << (node.parallel_enabled ? "true" : "false")
+                                        << "\" parallel_workers_planned=\""
+                                        << node.parallel_workers_planned
+                                        << "\" gather_merge=\""
+                                        << (node.gather_merge ? "true" : "false")
+                                        << "\"";
+                                    if (!node.parallel_stage.empty())
+                                    {
+                                        out << " parallel_stage=\""
+                                            << escape_xml(node.parallel_stage)
+                                            << "\"";
+                                    }
+                                    if (!node.parallel_reason.empty())
+                                    {
+                                        out << " parallel_reason=\""
+                                            << escape_xml(node.parallel_reason)
+                                            << "\"";
+                                    }
+                                }
                                 if (node.memory_budget_bytes > 0 ||
                                     node.estimated_memory_bytes > 0 ||
                                     node.spill_expected)
@@ -65503,6 +65579,34 @@ namespace scratchbird
                                 {
                                     out << indent << "detail: \"" << escape_json(node.detail_text)
                                         << "\"\n";
+                                }
+                                if (node.parallel_aware || node.parallel_enabled ||
+                                    node.parallel_workers_planned > 0 ||
+                                    !node.parallel_stage.empty())
+                                {
+                                    out << indent << "parallel_aware: "
+                                        << (node.parallel_aware ? "true" : "false")
+                                        << "\n"
+                                        << indent << "parallel_enabled: "
+                                        << (node.parallel_enabled ? "true" : "false")
+                                        << "\n"
+                                        << indent << "parallel_workers_planned: "
+                                        << node.parallel_workers_planned << "\n"
+                                        << indent << "gather_merge: "
+                                        << (node.gather_merge ? "true" : "false")
+                                        << "\n";
+                                    if (!node.parallel_stage.empty())
+                                    {
+                                        out << indent << "parallel_stage: \""
+                                            << escape_json(node.parallel_stage)
+                                            << "\"\n";
+                                    }
+                                    if (!node.parallel_reason.empty())
+                                    {
+                                        out << indent << "parallel_reason: \""
+                                            << escape_json(node.parallel_reason)
+                                            << "\"\n";
+                                    }
                                 }
                                 if (node.memory_budget_bytes > 0 ||
                                     node.estimated_memory_bytes > 0 ||
@@ -65783,6 +65887,31 @@ namespace scratchbird
                                         }
                                     }
                                 }
+                                if (relation.parallel_eligible ||
+                                    relation.parallel_enabled ||
+                                    relation.parallel_workers_planned > 0 ||
+                                    !relation.parallel_stage.empty() ||
+                                    !relation.parallel_rejection_reason.empty())
+                                {
+                                    line << " parallel_eligible="
+                                         << (relation.parallel_eligible ? "true"
+                                                                        : "false")
+                                         << " parallel_enabled="
+                                         << (relation.parallel_enabled ? "true"
+                                                                       : "false")
+                                         << " parallel_workers="
+                                         << relation.parallel_workers_planned;
+                                    if (!relation.parallel_stage.empty())
+                                    {
+                                        line << " parallel_stage="
+                                             << relation.parallel_stage;
+                                    }
+                                    if (!relation.parallel_rejection_reason.empty())
+                                    {
+                                        line << " parallel_reason="
+                                             << relation.parallel_rejection_reason;
+                                    }
+                                }
                                 return line.str();
                             };
 
@@ -65846,6 +65975,31 @@ namespace scratchbird
                                 if (step.parameterized_dependency)
                                 {
                                     line << " parameterized_dependency=true";
+                                }
+                                if (step.parallel_eligible ||
+                                    step.parallel_enabled ||
+                                    step.parallel_workers_planned > 0 ||
+                                    !step.parallel_stage.empty() ||
+                                    !step.parallel_rejection_reason.empty())
+                                {
+                                    line << " parallel_eligible="
+                                         << (step.parallel_eligible ? "true"
+                                                                    : "false")
+                                         << " parallel_enabled="
+                                         << (step.parallel_enabled ? "true"
+                                                                   : "false")
+                                         << " parallel_workers="
+                                         << step.parallel_workers_planned;
+                                    if (!step.parallel_stage.empty())
+                                    {
+                                        line << " parallel_stage="
+                                             << step.parallel_stage;
+                                    }
+                                    if (!step.parallel_rejection_reason.empty())
+                                    {
+                                        line << " parallel_reason="
+                                             << step.parallel_rejection_reason;
+                                    }
                                 }
                                 return line.str();
                             };
@@ -66168,6 +66322,21 @@ namespace scratchbird
                                             << "}";
                                     }
                                     out << "]"
+                                        << ",\"parallel_eligible\":"
+                                        << (entry.parallel_eligible ? "true"
+                                                                    : "false")
+                                        << ",\"parallel_enabled\":"
+                                        << (entry.parallel_enabled ? "true"
+                                                                   : "false")
+                                        << ",\"parallel_workers_planned\":"
+                                        << entry.parallel_workers_planned
+                                        << ",\"parallel_stage\":\""
+                                        << escape_json(entry.parallel_stage)
+                                        << "\""
+                                        << ",\"parallel_rejection_reason\":\""
+                                        << escape_json(
+                                               entry.parallel_rejection_reason)
+                                        << "\""
                                         << "}";
                                 }
                                 out << "]";
@@ -66317,7 +66486,23 @@ namespace scratchbird
                                                    entry.parameter_dependency_relation_aliases[j])
                                             << "\"";
                                     }
-                                    out << "]}";
+                                    out << "]"
+                                        << ",\"parallel_eligible\":"
+                                        << (entry.parallel_eligible ? "true"
+                                                                    : "false")
+                                        << ",\"parallel_enabled\":"
+                                        << (entry.parallel_enabled ? "true"
+                                                                   : "false")
+                                        << ",\"parallel_workers_planned\":"
+                                        << entry.parallel_workers_planned
+                                        << ",\"parallel_stage\":\""
+                                        << escape_json(entry.parallel_stage)
+                                        << "\""
+                                        << ",\"parallel_rejection_reason\":\""
+                                        << escape_json(
+                                               entry.parallel_rejection_reason)
+                                        << "\""
+                                        << "}";
                                 }
                                 out << "]";
                             };

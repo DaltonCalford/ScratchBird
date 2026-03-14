@@ -47,6 +47,11 @@ namespace scratchbird::optimizer
             out["runtime_filter_column"] = relation.runtime_filter_column;
             out["runtime_filter_index_name"] = relation.runtime_filter_index_name;
             out["runtime_filter_index_id_text"] = relation.runtime_filter_index_id_text;
+            out["parallel_eligible"] = relation.parallel_eligible;
+            out["parallel_enabled"] = relation.parallel_enabled;
+            out["parallel_workers_planned"] = relation.parallel_workers_planned;
+            out["parallel_stage"] = relation.parallel_stage;
+            out["parallel_rejection_reason"] = relation.parallel_rejection_reason;
             out["base_rows"] = relation.base_rows;
             out["selectivity"] = relation.selectivity;
             out["startup_cost"] = relation.startup_cost;
@@ -250,6 +255,16 @@ namespace scratchbird::optimizer
                 json_in.value("runtime_filter_index_name", std::string());
             relation_out.runtime_filter_index_id_text =
                 json_in.value("runtime_filter_index_id_text", std::string());
+            relation_out.parallel_eligible =
+                json_in.value("parallel_eligible", false);
+            relation_out.parallel_enabled =
+                json_in.value("parallel_enabled", false);
+            relation_out.parallel_workers_planned =
+                json_in.value("parallel_workers_planned", 0U);
+            relation_out.parallel_stage =
+                json_in.value("parallel_stage", std::string());
+            relation_out.parallel_rejection_reason =
+                json_in.value("parallel_rejection_reason", std::string());
             relation_out.base_rows = json_in.value("base_rows", 0ULL);
             relation_out.selectivity = json_in.value("selectivity", 1.0);
             relation_out.startup_cost = json_in.value("startup_cost", 0.0);
@@ -384,6 +399,12 @@ namespace scratchbird::optimizer
             out["spill_passes"] = join_step.spill_passes;
             out["spill_bytes"] = join_step.spill_bytes;
             out["spill_policy"] = join_step.spill_policy;
+            out["parallel_eligible"] = join_step.parallel_eligible;
+            out["parallel_enabled"] = join_step.parallel_enabled;
+            out["parallel_workers_planned"] = join_step.parallel_workers_planned;
+            out["parallel_stage"] = join_step.parallel_stage;
+            out["parallel_rejection_reason"] =
+                join_step.parallel_rejection_reason;
 
             nlohmann::json left_hash;
             left_hash["qualifier"] = join_step.left_hash_key.qualifier;
@@ -574,6 +595,16 @@ namespace scratchbird::optimizer
             join_step_out.spill_bytes = json_in.value("spill_bytes", 0ULL);
             join_step_out.spill_policy =
                 json_in.value("spill_policy", std::string());
+            join_step_out.parallel_eligible =
+                json_in.value("parallel_eligible", false);
+            join_step_out.parallel_enabled =
+                json_in.value("parallel_enabled", false);
+            join_step_out.parallel_workers_planned =
+                json_in.value("parallel_workers_planned", 0U);
+            join_step_out.parallel_stage =
+                json_in.value("parallel_stage", std::string());
+            join_step_out.parallel_rejection_reason =
+                json_in.value("parallel_rejection_reason", std::string());
 
             const auto using_it = json_in.find("using_columns");
             if (using_it != json_in.end() && using_it->is_array())
@@ -636,6 +667,12 @@ namespace scratchbird::optimizer
             out["condition_text"] = node.condition_text;
             out["index_name"] = node.index_name;
             out["detail_text"] = node.detail_text;
+            out["parallel_aware"] = node.parallel_aware;
+            out["parallel_enabled"] = node.parallel_enabled;
+            out["parallel_workers_planned"] = node.parallel_workers_planned;
+            out["gather_merge"] = node.gather_merge;
+            out["parallel_stage"] = node.parallel_stage;
+            out["parallel_reason"] = node.parallel_reason;
             out["startup_cost"] = node.startup_cost;
             out["total_cost"] = node.total_cost;
             out["estimated_rows"] = node.estimated_rows;
@@ -696,6 +733,15 @@ namespace scratchbird::optimizer
             node_out.condition_text = json_in.value("condition_text", std::string());
             node_out.index_name = json_in.value("index_name", std::string());
             node_out.detail_text = json_in.value("detail_text", std::string());
+            node_out.parallel_aware = json_in.value("parallel_aware", false);
+            node_out.parallel_enabled = json_in.value("parallel_enabled", false);
+            node_out.parallel_workers_planned =
+                json_in.value("parallel_workers_planned", 0U);
+            node_out.gather_merge = json_in.value("gather_merge", false);
+            node_out.parallel_stage =
+                json_in.value("parallel_stage", std::string());
+            node_out.parallel_reason =
+                json_in.value("parallel_reason", std::string());
             node_out.startup_cost = json_in.value("startup_cost", 0.0);
             node_out.total_cost = json_in.value("total_cost", 0.0);
             node_out.estimated_rows = json_in.value("estimated_rows", 0ULL);

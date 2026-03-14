@@ -1835,6 +1835,125 @@ namespace scratchbird::optimizer
         return cost;
     }
 
+    auto CostModel::costGather(const CostEstimate &input_cost,
+                               uint64_t input_rows,
+                               uint32_t workers_planned,
+                               bool leader_participates,
+                               core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        (void)ctx;
+        DEBUG_LOG_DB("Estimating gather cost: input_rows=" +
+                     std::to_string(input_rows) +
+                     ", workers=" + std::to_string(workers_planned) +
+                     ", leader=" + std::to_string(leader_participates ? 1 : 0));
+
+        CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "GATHER");
+        appendInputEstimate(cost,
+                            "input_rows",
+                            static_cast<double>(input_rows),
+                            "rows");
+        appendInputEstimate(cost,
+                            "workers_planned",
+                            static_cast<double>(workers_planned),
+                            "workers");
+        appendInputEstimate(cost,
+                            "leader_participates",
+                            leader_participates ? 1.0 : 0.0,
+                            "flag");
+
+        const uint64_t rows = input_rows == 0 ? input_cost.rows : input_rows;
+        const double participants = std::max(
+            1.0,
+            static_cast<double>(workers_planned) +
+                (leader_participates ? 1.0 : 0.0));
+        const double parallelized_startup_cost =
+            input_cost.startup_cost / participants;
+        const double parallelized_run_cost = input_cost.run_cost / participants;
+        const double tuple_transfer_cost =
+            static_cast<double>(rows) * params_.parallel_tuple_cost;
+
+        cost.startup_cost =
+            parallelized_startup_cost + params_.parallel_setup_cost;
+        appendFormulaTerm(cost,
+                          "startup.parallelized_child_startup",
+                          1.0 / participants,
+                          input_cost.startup_cost,
+                          parallelized_startup_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "startup.parallel_setup",
+                          1.0,
+                          params_.parallel_setup_cost,
+                          params_.parallel_setup_cost,
+                          "cost");
+
+        cost.run_cost = parallelized_run_cost + tuple_transfer_cost;
+        appendFormulaTerm(cost,
+                          "run.parallelized_child",
+                          1.0 / participants,
+                          input_cost.run_cost,
+                          parallelized_run_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.parallel_tuple_transfer",
+                          params_.parallel_tuple_cost,
+                          static_cast<double>(rows),
+                          tuple_transfer_cost,
+                          "cost");
+
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = rows;
+        return cost;
+    }
+
+    auto CostModel::costGatherMerge(const CostEstimate &input_cost,
+                                    uint64_t input_rows,
+                                    uint64_t num_order_keys,
+                                    uint32_t workers_planned,
+                                    bool leader_participates,
+                                    core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        (void)ctx;
+        DEBUG_LOG_DB("Estimating gather merge cost: input_rows=" +
+                     std::to_string(input_rows) +
+                     ", order_keys=" + std::to_string(num_order_keys) +
+                     ", workers=" + std::to_string(workers_planned));
+
+        CostEstimate cost = costGather(input_cost,
+                                       input_rows,
+                                       workers_planned,
+                                       leader_participates,
+                                       nullptr);
+        cost.operator_name = "GATHER_MERGE";
+        const uint64_t rows = cost.rows;
+        const double participants = std::max(
+            2.0,
+            static_cast<double>(workers_planned) +
+                (leader_participates ? 1.0 : 0.0));
+        const double merge_comparisons =
+            static_cast<double>(rows) *
+            std::log2(participants) *
+            static_cast<double>(std::max<uint64_t>(1, num_order_keys));
+        const double merge_cost =
+            merge_comparisons * params_.cpu_operator_cost;
+        appendInputEstimate(cost,
+                            "num_order_keys",
+                            static_cast<double>(num_order_keys),
+                            "count");
+        appendFormulaTerm(cost,
+                          "run.gather_merge_compare_cpu",
+                          params_.cpu_operator_cost,
+                          merge_comparisons,
+                          merge_cost,
+                          "cost");
+        cost.run_cost += merge_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        return cost;
+    }
+
     auto CostModel::costLimit(uint64_t input_rows,
                              int64_t limit_count,
                              int64_t offset_count,

@@ -8,8 +8,8 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 5;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v5";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 6;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v6";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -63,6 +63,11 @@ namespace scratchbird::optimizer
         std::string runtime_filter_column;
         std::string runtime_filter_index_name;
         std::string runtime_filter_index_id_text;
+        bool parallel_eligible = false;
+        bool parallel_enabled = false;
+        uint32_t parallel_workers_planned = 0;
+        std::string parallel_stage;
+        std::string parallel_rejection_reason;
         uint64_t base_rows = 0;
         double selectivity = 1.0;
         double startup_cost = 0.0;
@@ -163,6 +168,11 @@ namespace scratchbird::optimizer
         uint32_t spill_passes = 0;
         uint64_t spill_bytes = 0;
         std::string spill_policy;
+        bool parallel_eligible = false;
+        bool parallel_enabled = false;
+        uint32_t parallel_workers_planned = 0;
+        std::string parallel_stage;
+        std::string parallel_rejection_reason;
     };
 
     struct RuntimePlanTraceEntry
@@ -240,6 +250,12 @@ namespace scratchbird::optimizer
         std::string condition_text;
         std::string index_name;
         std::string detail_text;
+        bool parallel_aware = false;
+        bool parallel_enabled = false;
+        uint32_t parallel_workers_planned = 0;
+        bool gather_merge = false;
+        std::string parallel_stage;
+        std::string parallel_reason;
         double startup_cost = 0.0;
         double total_cost = 0.0;
         uint64_t estimated_rows = 0;

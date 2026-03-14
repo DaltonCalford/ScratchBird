@@ -15,6 +15,8 @@ using scratchbird::executor::ParallelAggregate;
 using scratchbird::executor::ParallelConfig;
 using scratchbird::executor::ParallelExecutionManager;
 using scratchbird::executor::ParallelHashJoin;
+using scratchbird::executor::ParallelPlanDecision;
+using scratchbird::executor::ParallelStageKind;
 
 namespace
 {
@@ -82,6 +84,77 @@ TEST(ParallelExecutionControlsTest, ZeroWorkerBudgetDisablesParallelization)
     EXPECT_EQ(manager.optimalWorkerCount(100, 100), 1u);
 
     manager.shutdown();
+}
+
+TEST(ParallelExecutionControlsTest, EvaluateParallelPlanHonorsStageFlagsAndThresholds)
+{
+    ParallelConfig config;
+    config.enable_parallel = true;
+    config.enable_parallel_scan = true;
+    config.max_workers = 4;
+    config.max_workers_per_gather = 4;
+    config.min_rows_per_worker = 100;
+    config.min_pages_per_worker = 2;
+    config.min_parallel_table_scan_size = 1;
+
+    const ParallelPlanDecision chosen =
+        scratchbird::executor::evaluateParallelPlan(config,
+                                                    ParallelStageKind::SCAN,
+                                                    1200,
+                                                    32,
+                                                    false,
+                                                    false,
+                                                    true);
+    EXPECT_TRUE(chosen.eligible);
+    EXPECT_GE(chosen.workers_planned, 2u);
+
+    config.enable_parallel_scan = false;
+    const ParallelPlanDecision rejected =
+        scratchbird::executor::evaluateParallelPlan(config,
+                                                    ParallelStageKind::SCAN,
+                                                    1200,
+                                                    32,
+                                                    false,
+                                                    false,
+                                                    true);
+    EXPECT_FALSE(rejected.eligible);
+    EXPECT_EQ(rejected.rejection_reason, "parallel_scan_disabled");
+}
+
+TEST(ParallelExecutionControlsTest, EvaluateParallelPlanRejectsSpilledHashJoinAndUsesGatherMerge)
+{
+    ParallelConfig config;
+    config.enable_parallel = true;
+    config.enable_parallel_scan = true;
+    config.enable_parallel_hash = true;
+    config.enable_parallel_join = true;
+    config.max_workers = 4;
+    config.max_workers_per_gather = 4;
+    config.min_rows_per_worker = 100;
+    config.min_pages_per_worker = 2;
+    config.min_parallel_table_scan_size = 1;
+
+    const ParallelPlanDecision ordered =
+        scratchbird::executor::evaluateParallelPlan(config,
+                                                    ParallelStageKind::GATHER_MERGE,
+                                                    1200,
+                                                    32,
+                                                    true,
+                                                    false,
+                                                    true);
+    EXPECT_TRUE(ordered.eligible);
+    EXPECT_TRUE(ordered.use_gather_merge);
+
+    const ParallelPlanDecision spilled =
+        scratchbird::executor::evaluateParallelPlan(config,
+                                                    ParallelStageKind::HASH_JOIN,
+                                                    1200,
+                                                    32,
+                                                    false,
+                                                    true,
+                                                    true);
+    EXPECT_FALSE(spilled.eligible);
+    EXPECT_EQ(spilled.rejection_reason, "spill_risk_blocks_parallel_stage");
 }
 
 TEST(ParallelExecutionControlsTest, ParallelAggregateFailsClosed)

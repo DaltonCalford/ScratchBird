@@ -33,6 +33,16 @@ using namespace scratchbird::core;
 namespace
 {
 
+auto effectiveWorkerCap(const ParallelConfig& config) -> uint32_t
+{
+    uint32_t worker_cap = config.max_workers;
+    if (config.max_workers_per_gather > 0)
+    {
+        worker_cap = std::min(worker_cap, config.max_workers_per_gather);
+    }
+    return worker_cap;
+}
+
 auto shouldParallelizeWithConfig(const ParallelConfig& config,
                                  bool initialized,
                                  uint64_t num_rows,
@@ -41,7 +51,10 @@ auto shouldParallelizeWithConfig(const ParallelConfig& config,
     if (!initialized) {
         return false;
     }
-    if (config.max_workers <= 1) {
+    if (!config.enable_parallel) {
+        return false;
+    }
+    if (effectiveWorkerCap(config) <= 1) {
         return false;
     }
     if (!config.enable_parallel_scan) {
@@ -57,6 +70,135 @@ auto shouldParallelizeWithConfig(const ParallelConfig& config,
 }
 
 } // namespace
+
+auto parallelStageName(ParallelStageKind stage) -> const char *
+{
+    switch (stage)
+    {
+        case ParallelStageKind::SCAN: return "SCAN";
+        case ParallelStageKind::HASH_JOIN: return "HASH_JOIN";
+        case ParallelStageKind::AGGREGATE: return "AGGREGATE";
+        case ParallelStageKind::GATHER_MERGE: return "GATHER_MERGE";
+    }
+    return "UNKNOWN";
+}
+
+auto evaluateParallelPlan(const ParallelConfig& config,
+                          ParallelStageKind stage,
+                          uint64_t num_rows,
+                          uint64_t num_pages,
+                          bool ordered_required,
+                          bool spill_expected,
+                          bool safety_ok) -> ParallelPlanDecision
+{
+    ParallelPlanDecision decision;
+    decision.use_gather_merge = ordered_required;
+
+    if (!safety_ok)
+    {
+        decision.rejection_reason = "snapshot_or_policy_safety_rejects_parallel";
+        return decision;
+    }
+    if (!config.enable_parallel)
+    {
+        decision.rejection_reason = "parallel_execution_disabled";
+        return decision;
+    }
+
+    const uint32_t worker_cap = effectiveWorkerCap(config);
+    if (worker_cap <= 1)
+    {
+        decision.rejection_reason = "worker_budget_exhausted";
+        return decision;
+    }
+
+    switch (stage)
+    {
+        case ParallelStageKind::SCAN:
+            if (!config.enable_parallel_scan)
+            {
+                decision.rejection_reason = "parallel_scan_disabled";
+                return decision;
+            }
+            break;
+        case ParallelStageKind::HASH_JOIN:
+            if (!config.enable_parallel_join)
+            {
+                decision.rejection_reason = "parallel_join_disabled";
+                return decision;
+            }
+            if (!config.enable_parallel_hash)
+            {
+                decision.rejection_reason = "parallel_hash_disabled";
+                return decision;
+            }
+            break;
+        case ParallelStageKind::AGGREGATE:
+            if (!config.enable_parallel_aggregate)
+            {
+                decision.rejection_reason = "parallel_aggregate_disabled";
+                return decision;
+            }
+            break;
+        case ParallelStageKind::GATHER_MERGE:
+            if (ordered_required && !config.enable_parallel_scan &&
+                !config.enable_parallel_join &&
+                !config.enable_parallel_aggregate)
+            {
+                decision.rejection_reason = "no_parallel_stage_family_enabled";
+                return decision;
+            }
+            break;
+    }
+
+    if (num_rows < config.min_rows_per_worker)
+    {
+        decision.rejection_reason = "row_estimate_below_parallel_threshold";
+        return decision;
+    }
+
+    const uint64_t min_pages = std::max<uint64_t>(config.min_pages_per_worker,
+                                                  config.min_parallel_table_scan_size);
+    if (num_pages < min_pages)
+    {
+        decision.rejection_reason = "page_estimate_below_parallel_threshold";
+        return decision;
+    }
+
+    if (spill_expected &&
+        (stage == ParallelStageKind::HASH_JOIN ||
+         stage == ParallelStageKind::AGGREGATE))
+    {
+        decision.rejection_reason = "spill_risk_blocks_parallel_stage";
+        return decision;
+    }
+
+    const uint32_t workers_by_rows = static_cast<uint32_t>(
+        std::max<uint64_t>(1, (num_rows + config.min_rows_per_worker - 1) /
+                                  std::max<uint32_t>(1, config.min_rows_per_worker)));
+    const uint32_t workers_by_pages = static_cast<uint32_t>(
+        std::max<uint64_t>(1, (num_pages + std::max<uint64_t>(1, min_pages) - 1) /
+                                  std::max<uint64_t>(1, min_pages)));
+    uint32_t workers = std::min(worker_cap, std::max(1u, std::min(workers_by_rows, workers_by_pages)));
+    if (workers <= 1)
+    {
+        decision.rejection_reason = "parallel_degree_not_beneficial";
+        return decision;
+    }
+
+    const double row_remainder_ratio =
+        num_rows == 0 ? 0.0
+                      : static_cast<double>(num_rows % workers) /
+                            static_cast<double>(num_rows);
+    const double page_remainder_ratio =
+        num_pages == 0 ? 0.0
+                       : static_cast<double>(num_pages % workers) /
+                             static_cast<double>(num_pages);
+    decision.skew_penalty = std::max(row_remainder_ratio, page_remainder_ratio);
+    decision.eligible = true;
+    decision.workers_planned = workers;
+    return decision;
+}
 
 // =================================================================================================
 // WorkerPool Implementation
@@ -669,7 +811,7 @@ uint32_t ParallelExecutionManager::optimalWorkerCount(uint64_t num_rows, uint64_
         (num_pages + config_.min_pages_per_worker - 1) / config_.min_pages_per_worker);
 
     uint32_t optimal = std::min(workers_by_rows, workers_by_pages);
-    return std::min(optimal, config_.max_workers);
+    return std::min(optimal, effectiveWorkerCap(config_));
 }
 
 void ParallelExecutionManager::shutdown()

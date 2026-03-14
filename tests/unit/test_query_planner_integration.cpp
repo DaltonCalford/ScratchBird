@@ -810,6 +810,24 @@ protected:
         return total_ms / static_cast<double>(iterations);
     }
 
+    void enableParallelPlanning(const std::string& setup_cost = "0",
+                                const std::string& tuple_cost = "0")
+    {
+        ASSERT_NE(connection_ctx_, nullptr);
+        connection_ctx_->setSessionVariable("ENABLE_PARALLEL", "ON");
+        connection_ctx_->setSessionVariable("ENABLE_PARALLEL_SCAN", "ON");
+        connection_ctx_->setSessionVariable("ENABLE_PARALLEL_HASH", "ON");
+        connection_ctx_->setSessionVariable("ENABLE_PARALLEL_AGGREGATE", "ON");
+        connection_ctx_->setSessionVariable("ENABLE_PARALLEL_JOIN", "ON");
+        connection_ctx_->setSessionVariable("PARALLEL_LEADER_PARTICIPATION", "ON");
+        connection_ctx_->setSessionVariable("MAX_PARALLEL_WORKERS", "4");
+        connection_ctx_->setSessionVariable("MAX_PARALLEL_WORKERS_PER_GATHER", "4");
+        connection_ctx_->setSessionVariable("MIN_PARALLEL_ROWS_PER_WORKER", "1");
+        connection_ctx_->setSessionVariable("MIN_PARALLEL_TABLE_SCAN_SIZE", "1");
+        connection_ctx_->setSessionVariable("PARALLEL_SETUP_COST", setup_cost);
+        connection_ctx_->setSessionVariable("PARALLEL_TUPLE_COST", tuple_cost);
+    }
+
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<Database> db_;
     std::unique_ptr<QueryCompilerV3> compiler_;
@@ -3174,7 +3192,7 @@ TEST_F(QueryPlannerIntegrationTest,
 
     ASSERT_TRUE(executeSQL("CREATE INDEX idx_orders_user_id ON orders (user_id)")
                     .success());
-    for (int i = 1; i <= 2048; ++i)
+    for (int i = 1; i <= 8192; ++i)
     {
         const int user_id = 1 + (i % 32);
         ASSERT_TRUE(executeSQL("INSERT INTO orders (id, user_id, amount) VALUES (" +
@@ -3557,6 +3575,191 @@ TEST_F(QueryPlannerIntegrationTest,
                                 entry.verdict == "CHOSEN";
                      });
     ASSERT_NE(chosen_it, plan.considered_paths.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       ParallelSeqScanWrapsPlanInGatherAndPublishesRelationMetadata)
+{
+    ASSERT_TRUE(createDatabase());
+    enableParallelPlanning();
+
+    for (int i = 1; i <= 2048; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'pseq" +
+                               std::to_string(i) + "', 'pseq" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(18 + (i % 5)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT id FROM users WHERE age >= 18");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.root.node_type, "Gather");
+    ASSERT_EQ(plan.root.children.size(), 1u);
+    EXPECT_EQ(plan.root.children.front().node_type, "SeqScan");
+    EXPECT_TRUE(plan.root.parallel_enabled);
+    EXPECT_GT(plan.root.parallel_workers_planned, 1u);
+    ASSERT_FALSE(plan.relations.empty());
+    EXPECT_TRUE(plan.relations.front().parallel_enabled);
+    EXPECT_EQ(plan.relations.front().parallel_stage, "SCAN");
+
+    const auto chosen_it =
+        std::find_if(plan.considered_paths.begin(),
+                     plan.considered_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "PARALLEL" &&
+                                entry.candidate == "PARALLEL_SEQ_SCAN" &&
+                                entry.verdict == "CHOSEN";
+                     });
+    ASSERT_NE(chosen_it, plan.considered_paths.end());
+
+    auto result = executeSQL("SELECT id FROM users WHERE age >= 18");
+    ASSERT_TRUE(result.success()) << result.error();
+    EXPECT_EQ(resultRowCount(result), 2048u);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       ParallelHashJoinWrapsPlanInGatherAndPublishesJoinMetadata)
+{
+    ASSERT_TRUE(createDatabase());
+    enableParallelPlanning();
+    connection_ctx_->setSessionVariable("OPTIMIZER.JOIN_METHOD", "HASH_JOIN");
+
+    for (int i = 1; i <= 4096; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'phj" +
+                               std::to_string(i) + "', 'phj" +
+                               std::to_string(i) + "@example.com', 30)")
+                        .success());
+        ASSERT_TRUE(executeSQL("INSERT INTO orders (id, user_id, amount) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(i) +
+                               ", 10.0)")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(executeSQL("ANALYZE orders").success());
+
+    auto bytecode = compileSQL(
+        "SELECT users.id FROM users JOIN orders ON users.id = orders.user_id");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.root.node_type, "Gather");
+    ASSERT_EQ(plan.root.children.size(), 1u);
+    EXPECT_EQ(plan.root.children.front().node_type, "HashJoin");
+    ASSERT_FALSE(plan.join_steps.empty());
+    EXPECT_TRUE(plan.join_steps.back().parallel_enabled);
+    EXPECT_EQ(plan.join_steps.back().parallel_stage, "HASH_JOIN");
+
+    const auto chosen_it =
+        std::find_if(plan.considered_paths.begin(),
+                     plan.considered_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "PARALLEL" &&
+                                entry.candidate == "PARALLEL_HASH_JOIN" &&
+                                entry.verdict == "CHOSEN";
+                     });
+    ASSERT_NE(chosen_it, plan.considered_paths.end());
+
+    auto result = executeSQL(
+        "SELECT users.id FROM users JOIN orders ON users.id = orders.user_id");
+    ASSERT_TRUE(result.success()) << result.error();
+    EXPECT_EQ(resultRowCount(result), 4096u);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       ParallelAggregateWrapsPlanInGatherAndPublishesStageMetadata)
+{
+    ASSERT_TRUE(createDatabase());
+    enableParallelPlanning();
+
+    for (int i = 1; i <= 8192; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'pagg" +
+                               std::to_string(i) + "', 'pagg" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 16)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT age, COUNT(*) FROM users GROUP BY age");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.root.node_type, "Gather");
+    ASSERT_EQ(plan.root.children.size(), 1u);
+    EXPECT_EQ(plan.root.children.front().node_type, "Aggregate");
+    EXPECT_TRUE(plan.root.children.front().parallel_aware);
+    EXPECT_TRUE(plan.root.children.front().parallel_enabled);
+    EXPECT_EQ(plan.root.children.front().parallel_stage, "AGGREGATE");
+
+    const auto chosen_it =
+        std::find_if(plan.considered_paths.begin(),
+                     plan.considered_paths.end(),
+                     [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                         return entry.phase == "PARALLEL" &&
+                                entry.candidate == "PARALLEL_AGGREGATE" &&
+                                entry.verdict == "CHOSEN";
+                     });
+    ASSERT_NE(chosen_it, plan.considered_paths.end());
+
+    auto result = executeSQL("SELECT age, COUNT(*) FROM users GROUP BY age");
+    ASSERT_TRUE(result.success()) << result.error();
+    EXPECT_EQ(resultRowCount(result), 16u);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       OrderedParallelPlanUsesGatherMergeAndExplainJsonPublishesParallelFields)
+{
+    ASSERT_TRUE(createDatabase());
+    enableParallelPlanning();
+
+    for (int i = 1; i <= 8192; ++i)
+    {
+        const int reversed = 2049 - i;
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'pgm" +
+                               std::to_string(reversed) + "', 'pgm" +
+                               std::to_string(i) + "@example.com', 30)")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT name FROM users ORDER BY name");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.root.node_type, "GatherMerge");
+    ASSERT_EQ(plan.root.children.size(), 1u);
+    EXPECT_EQ(plan.root.children.front().node_type, "Sort");
+    EXPECT_TRUE(plan.root.parallel_enabled);
+    EXPECT_TRUE(plan.root.gather_merge);
+    EXPECT_EQ(plan.root.parallel_stage, "GATHER_MERGE");
+
+    auto explain_result =
+        executeSQL("EXPLAIN (FORMAT JSON) SELECT name FROM users ORDER BY name");
+    ASSERT_TRUE(explain_result.success()) << explain_result.error();
+    const auto explain_lines = resultStrings(explain_result);
+    ASSERT_EQ(explain_lines.size(), 1u);
+    const auto explain_json = nlohmann::json::parse(explain_lines.front());
+    ASSERT_TRUE(explain_json.contains("plan_root"));
+    const auto &plan_root = explain_json.at("plan_root");
+    EXPECT_EQ(plan_root.value("node_type", std::string()), "GatherMerge");
+    EXPECT_TRUE(plan_root.value("parallel_enabled", false));
+    EXPECT_TRUE(plan_root.value("gather_merge", false));
+    EXPECT_EQ(plan_root.value("parallel_stage", std::string()),
+              "GATHER_MERGE");
 }
 
 TEST_F(QueryPlannerIntegrationTest, CorrelatedExistsPreservesQualifiedOuterReferenceInBytecode)

@@ -44,6 +44,8 @@ namespace scratchbird::optimizer
         MERGE_JOIN,        // Merge join (NCW-040C)
         AGGREGATE,         // Aggregation (Phase 1, Task 4.1)
         SORT,              // Sort operation (Phase 1, Task 5.1)
+        GATHER,            // Parallel gather (OPW-015)
+        GATHER_MERGE,      // Parallel gather merge (OPW-015)
         LIMIT,             // Limit/offset (Phase 1, Task 5.2)
         WINDOW             // Window functions (Phase 1, Task 6.2)
     };
@@ -93,6 +95,10 @@ namespace scratchbird::optimizer
                 return "AGGREGATE";
             case PathType::SORT:
                 return "SORT";
+            case PathType::GATHER:
+                return "GATHER";
+            case PathType::GATHER_MERGE:
+                return "GATHER_MERGE";
             case PathType::LIMIT:
                 return "LIMIT";
             case PathType::WINDOW:
@@ -1076,6 +1082,42 @@ namespace scratchbird::optimizer
         std::shared_ptr<Path> input_path_;
         std::vector<parser::v3::OrderByItem*> order_by_items_;
         uint64_t row_width_;
+    };
+
+    class GatherPath : public Path
+    {
+    public:
+        GatherPath(std::shared_ptr<Path> input_path,
+                   uint32_t workers_planned,
+                   bool leader_participates,
+                   bool merge_ordered,
+                   const CostEstimate& cost)
+            : Path(merge_ordered ? PathType::GATHER_MERGE : PathType::GATHER, cost),
+              input_path_(std::move(input_path)),
+              workers_planned_(workers_planned),
+              leader_participates_(leader_participates),
+              merge_ordered_(merge_ordered)
+        {
+        }
+
+        const std::shared_ptr<Path>& inputPath() const { return input_path_; }
+        uint32_t workersPlanned() const { return workers_planned_; }
+        bool leaderParticipates() const { return leader_participates_; }
+        bool mergeOrdered() const { return merge_ordered_; }
+
+        auto toString() const -> std::string override
+        {
+            return std::string(merge_ordered_ ? "GatherMergePath(" : "GatherPath(") +
+                   "workers=" + std::to_string(workers_planned_) +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        std::shared_ptr<Path> input_path_;
+        uint32_t workers_planned_ = 0;
+        bool leader_participates_ = true;
+        bool merge_ordered_ = false;
     };
 
     /**
