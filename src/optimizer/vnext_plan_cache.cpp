@@ -54,6 +54,31 @@ namespace scratchbird::optimizer
             message = "role_context_signature is required";
             return false;
         }
+        if (key.object_ref_digest.empty())
+        {
+            message = "object_ref_digest is required";
+            return false;
+        }
+        if (key.plan_profile_signature.empty())
+        {
+            message = "plan_profile_signature is required";
+            return false;
+        }
+        if (key.statistics_snapshot_signature.empty())
+        {
+            message = "statistics_snapshot_signature is required";
+            return false;
+        }
+        if (key.cost_profile_id.empty())
+        {
+            message = "cost_profile_id is required";
+            return false;
+        }
+        if (key.policy_snapshot_id.empty())
+        {
+            message = "policy_snapshot_id is required";
+            return false;
+        }
         if (key.capability_set_hash.empty())
         {
             message = "capability_set_hash is required";
@@ -279,6 +304,31 @@ namespace scratchbird::optimizer
         stats_.entries = entries_.size();
         core::VNextMetricsEventModel::recordOptimizerEvent(
             "plan_cache_invalidate_payload_hash", "ok", "NONE",
+            static_cast<double>(removed));
+        return removed;
+    }
+
+    auto VNextPlanCache::invalidateByObjectRefDigest(
+        const std::string &object_ref_digest) -> uint64_t
+    {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        uint64_t removed = 0;
+        for (auto it = entries_.begin(); it != entries_.end();)
+        {
+            if (it->second.key.object_ref_digest == object_ref_digest)
+            {
+                it = entries_.erase(it);
+                ++removed;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        stats_.invalidations += removed;
+        stats_.entries = entries_.size();
+        core::VNextMetricsEventModel::recordOptimizerEvent(
+            "plan_cache_invalidate_object_ref", "ok", "NONE",
             static_cast<double>(removed));
         return removed;
     }

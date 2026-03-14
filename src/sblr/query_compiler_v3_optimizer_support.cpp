@@ -6,17 +6,18 @@
 #include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/query_profiler.h"
 #include "scratchbird/optimizer/query_planner.h"
+#include "scratchbird/optimizer/vnext_plan_selection.h"
 #include "scratchbird/sblr/v3_payloads.h"
 #include "scratchbird/sblr/v3_opcode_identity.h"
 #include "scratchbird/sblr/v3_plan_cache_key.h"
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cctype>
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <unordered_set>
 
@@ -28,18 +29,6 @@ namespace scratchbird::sblr::detail
         {
             static optimizer::VNextPlanCache cache;
             return cache;
-        }
-
-        std::atomic<uint64_t> &compilerCatalogEpoch()
-        {
-            static std::atomic<uint64_t> epoch{1};
-            return epoch;
-        }
-
-        std::atomic<uint64_t> &compilerSecurityEpoch()
-        {
-            static std::atomic<uint64_t> epoch{1};
-            return epoch;
         }
 
         auto normalizeSql(std::string_view sql) -> std::string
@@ -204,6 +193,72 @@ namespace scratchbird::sblr::detail
             }
         }
 
+        auto planProfileModeText(QueryCompilerV3PlanProfileMode mode) -> const char *
+        {
+            switch (mode)
+            {
+                case QueryCompilerV3PlanProfileMode::GENERIC: return "GENERIC";
+                case QueryCompilerV3PlanProfileMode::CUSTOM: return "CUSTOM";
+                case QueryCompilerV3PlanProfileMode::AUTO: return "AUTO";
+            }
+            return "GENERIC";
+        }
+
+        auto stableNonZeroHash(std::string_view text) -> uint64_t
+        {
+            const uint64_t hash = sblr::v3::stableHash64(text);
+            return hash == 0 ? 1 : hash;
+        }
+
+        auto effectiveSchemaId(const core::ConnectionContext *conn,
+                               const core::ID &current_schema_id) -> core::ID
+        {
+            if (current_schema_id != core::ID{})
+            {
+                return current_schema_id;
+            }
+            if (conn != nullptr && conn->getCurrentSchemaId() != core::ID{})
+            {
+                return conn->getCurrentSchemaId();
+            }
+            return {};
+        }
+
+        auto currentSchemaEpochKey(const core::ConnectionContext *conn,
+                                   const core::ID &current_schema_id) -> uint64_t
+        {
+            const core::ID schema_id = effectiveSchemaId(conn, current_schema_id);
+            if (conn != nullptr)
+            {
+                const core::ID &schema_epoch_uuid = conn->getCurrentSchemaEpochUuid();
+                if (schema_epoch_uuid != core::ID{})
+                {
+                    return stableNonZeroHash(schema_epoch_uuid.toString());
+                }
+                const core::ID &session_schema_id = conn->getCurrentSchemaId();
+                if (session_schema_id != core::ID{})
+                {
+                    return stableNonZeroHash(session_schema_id.toString());
+                }
+            }
+
+            if (schema_id != core::ID{})
+            {
+                return stableNonZeroHash(schema_id.toString());
+            }
+            return 1;
+        }
+
+        auto currentPolicySnapshotId(const core::ConnectionContext *conn) -> std::string
+        {
+            if (conn == nullptr)
+            {
+                return "policy:g1:t1";
+            }
+            return "policy:g" + std::to_string(std::max<uint64_t>(1, conn->policyEpochGlobal())) +
+                   ":t" + std::to_string(std::max<uint64_t>(1, conn->policyEpochTable()));
+        }
+
         auto upsertRuntimePlanControl(std::vector<optimizer::RuntimePlanControlEntry> &controls,
                                       const std::string &name,
                                       const std::string &value,
@@ -245,6 +300,9 @@ namespace scratchbird::sblr::detail
                     core::IdentifierUtils::toUpper(trimOptimizerControl(raw_value));
                 if (upper.empty() || upper == "AUTO")
                 {
+                    effective_mode_out = QueryCompilerV3PlanProfileMode::AUTO;
+                    control_out.value = "AUTO";
+                    control_out.source = source;
                     return true;
                 }
                 if (upper == "GENERIC")
@@ -381,12 +439,220 @@ namespace scratchbird::sblr::detail
             return signature.str();
         }
 
+        auto deriveStatsSnapshotSignature(const optimizer::RuntimePlan &plan) -> std::string
+        {
+            std::set<uint64_t> snapshot_ids;
+            for (const auto &entry : plan.statistics_provenance)
+            {
+                if (entry.stats_snapshot_id != 0)
+                {
+                    snapshot_ids.insert(entry.stats_snapshot_id);
+                }
+            }
+
+            if (snapshot_ids.empty())
+            {
+                return "NONE";
+            }
+
+            std::ostringstream out;
+            bool first = true;
+            for (uint64_t snapshot_id : snapshot_ids)
+            {
+                if (!first)
+                {
+                    out << ';';
+                }
+                first = false;
+                out << snapshot_id;
+            }
+            return out.str();
+        }
+
+        auto collectCostProfiles(const optimizer::RuntimePlanNode &node,
+                                 std::set<std::string> &profiles) -> void
+        {
+            if (!node.formula_profile_id.empty())
+            {
+                std::ostringstream profile;
+                profile << node.formula_profile_id;
+                if (node.formula_profile_version != 0)
+                {
+                    profile << '@' << node.formula_profile_version;
+                }
+                profiles.insert(profile.str());
+            }
+            for (const auto &child : node.children)
+            {
+                collectCostProfiles(child, profiles);
+            }
+        }
+
+        auto deriveCostProfileId(const optimizer::RuntimePlan &plan) -> std::string
+        {
+            std::set<std::string> profiles;
+            collectCostProfiles(plan.root, profiles);
+            if (profiles.empty())
+            {
+                return "UNSPECIFIED";
+            }
+
+            std::ostringstream out;
+            bool first = true;
+            for (const auto &profile : profiles)
+            {
+                if (!first)
+                {
+                    out << '+';
+                }
+                first = false;
+                out << profile;
+            }
+            return out.str();
+        }
+
+        auto countPlanNodes(const optimizer::RuntimePlanNode &node) -> uint32_t
+        {
+            uint32_t count = 1;
+            for (const auto &child : node.children)
+            {
+                count += countPlanNodes(child);
+            }
+            return count;
+        }
+
+        auto estimatedAvgRowBytes(const optimizer::RuntimePlan &plan) -> uint64_t
+        {
+            if (plan.root.estimated_rows != 0 && plan.root.estimated_memory_bytes != 0)
+            {
+                return std::max<uint64_t>(1,
+                                          plan.root.estimated_memory_bytes /
+                                              plan.root.estimated_rows);
+            }
+
+            uint64_t total_rows = 0;
+            for (const auto &relation : plan.relations)
+            {
+                total_rows += relation.estimated_rows;
+            }
+            if (total_rows != 0 && plan.root.estimated_memory_bytes != 0)
+            {
+                return std::max<uint64_t>(1, plan.root.estimated_memory_bytes / total_rows);
+            }
+            return 128;
+        }
+
+        auto buildReusablePlanChoiceNode(const optimizer::RuntimePlan &plan)
+            -> optimizer::PlanHashNode
+        {
+            optimizer::PlanHashNode root;
+            root.node_symbol = "REUSABLE_PLAN";
+            root.attributes.push_back(
+                optimizer::PlanHashAttribute::makeString("cache_mode", plan.cache_mode));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "plan_profile_signature", plan.plan_profile_signature));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "root_node_type", plan.root.node_type));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
+                "estimated_rows", plan.root.estimated_rows));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
+                "relation_count", static_cast<uint64_t>(plan.relations.size())));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
+                "join_count", static_cast<uint64_t>(plan.join_steps.size())));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "plan_hash", plan.plan_hash));
+
+            for (const auto &relation : plan.relations)
+            {
+                optimizer::PlanHashNode relation_node;
+                relation_node.node_symbol = "REL";
+                relation_node.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                    "alias", relation.alias));
+                relation_node.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                    "scan_kind", relation.scan_kind));
+                relation_node.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
+                    "estimated_rows", relation.estimated_rows));
+                root.children.push_back(std::move(relation_node));
+            }
+
+            for (const auto &join : plan.join_steps)
+            {
+                optimizer::PlanHashNode join_node;
+                join_node.node_symbol = "JOIN";
+                join_node.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                    "method", join.method));
+                join_node.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                    "join_type", join.join_type));
+                join_node.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
+                    "estimated_rows", join.estimated_rows));
+                root.children.push_back(std::move(join_node));
+            }
+            return root;
+        }
+
+        auto buildReusablePlanCandidate(const optimizer::RuntimePlan &plan,
+                                        uint32_t page_size_bytes)
+            -> optimizer::VNextPlanCandidateInput
+        {
+            optimizer::VNextPlanCandidateInput candidate;
+            candidate.track_symbol = optimizer::QueryTrack::RELATIONAL_TRACK;
+
+            uint64_t base_rows = 0;
+            double max_selectivity = 0.0;
+            for (const auto &relation : plan.relations)
+            {
+                base_rows += relation.base_rows;
+                max_selectivity = std::max(max_selectivity, relation.selectivity);
+            }
+            if (base_rows == 0)
+            {
+                base_rows = std::max<uint64_t>(1, plan.root.estimated_rows);
+            }
+
+            const double selectivity =
+                std::clamp(max_selectivity > 0.0
+                               ? max_selectivity
+                               : static_cast<double>(std::max<uint64_t>(1, plan.root.estimated_rows)) /
+                                     static_cast<double>(std::max<uint64_t>(1, base_rows)),
+                           0.0,
+                           1.0);
+            const uint64_t avg_row_bytes = estimatedAvgRowBytes(plan);
+            const uint64_t memory_budget_bytes =
+                std::max<uint64_t>(plan.root.memory_budget_bytes, 4ULL * 1024ULL * 1024ULL);
+            const uint64_t bridge_shuffle_bytes =
+                static_cast<uint64_t>(std::max<uint64_t>(
+                    0,
+                    plan.root.estimated_rows * avg_row_bytes *
+                        std::max<size_t>(1, plan.join_steps.size())));
+
+            candidate.base_cardinality = base_rows;
+            candidate.post_filter_selectivity = selectivity;
+            candidate.avg_row_bytes = avg_row_bytes;
+            candidate.operator_count = countPlanNodes(plan.root);
+            candidate.bridge_count = static_cast<uint32_t>(plan.join_steps.size());
+            candidate.bridge_shuffle_bytes = bridge_shuffle_bytes;
+            candidate.read_amplification_factor = 1.0;
+            candidate.latency_budget_ms = 50.0;
+            candidate.memory_budget_bytes = memory_budget_bytes;
+            candidate.page_size_bytes =
+                std::max<uint32_t>(page_size_bytes == 0 ? 16384U : page_size_bytes, 1024U);
+            candidate.join_reorder_candidate_count =
+                static_cast<uint32_t>(plan.search_summary.considered_state_count);
+            candidate.plan_root = buildReusablePlanChoiceNode(plan);
+            return candidate;
+        }
+
         auto planProfileSignature(QueryCompilerV3PlanProfileMode mode,
                                   const std::string &bucket_signature) -> std::string
         {
             if (mode == QueryCompilerV3PlanProfileMode::CUSTOM)
             {
                 return std::string("CUSTOM:") +
+                       (bucket_signature.empty() ? "UNSPECIFIED" : bucket_signature);
+            }
+            if (mode == QueryCompilerV3PlanProfileMode::AUTO)
+            {
+                return std::string("AUTO:") +
                        (bucket_signature.empty() ? "UNSPECIFIED" : bucket_signature);
             }
             return "GENERIC";
@@ -708,10 +974,14 @@ namespace scratchbird::sblr::detail
                                const core::ID &current_schema_id,
                                uint16_t root_opcode,
                                const std::string &payload_hash,
-                               const std::string &plan_profile_signature)
+                               const std::string &plan_profile_signature,
+                               const std::string &stats_snapshot_signature,
+                               const std::string &cost_profile_id,
+                               const std::string &policy_snapshot_id)
             -> sblr::v3::PlanCacheKeyInput
         {
             const auto *conn = core::ConnectionContext::getCurrent();
+            const core::ID schema_id = effectiveSchemaId(conn, current_schema_id);
             sblr::v3::PlanCacheKeyInput key;
             key.profile_id = "native";
             key.profile_version = "v3";
@@ -719,8 +989,9 @@ namespace scratchbird::sblr::detail
             key.payload_hash = payload_hash;
             key.canonical_opcode_symbol =
                 sblr::v3::canonicalOpcodeSymbolForOpcode(root_opcode);
-            key.catalog_epoch = compilerCatalogEpoch().load();
-            key.security_epoch = compilerSecurityEpoch().load();
+            key.catalog_epoch = currentSchemaEpochKey(conn, current_schema_id);
+            key.security_epoch =
+                conn != nullptr ? std::max<uint64_t>(1, conn->policyEpochGlobal()) : 1;
             key.capability_set_hash = conn != nullptr ? conn->dialect_tag() : "scratchbird";
             key.module_version = 1;
             key.translation_rule_version = 1;
@@ -729,14 +1000,17 @@ namespace scratchbird::sblr::detail
             key.artifact_preference = "SBLR_ONLY";
             key.optimization_level = "O2";
             key.normalization_rule_set_id = 0x3901;
-            key.object_ref_digest = current_schema_id.toString();
+            key.object_ref_digest = schema_id.toString();
             key.plan_profile_signature = plan_profile_signature;
+            key.statistics_snapshot_signature = stats_snapshot_signature;
+            key.cost_profile_id = cost_profile_id;
+            key.policy_snapshot_id = policy_snapshot_id;
 
             std::ostringstream session_sig;
             session_sig << "sql=" << hashTextHex(normalizeSql(sql));
             if (conn != nullptr)
             {
-                session_sig << "|schema=" << conn->getCurrentSchemaId().toString();
+                session_sig << "|schema=" << schema_id.toString();
                 session_sig << "|dialect=" << conn->dialect_tag();
                 session_sig << "|search=";
                 for (const auto &entry : conn->search_path())
@@ -762,19 +1036,35 @@ namespace scratchbird::sblr::detail
             return key;
         }
 
-        auto cacheMutationBarrier(const parser::v3::Statement *stmt) -> void
+        auto cacheMutationBarrier(uint16_t root_opcode,
+                                  const core::ID &current_schema_id) -> void
         {
-            const parser::v3::SelectStmt *select_stmt = nullptr;
-            bool is_explain = false;
-            if (isCacheableSelect(stmt, select_stmt, is_explain))
+            const auto *conn = core::ConnectionContext::getCurrent();
+            const core::ID schema_id = effectiveSchemaId(conn, current_schema_id);
+            const std::string opcode_symbol =
+                sblr::v3::canonicalOpcodeSymbolForOpcode(root_opcode);
+            if (opcode_symbol.rfind("OP_STMT_DML_", 0) == 0)
             {
                 return;
             }
-
-            planCache().invalidateAll();
-            ++compilerCatalogEpoch();
-            ++compilerSecurityEpoch();
+            if (schema_id != core::ID{})
+            {
+                (void)planCache().invalidateByObjectRefDigest(schema_id.toString());
+            }
         }
+
+        struct PlannedCompilationVariant
+        {
+            QueryCompilerV3PlanProfileMode mode =
+                QueryCompilerV3PlanProfileMode::GENERIC;
+            std::vector<sblr::v3::Instruction> instructions;
+            optimizer::RuntimePlan runtime_plan;
+            optimizer::VNextPlanCandidateInput chooser_candidate;
+            sblr::v3::PlanCacheKeyInput cache_key;
+            std::string stats_snapshot_signature;
+            std::string cost_profile_id;
+            std::string policy_snapshot_id;
+        };
 
         auto parseUuidText(std::string_view text, core::ID &id_out) -> bool
         {
@@ -942,6 +1232,146 @@ namespace scratchbird::sblr::detail
 
             return refreshed_any;
         }
+
+        auto annotateReusablePlanMetadata(
+            optimizer::RuntimePlan &plan,
+            const optimizer::RuntimePlanControlEntry &plan_profile_control,
+            std::string_view decision_source,
+            const std::string &stats_snapshot_signature,
+            const std::string &cost_profile_id,
+            const std::string &policy_snapshot_id) -> void
+        {
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     plan_profile_control.name,
+                                     plan_profile_control.value,
+                                     plan_profile_control.source);
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_REUSE_DECISION",
+                                     plan.cache_mode,
+                                     std::string(decision_source));
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_STATS_SNAPSHOT",
+                                     stats_snapshot_signature,
+                                     "CACHE_KEY");
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_COST_PROFILE",
+                                     cost_profile_id,
+                                     "CACHE_KEY");
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_POLICY_SNAPSHOT",
+                                     policy_snapshot_id,
+                                     "CACHE_KEY");
+        }
+
+        auto buildPlannedVariant(core::Database *db,
+                                 const parser::v3::SelectStmt *select_stmt,
+                                 const parser::v3::StringPool &pool,
+                                 const core::ID &current_schema_id,
+                                 const std::vector<sblr::v3::Instruction> &base_instructions,
+                                 size_t root_index,
+                                 bool is_explain,
+                                 std::vector<std::string> &warnings,
+                                 const optimizer::ParameterBindings *parameter_bindings,
+                                 const std::string &query_feedback_key,
+                                 QueryCompilerV3PlanProfileMode plan_mode,
+                                 const std::string &sql,
+                                 const parser::v3::Statement *stmt,
+                                 const std::string &payload_hash,
+                                 const optimizer::RuntimePlanControlEntry &plan_profile_control,
+                                 std::string_view decision_source,
+                                 PlannedCompilationVariant &variant_out,
+                                 std::string &error_out) -> bool
+        {
+            variant_out = PlannedCompilationVariant{};
+            variant_out.mode = plan_mode;
+            variant_out.instructions = base_instructions;
+
+            bool plan_ok = true;
+            if (!is_explain)
+            {
+                plan_ok = applyPlannedSelect(db,
+                                             select_stmt,
+                                             pool,
+                                             current_schema_id,
+                                             variant_out.instructions[root_index],
+                                             warnings,
+                                             error_out,
+                                             plan_mode,
+                                             plan_mode == QueryCompilerV3PlanProfileMode::CUSTOM
+                                                 ? parameter_bindings
+                                                 : nullptr,
+                                             query_feedback_key,
+                                             &variant_out.runtime_plan);
+            }
+            else
+            {
+                auto *explain_payload = instructionObject(variant_out.instructions[root_index]);
+                if (explain_payload == nullptr)
+                {
+                    error_out = "EXPLAIN instruction payload is not an object";
+                    return false;
+                }
+                auto query_it = explain_payload->find("query");
+                if (query_it == explain_payload->end())
+                {
+                    error_out = "EXPLAIN payload is missing query";
+                    return false;
+                }
+                auto *query_ptr =
+                    std::get_if<sblr::v3::Value::InstrPtr>(&query_it->second.data);
+                if (query_ptr == nullptr || !*query_ptr)
+                {
+                    error_out = "EXPLAIN query payload is invalid";
+                    return false;
+                }
+                plan_ok = applyPlannedSelect(db,
+                                             select_stmt,
+                                             pool,
+                                             current_schema_id,
+                                             **query_ptr,
+                                             warnings,
+                                             error_out,
+                                             plan_mode,
+                                             plan_mode == QueryCompilerV3PlanProfileMode::CUSTOM
+                                                 ? parameter_bindings
+                                                 : nullptr,
+                                             query_feedback_key,
+                                             &variant_out.runtime_plan);
+            }
+
+            if (!plan_ok)
+            {
+                return false;
+            }
+
+            variant_out.stats_snapshot_signature =
+                deriveStatsSnapshotSignature(variant_out.runtime_plan);
+            variant_out.cost_profile_id =
+                deriveCostProfileId(variant_out.runtime_plan);
+            variant_out.policy_snapshot_id =
+                currentPolicySnapshotId(core::ConnectionContext::getCurrent());
+
+            annotateReusablePlanMetadata(variant_out.runtime_plan,
+                                         plan_profile_control,
+                                         decision_source,
+                                         variant_out.stats_snapshot_signature,
+                                         variant_out.cost_profile_id,
+                                         variant_out.policy_snapshot_id);
+            variant_out.chooser_candidate =
+                buildReusablePlanCandidate(variant_out.runtime_plan,
+                                           db != nullptr ? db->page_size() : 16384);
+            variant_out.cache_key = buildPlanCacheKey(
+                sql,
+                stmt,
+                current_schema_id,
+                variant_out.instructions[root_index].opcode,
+                payload_hash,
+                variant_out.runtime_plan.plan_profile_signature,
+                variant_out.stats_snapshot_signature,
+                variant_out.cost_profile_id,
+                variant_out.policy_snapshot_id);
+            return true;
+        }
     } // namespace
 
     auto finalizeQueryCompilerV3Compilation(core::Database *db,
@@ -961,8 +1391,6 @@ namespace scratchbird::sblr::detail
             result.errors.push_back("Database context is required for QueryCompilerV3");
             return result;
         }
-
-        cacheMutationBarrier(stmt);
 
         std::vector<sblr::v3::Instruction> instructions;
         std::string instruction_error;
@@ -989,6 +1417,8 @@ namespace scratchbird::sblr::detail
             result.errors.push_back("V3 container did not contain a root statement");
             return result;
         }
+
+        cacheMutationBarrier(instructions[root_index].opcode, current_schema_id);
 
         const parser::v3::SelectStmt *select_stmt = nullptr;
         bool is_explain = false;
@@ -1017,93 +1447,252 @@ namespace scratchbird::sblr::detail
             result.errors.push_back(plan_profile_control_error);
             return result;
         }
+        const bool has_parameter_bindings =
+            parameter_bindings != nullptr && !parameter_bindings->empty();
+        const bool chooser_requested =
+            cacheable &&
+            optimizations_enabled &&
+            has_parameter_bindings &&
+            effective_plan_profile_mode == QueryCompilerV3PlanProfileMode::AUTO;
         const bool parameter_sensitive_requested =
             cacheable &&
             optimizations_enabled &&
-            parameter_bindings != nullptr &&
-            !parameter_bindings->empty() &&
+            has_parameter_bindings &&
             effective_plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM;
 
-        result.plan_profile.mode = parameter_sensitive_requested
-            ? QueryCompilerV3PlanProfileMode::CUSTOM
-            : QueryCompilerV3PlanProfileMode::GENERIC;
-        result.plan_profile.parameter_sensitive = parameter_sensitive_requested;
+        result.plan_profile.mode = QueryCompilerV3PlanProfileMode::GENERIC;
+        result.plan_profile.parameter_sensitive = false;
         result.plan_profile.signature =
-            planProfileSignature(result.plan_profile.mode, std::string());
+            planProfileSignature(QueryCompilerV3PlanProfileMode::GENERIC, std::string());
 
         if (cacheable && optimizations_enabled)
         {
-            if (!parameter_sensitive_requested && !adaptive_replan_required)
-            {
-                const auto key = buildPlanCacheKey(sql,
-                                                   stmt,
-                                                   current_schema_id,
-                                                   instructions[root_index].opcode,
-                                                   payload_hash,
-                                                   result.plan_profile.signature);
-                auto get_result = planCache().get(key);
-                if (get_result.ok && get_result.hit)
-                {
-                    result.success = true;
-                    result.cache_hit = true;
-                    result.bytecode = std::move(get_result.value.sblr_payload);
-                    return result;
-                }
-            }
+            auto fillResultPlanProfile =
+                [&](const PlannedCompilationVariant &variant,
+                    std::string_view decision_source) -> void {
+                    result.plan_profile.mode = variant.mode;
+                    result.plan_profile.parameter_sensitive =
+                        variant.runtime_plan.parameter_sensitive;
+                    result.plan_profile.signature =
+                        variant.runtime_plan.plan_profile_signature;
+                    result.plan_profile.selectivity_bucket_signature =
+                        variant.runtime_plan.selectivity_bucket_signature;
+                    result.plan_profile.runtime_plan_hash =
+                        variant.runtime_plan.plan_hash;
+                    result.plan_profile.decision_source = std::string(decision_source);
+                    result.plan_profile.statistics_snapshot_signature =
+                        variant.stats_snapshot_signature;
+                    result.plan_profile.cost_profile_id = variant.cost_profile_id;
+                    result.plan_profile.policy_snapshot_id =
+                        variant.policy_snapshot_id;
+                };
 
-            std::string plan_error;
-            bool plan_ok = true;
-            optimizer::RuntimePlan planned_runtime_plan;
-            if (!is_explain)
-            {
-                plan_ok = applyPlannedSelect(db,
+            auto encodeSelectedVariant = [&](PlannedCompilationVariant &variant) -> bool {
+                std::string plan_error;
+                std::vector<uint8_t> annotated_plan_bytes;
+                if (!optimizer::encodeRuntimePlan(variant.runtime_plan,
+                                                  annotated_plan_bytes,
+                                                  plan_error))
+                {
+                    result.errors.push_back(plan_error);
+                    return false;
+                }
+
+                if (!is_explain)
+                {
+                    auto *payload = instructionObject(variant.instructions[root_index]);
+                    if (payload == nullptr ||
+                        !rewriteSelectPayloadForPlan(*payload,
+                                                     variant.runtime_plan,
+                                                     std::move(annotated_plan_bytes),
+                                                     plan_error))
+                    {
+                        result.errors.push_back(plan_error.empty()
+                            ? "SELECT instruction payload is not an object"
+                            : plan_error);
+                        return false;
+                    }
+                }
+                else
+                {
+                    auto *explain_payload = instructionObject(variant.instructions[root_index]);
+                    if (explain_payload == nullptr)
+                    {
+                        result.errors.push_back("EXPLAIN instruction payload is not an object");
+                        return false;
+                    }
+                    auto query_it = explain_payload->find("query");
+                    if (query_it == explain_payload->end())
+                    {
+                        result.errors.push_back("EXPLAIN payload is missing query");
+                        return false;
+                    }
+                    auto *query_ptr =
+                        std::get_if<sblr::v3::Value::InstrPtr>(&query_it->second.data);
+                    if (query_ptr == nullptr || !*query_ptr)
+                    {
+                        result.errors.push_back("EXPLAIN query payload is invalid");
+                        return false;
+                    }
+                    auto *query_payload = instructionObject(**query_ptr);
+                    if (query_payload == nullptr ||
+                        !rewriteSelectPayloadForPlan(*query_payload,
+                                                     variant.runtime_plan,
+                                                     std::move(annotated_plan_bytes),
+                                                     plan_error))
+                    {
+                        result.errors.push_back(plan_error.empty()
+                            ? "EXPLAIN query payload is invalid"
+                            : plan_error);
+                        return false;
+                    }
+                }
+
+                if (!encodeInstructions(variant.instructions,
+                                        container.bytecode_stream,
+                                        instruction_error))
+                {
+                    result.errors.push_back(instruction_error);
+                    return false;
+                }
+
+                std::string encode_error;
+                if (!sblr::v3::encodeContainer(container, result.bytecode, encode_error))
+                {
+                    result.errors.push_back(encode_error.empty() ?
+                        "V3 container encode failed" :
+                        encode_error);
+                    return false;
+                }
+                return true;
+            };
+
+            auto makeDecisionSource = [&](QueryCompilerV3PlanProfileMode mode) -> std::string {
+                if (chooser_requested)
+                {
+                    return "CHOOSER";
+                }
+                if (effective_plan_profile_mode == QueryCompilerV3PlanProfileMode::AUTO)
+                {
+                    return has_parameter_bindings ? "AUTO_FALLBACK" : "AUTO_NO_PARAMETERS";
+                }
+                return mode == QueryCompilerV3PlanProfileMode::CUSTOM
+                    ? "FORCED_CUSTOM"
+                    : "FORCED_GENERIC";
+            };
+
+            auto buildVariants = [&](std::vector<PlannedCompilationVariant> &variants_out,
+                                     size_t &selected_index_out,
+                                     std::string &decision_source_out) -> bool {
+                variants_out.clear();
+                selected_index_out = 0;
+                decision_source_out.clear();
+
+                std::string plan_error;
+                if (chooser_requested)
+                {
+                    PlannedCompilationVariant generic_variant;
+                    if (!buildPlannedVariant(db,
                                              select_stmt,
                                              pool,
                                              current_schema_id,
-                                             instructions[root_index],
+                                             instructions,
+                                             root_index,
+                                             is_explain,
                                              result.warnings,
-                                             plan_error,
-                                             effective_plan_profile_mode,
                                              parameter_bindings,
                                              query_feedback_key,
-                                             &planned_runtime_plan);
-            }
-            else
-            {
-                auto *explain_payload = instructionObject(instructions[root_index]);
-                if (explain_payload == nullptr)
-                {
-                    result.errors.push_back("EXPLAIN instruction payload is not an object");
-                    return result;
-                }
-                auto query_it = explain_payload->find("query");
-                if (query_it == explain_payload->end())
-                {
-                    result.errors.push_back("EXPLAIN payload is missing query");
-                    return result;
-                }
-                auto *query_ptr = std::get_if<sblr::v3::Value::InstrPtr>(&query_it->second.data);
-                if (query_ptr == nullptr || !*query_ptr)
-                {
-                    result.errors.push_back("EXPLAIN query payload is invalid");
-                    return result;
-                }
-                plan_ok = applyPlannedSelect(db,
+                                             QueryCompilerV3PlanProfileMode::GENERIC,
+                                             sql,
+                                             stmt,
+                                             payload_hash,
+                                             plan_profile_control,
+                                             "CHOOSER",
+                                             generic_variant,
+                                             plan_error))
+                    {
+                        result.errors.push_back(plan_error);
+                        return false;
+                    }
+                    variants_out.push_back(std::move(generic_variant));
+
+                    PlannedCompilationVariant custom_variant;
+                    if (!buildPlannedVariant(db,
                                              select_stmt,
                                              pool,
                                              current_schema_id,
-                                             **query_ptr,
+                                             instructions,
+                                             root_index,
+                                             is_explain,
                                              result.warnings,
-                                             plan_error,
-                                             effective_plan_profile_mode,
                                              parameter_bindings,
                                              query_feedback_key,
-                                             &planned_runtime_plan);
-            }
+                                             QueryCompilerV3PlanProfileMode::CUSTOM,
+                                             sql,
+                                             stmt,
+                                             payload_hash,
+                                             plan_profile_control,
+                                             "CHOOSER",
+                                             custom_variant,
+                                             plan_error))
+                    {
+                        result.errors.push_back(plan_error);
+                        return false;
+                    }
+                    variants_out.push_back(std::move(custom_variant));
 
-            if (!plan_ok)
+                    auto selection = optimizer::VNextPlanSelection::selectBestPlan(
+                        {variants_out[0].chooser_candidate, variants_out[1].chooser_candidate});
+                    if (!selection.ok || selection.selected_index >= variants_out.size())
+                    {
+                        result.errors.push_back(selection.error_message.empty()
+                            ? "Reusable-plan chooser failed"
+                            : selection.error_message);
+                        return false;
+                    }
+                    selected_index_out = selection.selected_index;
+                    decision_source_out = "CHOOSER";
+                    return true;
+                }
+
+                const QueryCompilerV3PlanProfileMode selected_mode =
+                    parameter_sensitive_requested
+                        ? QueryCompilerV3PlanProfileMode::CUSTOM
+                        : QueryCompilerV3PlanProfileMode::GENERIC;
+                PlannedCompilationVariant selected_variant;
+                if (!buildPlannedVariant(db,
+                                         select_stmt,
+                                         pool,
+                                         current_schema_id,
+                                         instructions,
+                                         root_index,
+                                         is_explain,
+                                         result.warnings,
+                                         parameter_bindings,
+                                         query_feedback_key,
+                                         selected_mode,
+                                         sql,
+                                         stmt,
+                                         payload_hash,
+                                         plan_profile_control,
+                                         makeDecisionSource(selected_mode),
+                                         selected_variant,
+                                         plan_error))
+                {
+                    result.errors.push_back(plan_error);
+                    return false;
+                }
+                variants_out.push_back(std::move(selected_variant));
+                selected_index_out = 0;
+                decision_source_out = makeDecisionSource(selected_mode);
+                return true;
+            };
+
+            std::vector<PlannedCompilationVariant> variants;
+            size_t selected_variant_index = 0;
+            std::string selected_decision_source;
+            if (!buildVariants(variants, selected_variant_index, selected_decision_source))
             {
-                result.errors.push_back(plan_error);
                 return result;
             }
 
@@ -1111,162 +1700,35 @@ namespace scratchbird::sblr::detail
             {
                 (void)planCache().invalidateByPayloadHash(payload_hash);
                 const bool adaptive_stats_refreshed =
-                    refreshAdaptiveStatistics(db, planned_runtime_plan, result.warnings);
+                    refreshAdaptiveStatistics(db,
+                                              variants[selected_variant_index].runtime_plan,
+                                              result.warnings);
                 (void)optimizer::QueryProfiler::getInstance().acknowledgeCardinalityFeedback(
                     query_feedback_key,
                     adaptive_stats_refreshed);
                 if (adaptive_stats_refreshed)
                 {
-                    plan_error.clear();
-                    if (!is_explain)
+                    if (!buildVariants(variants,
+                                       selected_variant_index,
+                                       selected_decision_source))
                     {
-                        plan_ok = applyPlannedSelect(db,
-                                                     select_stmt,
-                                                     pool,
-                                                     current_schema_id,
-                                                     instructions[root_index],
-                                                     result.warnings,
-                                                     plan_error,
-                                                     effective_plan_profile_mode,
-                                                     parameter_bindings,
-                                                     query_feedback_key,
-                                                     &planned_runtime_plan);
-                    }
-                    else
-                    {
-                        auto *explain_payload = instructionObject(instructions[root_index]);
-                        if (explain_payload == nullptr)
-                        {
-                            result.errors.push_back(
-                                "EXPLAIN instruction payload is not an object");
-                            return result;
-                        }
-                        auto query_it = explain_payload->find("query");
-                        if (query_it == explain_payload->end())
-                        {
-                            result.errors.push_back("EXPLAIN payload is missing query");
-                            return result;
-                        }
-                        auto *query_ptr =
-                            std::get_if<sblr::v3::Value::InstrPtr>(&query_it->second.data);
-                        if (query_ptr == nullptr || !*query_ptr)
-                        {
-                            result.errors.push_back("EXPLAIN query payload is invalid");
-                            return result;
-                        }
-                        plan_ok = applyPlannedSelect(db,
-                                                     select_stmt,
-                                                     pool,
-                                                     current_schema_id,
-                                                     **query_ptr,
-                                                     result.warnings,
-                                                     plan_error,
-                                                     effective_plan_profile_mode,
-                                                     parameter_bindings,
-                                                     query_feedback_key,
-                                                     &planned_runtime_plan);
-                    }
-                    if (!plan_ok)
-                    {
-                        result.errors.push_back(plan_error);
                         return result;
                     }
                 }
             }
 
             annotateAdaptiveFeedback(
-                planned_runtime_plan,
+                variants[selected_variant_index].runtime_plan,
                 optimizer::QueryProfiler::getInstance().latestCardinalityFeedback(
                     query_feedback_key),
                 adaptive_replan_required);
-            upsertRuntimePlanControl(planned_runtime_plan.optimizer_controls,
-                                     plan_profile_control.name,
-                                     plan_profile_control.value,
-                                     plan_profile_control.source);
+            PlannedCompilationVariant &selected_variant =
+                variants[selected_variant_index];
+            fillResultPlanProfile(selected_variant, selected_decision_source);
 
+            if (!adaptive_replan_required)
             {
-                std::vector<uint8_t> annotated_plan_bytes;
-                if (!optimizer::encodeRuntimePlan(planned_runtime_plan,
-                                                  annotated_plan_bytes,
-                                                  plan_error))
-                {
-                    result.errors.push_back(plan_error);
-                    return result;
-                }
-
-                if (!is_explain)
-                {
-                    auto *payload = instructionObject(instructions[root_index]);
-                    if (payload == nullptr ||
-                        !rewriteSelectPayloadForPlan(*payload,
-                                                     planned_runtime_plan,
-                                                     std::move(annotated_plan_bytes),
-                                                     plan_error))
-                    {
-                        result.errors.push_back(plan_error.empty()
-                            ? "SELECT instruction payload is not an object"
-                            : plan_error);
-                        return result;
-                    }
-                }
-                else
-                {
-                    auto *explain_payload = instructionObject(instructions[root_index]);
-                    if (explain_payload == nullptr)
-                    {
-                        result.errors.push_back("EXPLAIN instruction payload is not an object");
-                        return result;
-                    }
-                    auto query_it = explain_payload->find("query");
-                    if (query_it == explain_payload->end())
-                    {
-                        result.errors.push_back("EXPLAIN payload is missing query");
-                        return result;
-                    }
-                    auto *query_ptr =
-                        std::get_if<sblr::v3::Value::InstrPtr>(&query_it->second.data);
-                    if (query_ptr == nullptr || !*query_ptr)
-                    {
-                        result.errors.push_back("EXPLAIN query payload is invalid");
-                        return result;
-                    }
-                    auto *query_payload = instructionObject(**query_ptr);
-                    if (query_payload == nullptr ||
-                        !rewriteSelectPayloadForPlan(*query_payload,
-                                                     planned_runtime_plan,
-                                                     std::move(annotated_plan_bytes),
-                                                     plan_error))
-                    {
-                        result.errors.push_back(plan_error.empty()
-                            ? "EXPLAIN query payload is invalid"
-                            : plan_error);
-                        return result;
-                    }
-                }
-            }
-
-            if (!planned_runtime_plan.plan_hash.empty())
-            {
-                result.plan_profile.runtime_plan_hash = planned_runtime_plan.plan_hash;
-            }
-            result.plan_profile.parameter_sensitive =
-                planned_runtime_plan.parameter_sensitive;
-            result.plan_profile.selectivity_bucket_signature =
-                planned_runtime_plan.selectivity_bucket_signature;
-            if (!planned_runtime_plan.plan_profile_signature.empty())
-            {
-                result.plan_profile.signature =
-                    planned_runtime_plan.plan_profile_signature;
-            }
-            if (parameter_sensitive_requested && !adaptive_replan_required)
-            {
-                const auto custom_key = buildPlanCacheKey(sql,
-                                                          stmt,
-                                                          current_schema_id,
-                                                          instructions[root_index].opcode,
-                                                          payload_hash,
-                                                          result.plan_profile.signature);
-                auto get_result = planCache().get(custom_key);
+                auto get_result = planCache().get(selected_variant.cache_key);
                 if (get_result.ok && get_result.hit)
                 {
                     result.success = true;
@@ -1276,18 +1738,8 @@ namespace scratchbird::sblr::detail
                 }
             }
 
-            if (!encodeInstructions(instructions, container.bytecode_stream, instruction_error))
+            if (!encodeSelectedVariant(selected_variant))
             {
-                result.errors.push_back(instruction_error);
-                return result;
-            }
-
-            std::string encode_error;
-            if (!sblr::v3::encodeContainer(container, result.bytecode, encode_error))
-            {
-                result.errors.push_back(encode_error.empty() ?
-                    "V3 container encode failed" :
-                    encode_error);
                 return result;
             }
 
@@ -1304,13 +1756,7 @@ namespace scratchbird::sblr::detail
             cache_value.native_artifact_status =
                 optimizer::NativeArtifactStatus::FALLBACK_SBLR_ONLY;
             cache_value.fallback_reason_code = "SBLR_ONLY";
-            const auto key = buildPlanCacheKey(sql,
-                                               stmt,
-                                               current_schema_id,
-                                               instructions[root_index].opcode,
-                                               payload_hash,
-                                               result.plan_profile.signature);
-            (void)planCache().put(key, cache_value);
+            (void)planCache().put(selected_variant.cache_key, cache_value);
         }
         else
         {

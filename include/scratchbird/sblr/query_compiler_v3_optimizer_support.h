@@ -14,7 +14,8 @@ namespace scratchbird::sblr::detail
     enum class QueryCompilerV3PlanProfileMode : uint8_t
     {
         GENERIC = 0,
-        CUSTOM = 1
+        CUSTOM = 1,
+        AUTO = 2
     };
 
     struct QueryCompilerV3PlanProfile
@@ -24,6 +25,10 @@ namespace scratchbird::sblr::detail
         std::string signature = "GENERIC";
         std::string selectivity_bucket_signature;
         std::string runtime_plan_hash;
+        std::string decision_source;
+        std::string statistics_snapshot_signature;
+        std::string cost_profile_id;
+        std::string policy_snapshot_id;
     };
 
     struct QueryCompilerV3FinalizeResult

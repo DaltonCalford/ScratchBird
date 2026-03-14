@@ -39,6 +39,10 @@ auto makeKey() -> PlanCacheKeyInput
     key.optimization_level = "O2";
     key.normalization_rule_set_id = 0x1301;
     key.object_ref_digest = "obj_digest";
+    key.plan_profile_signature = "GENERIC";
+    key.statistics_snapshot_signature = "stats:1;4";
+    key.cost_profile_id = "sb_cost_formula/default@1";
+    key.policy_snapshot_id = "policy:g1:t1";
     return key;
 }
 
@@ -224,6 +228,30 @@ TEST(OptimizerVNextPlanCacheTest, InvalidateAllClearsEntries)
     auto stats = cache.getStats();
     EXPECT_EQ(1U, stats.invalidations);
     EXPECT_EQ(0U, stats.entries);
+}
+
+TEST(OptimizerVNextPlanCacheTest, ObjectRefInvalidationIsLocalized)
+{
+    VNextPlanCache cache;
+    PlanCacheKeyInput kept = makeKey();
+    kept.object_ref_digest = "schema_keep";
+    PlanCacheKeyInput removed = makeKey();
+    removed.payload_hash = "payload_removed";
+    removed.object_ref_digest = "schema_removed";
+    VNextPlanCacheValue value = makeValue();
+
+    ASSERT_TRUE(cache.put(kept, value).ok);
+    ASSERT_TRUE(cache.put(removed, value).ok);
+
+    EXPECT_EQ(1U, cache.invalidateByObjectRefDigest("schema_removed"));
+
+    auto kept_hit = cache.get(kept);
+    ASSERT_TRUE(kept_hit.ok);
+    EXPECT_TRUE(kept_hit.hit);
+
+    auto removed_hit = cache.get(removed);
+    ASSERT_TRUE(removed_hit.ok);
+    EXPECT_FALSE(removed_hit.hit);
 }
 
 TEST(OptimizerVNextPlanCacheTest, MetricsEmissionTracksHitMissAndRejectPaths)

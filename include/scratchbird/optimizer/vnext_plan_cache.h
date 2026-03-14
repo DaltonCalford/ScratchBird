@@ -89,6 +89,7 @@ namespace scratchbird::optimizer
 
         auto invalidateAll() -> uint64_t;
         auto invalidateByPayloadHash(const std::string &payload_hash) -> uint64_t;
+        auto invalidateByObjectRefDigest(const std::string &object_ref_digest) -> uint64_t;
         auto invalidateByCatalogEpoch(uint64_t expected_epoch) -> uint64_t;
         auto invalidateBySecurityEpoch(uint64_t expected_epoch) -> uint64_t;
         auto invalidateByCapabilitySetHash(const std::string &hash) -> uint64_t;

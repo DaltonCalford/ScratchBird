@@ -917,17 +917,18 @@ TEST_F(QueryPlannerIntegrationTest, RepeatedSelectHitsPlanCache)
     EXPECT_EQ(first, second);
 }
 
-TEST_F(QueryPlannerIntegrationTest, MutationInvalidatesCachedPlans)
+TEST_F(QueryPlannerIntegrationTest, SchemaMutationInvalidatesCachedPlansLocally)
 {
     ASSERT_TRUE(createDatabase());
 
     QueryCompilerV3::resetPlanCacheStats();
+    const auto baseline = QueryCompilerV3::planCacheStats();
 
     auto first = compileSQL("SELECT id FROM users WHERE id = 42");
     ASSERT_FALSE(first.empty()) << last_compile_errors_;
     auto second = compileSQL("SELECT id FROM users WHERE id = 42");
     ASSERT_FALSE(second.empty()) << last_compile_errors_;
-    auto mutation = compileSQL("INSERT INTO users (id, name) VALUES (1, 'alice')");
+    auto mutation = compileSQL("CREATE INDEX idx_users_age ON users (age)");
     ASSERT_FALSE(mutation.empty()) << last_compile_errors_;
 
     auto after_mutation = QueryCompilerV3::planCacheStats();
@@ -935,7 +936,31 @@ TEST_F(QueryPlannerIntegrationTest, MutationInvalidatesCachedPlans)
     EXPECT_EQ(after_mutation.misses, 1u);
     EXPECT_EQ(after_mutation.inserts, 1u);
     EXPECT_EQ(after_mutation.invalidations, 1u);
-    EXPECT_EQ(after_mutation.entries, 0u);
+    EXPECT_EQ(after_mutation.entries, baseline.entries);
+}
+
+TEST_F(QueryPlannerIntegrationTest, DmlDoesNotInvalidateCachedPlans)
+{
+    ASSERT_TRUE(createDatabase());
+
+    QueryCompilerV3::resetPlanCacheStats();
+    const auto baseline = QueryCompilerV3::planCacheStats();
+
+    auto first = compileSQL("SELECT id FROM users WHERE id = 42");
+    ASSERT_FALSE(first.empty()) << last_compile_errors_;
+    auto second = compileSQL("SELECT id FROM users WHERE id = 42");
+    ASSERT_FALSE(second.empty()) << last_compile_errors_;
+    auto dml = compileSQL("INSERT INTO users (id, name) VALUES (1, 'alice')");
+    ASSERT_FALSE(dml.empty()) << last_compile_errors_;
+    auto third = compileSQL("SELECT id FROM users WHERE id = 42");
+    ASSERT_FALSE(third.empty()) << last_compile_errors_;
+
+    auto after_dml = QueryCompilerV3::planCacheStats();
+    EXPECT_EQ(after_dml.hits, 2u);
+    EXPECT_EQ(after_dml.misses, 1u);
+    EXPECT_EQ(after_dml.inserts, 1u);
+    EXPECT_EQ(after_dml.invalidations, 0u);
+    EXPECT_EQ(after_dml.entries, baseline.entries + 1u);
 }
 
 TEST_F(QueryPlannerIntegrationTest, ParameterizedSelectUsesCustomPlanProfileAndHitsBucketedCache)
@@ -1092,6 +1117,94 @@ TEST_F(QueryPlannerIntegrationTest, PlanProfileDirectiveForcesGenericParameteriz
     ASSERT_NE(plan_profile, nullptr);
     EXPECT_EQ(plan_profile->value, "GENERIC");
     EXPECT_EQ(plan_profile->source, "DIRECTIVE");
+}
+
+TEST_F(QueryPlannerIntegrationTest, AutoPlanProfileUsesChooserAndPublishesReuseMetadata)
+{
+    ASSERT_TRUE(createDatabase());
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_id ON users (id)").success());
+
+    for (int i = 1; i <= 256; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'u" + std::to_string(i) +
+                               "', 'u" + std::to_string(i) + "@x', " +
+                               std::to_string(20 + (i % 10)) + ")")
+                        .success());
+    }
+
+    CatalogManager::TableInfo table_info;
+    ErrorContext stats_ctx;
+    ASSERT_EQ(db_->catalog_manager()->getTable(connection_ctx_->getCurrentSchemaId(),
+                                               "users",
+                                               table_info,
+                                               &stats_ctx),
+              Status::OK)
+        << stats_ctx.message;
+    ASSERT_EQ(db_->statistics_manager()->analyzeTable(table_info.table_id, 1.0, &stats_ctx),
+              Status::OK)
+        << stats_ctx.message;
+
+    connection_ctx_->setSessionVariable("OPTIMIZER.PLAN_DIRECTIVES",
+                                        "PLAN_PROFILE=AUTO");
+    optimizer::ParameterBindings bindings;
+    bindings.positional.push_back({false, "5"});
+
+    QueryCompilerV3::resetPlanCacheStats();
+
+    auto first =
+        compileSQLWithParameters("SELECT id FROM users WHERE id < $1", bindings);
+    ASSERT_TRUE(first.success()) << last_compile_errors_;
+    EXPECT_EQ(first.planProfile().decision_source, "CHOOSER");
+    EXPECT_FALSE(first.planProfile().statistics_snapshot_signature.empty());
+    EXPECT_FALSE(first.planProfile().cost_profile_id.empty());
+    EXPECT_FALSE(first.planProfile().policy_snapshot_id.empty());
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(first.bytecode(), plan));
+    EXPECT_EQ(plan.cache_mode,
+              first.planProfile().mode ==
+                      scratchbird::sblr::detail::QueryCompilerV3PlanProfileMode::CUSTOM
+                  ? "CUSTOM"
+                  : "GENERIC");
+    const auto *plan_profile = findOptimizerControl(plan, "PLAN_PROFILE");
+    ASSERT_NE(plan_profile, nullptr);
+    EXPECT_EQ(plan_profile->value, "AUTO");
+    EXPECT_EQ(plan_profile->source, "DIRECTIVE");
+    const auto *reuse_decision = findOptimizerControl(plan, "PLAN_REUSE_DECISION");
+    ASSERT_NE(reuse_decision, nullptr);
+    EXPECT_EQ(reuse_decision->value, plan.cache_mode);
+    EXPECT_EQ(reuse_decision->source, "CHOOSER");
+    const auto *stats_snapshot = findOptimizerControl(plan, "PLAN_STATS_SNAPSHOT");
+    ASSERT_NE(stats_snapshot, nullptr);
+    EXPECT_EQ(stats_snapshot->value,
+              first.planProfile().statistics_snapshot_signature);
+    const auto *cost_profile = findOptimizerControl(plan, "PLAN_COST_PROFILE");
+    ASSERT_NE(cost_profile, nullptr);
+    EXPECT_EQ(cost_profile->value, first.planProfile().cost_profile_id);
+    const auto *policy_snapshot = findOptimizerControl(plan, "PLAN_POLICY_SNAPSHOT");
+    ASSERT_NE(policy_snapshot, nullptr);
+    EXPECT_EQ(policy_snapshot->value, first.planProfile().policy_snapshot_id);
+
+    auto after_first = QueryCompilerV3::planCacheStats();
+    EXPECT_EQ(after_first.hits, 0u);
+    EXPECT_EQ(after_first.misses, 1u);
+    EXPECT_EQ(after_first.inserts, 1u);
+
+    auto second =
+        compileSQLWithParameters("SELECT id FROM users WHERE id < $1", bindings);
+    ASSERT_TRUE(second.success()) << last_compile_errors_;
+    EXPECT_EQ(second.planProfile().decision_source, "CHOOSER");
+    EXPECT_EQ(second.planProfile().signature, first.planProfile().signature);
+    EXPECT_EQ(second.planProfile().statistics_snapshot_signature,
+              first.planProfile().statistics_snapshot_signature);
+    EXPECT_EQ(second.planProfile().cost_profile_id,
+              first.planProfile().cost_profile_id);
+
+    auto after_second = QueryCompilerV3::planCacheStats();
+    EXPECT_EQ(after_second.hits, 1u);
+    EXPECT_EQ(after_second.misses, 1u);
+    EXPECT_EQ(after_second.inserts, 1u);
 }
 
 TEST_F(QueryPlannerIntegrationTest, CardinalityFeedbackBypassesStaleCacheAndRebuildsPlan)

@@ -27,6 +27,9 @@ struct PlanCacheKeyInput {
     uint16_t normalization_rule_set_id = 0;
     std::string object_ref_digest;
     std::string plan_profile_signature;
+    std::string statistics_snapshot_signature;
+    std::string cost_profile_id;
+    std::string policy_snapshot_id;
 };
 
 uint64_t stableHash64(std::string_view data);
