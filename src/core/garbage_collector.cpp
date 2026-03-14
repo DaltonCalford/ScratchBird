@@ -48,36 +48,6 @@ namespace scratchbird::core
 {
     namespace
     {
-        auto computeToastReclaimHorizon(TransactionManager* txn_manager) -> uint64_t
-        {
-            if (txn_manager == nullptr)
-            {
-                return UINT64_MAX;
-            }
-
-            const uint64_t oat = txn_manager->getOldestActiveXid();
-            const uint64_t ost = txn_manager->getOldestSnapshot();
-
-            if (oat != 0 && ost != 0)
-            {
-                return std::min(oat, ost);
-            }
-            if (oat != 0)
-            {
-                return oat;
-            }
-            if (ost != 0)
-            {
-                return ost;
-            }
-
-            const uint64_t current_xid = txn_manager->getCurrentXid();
-            return current_xid != 0 ? current_xid : UINT64_MAX;
-        }
-    }
-
-    namespace
-    {
         bool parseUuidFromString(const std::string& text, ID& out)
         {
             // Expect canonical UUID with dashes; tolerate missing dashes.
@@ -539,15 +509,17 @@ namespace scratchbird::core
     uint64_t GarbageCollector::cleanPage(uint32_t page_id, uint64_t *space_reclaimed_out,
                                          ErrorContext *ctx)
     {
-        uint64_t reclaim_horizon = txn_manager_->getOldestSnapshot();
-        if (reclaim_horizon == 0)
+        ReclaimHorizonSnapshot horizons{};
+        Status horizon_status = txn_manager_->captureReclaimHorizons(horizons, ctx);
+        if (horizon_status != Status::OK)
         {
-            reclaim_horizon = txn_manager_->getCurrentXid();
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
+            return 0;
         }
-        if (reclaim_horizon == 0)
-        {
-            reclaim_horizon = UINT64_MAX;
-        }
+        uint64_t reclaim_horizon = horizons.heap_reclaim_horizon;
 
         // Pin the page through buffer pool
         void *page_buffer;
@@ -1597,7 +1569,13 @@ namespace scratchbird::core
             }
         };
 
-        uint64_t reclaim_horizon = computeToastReclaimHorizon(txn_manager_);
+        ReclaimHorizonSnapshot horizons{};
+        status = txn_manager_->captureReclaimHorizons(horizons, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        uint64_t reclaim_horizon = horizons.toast_reclaim_horizon;
 
         std::vector<GPID> parent_pages;
         status = catalog->enumerateTablePages(parent_table_id, parent_pages, ctx);
@@ -1842,9 +1820,16 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        const uint64_t reclaim_horizon = computeToastReclaimHorizon(txn_manager_);
+        ReclaimHorizonSnapshot horizons{};
+        Status horizon_status = txn_manager_->captureReclaimHorizons(horizons, ctx);
+        if (horizon_status != Status::OK)
+        {
+            return horizon_status;
+        }
 
-        uint64_t visibility_xid = txn_manager_->getCurrentXid();
+        const uint64_t reclaim_horizon = horizons.toast_reclaim_horizon;
+
+        uint64_t visibility_xid = horizons.current_xid;
         if (visibility_xid == 0)
         {
             visibility_xid = (reclaim_horizon == UINT64_MAX) ? 1 : reclaim_horizon;

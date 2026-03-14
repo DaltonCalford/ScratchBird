@@ -1588,6 +1588,55 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto TransactionManager::captureReclaimHorizons(ReclaimHorizonSnapshot &snapshot_out,
+                                                    ErrorContext *ctx) const -> Status
+    {
+        (void)ctx;
+
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        snapshot_out.oldest_interesting_xid = oldest_xid_;
+        snapshot_out.oldest_active_xid = oldest_active_xid_;
+        snapshot_out.oldest_snapshot_xid = oldest_snapshot_;
+        snapshot_out.inventory_generation = inventory_generation_;
+
+        const uint64_t next_xid = next_xid_.load(std::memory_order_acquire);
+        snapshot_out.current_xid =
+            (next_xid <= config::DEFAULT_INITIAL_XID) ? config::DEFAULT_INITIAL_XID : (next_xid - 1);
+
+        auto fallbackToCurrentXid = [&snapshot_out](uint64_t xid) -> uint64_t {
+            if (xid != 0)
+            {
+                return xid;
+            }
+            if (snapshot_out.current_xid != 0)
+            {
+                return snapshot_out.current_xid;
+            }
+            return UINT64_MAX;
+        };
+
+        snapshot_out.heap_reclaim_horizon =
+            fallbackToCurrentXid(snapshot_out.oldest_snapshot_xid);
+
+        if (snapshot_out.oldest_active_xid != 0 && snapshot_out.oldest_snapshot_xid != 0)
+        {
+            snapshot_out.toast_reclaim_horizon =
+                std::min(snapshot_out.oldest_active_xid, snapshot_out.oldest_snapshot_xid);
+        }
+        else if (snapshot_out.oldest_active_xid != 0)
+        {
+            snapshot_out.toast_reclaim_horizon = snapshot_out.oldest_active_xid;
+        }
+        else
+        {
+            snapshot_out.toast_reclaim_horizon =
+                fallbackToCurrentXid(snapshot_out.oldest_snapshot_xid);
+        }
+
+        return Status::OK;
+    }
+
     auto TransactionManager::checkXIDWraparound(ErrorContext *ctx) -> Status
     {
         // P1-2: Age-based XID wraparound prevention (Firebird MGA style)

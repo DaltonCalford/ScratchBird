@@ -133,6 +133,17 @@ namespace scratchbird::core
         uint32_t blocker_proc_id = 0;
     };
 
+    struct ReclaimHorizonSnapshot
+    {
+        uint64_t oldest_interesting_xid = 0;
+        uint64_t oldest_active_xid = 0;
+        uint64_t oldest_snapshot_xid = 0;
+        uint64_t current_xid = 0;
+        uint64_t heap_reclaim_horizon = UINT64_MAX;
+        uint64_t toast_reclaim_horizon = UINT64_MAX;
+        uint64_t inventory_generation = 0;
+    };
+
 // Transaction Inventory Page (TIP) format
 // TIP pages track transaction states for MVCC visibility
 #pragma pack(push, 1)
@@ -380,6 +391,11 @@ namespace scratchbird::core
         // through repeated state lookups.
         auto findOldestInterestingXidFromInventory(uint64_t &xid_out,
                                                    ErrorContext *ctx = nullptr) const -> Status;
+
+        // Capture the canonical reclaim horizons that GC, TOAST cleanup, and
+        // sweep must consume together so their maturity decisions cannot drift.
+        auto captureReclaimHorizons(ReclaimHorizonSnapshot &snapshot_out,
+                                    ErrorContext *ctx = nullptr) const -> Status;
 
         // Update oldest XID after GC/sweep completes
         // LOCKING: Thread-safe. Acquires mutex_ internally.

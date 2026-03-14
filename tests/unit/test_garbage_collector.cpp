@@ -288,7 +288,7 @@ TEST_F(GarbageCollectorTest, PolicyManagement)
     EXPECT_EQ(gc->getPolicy(), GCPolicy::COMBINED);
 }
 
-TEST_F(GarbageCollectorTest, GcManagerUsesOldestSnapshotAsSafeReclaimHorizon)
+TEST_F(GarbageCollectorTest, GcManagerUsesCanonicalHeapReclaimHorizon)
 {
     Database db;
     ASSERT_TRUE(createTestDatabase(db));
@@ -298,11 +298,35 @@ TEST_F(GarbageCollectorTest, GcManagerUsesOldestSnapshotAsSafeReclaimHorizon)
     uint64_t horizon = 0;
     ASSERT_EQ(gc_mgr.getGcHorizon(&horizon, &ctx), Status::OK) << ctx.message;
 
-    const uint64_t expected =
-        (db.transaction_manager()->getOldestSnapshot() == 0)
-            ? db.transaction_manager()->getCurrentXid()
-            : db.transaction_manager()->getOldestSnapshot();
-    EXPECT_EQ(horizon, expected);
+    ReclaimHorizonSnapshot expected{};
+    ASSERT_EQ(db.transaction_manager()->captureReclaimHorizons(expected, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(horizon, expected.heap_reclaim_horizon);
+}
+
+TEST_F(GarbageCollectorTest, SweepPersistsCanonicalHeapReclaimStartHorizon)
+{
+    Database db;
+    ASSERT_TRUE(createTestDatabase(db));
+
+    auto sweep_mgr = db.sweep_manager();
+    ASSERT_NE(sweep_mgr, nullptr);
+
+    ErrorContext ctx;
+    ReclaimHorizonSnapshot expected{};
+    ASSERT_EQ(db.transaction_manager()->captureReclaimHorizons(expected, &ctx), Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(sweep_mgr->executeSweep(false, &ctx), Status::OK) << ctx.message;
+
+    db.close();
+
+    std::vector<uint8_t> raw_page;
+    ASSERT_TRUE(readRawPage(db, BOOTSTRAP_PAGE_SYSTEM_STATE, raw_page));
+    const auto* state_page =
+        reinterpret_cast<const BootstrapSystemStatePage*>(raw_page.data());
+    EXPECT_EQ(state_page->reserved[kSweepProgressSlotStartHorizon],
+              expected.heap_reclaim_horizon);
 }
 
 // ========== Dirty Page Tracking Tests ==========

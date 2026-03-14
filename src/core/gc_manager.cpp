@@ -49,17 +49,14 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        uint64_t horizon = txn_manager->getOldestSnapshot();
-        if (horizon == 0)
+        ReclaimHorizonSnapshot horizons{};
+        Status status = txn_manager->captureReclaimHorizons(horizons, ctx);
+        if (status != Status::OK)
         {
-            horizon = txn_manager->getCurrentXid();
-        }
-        if (horizon == 0)
-        {
-            horizon = UINT64_MAX;
+            return status;
         }
 
-        *horizon_out = horizon;
+        *horizon_out = horizons.heap_reclaim_horizon;
         return Status::OK;
     }
 

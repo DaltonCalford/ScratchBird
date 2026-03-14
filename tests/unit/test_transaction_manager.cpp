@@ -345,3 +345,31 @@ TEST_F(TransactionManagerTest, InventoryWalkStopsAtPreparedTransaction)
 
     ProcArrayManager::unregisterBackend(proc_id, &ctx);
 }
+
+TEST_F(TransactionManagerTest, CaptureReclaimHorizonsReflectsCanonicalMarkers)
+{
+    ErrorContext ctx;
+    uint32_t proc_id = 0;
+    ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
+
+    uint64_t committed_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, committed_xid, &ctx)) << ctx.message;
+    ASSERT_EQ(Status::OK, tm_->commitTransaction(proc_id, committed_xid, &ctx)) << ctx.message;
+
+    uint64_t active_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, active_xid, &ctx)) << ctx.message;
+
+    ReclaimHorizonSnapshot horizons{};
+    ASSERT_EQ(Status::OK, tm_->captureReclaimHorizons(horizons, &ctx)) << ctx.message;
+
+    EXPECT_EQ(horizons.oldest_interesting_xid, tm_->getOldestXid());
+    EXPECT_EQ(horizons.oldest_active_xid, tm_->getOldestActiveXid());
+    EXPECT_EQ(horizons.oldest_snapshot_xid, tm_->getOldestSnapshot());
+    EXPECT_EQ(horizons.current_xid, tm_->getCurrentXid());
+    EXPECT_EQ(horizons.heap_reclaim_horizon, tm_->getOldestSnapshot());
+    EXPECT_EQ(horizons.toast_reclaim_horizon,
+              std::min(tm_->getOldestActiveXid(), tm_->getOldestSnapshot()));
+
+    ASSERT_EQ(Status::OK, tm_->rollbackTransaction(proc_id, active_xid, &ctx)) << ctx.message;
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
+}

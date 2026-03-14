@@ -1544,18 +1544,23 @@ namespace scratchbird::core
             return false;
         }
 
-        // Get current transaction markers
-        uint64_t oit = txn_manager_->getOldestXid();
-        uint64_t ost = txn_manager_->getOldestSnapshot();
+        ReclaimHorizonSnapshot horizons{};
+        Status horizon_status = txn_manager_->captureReclaimHorizons(horizons, ctx);
+        if (horizon_status != Status::OK)
+        {
+            return false;
+        }
 
-        // No sweep needed if no snapshot transactions
-        if (ost == 0)
+        // No sweep needed if no reclaim horizon can be proven.
+        if (horizons.heap_reclaim_horizon == 0 || horizons.heap_reclaim_horizon == UINT64_MAX)
         {
             return false;
         }
 
         // Calculate transaction gap
-        uint64_t gap = (ost > oit) ? (ost - oit) : 0;
+        uint64_t gap = (horizons.heap_reclaim_horizon > horizons.oldest_interesting_xid)
+                           ? (horizons.heap_reclaim_horizon - horizons.oldest_interesting_xid)
+                           : 0;
 
         // Phase 4 Enhancement: Read sweep_interval from config
         // For now, use hardcoded default of 20000 (safe default value)
@@ -1564,8 +1569,13 @@ namespace scratchbird::core
         // Trigger sweep if gap exceeds threshold
         if (gap > sweep_interval)
         {
-            LOG_INFO(VACUUM, "Sweep trigger condition met: gap=%lu, interval=%u, oit=%lu, ost=%lu",
-                     gap, sweep_interval, oit, ost);
+            LOG_INFO(VACUUM,
+                     "Sweep trigger condition met: gap=%lu, interval=%u, oit=%lu, reclaim_horizon=%lu, ost=%lu",
+                     gap,
+                     sweep_interval,
+                     horizons.oldest_interesting_xid,
+                     horizons.heap_reclaim_horizon,
+                     horizons.oldest_snapshot_xid);
 
             // Trigger background sweep (non-blocking)
             Status s = executeSweep(false, ctx);
@@ -1600,7 +1610,15 @@ namespace scratchbird::core
         }
 
         auto start_time = std::chrono::steady_clock::now();
-        uint64_t oit_before = txn_manager_->getOldestXid();
+        ReclaimHorizonSnapshot horizons{};
+        Status horizon_status = txn_manager_->captureReclaimHorizons(horizons, ctx);
+        if (horizon_status != Status::OK)
+        {
+            sweep_in_progress_.store(false, std::memory_order_release);
+            return horizon_status;
+        }
+
+        uint64_t oit_before = horizons.oldest_interesting_xid;
         SweepProgressState sweep_progress{};
         Status s = loadSweepProgressState(&sweep_progress, ctx);
         if (s != Status::OK)
@@ -1613,10 +1631,10 @@ namespace scratchbird::core
         {
             sweep_progress.generation_id++;
             sweep_progress.active = true;
-            sweep_progress.start_horizon = txn_manager_->getOldestSnapshot();
-            if (sweep_progress.start_horizon == 0)
+            sweep_progress.start_horizon = horizons.heap_reclaim_horizon;
+            if (sweep_progress.start_horizon == UINT64_MAX)
             {
-                sweep_progress.start_horizon = txn_manager_->getCurrentXid();
+                sweep_progress.start_horizon = horizons.current_xid;
             }
             sweep_progress.last_relation_id = ID{};
             sweep_progress.last_page_cursor = 0;
