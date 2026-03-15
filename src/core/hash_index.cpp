@@ -1404,9 +1404,9 @@ namespace scratchbird
                             else
                             {
                                 visible =
-                                    txn_mgr->isRuntimeRecordVisible(entry.he_xmin,
-                                                                    entry.he_xmax,
-                                                                    current_xid);
+                                    txn_mgr->isInventoryRecordVisible(entry.he_xmin,
+                                                                      entry.he_xmax,
+                                                                      current_xid);
                             }
                         }
 

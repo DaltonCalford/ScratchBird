@@ -627,6 +627,7 @@ namespace scratchbird::core
                                             uint64_t end_time,
                                             ID& capsule_uuid_out,
                                             ErrorContext* ctx);
+        bool shouldPersistTransactionEvidence() const;
         Status flushCommittedTransactionalDdl(uint64_t commit_seqno,
                                               ErrorContext* ctx);
         void refreshActiveTransactionAttribution();
@@ -642,6 +643,7 @@ namespace scratchbird::core
         uint64_t transaction_start_oit_ = 0;
         uint64_t transaction_start_oat_ = 0;
         uint64_t transaction_start_ost_ = 0;
+        uint64_t last_commit_seqno_ = 0;
 
         struct ForensicReplayBinding
         {

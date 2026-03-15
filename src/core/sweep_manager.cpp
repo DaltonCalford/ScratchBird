@@ -42,16 +42,20 @@ namespace scratchbird::core
         constexpr const char* kWalAfterLogManifestMagic = "SB_WAL_AFTER_LOG_SEGMENT_v1";
         constexpr const char* kShadowCaptureProfileName = "__sweep_shadow_capture__";
         constexpr const char* kShadowCaptureManifestMagic = "SB_SHADOW_CAPTURE_MANIFEST_v1";
-        constexpr size_t kSweepProgressSlotGeneration = 0;
-        constexpr size_t kSweepProgressSlotActive = 1;
-        constexpr size_t kSweepProgressSlotStartHorizon = 2;
-        constexpr size_t kSweepProgressSlotRelationHi = 3;
-        constexpr size_t kSweepProgressSlotRelationLo = 4;
-        constexpr size_t kSweepProgressSlotPageCursor = 5;
-        constexpr size_t kSweepProgressSlotReclaimedVersions = 6;
-        constexpr size_t kSweepProgressSlotReclaimedBytes = 7;
-        constexpr size_t kSweepProgressSlotIndexBacklog = 8;
-        constexpr size_t kSweepProgressSlotResumeMeta = 9;
+        // Startup reconciliation owns reserved slots 0..14 on the system-state
+        // bootstrap page. Sweep progress must live in its own non-overlapping
+        // slot range so a fresh database never mistakes startup metadata for an
+        // in-flight sweep checkpoint.
+        constexpr size_t kSweepProgressSlotGeneration = 16;
+        constexpr size_t kSweepProgressSlotActive = 17;
+        constexpr size_t kSweepProgressSlotStartHorizon = 18;
+        constexpr size_t kSweepProgressSlotRelationHi = 19;
+        constexpr size_t kSweepProgressSlotRelationLo = 20;
+        constexpr size_t kSweepProgressSlotPageCursor = 21;
+        constexpr size_t kSweepProgressSlotReclaimedVersions = 22;
+        constexpr size_t kSweepProgressSlotReclaimedBytes = 23;
+        constexpr size_t kSweepProgressSlotIndexBacklog = 24;
+        constexpr size_t kSweepProgressSlotResumeMeta = 25;
         constexpr uint64_t kSweepProgressStageShift = 60;
         constexpr uint64_t kSweepProgressLaneShift = 52;
         constexpr uint64_t kSweepProgressStrictShift = 51;

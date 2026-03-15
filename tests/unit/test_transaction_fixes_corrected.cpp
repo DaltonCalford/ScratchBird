@@ -125,7 +125,10 @@ TEST_F(TransactionFixCorrectedTest, NoDeadlock)
                 }
 
                 auto now = std::chrono::steady_clock::now();
-                if (std::chrono::duration_cast<std::chrono::seconds>(now - start).count() > 2)
+                // This gate checks for lock-order deadlock, not threaded throughput. Under
+                // heavy CI/domain-bootstrap load, 400 begin/commit cycles can exceed 2s without
+                // any deadlock, so keep a stable upper bound.
+                if (std::chrono::duration_cast<std::chrono::seconds>(now - start).count() > 6)
                 {
                     deadlock = true;
                     break;

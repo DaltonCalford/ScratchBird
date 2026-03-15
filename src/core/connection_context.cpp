@@ -848,6 +848,7 @@ namespace scratchbird::core
           transaction_start_oit_(0),
           transaction_start_oat_(0),
           transaction_start_ost_(0),
+          last_commit_seqno_(0),
           current_schema_epoch_uuid_(),
           transaction_start_schema_epoch_uuid_(),
           retained_transaction_snapshot_(nullptr),
@@ -2297,6 +2298,10 @@ namespace scratchbird::core
         {
             return Status::OK;
         }
+        if (!shouldPersistTransactionEvidence())
+        {
+            return Status::OK;
+        }
 
         CatalogManager* catalog = db_->catalog_manager();
         if (!catalog)
@@ -2356,6 +2361,10 @@ namespace scratchbird::core
         {
             return Status::OK;
         }
+        if (!shouldPersistTransactionEvidence())
+        {
+            return Status::OK;
+        }
 
         CatalogManager* catalog = db_->catalog_manager();
         if (!catalog)
@@ -2392,6 +2401,10 @@ namespace scratchbird::core
                                                                ErrorContext* ctx)
     {
         if (!db_ || txid == 0 || isZeroUuidLocal(tx_uuid))
+        {
+            return Status::OK;
+        }
+        if (!shouldPersistTransactionEvidence())
         {
             return Status::OK;
         }
@@ -2452,6 +2465,10 @@ namespace scratchbird::core
         {
             return Status::OK;
         }
+        if (!shouldPersistTransactionEvidence())
+        {
+            return Status::OK;
+        }
 
         CatalogManager* catalog = db_->catalog_manager();
         if (!catalog)
@@ -2488,9 +2505,30 @@ namespace scratchbird::core
         return status;
     }
 
+    bool ConnectionContext::shouldPersistTransactionEvidence() const
+    {
+        if (isForensicReplayActive())
+        {
+            return true;
+        }
+        if (!pending_transactional_ddl_batches_.empty())
+        {
+            return true;
+        }
+        return !isZeroUuidLocal(current_user_id_) ||
+               !isZeroUuidLocal(session_user_id_) ||
+               !isZeroUuidLocal(active_role_id_) ||
+               !isZeroUuidLocal(session_id_) ||
+               !isZeroUuidLocal(protocol_session_id_);
+    }
+
     void ConnectionContext::refreshActiveTransactionAttribution()
     {
         if (current_xid_ == 0)
+        {
+            return;
+        }
+        if (!shouldPersistTransactionEvidence())
         {
             return;
         }
@@ -2511,6 +2549,21 @@ namespace scratchbird::core
             LOG_WARNING(TRANSACTION,
                         "Failed to refresh runtime transaction attribution: proc_id=%u, xid=%lu, status=%d",
                         proc_id_, current_xid_, static_cast<int>(status));
+        }
+
+        if (isZeroUuidLocal(lineage_root_event_id_))
+        {
+            ErrorContext lineage_ctx;
+            Status lineage_status = appendTransactionLineageBegin(&lineage_ctx);
+            if (lineage_status != Status::OK)
+            {
+                LOG_WARNING(TRANSACTION,
+                            "Failed to initialize retained transaction lineage after attribution refresh: proc_id=%u, xid=%lu, status=%d, detail=%s",
+                            proc_id_,
+                            current_xid_,
+                            static_cast<int>(lineage_status),
+                            lineage_ctx.message.c_str());
+            }
         }
     }
 
@@ -3715,6 +3768,7 @@ namespace scratchbird::core
         }
 
         current_transaction_uuid_ = generateUuidV7();
+        last_commit_seqno_ = 0;
         std::memset(&lineage_root_event_id_, 0, sizeof(lineage_root_event_id_));
         s = ensureCurrentSchemaEpochInitialized(ctx);
         if (s != Status::OK)
@@ -3783,11 +3837,19 @@ namespace scratchbird::core
         const uint64_t ended_xid = current_xid_;
         const ID ended_tx_uuid = current_transaction_uuid_;
         const uint64_t start_time = static_cast<uint64_t>(xact_start_time_.count());
+        const bool persist_tx_evidence = shouldPersistTransactionEvidence();
+        uint64_t terminal_commit_seqno = 0;
         Status s;
 
         if (commit)
         {
-            s = txn_manager_->commitTransaction(proc_id_, current_xid_, ctx);
+            uint64_t committed_seqno = 0;
+            s = txn_manager_->commitTransactionWithSequence(
+                proc_id_, current_xid_, committed_seqno, ctx);
+            if (s == Status::OK)
+            {
+                terminal_commit_seqno = committed_seqno;
+            }
         }
         else
         {
@@ -3818,26 +3880,34 @@ namespace scratchbird::core
             const uint64_t end_time = nowMicros();
             uint64_t commit_seqno = 0;
             bool has_commit_seqno = false;
-            if (commit && !isForensicReplayActive())
+            if (commit && !isForensicReplayActive() && persist_tx_evidence)
             {
-                ErrorContext commit_seq_ctx;
-                Status commit_seq_status = txn_manager_->getCommittedTransactionSequence(
-                    ended_xid, commit_seqno, &commit_seq_ctx);
-                if (commit_seq_status == Status::OK && commit_seqno != 0)
+                commit_seqno = terminal_commit_seqno;
+                if (commit_seqno != 0)
                 {
                     has_commit_seqno = true;
                 }
                 else
                 {
-                    LOG_WARNING(TRANSACTION,
-                                "Failed to resolve durable commit sequence after commit: proc_id=%u, xid=%lu, status=%d, detail=%s",
-                                proc_id_,
-                                ended_xid,
-                                static_cast<int>(commit_seq_status),
-                                commit_seq_ctx.message.c_str());
+                    ErrorContext commit_seq_ctx;
+                    Status commit_seq_status = txn_manager_->getCommittedTransactionSequence(
+                        ended_xid, commit_seqno, &commit_seq_ctx);
+                    if (commit_seq_status == Status::OK && commit_seqno != 0)
+                    {
+                        has_commit_seqno = true;
+                    }
+                    else
+                    {
+                        LOG_WARNING(TRANSACTION,
+                                    "Failed to resolve durable commit sequence after commit: proc_id=%u, xid=%lu, status=%d, detail=%s",
+                                    proc_id_,
+                                    ended_xid,
+                                    static_cast<int>(commit_seq_status),
+                                    commit_seq_ctx.message.c_str());
+                    }
                 }
             }
-            if (commit && !isForensicReplayActive())
+            if (commit && !isForensicReplayActive() && persist_tx_evidence)
             {
                 Status ddl_status = flushCommittedTransactionalDdl(
                     has_commit_seqno ? commit_seqno : 0, nullptr);
@@ -3886,13 +3956,15 @@ namespace scratchbird::core
                             proc_id_, ended_xid, static_cast<int>(runtime_status));
             }
 
+            ErrorContext lineage_ctx;
             Status lineage_status = appendTransactionLineageTerminal(
-                commit, ended_xid, ended_tx_uuid, start_time, end_time, nullptr);
+                commit, ended_xid, ended_tx_uuid, start_time, end_time, &lineage_ctx);
             if (lineage_status != Status::OK)
             {
                 LOG_WARNING(TRANSACTION,
-                            "Failed to persist terminal transaction lineage: proc_id=%u, xid=%lu, status=%d",
-                            proc_id_, ended_xid, static_cast<int>(lineage_status));
+                            "Failed to persist terminal transaction lineage: proc_id=%u, xid=%lu, status=%d, detail=%s",
+                            proc_id_, ended_xid, static_cast<int>(lineage_status),
+                            lineage_ctx.message.c_str());
             }
 
             if (catalog)

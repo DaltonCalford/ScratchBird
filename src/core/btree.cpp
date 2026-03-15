@@ -1294,6 +1294,11 @@ namespace scratchbird::core
             prev_key = std::move(node_key);
         }
 
+        if (found)
+        {
+            page->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
+        }
+
         // Unpin page (mark dirty if modified)
         unpinIndexPage(leaf_page_num, found, ctx);
 
@@ -1535,7 +1540,8 @@ namespace scratchbird::core
             return true;
         }
 
-        return txn_mgr->isRuntimeRecordVisible(xmin, xmax, current_xid);
+        // Index visibility is TIP-based and must not inherit connection snapshot state.
+        return txn_mgr->isInventoryRecordVisible(xmin, xmax, current_xid);
     }
 
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API

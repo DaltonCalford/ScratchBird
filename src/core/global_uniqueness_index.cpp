@@ -10,6 +10,7 @@
 #include "scratchbird/core/global_uniqueness_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/transaction_manager.h"
 #include <limits>
 
 namespace scratchbird::core
@@ -96,10 +97,23 @@ namespace scratchbird::core
     bool GlobalUniquenessIndex::isLocationVisible(const ValueLocation &loc,
                                                   uint64_t current_xid) const
     {
-        if (db_ == nullptr || db_->storage_engine() == nullptr)
+        if (db_ == nullptr)
         {
             return true;
         }
+
+        if (TransactionManager *txn_mgr = db_->transaction_manager(); txn_mgr != nullptr)
+        {
+            // Domain uniqueness checks must use transaction inventory truth directly and
+            // must not inherit connection snapshot state.
+            return txn_mgr->isInventoryRecordVisible(loc.xmin, loc.xmax, current_xid);
+        }
+
+        if (db_->storage_engine() == nullptr)
+        {
+            return true;
+        }
+
         return db_->storage_engine()->isVisible(loc.xmin, loc.xmax, current_xid);
     }
 

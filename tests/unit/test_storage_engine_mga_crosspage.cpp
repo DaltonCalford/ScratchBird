@@ -357,7 +357,7 @@ TEST_F(StorageEngineMGATest, OverwriteTupleHandlesSizeChanges)
         status = primary_page.overwriteTuple(
             primary_item_id,
             smaller_data.data(),
-            smaller_payload_size,
+            static_cast<uint32_t>(smaller_data.size()),
             100, // xmax
             101, // new_xmin
             back_gpid,

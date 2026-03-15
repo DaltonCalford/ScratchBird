@@ -74,7 +74,7 @@ namespace scratchbird
                 return (xmax == 0 || xmax != current_xid);
             }
 
-            return txn_mgr->isRuntimeRecordVisible(xmin, xmax, current_xid);
+            return txn_mgr->isInventoryRecordVisible(xmin, xmax, current_xid);
         }
 
         // ========================================
@@ -774,9 +774,9 @@ namespace scratchbird
 
                 if (!visible)
                 {
-                    visible = txn_manager->isRuntimeRecordVisible(tuple_header->xmin,
-                                                                  tuple_header->xmax,
-                                                                  current_xid);
+                    visible = txn_manager->isInventoryRecordVisible(tuple_header->xmin,
+                                                                    tuple_header->xmax,
+                                                                    current_xid);
                 }
 
                 if (visible)

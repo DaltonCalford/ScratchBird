@@ -223,8 +223,16 @@ namespace scratchbird::core
             return;
         }
 
-        // Rate limiting - don't run on every page read
-        if (!shouldRunCooperativeGC())
+        bool explicitly_dirty = false;
+        {
+            std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
+            explicitly_dirty = dirty_pages_.find(page_id) != dirty_pages_.end();
+        }
+
+        // Rate limiting is only for opportunistic page reads. If a caller
+        // explicitly marked a page dirty and then asked for cooperative GC on
+        // that page, honor the request immediately.
+        if (!explicitly_dirty && !shouldRunCooperativeGC())
         {
             return;
         }

@@ -249,8 +249,12 @@ TEST_F(HeapToastIntegrationTest, ToastDeleteCleansUp)
     // Delete the tuple (should also delete TOAST data)
     ASSERT_EQ(heap_page.deleteTuple(item_id, TEST_XMAX, &error_ctx), Status::OK);
 
-    // Verify tuple is deleted
-    EXPECT_EQ(heap_page.getTuple(item_id, &raw_data, &raw_size, &error_ctx), Status::NOT_FOUND);
+    // HeapPage delete is an MGA soft-delete: the line pointer remains readable for internal
+    // version/backout work, but the tuple header must reflect the committed tombstone state.
+    ASSERT_EQ(heap_page.getTuple(item_id, &raw_data, &raw_size, &error_ctx), Status::OK);
+    const auto *deleted_hdr = reinterpret_cast<const TupleHeader *>(raw_data);
+    EXPECT_EQ(deleted_hdr->xmax, TEST_XMAX);
+    EXPECT_TRUE(deleted_hdr->hasRecordFlag(TupleHeader::RHD_DELETED));
 
     // Try to detoast the deleted value (visibility depends on xmax status)
     std::vector<uint8_t> detoasted_data;

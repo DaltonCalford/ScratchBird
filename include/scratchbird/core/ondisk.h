@@ -472,7 +472,9 @@ static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per
         uint64_t restart_generation;
         uint64_t last_clean_shutdown_generation;
         uint64_t config_flags;
-        uint64_t reserved[16];
+        // Shared extension slots for startup reconciliation, sweep progress,
+        // and future restart-safe control metadata.
+        uint64_t reserved[32];
     };
 
     constexpr uint64_t SYSTEM_STATE_STARTUP_RECON_VERSION = 2;

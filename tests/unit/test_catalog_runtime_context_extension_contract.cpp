@@ -434,3 +434,24 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, LiveTransactionCommitSurvives
     EXPECT_EQ(tx_row.state, CatalogManager::RuntimeTransactionState::COMMITTED);
     EXPECT_EQ(tx_row.session_id, ID{});
 }
+
+TEST_F(CatalogRuntimeContextExtensionContractTest, AnonymousConnectionCommitSkipsRetainedTransactionEvidence)
+{
+    ErrorContext ctx;
+
+    const uint64_t txid = conn_->getCurrentXid();
+    const ID tx_uuid = conn_->getCurrentTransactionUuid();
+    ASSERT_NE(txid, 0u);
+    ASSERT_NE(tx_uuid, ID{});
+
+    ASSERT_EQ(conn_->commit(&ctx), Status::OK) << ctx.message;
+
+    CatalogManager::RuntimeTransactionCatalogInfo tx_row{};
+    EXPECT_EQ(catalog_->getRuntimeTransactionCatalogEntry(txid, tx_row, &ctx), Status::NOT_FOUND);
+
+    std::vector<CatalogManager::TransactionLineageEventCatalogInfo> rows;
+    ASSERT_EQ(catalog_->listTransactionLineageEventCatalogEntries(tx_uuid, txid, rows, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(rows.empty());
+}

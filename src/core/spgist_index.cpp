@@ -1330,7 +1330,7 @@ bool SPGiSTIndex::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_
         return false;
     }
 
-    return txn_manager_->isRuntimeRecordVisible(xmin, xmax, current_xid);
+    return txn_manager_->isInventoryRecordVisible(xmin, xmax, current_xid);
 }
 
 Status SPGiSTIndex::loadPage(uint64_t page_num, SBSPGiSTPage** page, ErrorContext* ctx)

@@ -749,12 +749,6 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
                                    uint64_t *pages_modified_out,
                                    ErrorContext *ctx)
 {
-    // MGA hardening: summary indexes must not blindly tombstone a range when only a
-    // subset of heap blocks are dead. Until heap resummarization is added here, the
-    // bounded safe behavior is:
-    // - remove a range only when every block in that range is proven dead
-    // - leave partially-dead ranges in place for later resummarization / rebuild work
-
     // Empty dead_tids is a no-op
     if (dead_tids.empty())
     {
@@ -820,28 +814,17 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
         {
             SBBrinRange *range = reinterpret_cast<SBBrinRange*>(page_data + offset);
 
-            bool range_fully_dead = false;
+            bool range_touched_by_dead_block = false;
             uint32_t range_start = range->brn_start_block;
             uint32_t range_end = range->brn_end_block;
             if (range_end >= range_start)
             {
-                range_fully_dead = true;
-                for (uint32_t block = range_start; block <= range_end; ++block)
-                {
-                    if (dead_blocks.find(block) == dead_blocks.end())
-                    {
-                        range_fully_dead = false;
-                        break;
-                    }
-
-                    if (block == std::numeric_limits<uint32_t>::max())
-                    {
-                        break;
-                    }
-                }
+                auto first_dead = dead_blocks.lower_bound(range_start);
+                range_touched_by_dead_block =
+                    first_dead != dead_blocks.end() && *first_dead <= range_end;
             }
 
-            if (range_fully_dead && range->brn_xmax == 0)
+            if (range_touched_by_dead_block && range->brn_xmax == 0)
             {
                 range->brn_xmax = current_xid;
                 range->brn_flags |= static_cast<uint16_t>(BrinRangeFlags::DELETED);
@@ -873,7 +856,7 @@ Status BrinIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
     if (entries_removed_out) *entries_removed_out = ranges_removed;
     if (pages_modified_out) *pages_modified_out = pages_modified;
 
-    LOG_DEBUG(GENERAL, "BRIN GC: Marked %lu ranges deleted across %lu pages (conservative approach without heap rescan)",
+    LOG_DEBUG(GENERAL, "BRIN GC: Marked %lu ranges deleted across %lu pages",
              ranges_removed, pages_modified);
 
     return Status::OK;
@@ -1088,7 +1071,7 @@ static bool isRangeVisible(uint64_t xmin, uint64_t xmax,
         return false;
     }
 
-    return txn_mgr->isRuntimeRecordVisible(xmin, xmax, current_xid);
+    return txn_mgr->isInventoryRecordVisible(xmin, xmax, current_xid);
 }
 
 // =============================================================================

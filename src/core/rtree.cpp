@@ -24,6 +24,34 @@
 namespace scratchbird::core
 {
 
+namespace
+{
+    uint64_t resolveRTreeMutationXid(Database* db, uint64_t preferred_xid)
+    {
+        if (preferred_xid != 0)
+        {
+            return preferred_xid;
+        }
+
+        uint64_t xid = ConnectionContext::getCurrentTransactionId();
+        if (xid != 0)
+        {
+            return xid;
+        }
+
+        if (db && db->transaction_manager())
+        {
+            xid = db->transaction_manager()->getCurrentXid();
+            if (xid != 0)
+            {
+                return xid;
+            }
+        }
+
+        return config::DEFAULT_INITIAL_XID;
+    }
+}
+
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
@@ -128,9 +156,9 @@ Status RTree::create(Database* db,
     rtree_page->rtree_deleted_entries = 0;
     rtree_page->rtree_height = 1;
 
-    // Get current transaction ID for MGA
-    TransactionManager* txn_mgr = db->transaction_manager();
-    uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+    // Root metadata needs a stable creator xid even when the caller is using
+    // the index directly outside a bound ConnectionContext.
+    uint64_t xmin = resolveRTreeMutationXid(db, 0);
     rtree_page->rtree_xmin = xmin;
     rtree_page->rtree_xmax = 0;
     rtree_page->rtree_lsn = 0;
@@ -205,9 +233,7 @@ Status RTree::insert(const BoundingBox& bbox,
         return Status::INVALID_ARGUMENT;
     }
 
-    // Get current transaction ID
-    TransactionManager* txn_mgr = db_->transaction_manager();
-    uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+    uint64_t xmin = resolveRTreeMutationXid(db_, current_xid);
 
     // Create entry
     RTreeEntry entry;
@@ -1353,7 +1379,7 @@ bool RTree::isEntryVisible(const RTreeEntry& entry, uint64_t current_xid) const
 
     TransactionManager* txn_mgr = db_->transaction_manager();
 
-    return txn_mgr->isRuntimeRecordVisible(entry.xmin, entry.xmax, current_xid);
+    return txn_mgr->isInventoryRecordVisible(entry.xmin, entry.xmax, current_xid);
 }
 
 void RTree::updateStatistics()

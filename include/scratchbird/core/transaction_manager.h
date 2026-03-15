@@ -291,6 +291,11 @@ namespace scratchbird::core
         auto commitTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx = nullptr)
             -> Status;
 
+        auto commitTransactionWithSequence(uint32_t proc_id,
+                                           uint64_t xid,
+                                           uint64_t &commit_seqno_out,
+                                           ErrorContext *ctx = nullptr) -> Status;
+
         // Rollback a transaction
         // LOCKING: Thread-safe. Acquires mutex_ for pre-rollback work, releases before I/O,
         //          then uses group_commit_mutex_ for group commit coordination.
@@ -413,6 +418,12 @@ namespace scratchbird::core
 
         auto isRuntimeTransactionVisible(uint64_t xid, uint64_t default_reader_xid,
                                          const ConnectionContext *conn_ctx = nullptr) -> bool;
+
+        // Direct transaction-inventory visibility helpers for index/auxiliary
+        // structures that must not inherit ConnectionContext snapshot state.
+        auto isInventoryRecordVisible(uint64_t create_xid, uint64_t delete_xid,
+                                      uint64_t reader_xid) -> bool;
+        auto isInventoryTransactionVisible(uint64_t xid, uint64_t reader_xid) -> bool;
 
         auto resolveVisibilityContext(uint64_t default_reader_xid,
                                       const ConnectionContext *conn_ctx) const
@@ -636,13 +647,14 @@ namespace scratchbird::core
         {
             uint64_t xid;
             TransactionState state;
+            uint64_t commit_seqno;
             Status result;
             std::condition_variable cv;
             std::mutex cv_mutex;
             bool completed;
 
             CommitWaiter(uint64_t xid_, TransactionState state_)
-                : xid(xid_), state(state_), result(Status::OK), completed(false)
+                : xid(xid_), state(state_), commit_seqno(0), result(Status::OK), completed(false)
             {
             }
         };

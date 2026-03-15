@@ -132,7 +132,7 @@ Status Memtable::get(const std::vector<uint8_t> &key,
         const MemtableEntry &entry = *ver_it;
 
         // MGA visibility check (Firebird TIP-based)
-        bool visible = txn_mgr->isRuntimeTransactionVisible(entry.xmin, current_xid);
+        bool visible = txn_mgr->isInventoryTransactionVisible(entry.xmin, current_xid);
 
         if (visible)
         {
@@ -183,7 +183,7 @@ Status Memtable::scan(const std::vector<uint8_t> *start_key,
             const MemtableEntry &entry = *ver_it;
 
             // MGA visibility check
-            bool visible = txn_mgr->isRuntimeTransactionVisible(entry.xmin, current_xid);
+            bool visible = txn_mgr->isInventoryTransactionVisible(entry.xmin, current_xid);
 
             if (visible)
             {
@@ -1033,7 +1033,7 @@ Status SSTableReader::get(const std::vector<uint8_t> &key,
         if (entry_key == key)
         {
             // Check MGA visibility
-            bool visible = txn_mgr->isRuntimeTransactionVisible(xmin, current_xid);
+            bool visible = txn_mgr->isInventoryTransactionVisible(xmin, current_xid);
 
             if (visible)
             {
@@ -1130,7 +1130,7 @@ Status SSTableReader::scan(const std::vector<uint8_t> &start_key,
         ::read(fd_, &xmax, sizeof(xmax));
 
         // Check MGA visibility
-        bool visible = txn_mgr->isRuntimeTransactionVisible(xmin, current_xid);
+        bool visible = txn_mgr->isInventoryTransactionVisible(xmin, current_xid);
 
         if (visible)
         {

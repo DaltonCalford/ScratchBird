@@ -683,6 +683,16 @@ namespace scratchbird::core
     auto TransactionManager::commitTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx)
         -> Status
     {
+        uint64_t ignored_commit_seqno = 0;
+        return commitTransactionWithSequence(proc_id, xid, ignored_commit_seqno, ctx);
+    }
+
+    auto TransactionManager::commitTransactionWithSequence(uint32_t proc_id,
+                                                           uint64_t xid,
+                                                           uint64_t &commit_seqno_out,
+                                                           ErrorContext *ctx) -> Status
+    {
+        commit_seqno_out = 0;
         TransactionState current_state = TransactionState::ACTIVE;
         Status state_status = getTransactionState(xid, current_state, ctx);
         if (state_status != Status::OK)
@@ -789,7 +799,7 @@ namespace scratchbird::core
                     straggler_batch.reserve(stragglers.size());
                     {
                         std::lock_guard<std::mutex> seq_lock(mutex_);
-                        for (const auto *straggler : stragglers)
+                        for (auto *straggler : stragglers)
                         {
                             TipBatchEntry entry{};
                             entry.xid = straggler->xid;
@@ -798,6 +808,7 @@ namespace scratchbird::core
                             {
                                 entry.commit_seqno = ++latest_commit_seqno_;
                             }
+                            straggler->commit_seqno = entry.commit_seqno;
                             straggler_batch.push_back(entry);
                         }
                     }
@@ -823,9 +834,13 @@ namespace scratchbird::core
                     }
 
                     // Wake stragglers with result
-                    for (auto* straggler : stragglers)
+                    for (size_t i = 0; i < stragglers.size(); ++i)
                     {
+                        auto* straggler = stragglers[i];
                         std::lock_guard<std::mutex> lock(straggler->cv_mutex);
+                        straggler->commit_seqno =
+                            (straggler_status == Status::OK) ? straggler_batch[i].commit_seqno
+                                                             : 0;
                         straggler->result = straggler_status;
                         straggler->completed = true;
                         straggler->cv.notify_one();
@@ -841,6 +856,8 @@ namespace scratchbird::core
                 waiter->cv.wait(lock, [&waiter] { return waiter->completed; });
                 status = waiter->result;
             }
+
+            commit_seqno_out = waiter->commit_seqno;
         }
         else
         {
@@ -858,10 +875,12 @@ namespace scratchbird::core
             {
                 status = flushTransactionState(ctx);
             }
+            commit_seqno_out = commit_seqno;
         }
 
         if (status != Status::OK)
         {
+            commit_seqno_out = 0;
             return status;
         }
 
@@ -2788,6 +2807,28 @@ namespace scratchbird::core
         return evaluateRuntimeTransactionVisibility(xid, default_reader_xid, conn_ctx).visible;
     }
 
+    auto TransactionManager::isInventoryRecordVisible(uint64_t create_xid,
+                                                      uint64_t delete_xid,
+                                                      uint64_t reader_xid) -> bool
+    {
+        return evaluateRecordVisibility(create_xid,
+                                        delete_xid,
+                                        reader_xid,
+                                        VisibilityMode::READ_CURRENT_TRANSACTION,
+                                        nullptr)
+            .visible;
+    }
+
+    auto TransactionManager::isInventoryTransactionVisible(uint64_t xid,
+                                                           uint64_t reader_xid) -> bool
+    {
+        return evaluateTransactionVisibility(xid,
+                                             reader_xid,
+                                             VisibilityMode::READ_CURRENT_TRANSACTION,
+                                             nullptr)
+            .visible;
+    }
+
     auto TransactionManager::resolveVisibilityContext(uint64_t default_reader_xid,
                                                       const ConnectionContext *conn_ctx) const
         -> VisibilityContextSelection
@@ -3434,7 +3475,7 @@ namespace scratchbird::core
         xid_batch.reserve(batch.size());
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            for (const auto *waiter : batch)
+            for (auto *waiter : batch)
             {
                 TipBatchEntry entry{};
                 entry.xid = waiter->xid;
@@ -3443,6 +3484,7 @@ namespace scratchbird::core
                 {
                     entry.commit_seqno = ++latest_commit_seqno_;
                 }
+                waiter->commit_seqno = entry.commit_seqno;
                 xid_batch.push_back(entry);
             }
         }
@@ -3471,9 +3513,11 @@ namespace scratchbird::core
         }
 
         // Wake all waiters with result
-        for (auto* waiter : batch)
+        for (size_t i = 0; i < batch.size(); ++i)
         {
+            auto* waiter = batch[i];
             std::lock_guard<std::mutex> lock(waiter->cv_mutex);
+            waiter->commit_seqno = (status == Status::OK) ? xid_batch[i].commit_seqno : 0;
             waiter->result = status;
             waiter->completed = true;
             waiter->cv.notify_one();

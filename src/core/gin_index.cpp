@@ -3353,7 +3353,7 @@ namespace scratchbird
             }
 
             // Use TIP-based visibility check from TransactionManager
-            return db_->transaction_manager()->isRuntimeTransactionVisible(xmin, current_xid);
+            return db_->transaction_manager()->isInventoryTransactionVisible(xmin, current_xid);
         }
 
         // Helper: Filter TID list by heap tuple visibility
@@ -3433,9 +3433,9 @@ namespace scratchbird
 
                 if (!visible)
                 {
-                    visible = txn_manager->isRuntimeRecordVisible(tuple_header->xmin,
-                                                                  tuple_header->xmax,
-                                                                  current_xid);
+                    visible = txn_manager->isInventoryRecordVisible(tuple_header->xmin,
+                                                                    tuple_header->xmax,
+                                                                    current_xid);
                 }
 
                 // Tuple is visible if inserted by visible transaction and not deleted by visible transaction

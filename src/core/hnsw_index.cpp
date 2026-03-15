@@ -1149,7 +1149,7 @@ bool HnswIndex::is_node_visible(const SBHnswNode *node,
         return true; // Fallback
     }
 
-    return txn_mgr->isRuntimeRecordVisible(node->node_xmin, node->node_xmax, current_xid);
+    return txn_mgr->isInventoryRecordVisible(node->node_xmin, node->node_xmax, current_xid);
 }
 
 Status HnswIndex::create_node(const VectorValue &vector,

@@ -44,10 +44,10 @@ using namespace scratchbird::core;
 
 namespace
 {
-    constexpr size_t kSweepProgressSlotGeneration = 0;
-    constexpr size_t kSweepProgressSlotActive = 1;
-    constexpr size_t kSweepProgressSlotStartHorizon = 2;
-    constexpr size_t kSweepProgressSlotPageCursor = 5;
+    constexpr size_t kSweepProgressSlotGeneration = 16;
+    constexpr size_t kSweepProgressSlotActive = 17;
+    constexpr size_t kSweepProgressSlotStartHorizon = 18;
+    constexpr size_t kSweepProgressSlotPageCursor = 21;
 
     auto buildTuple(const uint8_t *payload, size_t payload_size) -> std::vector<uint8_t>
     {
