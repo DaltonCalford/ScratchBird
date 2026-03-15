@@ -31,6 +31,7 @@ namespace scratchbird::core
     class Database;
     class BufferPool;
     class PageManager;
+    class ConnectionContext;
     struct ErrorContext;
 
     // Transaction states
@@ -82,6 +83,7 @@ namespace scratchbird::core
         ACTIVE_IN_SNAPSHOT,
         STATE_LOOKUP_FAILED,
         STATE_LOOKUP_ASSUMED_COMMITTED,
+        COMMITTED_AFTER_SNAPSHOT,
         COMMITTED_VISIBLE,
         ACTIVE_INVISIBLE,
         ABORTED_INVISIBLE,
@@ -105,6 +107,15 @@ namespace scratchbird::core
         VisibilityMode mode = VisibilityMode::READ_CURRENT_TRANSACTION;
         TransactionVisibilityDecision create_decision{};
         TransactionVisibilityDecision delete_decision{};
+    };
+
+    struct VisibilityContextSelection
+    {
+        bool valid = false;
+        VisibilityMode mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+        VisibilityReason reason = VisibilityReason::NONE;
+        uint64_t reader_xid = 0;
+        const TransactionSnapshot *snapshot = nullptr;
     };
 
     enum class StatementRestartReason : uint8_t
@@ -175,7 +186,7 @@ namespace scratchbird::core
         uint8_t state;        // TransactionState
         uint8_t flags;        // Reserved flags
         uint16_t reserved;    // Alignment padding
-        uint64_t commit_time; // Commit/abort timestamp
+        uint64_t commit_time; // Durable commit sequence for COMMITTED, 0 otherwise
     };
 #pragma pack(pop)
 
@@ -281,6 +292,11 @@ namespace scratchbird::core
         auto getTransactionState(uint64_t xid, TransactionState &state_out,
                                  ErrorContext *ctx = nullptr) -> Status;
 
+        // Resolve the durable commit-sequence number for a committed transaction.
+        // LOCKING: Thread-safe. Reads authoritative TIP state under internal synchronization.
+        auto getCommittedTransactionSequence(uint64_t xid, uint64_t &commit_seqno_out,
+                                            ErrorContext *ctx = nullptr) -> Status;
+
         // Check if a transaction is visible to another transaction (READ COMMITTED semantics)
         // CRITICAL FIX (CRITICAL-2 side-effect): Removed const because this calls getTransactionState()
         // which modifies the cache. This is part of the cache consistency fix.
@@ -316,6 +332,10 @@ namespace scratchbird::core
                                       uint64_t reader_xid, VisibilityMode mode,
                                       const TransactionSnapshot *snapshot = nullptr)
             -> RecordVisibilityDecision;
+
+        auto resolveVisibilityContext(uint64_t default_reader_xid,
+                                      const ConnectionContext *conn_ctx) const
+            -> VisibilityContextSelection;
 
         auto evaluateReadConsistencyRestart(Status conflict_status,
                                             uint64_t reader_xid,
@@ -397,6 +417,12 @@ namespace scratchbird::core
         {
             std::lock_guard<std::mutex> lock(mutex_);
             return oldest_snapshot_serial_;
+        }
+
+        auto getLatestCommitSequence() const -> uint64_t
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            return latest_commit_seqno_;
         }
 
         // Walk the authoritative TIP/inventory chain directly to find the
@@ -538,6 +564,13 @@ namespace scratchbird::core
             {
             }
         };
+
+        struct TipBatchEntry
+        {
+            uint64_t xid = 0;
+            TransactionState state = TransactionState::ACTIVE;
+            uint64_t commit_seqno = 0;
+        };
         Database *db_;
         BufferPool *buffer_pool_;
         PageManager *page_manager_;
@@ -558,6 +591,7 @@ namespace scratchbird::core
         uint64_t inventory_generation_ = 1;
         uint64_t next_snapshot_serial_ = 1;
         uint64_t oldest_snapshot_serial_ = 0;
+        uint64_t latest_commit_seqno_ = 0;
         uint32_t tip_root_page_ = 0;                      // Root TIP page ID
 
         // In-memory cache of recent transactions (LRU cache)
@@ -629,7 +663,8 @@ namespace scratchbird::core
 
         // LOCKING: No locks required internally. Updates TIP pages (disk I/O).
         //          May update tip_location_cache_ but doesn't require mutex_ (cache is best-effort).
-        auto writeTipEntry(uint64_t xid, TransactionState state, ErrorContext *ctx) -> Status;
+        auto writeTipEntry(uint64_t xid, TransactionState state, uint64_t commit_seqno,
+                           ErrorContext *ctx) -> Status;
 
         // LOCKING: No locks required (reads TIP pages from disk via buffer pool).
         auto findTipEntry(uint64_t xid, TIPEntry &entry_out, ErrorContext *ctx) -> Status;
@@ -659,6 +694,12 @@ namespace scratchbird::core
         // LOCKING: Requires mutex_ held by caller.
         auto persistTransactionMarkersLocked(ErrorContext *ctx) -> Status;
 
+        auto backfillLegacyCommitSequencesLocked(bool *rewrote_tip_out,
+                                                ErrorContext *ctx) -> Status;
+
+        auto reconcileCommitSequenceMetadataLocked(bool *startup_repair_out,
+                                                   ErrorContext *ctx) -> Status;
+
         // Convert raw TIP byte to a valid TransactionState.
         static auto decodeTipState(uint8_t tip_state, TransactionState &state_out) -> bool;
 
@@ -667,7 +708,7 @@ namespace scratchbird::core
 
         // Group commit methods
         // LOCKING: No locks required (performs batch TIP writes via writeTipEntry()).
-        auto writeTipEntriesBatch(const std::vector<std::pair<uint64_t, TransactionState>> &batch,
+        auto writeTipEntriesBatch(const std::vector<TipBatchEntry> &batch,
                                   ErrorContext *ctx) -> Status;
 
         // LOCKING: Acquires group_commit_mutex_ internally to collect waiters.

@@ -968,7 +968,10 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyActiveStatementDoesNot
     ASSERT_EQ(reader->clearStatementXID(&err_ctx), Status::OK);
     EXPECT_EQ(reader->getStatementTransactionSnapshot(), nullptr);
 
-    auto visibility_context = reader->resolveReadConsistencyVisibilityContext();
+    TransactionManager *txn_mgr = db_.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
+
+    auto visibility_context = txn_mgr->resolveVisibilityContext(xid_reader, reader.get());
     EXPECT_FALSE(visibility_context.valid);
     EXPECT_EQ(visibility_context.reason, VisibilityReason::MISSING_SNAPSHOT);
 
@@ -980,6 +983,27 @@ TEST_F(ConnectionContextTest, ReadCommittedReadConsistencyActiveStatementDoesNot
     ConnectionContext::setCurrent(reader.get());
     EXPECT_FALSE(storage->isVisible(xid_writer, 0, xid_reader))
         << "Active READ CONSISTENCY statements must not fall back to current-version reads";
+}
+
+TEST_F(ConnectionContextTest, VisibilityResolverUsesRetainedSnapshotForSnapshotIsolation)
+{
+    ErrorContext err_ctx;
+    std::unique_ptr<ConnectionContext> reader;
+
+    ASSERT_EQ(db_.connect(reader, &err_ctx), Status::OK);
+    ASSERT_EQ(reader->startTransaction(false, IsolationLevel::SNAPSHOT, true, &err_ctx),
+              Status::OK);
+
+    TransactionManager *txn_mgr = db_.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
+
+    const auto visibility_context =
+        txn_mgr->resolveVisibilityContext(reader->getCurrentXid(), reader.get());
+    EXPECT_TRUE(visibility_context.valid);
+    EXPECT_EQ(visibility_context.mode, VisibilityMode::SNAPSHOT);
+    EXPECT_EQ(visibility_context.reason, VisibilityReason::NONE);
+    EXPECT_EQ(visibility_context.reader_xid, reader->getCurrentXid());
+    EXPECT_EQ(visibility_context.snapshot, reader->getRetainedTransactionSnapshot());
 }
 
 TEST_F(ConnectionContextTest, SnapshotMarkersPersistAcrossCleanReopen)

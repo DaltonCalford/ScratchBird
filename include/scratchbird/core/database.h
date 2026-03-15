@@ -97,7 +97,7 @@ namespace scratchbird
             uint32_t db_compat_version; // Minimum version that can read DB
             uint64_t creation_time;     // Unix timestamp (microseconds)
             uint64_t last_checkpoint;   // Last checkpoint timestamp
-            uint64_t reserved1;         // Reserved for future use
+            uint64_t latest_commit_seqno; // Durable commit-sequence high-water mark
 
             // Configuration (32 bytes)
             uint32_t block_size;      // Must match page_header.page_size

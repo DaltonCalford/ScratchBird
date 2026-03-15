@@ -1455,6 +1455,19 @@ namespace scratchbird::core
     auto ConnectionContext::resolveReadConsistencyVisibilityContext() const
         -> VisibilityContext
     {
+        if (db_ != nullptr && db_->transaction_manager() != nullptr)
+        {
+            const auto resolved =
+                db_->transaction_manager()->resolveVisibilityContext(current_xid_, this);
+            VisibilityContext context{};
+            context.valid = resolved.valid;
+            context.mode = resolved.mode;
+            context.reason = resolved.reason;
+            context.reader_xid = resolved.reader_xid;
+            context.snapshot = resolved.snapshot;
+            return context;
+        }
+
         VisibilityContext context{};
         context.reader_xid = getStatementXID();
 
@@ -2423,6 +2436,7 @@ namespace scratchbird::core
     Status ConnectionContext::createForensicSnapshotCapsule(bool committed,
                                                             uint64_t txid,
                                                             const ID& tx_uuid,
+                                                            uint64_t commit_seqno,
                                                             uint64_t end_time,
                                                             ID& capsule_uuid_out,
                                                             ErrorContext* ctx)
@@ -2448,8 +2462,8 @@ namespace scratchbird::core
         capsule.database_id = db_->uuid();
         capsule.tx_uuid = tx_uuid;
         capsule.txid = txid;
-        capsule.has_commit_seqno = committed;
-        capsule.commit_seqno = committed ? end_time : 0;
+        capsule.has_commit_seqno = committed && commit_seqno != 0;
+        capsule.commit_seqno = committed ? commit_seqno : 0;
         capsule.snapshot_kind = "TRANSACTION_START";
         capsule.schema_epoch_uuid = current_schema_epoch_uuid_;
         capsule.active_tx_manifest = buildActiveTxManifest(*retained_transaction_snapshot_);
@@ -3801,9 +3815,31 @@ namespace scratchbird::core
         {
             CatalogManager *catalog = db_ ? db_->catalog_manager() : nullptr;
             const uint64_t end_time = nowMicros();
+            uint64_t commit_seqno = 0;
+            bool has_commit_seqno = false;
             if (commit && !isForensicReplayActive())
             {
-                Status ddl_status = flushCommittedTransactionalDdl(end_time, nullptr);
+                ErrorContext commit_seq_ctx;
+                Status commit_seq_status = txn_manager_->getCommittedTransactionSequence(
+                    ended_xid, commit_seqno, &commit_seq_ctx);
+                if (commit_seq_status == Status::OK && commit_seqno != 0)
+                {
+                    has_commit_seqno = true;
+                }
+                else
+                {
+                    LOG_WARNING(TRANSACTION,
+                                "Failed to resolve durable commit sequence after commit: proc_id=%u, xid=%lu, status=%d, detail=%s",
+                                proc_id_,
+                                ended_xid,
+                                static_cast<int>(commit_seq_status),
+                                commit_seq_ctx.message.c_str());
+                }
+            }
+            if (commit && !isForensicReplayActive())
+            {
+                Status ddl_status = flushCommittedTransactionalDdl(
+                    has_commit_seqno ? commit_seqno : 0, nullptr);
                 if (ddl_status != Status::OK)
                 {
                     LOG_WARNING(TRANSACTION,
@@ -3817,7 +3853,13 @@ namespace scratchbird::core
             if (!isForensicReplayActive())
             {
                 Status capsule_status = createForensicSnapshotCapsule(
-                    commit, ended_xid, ended_tx_uuid, end_time, terminal_capsule_uuid, nullptr);
+                    commit,
+                    ended_xid,
+                    ended_tx_uuid,
+                    has_commit_seqno ? commit_seqno : 0,
+                    end_time,
+                    terminal_capsule_uuid,
+                    nullptr);
                 if (capsule_status != Status::OK)
                 {
                     LOG_WARNING(TRANSACTION,
@@ -3832,8 +3874,8 @@ namespace scratchbird::core
                 ended_tx_uuid,
                 terminal_capsule_uuid,
                 terminal_schema_epoch_uuid,
-                commit && !isForensicReplayActive(),
-                commit && !isForensicReplayActive() ? end_time : 0,
+                commit && !isForensicReplayActive() && has_commit_seqno,
+                commit && !isForensicReplayActive() && has_commit_seqno ? commit_seqno : 0,
                 end_time,
                 nullptr);
             if (runtime_status != Status::OK)
@@ -4366,7 +4408,9 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    void ConnectionContext::trackTupleInsertion(uint32_t page_id, uint16_t item_id)
+    void ConnectionContext::trackTupleInsertion(const ID& table_id,
+                                               uint32_t page_id,
+                                               uint16_t item_id)
     {
         if (savepoint_rollback_in_progress_)
         {
@@ -4377,6 +4421,7 @@ namespace scratchbird::core
         {
             SavepointBackoutAction action;
             action.kind = SavepointBackoutActionKind::INSERT;
+            action.table_id = table_id;
             action.page_id = page_id;
             action.item_id = item_id;
             savepoint_stack_.back().actions.emplace_back(std::move(action));
@@ -4388,7 +4433,14 @@ namespace scratchbird::core
         }
     }
 
-    void ConnectionContext::trackTupleDeletion(uint32_t page_id, uint16_t item_id)
+    void ConnectionContext::trackTupleInsertion(uint32_t page_id, uint16_t item_id)
+    {
+        trackTupleInsertion(ID{}, page_id, item_id);
+    }
+
+    void ConnectionContext::trackTupleDeletion(const ID& table_id,
+                                              uint32_t page_id,
+                                              uint16_t item_id)
     {
         if (savepoint_rollback_in_progress_)
         {
@@ -4399,6 +4451,7 @@ namespace scratchbird::core
         {
             SavepointBackoutAction action;
             action.kind = SavepointBackoutActionKind::DELETE;
+            action.table_id = table_id;
             action.page_id = page_id;
             action.item_id = item_id;
             savepoint_stack_.back().actions.emplace_back(std::move(action));
@@ -4408,6 +4461,11 @@ namespace scratchbird::core
                       page_id, item_id, savepoint_stack_.back().name.c_str(),
                       savepoint_stack_.back().level);
         }
+    }
+
+    void ConnectionContext::trackTupleDeletion(uint32_t page_id, uint16_t item_id)
+    {
+        trackTupleDeletion(ID{}, page_id, item_id);
     }
 
     void ConnectionContext::trackTupleUpdate(const ID& table_id,

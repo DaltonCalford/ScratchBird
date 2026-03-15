@@ -129,6 +129,42 @@ namespace scratchbird::core
             }
             return candidate.page_id < best.page_id;
         }
+
+        auto extractReferencedToastValueId(const uint8_t *tuple_data,
+                                           uint32_t tuple_size,
+                                           ID *value_id_out) -> bool
+        {
+            if (value_id_out == nullptr)
+            {
+                return false;
+            }
+            *value_id_out = ID{};
+
+            if (tuple_data == nullptr || tuple_size < sizeof(TupleHeader) + sizeof(ToastPointer))
+            {
+                return false;
+            }
+
+            const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+            const uint8_t *payload = tuple_data + sizeof(TupleHeader);
+            const size_t payload_size = tuple_size - sizeof(TupleHeader);
+            if (payload_size != sizeof(ToastPointer))
+            {
+                return false;
+            }
+
+            if (!tuple_hdr->hasRecordFlag(TupleHeader::RHD_TOAST_PTR) &&
+                !ToastManager::isToastPointer(payload, payload_size))
+            {
+                return false;
+            }
+
+            const auto *toast_ptr = reinterpret_cast<const ToastPointer *>(payload);
+            *value_id_out = toast_ptr->lob_uuid;
+            return std::any_of(value_id_out->bytes.begin(),
+                               value_id_out->bytes.end(),
+                               [](uint8_t byte) { return byte != 0; });
+        }
     }
 
     StorageEngine::StorageEngine(Database *db)
@@ -1518,7 +1554,7 @@ namespace scratchbird::core
         {
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
-                conn_ctx->trackTupleInsertion(page_id, item_id);
+                conn_ctx->trackTupleInsertion(table_id, page_id, item_id);
             }
 
             // Sprint 4 Task 5.4.3: Dirty page tracking
@@ -2059,7 +2095,8 @@ namespace scratchbird::core
         {
             if (ConnectionContext* active_conn_ctx = ConnectionContext::getCurrent())
             {
-                active_conn_ctx->trackTupleDeletion(delete_target_page_id, delete_target_item_id);
+                active_conn_ctx->trackTupleDeletion(
+                    table_id, delete_target_page_id, delete_target_item_id);
             }
 
             // Sprint 4 Task 5.4.3: Mark page dirty if migrating
@@ -2287,30 +2324,287 @@ namespace scratchbird::core
                                                 uint64_t rollback_xid,
                                                 ErrorContext *ctx) -> Status
     {
+        auto is_zero_id = [](const ID &id) {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        auto resolve_tablespace_id = [&]() -> uint16_t
+        {
+            if (is_zero_id(action.table_id) || catalog_manager_ == nullptr)
+            {
+                return PRIMARY_TABLESPACE_ID;
+            }
+
+            CatalogManager::TableInfo table_info;
+            Status table_status = catalog_manager_->getTable(action.table_id, table_info, ctx);
+            if (table_status != Status::OK)
+            {
+                return PRIMARY_TABLESPACE_ID;
+            }
+
+            return table_info.tablespace_id;
+        };
+
+        auto copy_tuple_image = [](const uint8_t *tuple_data, uint32_t tuple_size,
+                                   std::vector<uint8_t> &out) -> Status
+        {
+            if (tuple_data == nullptr || tuple_size < sizeof(TupleHeader))
+            {
+                return Status::INVALID_ARGUMENT;
+            }
+
+            try
+            {
+                out.assign(tuple_data, tuple_data + tuple_size);
+            }
+            catch (const std::bad_alloc &)
+            {
+                return Status::OOM;
+            }
+
+            return Status::OK;
+        };
+
+        const uint16_t tablespace_id = resolve_tablespace_id();
+        const GPID primary_gpid =
+            makeGPID(tablespace_id, static_cast<uint64_t>(action.page_id));
+
         switch (action.kind)
         {
             case SavepointBackoutActionKind::INSERT:
-                return markInsertedTupleRolledBack(action.page_id, action.item_id, rollback_xid,
-                                                   ctx);
+            {
+                void *page_buffer = nullptr;
+                Status status = buffer_pool_->pinPageGlobal(primary_gpid, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                bool dirty = false;
+                auto *page_data = static_cast<uint8_t *>(page_buffer);
+                HeapPage heap_page(page_data,
+                                   db_->page_size(),
+                                   is_zero_id(action.table_id)
+                                       ? nullptr
+                                       : getOrCreateToastManager(action.table_id, ctx),
+                                   db_,
+                                   action.table_id);
+                const uint8_t *tuple_data = nullptr;
+                uint32_t tuple_size = 0;
+                status = heap_page.getTuple(action.item_id, &tuple_data, &tuple_size, ctx);
+                if (status == Status::OK)
+                {
+                    const auto *tuple_hdr =
+                        reinterpret_cast<const TupleHeader *>(tuple_data);
+                    if (tuple_hdr->xmin != rollback_xid || tuple_hdr->hasBackVersion())
+                    {
+                        SET_ERROR_CONTEXT(ctx,
+                                          Status::INVALID_ARGUMENT,
+                                          "Insert backout requires a root version created by the current transaction");
+                        status = Status::INVALID_ARGUMENT;
+                    }
+                    else
+                    {
+                        status = heap_page.deleteTuple(action.item_id, UINT64_MAX, ctx, false);
+                        dirty = (status == Status::OK);
+                    }
+                }
+
+                buffer_pool_->unpinPageGlobal(primary_gpid, dirty, ctx);
+                return status;
+            }
 
             case SavepointBackoutActionKind::DELETE:
-                return clearTupleDeleteMark(action.page_id, action.item_id, ctx);
+            {
+                void *page_buffer = nullptr;
+                Status status = buffer_pool_->pinPageGlobal(primary_gpid, &page_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                bool dirty = false;
+                auto *page_data = static_cast<uint8_t *>(page_buffer);
+                HeapPage heap_page(page_data,
+                                   db_->page_size(),
+                                   is_zero_id(action.table_id)
+                                       ? nullptr
+                                       : getOrCreateToastManager(action.table_id, ctx),
+                                   db_,
+                                   action.table_id);
+                status = heap_page.backoutDeleteTuple(action.item_id, rollback_xid, ctx);
+                dirty = (status == Status::OK);
+                buffer_pool_->unpinPageGlobal(primary_gpid, dirty, ctx);
+                return status;
+            }
 
             case SavepointBackoutActionKind::UPDATE:
-                if (isZeroId(action.table_id) || action.old_tuple_image.empty())
+                if (isZeroId(action.table_id))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                      "Update backout action is missing restore image");
+                                      "Update backout action is missing table identity");
                     return Status::INVALID_ARGUMENT;
                 }
-                return updateTuple(action.table_id,
-                                   action.page_id,
-                                   action.item_id,
-                                   action.old_tuple_image.data(),
-                                   static_cast<uint32_t>(action.old_tuple_image.size()),
-                                   nullptr,
-                                   nullptr,
-                                   ctx);
+                else
+                {
+                    ToastManager *toast_mgr = getOrCreateToastManager(action.table_id, ctx);
+                    void *primary_page_buffer = nullptr;
+                    Status status =
+                        buffer_pool_->pinPageGlobal(primary_gpid, &primary_page_buffer, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+
+                    bool primary_dirty = false;
+                    bool back_dirty = false;
+                    const GPID no_back_page = INVALID_GPID;
+                    GPID back_gpid = no_back_page;
+                    void *back_page_buffer = nullptr;
+
+                    auto *primary_page_data = static_cast<uint8_t *>(primary_page_buffer);
+                    HeapPage primary_heap_page(primary_page_data, db_->page_size(), toast_mgr, db_,
+                                               action.table_id);
+
+                    const uint8_t *current_tuple_data = nullptr;
+                    uint32_t current_tuple_size = 0;
+                    status = primary_heap_page.getTuple(action.item_id,
+                                                        &current_tuple_data,
+                                                        &current_tuple_size,
+                                                        ctx);
+                    std::vector<uint8_t> current_tuple_image;
+                    if (status == Status::OK)
+                    {
+                        status = copy_tuple_image(current_tuple_data,
+                                                  current_tuple_size,
+                                                  current_tuple_image);
+                    }
+
+                    if (status != Status::OK)
+                    {
+                        buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                        return status;
+                    }
+
+                    const auto *current_hdr =
+                        reinterpret_cast<const TupleHeader *>(current_tuple_image.data());
+                    if (current_hdr->xmin != rollback_xid || !current_hdr->hasBackVersion())
+                    {
+                        buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                        SET_ERROR_CONTEXT(ctx,
+                                          Status::INVALID_ARGUMENT,
+                                          "Update backout requires a current version owned by the rollback XID and a back version");
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    ID current_toast_value{};
+                    ID restored_toast_value{};
+                    const bool current_has_toast =
+                        extractReferencedToastValueId(current_tuple_image.data(),
+                                                     static_cast<uint32_t>(current_tuple_image.size()),
+                                                     &current_toast_value);
+
+                    const TID back_tid = current_hdr->getBackVersionTID();
+                    if (back_tid.gpid == INVALID_GPID)
+                    {
+                        buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                          "Update backout cannot resolve back version");
+                        return Status::PAGE_CORRUPT;
+                    }
+
+                    if (back_tid.gpid == primary_gpid)
+                    {
+                        back_page_buffer = primary_page_buffer;
+                    }
+                    else
+                    {
+                        status = buffer_pool_->pinPageGlobal(back_tid.gpid, &back_page_buffer, ctx);
+                        if (status != Status::OK)
+                        {
+                            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                            return status;
+                        }
+                    }
+
+                    auto *back_page_data = static_cast<uint8_t *>(back_page_buffer);
+                    HeapPage back_heap_page(back_page_data, db_->page_size(), toast_mgr, db_,
+                                            action.table_id);
+
+                    const uint8_t *back_tuple_data = nullptr;
+                    uint32_t back_tuple_size = 0;
+                    status = back_heap_page.getTuple(back_tid.slot, &back_tuple_data,
+                                                     &back_tuple_size, ctx);
+                    std::vector<uint8_t> back_tuple_image;
+                    if (status == Status::OK)
+                    {
+                        status = copy_tuple_image(back_tuple_data, back_tuple_size, back_tuple_image);
+                    }
+
+                    if (status == Status::OK)
+                    {
+                        const auto *back_hdr =
+                            reinterpret_cast<const TupleHeader *>(back_tuple_image.data());
+                        const bool restored_has_toast =
+                            extractReferencedToastValueId(back_tuple_image.data(),
+                                                         static_cast<uint32_t>(back_tuple_image.size()),
+                                                         &restored_toast_value);
+                        status = primary_heap_page.overwriteTuple(action.item_id,
+                                                                  back_tuple_image.data(),
+                                                                  back_tuple_size,
+                                                                  rollback_xid,
+                                                                  back_hdr->xmin,
+                                                                  back_hdr->back_version_gpid,
+                                                                  back_hdr->back_version_slot,
+                                                                  ctx);
+                        if (status == Status::OK)
+                        {
+                            primary_dirty = true;
+                            status = updateStableTidIndexesForMutation(action.table_id,
+                                                                       tablespace_id,
+                                                                       action.page_id,
+                                                                       action.item_id,
+                                                                       current_tuple_image.data(),
+                                                                       static_cast<uint32_t>(current_tuple_image.size()),
+                                                                       back_tuple_image.data(),
+                                                                       static_cast<uint32_t>(back_tuple_image.size()),
+                                                                       rollback_xid,
+                                                                       ctx);
+                        }
+                        if (status == Status::OK && current_has_toast &&
+                            (!restored_has_toast || current_toast_value != restored_toast_value))
+                        {
+                            Status cleanup_status =
+                                toast_mgr->deleteToastValue(current_toast_value, rollback_xid, ctx);
+                            if (cleanup_status != Status::OK &&
+                                cleanup_status != Status::NOT_FOUND)
+                            {
+                                LOG_WARNING(STORAGE,
+                                            "Failed to retire rolled-back TOAST value during savepoint backout (status=%d)",
+                                            static_cast<int>(cleanup_status));
+                            }
+                        }
+                        if (status == Status::OK)
+                        {
+                            status = back_heap_page.deleteTuple(back_tid.slot, UINT64_MAX, ctx, true);
+                            back_dirty = (status == Status::OK);
+                        }
+                    }
+
+                    if (back_tid.gpid != primary_gpid)
+                    {
+                        buffer_pool_->unpinPageGlobal(back_tid.gpid, back_dirty, ctx);
+                    }
+                    buffer_pool_->unpinPageGlobal(primary_gpid, primary_dirty, ctx);
+                    return status;
+                }
         }
 
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown savepoint backout action");
@@ -2389,87 +2683,22 @@ namespace scratchbird::core
                 xmax = 0;
             }
 
-            // Get current connection context to determine isolation level
             ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-
-            if (conn_ctx != nullptr)
+            const auto visibility_context = tm->resolveVisibilityContext(current_xid, conn_ctx);
+            if (!visibility_context.valid)
             {
-                const auto* replay_snapshot = conn_ctx->getForensicReplaySnapshot();
-                if (replay_snapshot != nullptr)
-                {
-                    return tm->evaluateRecordVisibility(
-                                 xmin, xmax, current_xid, VisibilityMode::SNAPSHOT,
-                                 replay_snapshot)
-                        .visible;
-                }
+                LOG_ERROR(STORAGE,
+                          "Invalid visibility context: proc_id=%d xid=%lu reason=%d",
+                          ConnectionContext::getCurrentProcId(),
+                          conn_ctx != nullptr ? conn_ctx->getCurrentXid() : current_xid,
+                          static_cast<int>(visibility_context.reason));
+                return false;
             }
 
-            // If no connection context, fall back to READ COMMITTED semantics
-            if (conn_ctx == nullptr)
-            {
-                return tm->evaluateRecordVisibility(
-                             xmin, xmax, current_xid,
-                             VisibilityMode::READ_CURRENT_TRANSACTION, nullptr)
-                    .visible;
-            }
-
-            // Isolation-level-aware visibility checking
-            IsolationLevel iso_level = conn_ctx->getIsolationLevel();
-
-            switch (iso_level)
-            {
-                case IsolationLevel::READ_COMMITTED:
-                {
-                    return tm->evaluateRecordVisibility(
-                                 xmin, xmax, current_xid,
-                                 VisibilityMode::READ_CURRENT_TRANSACTION, nullptr)
-                        .visible;
-                }
-
-                case IsolationLevel::SNAPSHOT:
-                case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
-                {
-                    const auto *retained_snapshot = conn_ctx->getRetainedTransactionSnapshot();
-                    if (retained_snapshot != nullptr)
-                    {
-                        return tm->evaluateRecordVisibility(
-                                     xmin, xmax, current_xid, VisibilityMode::SNAPSHOT,
-                                     retained_snapshot)
-                            .visible;
-                    }
-
-                    // Fallback for paths that do not yet have a retained snapshot bound.
-                    return tm->evaluateRecordVisibility(
-                                 xmin, xmax, current_xid, VisibilityMode::READ_CURRENT_VERSION,
-                                 nullptr)
-                        .visible;
-                }
-
-                case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
-                {
-                    const auto visibility_context =
-                        conn_ctx->resolveReadConsistencyVisibilityContext();
-                    if (!visibility_context.valid)
-                    {
-                        LOG_ERROR(STORAGE,
-                                  "Missing statement snapshot for READ_CONSISTENCY visibility: "
-                                  "proc_id=%d xid=%lu",
-                                  ConnectionContext::getCurrentProcId(),
-                                  conn_ctx->getCurrentXid());
-                        return false;
-                    }
-                    return tm->evaluateRecordVisibility(
-                                 xmin, xmax, visibility_context.reader_xid,
-                                 visibility_context.mode, visibility_context.snapshot)
-                        .visible;
-                }
-
-                default:
-                {
-                    LOG_ERROR(STORAGE, "Unknown isolation level: %d", static_cast<int>(iso_level));
-                    return false;
-                }
-            }
+            return tm->evaluateRecordVisibility(
+                         xmin, xmax, visibility_context.reader_xid, visibility_context.mode,
+                         visibility_context.snapshot)
+                .visible;
         }
 
         // Fallback to simple visibility rules (still validate XIDs)

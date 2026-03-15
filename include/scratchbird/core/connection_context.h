@@ -623,6 +623,7 @@ namespace scratchbird::core
         Status createForensicSnapshotCapsule(bool committed,
                                             uint64_t txid,
                                             const ID& tx_uuid,
+                                            uint64_t commit_seqno,
                                             uint64_t end_time,
                                             ID& capsule_uuid_out,
                                             ErrorContext* ctx);
@@ -853,17 +854,21 @@ namespace scratchbird::core
         /**
          * Track a tuple insertion for potential savepoint rollback
          * Called by heap_page.cpp after inserting a tuple
+         * @param table_id Table owning the tuple, or zero if unavailable
          * @param page_id Page ID where tuple was inserted
          * @param item_id Item ID of inserted tuple
          */
+        void trackTupleInsertion(const ID& table_id, uint32_t page_id, uint16_t item_id);
         void trackTupleInsertion(uint32_t page_id, uint16_t item_id);
 
         /**
          * Track a tuple deletion for potential savepoint rollback
          * Called by heap_page.cpp after marking a tuple deleted
+         * @param table_id Table owning the tuple, or zero if unavailable
          * @param page_id Page ID where tuple was deleted
          * @param item_id Item ID of deleted tuple
          */
+        void trackTupleDeletion(const ID& table_id, uint32_t page_id, uint16_t item_id);
         void trackTupleDeletion(uint32_t page_id, uint16_t item_id);
 
         /**

@@ -194,6 +194,59 @@ protected:
         return buildTuple(payload.data(), payload.size());
     }
 
+    std::vector<uint8_t> buildIndexedTextTuple(int32_t value,
+                                               char fill,
+                                               size_t text_size)
+    {
+        TupleHeader header{};
+        header.xmin = config::DEFAULT_INITIAL_XID;
+        header.xmax = 0;
+        header.back_version_gpid = INVALID_GPID;
+        header.back_version_slot = 0;
+        header.ctid_gpid = INVALID_GPID;
+        header.ctid_slot = 0;
+        header.infomask = TupleHeader::HEAP_HAS_NULLS;
+        header.null_bitmap_offset = static_cast<uint16_t>(sizeof(TupleHeader));
+        header.padding = 0;
+        header.session_id = ID{};
+
+        const uint32_t encoded_size = static_cast<uint32_t>(text_size);
+        std::vector<uint8_t> tuple(sizeof(TupleHeader) + 1 + sizeof(value) +
+                                       sizeof(encoded_size) + text_size,
+                                   0);
+        std::memcpy(tuple.data(), &header, sizeof(TupleHeader));
+        tuple[sizeof(TupleHeader)] = 0;
+        size_t payload_offset = sizeof(TupleHeader) + 1;
+        std::memcpy(tuple.data() + payload_offset, &value, sizeof(value));
+        payload_offset += sizeof(value);
+        std::memcpy(tuple.data() + payload_offset, &encoded_size, sizeof(encoded_size));
+        payload_offset += sizeof(encoded_size);
+        std::memset(tuple.data() + payload_offset, fill, text_size);
+        return tuple;
+    }
+
+    std::vector<uint8_t> buildIndexedNullTextTuple(int32_t value,
+                                                   uint64_t xmin = config::DEFAULT_INITIAL_XID)
+    {
+        TupleHeader header{};
+        header.xmin = xmin;
+        header.xmax = 0;
+        header.back_version_gpid = INVALID_GPID;
+        header.back_version_slot = 0;
+        header.ctid_gpid = INVALID_GPID;
+        header.ctid_slot = 0;
+        header.infomask = TupleHeader::HEAP_HAS_NULLS;
+        header.null_bitmap_offset = static_cast<uint16_t>(sizeof(TupleHeader));
+        header.padding = 0;
+        header.session_id = ID{};
+
+        std::vector<uint8_t> tuple(sizeof(TupleHeader) + 1 + sizeof(value), 0);
+        std::memcpy(tuple.data(), &header, sizeof(TupleHeader));
+        tuple[sizeof(TupleHeader)] = 0x02;
+        std::memcpy(tuple.data() + sizeof(TupleHeader) + 1, &value, sizeof(value));
+        return tuple;
+    }
+
     std::vector<uint8_t> buildFilledTuple(size_t payload_size, uint8_t fill)
     {
         std::vector<uint8_t> payload(payload_size, fill);
@@ -266,7 +319,26 @@ protected:
         return value_id;
     }
 
-    void fillPageAlmostFull(uint32_t page_id, size_t payload_size = 64)
+    Status detectOrphanedToastValues(const ID &table_id,
+                                     std::unordered_set<ID, IDHash> *orphaned_value_ids)
+    {
+        ErrorContext ctx;
+        ToastManager toast_mgr(db_.get(), table_id);
+        Status status = toast_mgr.initialize(&ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return db_->garbage_collector()->detectOrphanedToastChunks(toast_mgr.toastTableId(),
+                                                                   orphaned_value_ids,
+                                                                   &ctx);
+    }
+
+    void fillPageAlmostFull(uint32_t page_id,
+                            size_t payload_size = 64,
+                            uint32_t target_free_space = 260)
     {
         ErrorContext ctx;
         void *page_buffer = nullptr;
@@ -275,7 +347,6 @@ protected:
 
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         HeapPage heap_page(page_data, kPageSize);
-        const uint32_t target_free_space = 260;
         auto tuple_data = buildFilledTuple(payload_size, 0xAB);
 
         while (heap_page.getFreeSpace() >
@@ -760,6 +831,51 @@ TEST_F(StorageEngineTest, SavepointRollbackRestoresIndexedKeyVisibility)
     expectIndexSeekNotFound(index_id, 40);
 }
 
+TEST_F(StorageEngineTest, SavepointRollbackRestoresOriginalVersionLifecycleState)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("savepoint_lifecycle_restore");
+
+    const uint64_t original_xid = conn_ctx_->getCurrentXid();
+    auto original_tuple = buildIntTuple(55, original_xid);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    ASSERT_NE(conn_ctx_->getCurrentXid(), original_xid);
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_lifecycle_restore", &ctx), Status::OK)
+        << ctx.message;
+
+    auto updated_tuple = buildIntTuple(66, conn_ctx_->getCurrentXid());
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_lifecycle_restore", &ctx), Status::OK)
+        << ctx.message;
+
+    Tuple restored{};
+    ASSERT_EQ(engine_->getTuple(page_id, item_id, &restored, &ctx), Status::OK) << ctx.message;
+    const auto *restored_hdr = reinterpret_cast<const TupleHeader *>(restored.data);
+    ASSERT_NE(restored_hdr, nullptr);
+    EXPECT_EQ(restored_hdr->xmin, original_xid);
+    EXPECT_EQ(restored_hdr->xmax, 0u);
+    EXPECT_FALSE(restored_hdr->hasBackVersion());
+}
+
 TEST_F(StorageEngineTest, ReadConsistencyNoWaitUpdateRequiresRestart)
 {
     ErrorContext ctx;
@@ -1110,4 +1226,109 @@ TEST_F(StorageEngineTest, CrossPageSavepointRollbackRestoresOriginalTuple)
         << ctx.message;
     std::vector<uint8_t> restored_tuple(restored.data, restored.data + restored.data_size);
     expectTuplePayloadEquals(restored_tuple, original_tuple);
+}
+
+TEST_F(StorageEngineTest, SavepointRollbackRetiresRolledBackToastValue)
+{
+    ID table_id = createTestTable("savepoint_toast_cleanup_test");
+
+    auto original_tuple = buildLargeRowTuple(3, 'C');
+    auto updated_tuple = buildLargeRowTuple(3, 'D');
+
+    ErrorContext ctx;
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    ID original_toast_value = readRawToastValueId(table_id, page_id, item_id);
+    ASSERT_NE(original_toast_value, ID{});
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_toast_cleanup", &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   nullptr,
+                                   nullptr,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    ID updated_toast_value = readRawToastValueId(table_id, page_id, item_id);
+    ASSERT_NE(updated_toast_value, ID{});
+    EXPECT_NE(updated_toast_value, original_toast_value);
+
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_toast_cleanup", &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    ID restored_toast_value = readRawToastValueId(table_id, page_id, item_id);
+    EXPECT_EQ(restored_toast_value, original_toast_value);
+
+    std::unordered_set<ID, IDHash> orphaned_value_ids;
+    ASSERT_EQ(detectOrphanedToastValues(table_id, &orphaned_value_ids), Status::OK);
+    EXPECT_EQ(orphaned_value_ids.count(original_toast_value), 0u);
+    EXPECT_EQ(orphaned_value_ids.count(updated_toast_value), 0u);
+}
+
+TEST_F(StorageEngineTest, CrossPageSavepointRollbackRestoresIndexedKeyVisibility)
+{
+    ErrorContext ctx;
+    ID table_id = createTestTable("cross_page_savepoint_index_restore");
+    ID index_id = createSingleIntIndex(table_id, "idx_cross_page_savepoint_restore", false);
+
+    auto original_tuple = buildIndexedNullTextTuple(10);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   original_tuple.data(),
+                                   static_cast<uint32_t>(original_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    TID stable_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
+    fillPageAlmostFull(page_id, 128, 96);
+
+    ASSERT_EQ(conn_ctx_->createSavepoint("sp_cross_page_index_restore", &ctx), Status::OK)
+        << ctx.message;
+
+    auto updated_tuple = buildIndexedTextTuple(20, 'Z', 5000);
+    uint32_t updated_page_id = 0;
+    uint16_t updated_item_id = 0;
+    ASSERT_EQ(engine_->updateTuple(table_id,
+                                   page_id,
+                                   item_id,
+                                   updated_tuple.data(),
+                                   static_cast<uint32_t>(updated_tuple.size()),
+                                   &updated_page_id,
+                                   &updated_item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(updated_page_id, page_id);
+    ASSERT_EQ(updated_item_id, item_id);
+
+    Tuple current_tuple{};
+    ASSERT_EQ(engine_->getTuple(page_id, item_id, &current_tuple, &ctx), Status::OK) << ctx.message;
+    const auto *current_hdr = reinterpret_cast<const TupleHeader *>(current_tuple.data);
+    ASSERT_NE(current_hdr, nullptr);
+    ASSERT_TRUE(current_hdr->hasBackVersion());
+    EXPECT_NE(current_hdr->getBackVersionTID().gpid, stable_tid.gpid);
+
+    expectIndexSeekFindsTid(index_id, 20, stable_tid);
+
+    ASSERT_EQ(conn_ctx_->rollbackToSavepoint("sp_cross_page_index_restore", &ctx), Status::OK)
+        << ctx.message;
+
+    db_->garbage_collector()->markPageDirty(page_id);
+    db_->garbage_collector()->processPageCooperative(page_id, &ctx);
+
+    expectIndexSeekFindsTid(index_id, 10, stable_tid);
+    expectIndexSeekNotFound(index_id, 20);
 }

@@ -2353,6 +2353,7 @@ namespace scratchbird::core
         uint64_t micros = defaultTimeSource().nowMicros();
         header->creation_time = micros;
         header->last_checkpoint = 0;
+        header->latest_commit_seqno = 0;
 
         // Set configuration
         header->block_size = page_size;

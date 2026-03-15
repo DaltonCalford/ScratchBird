@@ -409,6 +409,10 @@ namespace scratchbird::core
         auto deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx = nullptr,
                          bool defer_toast_cleanup = false) -> Status;
 
+        // Back out a delete that was applied by the current transaction or savepoint.
+        auto backoutDeleteTuple(uint16_t item_id, uint64_t delete_xid,
+                                ErrorContext *ctx = nullptr) -> Status;
+
         // Update tuple (MGA Phase 3: Version Chains)
         // Creates a new version and links it to the old version
         // Returns the new tuple's item_id

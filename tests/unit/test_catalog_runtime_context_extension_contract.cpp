@@ -374,7 +374,7 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, LiveTransactionPersistsRetain
     EXPECT_TRUE(tx_row.has_end_time);
     EXPECT_GE(tx_row.end_time, tx_row.start_time);
     EXPECT_TRUE(tx_row.has_commit_seqno);
-    EXPECT_EQ(tx_row.commit_seqno, tx_row.end_time);
+    EXPECT_GT(tx_row.commit_seqno, 0u);
     EXPECT_NE(tx_row.forensic_snapshot_capsule_uuid, ID{});
 
     std::vector<CatalogManager::TransactionLineageEventCatalogInfo> rows;
@@ -390,6 +390,8 @@ TEST_F(CatalogRuntimeContextExtensionContractTest, LiveTransactionPersistsRetain
     EXPECT_EQ(capsule.txid, txid);
     EXPECT_EQ(capsule.snapshot_kind, "TRANSACTION_START");
     EXPECT_EQ(capsule.status, "COMMITTED");
+    EXPECT_TRUE(capsule.has_commit_seqno);
+    EXPECT_EQ(capsule.commit_seqno, tx_row.commit_seqno);
     EXPECT_EQ(capsule.lineage_root_event_id, rows.front().lineage_event_id);
     EXPECT_EQ(rows[0].event_kind, CatalogManager::TransactionLineageEventKind::TX_BEGIN);
     EXPECT_EQ(rows[1].event_kind, CatalogManager::TransactionLineageEventKind::TX_CONTEXT_BOUND);

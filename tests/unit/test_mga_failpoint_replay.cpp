@@ -686,12 +686,28 @@ TEST_F(MgaFailpointReplayTest, CommitPostTipFailpointKeepsInsertedRowCommittedAc
     ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
     EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
 
+    uint64_t commit_seq_before_restart = 0;
+    ASSERT_EQ(txn_mgr_->getCommittedTransactionSequence(xid, commit_seq_before_restart, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_GT(commit_seq_before_restart, 0u);
+
     closeDatabase();
     markNextOpenAsUnclean();
     reopenDatabase();
 
     ASSERT_EQ(txn_mgr_->getTransactionState(xid, state, &ctx), Status::OK) << ctx.message;
     EXPECT_EQ(state, scratchbird::core::TransactionState::COMMITTED);
+
+    uint64_t commit_seq_after_restart = 0;
+    ASSERT_EQ(txn_mgr_->getCommittedTransactionSequence(xid, commit_seq_after_restart, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(commit_seq_after_restart, commit_seq_before_restart);
+
+    TransactionSnapshot snapshot{};
+    ASSERT_EQ(txn_mgr_->captureSnapshot(snapshot, &ctx), Status::OK) << ctx.message;
+    EXPECT_GE(snapshot.snapshot_commit_seqno_high, commit_seq_after_restart);
 
     const auto rows = visibleRows(conn_.get());
     ASSERT_EQ(rows.size(), 1u);

@@ -295,7 +295,7 @@ TEST(CacheBoundedTest, Comprehensive) {
     std::cout << "    - loadTipPage(): Populate cache on startup" << std::endl;
     std::cout << "    - beginTransaction(): Add new transaction" << std::endl;
     std::cout << "    - commit/rollback: Update state, maintain LRU" << std::endl;
-    std::cout << "    - getTransactionState(): Cache-first lookup with fallback to CLOG" << std::endl;
+    std::cout << "    - getTransactionState(): Cache-first lookup with strict TIP authority" << std::endl;
     std::cout << std::endl;
     std::cout << "  Thread Safety:" << std::endl;
     std::cout << "    - All public methods use std::lock_guard<std::mutex>" << std::endl;

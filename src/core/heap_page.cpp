@@ -779,6 +779,47 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto HeapPage::backoutDeleteTuple(uint16_t item_id, uint64_t delete_xid,
+                                      ErrorContext *ctx) -> Status
+    {
+        if (item_id >= getItemCount())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ItemPointer *items = getItemArray();
+        if (items[item_id].isDeleted() || items[item_id].isUnused())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple is deleted or unused");
+            return Status::NOT_FOUND;
+        }
+
+        if (!items[item_id].isValid(page_size_))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Item pointer out of bounds or invalid");
+            return Status::PAGE_CORRUPT;
+        }
+
+        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + items[item_id].offset);
+        if (tuple_hdr->xmax != delete_xid)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Tuple delete XID does not match backout XID");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        tuple_hdr->xmax = 0;
+        tuple_hdr->infomask = static_cast<uint16_t>(
+            tuple_hdr->infomask &
+            ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
+        tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
+        applyCanonicalRecordContract(tuple_hdr, page_data_ + items[item_id].offset,
+                                     items[item_id].length);
+        updateHeaderStats();
+        return Status::OK;
+    }
+
     auto HeapPage::hasFreeSpace(uint32_t tuple_size) const -> bool
     {
         const PageHeader *hdr = header();
@@ -1615,72 +1656,26 @@ namespace scratchbird::core
             {
                 TransactionManager *txn_mgr = db_->transaction_manager();
                 ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-                VisibilityMode visibility_mode = VisibilityMode::READ_CURRENT_TRANSACTION;
-                const TransactionSnapshot *snapshot = nullptr;
-                uint64_t reader_visibility_xid = current_xid;
-
-                if (conn_ctx != nullptr)
+                const auto visibility_context =
+                    txn_mgr->resolveVisibilityContext(current_xid, conn_ctx);
+                if (!visibility_context.valid)
                 {
-                    if (const auto *replay_snapshot = conn_ctx->getForensicReplaySnapshot();
-                        replay_snapshot != nullptr)
-                    {
-                        visibility_mode = VisibilityMode::SNAPSHOT;
-                        snapshot = replay_snapshot;
-                    }
-                    else
-                    {
-                        switch (conn_ctx->getIsolationLevel())
-                        {
-                            case IsolationLevel::SNAPSHOT:
-                            case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
-                                if (const auto *retained_snapshot =
-                                        conn_ctx->getRetainedTransactionSnapshot();
-                                    retained_snapshot != nullptr)
-                                {
-                                    visibility_mode = VisibilityMode::SNAPSHOT;
-                                    snapshot = retained_snapshot;
-                                }
-                                else
-                                {
-                                    visibility_mode = VisibilityMode::READ_CURRENT_VERSION;
-                                }
-                                break;
-
-                            case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
-                            {
-                                const auto visibility_context =
-                                    conn_ctx->resolveReadConsistencyVisibilityContext();
-                                if (!visibility_context.valid)
-                                {
-                                    LOG_ERROR(STORAGE,
-                                              "Missing statement snapshot for heap visibility: "
-                                              "proc_id=%d xid=%lu",
-                                              ConnectionContext::getCurrentProcId(),
-                                              conn_ctx->getCurrentXid());
-                                    create_visible = false;
-                                    delete_visible = true;
-                                    continue;
-                                }
-                                visibility_mode = visibility_context.mode;
-                                snapshot = visibility_context.snapshot;
-                                reader_visibility_xid = visibility_context.reader_xid;
-                                break;
-                            }
-
-                            case IsolationLevel::READ_COMMITTED:
-                            default:
-                                visibility_mode = VisibilityMode::READ_CURRENT_TRANSACTION;
-                                break;
-                        }
-                    }
+                    LOG_ERROR(STORAGE,
+                              "Invalid heap visibility context: proc_id=%d xid=%lu reason=%d",
+                              ConnectionContext::getCurrentProcId(),
+                              conn_ctx != nullptr ? conn_ctx->getCurrentXid() : current_xid,
+                              static_cast<int>(visibility_context.reason));
+                    create_visible = false;
+                    delete_visible = true;
+                    continue;
                 }
 
                 const RecordVisibilityDecision visibility_decision =
                     txn_mgr->evaluateRecordVisibility(tuple_hdr->xmin,
                                                       effective_xmax,
-                                                      reader_visibility_xid,
-                                                      visibility_mode,
-                                                      snapshot);
+                                                      visibility_context.reader_xid,
+                                                      visibility_context.mode,
+                                                      visibility_context.snapshot);
                 create_visible = visibility_decision.create_visible;
                 delete_visible = visibility_decision.delete_visible;
             }

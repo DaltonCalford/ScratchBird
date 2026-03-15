@@ -139,13 +139,13 @@ namespace scratchbird::core
         addToCacheLRU(FROZEN_XID, TransactionState::COMMITTED);
 
         // Write bootstrap transaction to TIP
-        status = writeTipEntry(BOOTSTRAP_XID, TransactionState::COMMITTED, ctx);
+        status = writeTipEntry(BOOTSTRAP_XID, TransactionState::COMMITTED, 0, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
-        status = writeTipEntry(FROZEN_XID, TransactionState::COMMITTED, ctx);
+        status = writeTipEntry(FROZEN_XID, TransactionState::COMMITTED, 0, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -186,6 +186,7 @@ namespace scratchbird::core
             : db_header->inventory_generation;
         oldest_snapshot_serial_ = db_header->oldest_snapshot_serial;
         next_snapshot_serial_ = oldest_snapshot_serial_ + 1;
+        latest_commit_seqno_ = db_header->latest_commit_seqno;
 
         // DATABASE HEADER VALIDATION: Validate next_xid is sane
         uint64_t current_next_xid = next_xid_.load(std::memory_order_acquire);
@@ -271,6 +272,28 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             return status;
+        }
+
+        bool rewrote_commit_sequences = false;
+        status = backfillLegacyCommitSequencesLocked(&rewrote_commit_sequences, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (rewrote_commit_sequences && startup_summary != nullptr)
+        {
+            startup_summary->startup_repair = true;
+        }
+
+        bool repaired_commit_sequence_metadata = false;
+        status = reconcileCommitSequenceMetadataLocked(&repaired_commit_sequence_metadata, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (repaired_commit_sequence_metadata && startup_summary != nullptr)
+        {
+            startup_summary->startup_repair = true;
         }
 
         CatalogManager *catalog = db_->catalog_manager();
@@ -362,12 +385,13 @@ namespace scratchbird::core
         oldest_snapshot_serial_ = reconciled_snapshot_serial;
         next_snapshot_serial_ = oldest_snapshot_serial_ + 1;
 
-        if (!db_->last_shutdown_was_clean() || startup_repair)
+        if (!db_->last_shutdown_was_clean() || startup_repair || rewrote_commit_sequences)
         {
             ++inventory_generation_;
         }
 
-        if (markers_changed || !db_->last_shutdown_was_clean() || startup_repair)
+        if (markers_changed || rewrote_commit_sequences || !db_->last_shutdown_was_clean() ||
+            startup_repair)
         {
             status = persistTransactionMarkersLocked(ctx);
             if (status != Status::OK)
@@ -379,7 +403,7 @@ namespace scratchbird::core
         if (startup_summary != nullptr)
         {
             startup_summary->startup_repair =
-                startup_summary->startup_repair || startup_repair;
+                startup_summary->startup_repair || startup_repair || rewrote_commit_sequences;
         }
 
         status = restorePreparedLockOwners(ctx);
@@ -611,7 +635,7 @@ namespace scratchbird::core
 
         // Persist ACTIVE state and next_xid advance before publishing the
         // transaction in attachment-visible inventory.
-        Status status = writeTipEntry(new_xid, TransactionState::ACTIVE, ctx);
+        Status status = writeTipEntry(new_xid, TransactionState::ACTIVE, 0, ctx);
         if (status != Status::OK)
         {
             return status;
@@ -622,7 +646,7 @@ namespace scratchbird::core
         if (clog_status != Status::OK)
         {
             // Best-effort mark as aborted in TIP to avoid dangling ACTIVE state
-            writeTipEntry(new_xid, TransactionState::ABORTED, nullptr);
+            writeTipEntry(new_xid, TransactionState::ABORTED, 0, nullptr);
             return clog_status;
         }
 
@@ -642,7 +666,7 @@ namespace scratchbird::core
         status = ProcArrayManager::setTransactionId(proc_id, new_xid, ctx);
         if (status != Status::OK)
         {
-            writeTipEntry(new_xid, TransactionState::ABORTED, nullptr);
+            writeTipEntry(new_xid, TransactionState::ABORTED, 0, nullptr);
             db_->clog()->setStatus(new_xid, ClogStatus::ABORTED, nullptr);
             flushTransactionState(nullptr);
             return status;
@@ -757,23 +781,44 @@ namespace scratchbird::core
                     group_commit_in_progress_ = false;
                 }
 
-                // Process stragglers outside the lock
-                // Stragglers have CLOG entries but NOT TIP entries - we must write TIP for them
+                // Process stragglers outside the lock.
                 if (!stragglers.empty())
                 {
-                    // Build batch for TIP writes
-                    std::vector<std::pair<uint64_t, TransactionState>> straggler_batch;
+                    std::vector<TipBatchEntry> straggler_batch;
                     straggler_batch.reserve(stragglers.size());
-                    for (const auto* straggler : stragglers)
                     {
-                        straggler_batch.push_back({straggler->xid, straggler->state});
+                        std::lock_guard<std::mutex> seq_lock(mutex_);
+                        for (const auto *straggler : stragglers)
+                        {
+                            TipBatchEntry entry{};
+                            entry.xid = straggler->xid;
+                            entry.state = straggler->state;
+                            if (straggler->state == TransactionState::COMMITTED)
+                            {
+                                entry.commit_seqno = ++latest_commit_seqno_;
+                            }
+                            straggler_batch.push_back(entry);
+                        }
                     }
 
-                    // Write TIP entries for stragglers
                     Status straggler_status = writeTipEntriesBatch(straggler_batch, ctx);
                     if (straggler_status == Status::OK)
                     {
-                        straggler_status = db_->sync(ctx);
+                        for (const auto *straggler : stragglers)
+                        {
+                            straggler_status = db_->clog()->setStatus(
+                                straggler->xid,
+                                clogStatusForTransactionState(straggler->state),
+                                ctx);
+                            if (straggler_status != Status::OK)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    if (straggler_status == Status::OK)
+                    {
+                        straggler_status = flushTransactionState(ctx);
                     }
 
                     // Wake stragglers with result
@@ -798,7 +843,12 @@ namespace scratchbird::core
         }
         else
         {
-            status = writeTipEntry(xid, TransactionState::COMMITTED, ctx);
+            uint64_t commit_seqno = 0;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                commit_seqno = ++latest_commit_seqno_;
+            }
+            status = writeTipEntry(xid, TransactionState::COMMITTED, commit_seqno, ctx);
             if (status == Status::OK)
             {
                 status = db_->clog()->setStatus(xid, ClogStatus::COMMITTED, ctx);
@@ -1006,7 +1056,7 @@ namespace scratchbird::core
             }
         }
 
-        status = writeTipEntry(xid, TransactionState::PREPARED, ctx);
+        status = writeTipEntry(xid, TransactionState::PREPARED, 0, ctx);
         if (status == Status::OK)
         {
             status = db_->clog()->setStatus(xid, ClogStatus::PREPARED, ctx);
@@ -1110,7 +1160,12 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        status = writeTipEntry(info.txn_id, TransactionState::COMMITTED, ctx);
+        uint64_t commit_seqno = 0;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            commit_seqno = ++latest_commit_seqno_;
+        }
+        status = writeTipEntry(info.txn_id, TransactionState::COMMITTED, commit_seqno, ctx);
         if (status == Status::OK)
         {
             status = db_->clog()->setStatus(info.txn_id, ClogStatus::COMMITTED, ctx);
@@ -1265,7 +1320,7 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        status = writeTipEntry(info.txn_id, TransactionState::ABORTED, ctx);
+        status = writeTipEntry(info.txn_id, TransactionState::ABORTED, 0, ctx);
         if (status == Status::OK)
         {
             status = db_->clog()->setStatus(info.txn_id, ClogStatus::ABORTED, ctx);
@@ -1448,23 +1503,37 @@ namespace scratchbird::core
                     group_commit_in_progress_ = false;
                 }
 
-                // Process stragglers outside the lock
-                // Stragglers have CLOG entries but NOT TIP entries - we must write TIP for them
+                // Process stragglers outside the lock.
                 if (!stragglers.empty())
                 {
-                    // Build batch for TIP writes
-                    std::vector<std::pair<uint64_t, TransactionState>> straggler_batch;
+                    std::vector<TipBatchEntry> straggler_batch;
                     straggler_batch.reserve(stragglers.size());
-                    for (const auto* straggler : stragglers)
+                    for (const auto *straggler : stragglers)
                     {
-                        straggler_batch.push_back({straggler->xid, straggler->state});
+                        TipBatchEntry entry{};
+                        entry.xid = straggler->xid;
+                        entry.state = straggler->state;
+                        straggler_batch.push_back(entry);
                     }
 
-                    // Write TIP entries for stragglers
                     Status straggler_status = writeTipEntriesBatch(straggler_batch, ctx);
                     if (straggler_status == Status::OK)
                     {
-                        straggler_status = db_->sync(ctx);
+                        for (const auto *straggler : stragglers)
+                        {
+                            straggler_status = db_->clog()->setStatus(
+                                straggler->xid,
+                                clogStatusForTransactionState(straggler->state),
+                                ctx);
+                            if (straggler_status != Status::OK)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    if (straggler_status == Status::OK)
+                    {
+                        straggler_status = flushTransactionState(ctx);
                     }
 
                     // Wake stragglers with result
@@ -1489,7 +1558,7 @@ namespace scratchbird::core
         }
         else
         {
-            status = writeTipEntry(xid, TransactionState::ABORTED, ctx);
+            status = writeTipEntry(xid, TransactionState::ABORTED, 0, ctx);
             if (status == Status::OK)
             {
                 status = db_->clog()->setStatus(xid, ClogStatus::ABORTED, ctx);
@@ -1555,6 +1624,16 @@ namespace scratchbird::core
             return Status::OK;
         }
 
+        // XIDs older than the current authoritative inventory window are
+        // treated as prehistorical committed history. Anything still inside
+        // the inventory window must resolve through TIP.
+        if (xid < oldest_xid_)
+        {
+            state_out = TransactionState::COMMITTED;
+            addToCacheLRU(xid, TransactionState::COMMITTED);
+            return Status::OK;
+        }
+
         // TIP is authoritative transaction truth.
         TIPEntry tip_entry{};
         Status status = findTipEntry(xid, tip_entry, ctx);
@@ -1576,40 +1655,60 @@ namespace scratchbird::core
             return status;
         }
 
-        // TIP entry absent: fall back to CLOG only as a compatibility accelerator.
-        ClogStatus clog_status;
-        status = db_->clog()->getStatus(xid, &clog_status, ctx);
-        if (status == Status::NOT_FOUND)
+        SET_ERROR_CONTEXT_VNEXT(
+            ctx,
+            Status::PAGE_CORRUPT,
+            "TXN_0215",
+            "Authoritative TIP entry missing for in-range transaction state lookup");
+        return Status::PAGE_CORRUPT;
+    }
+
+    auto TransactionManager::getCommittedTransactionSequence(uint64_t xid,
+                                                             uint64_t &commit_seqno_out,
+                                                             ErrorContext *ctx) -> Status
+    {
+        commit_seqno_out = 0;
+
+        if (xid <= FROZEN_XID)
         {
-            // Transaction not found, assume it's too old and committed
-            state_out = TransactionState::COMMITTED;
-            addToCacheLRU(xid, TransactionState::COMMITTED);
             return Status::OK;
         }
 
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (xid < oldest_xid_)
+            {
+                return Status::OK;
+            }
+        }
+
+        TransactionState state = TransactionState::ACTIVE;
+        Status status = getTransactionState(xid, state, ctx);
         if (status != Status::OK)
         {
             return status;
         }
-
-        // Convert CLOG status to TransactionState
-        switch (clog_status)
+        if (state != TransactionState::COMMITTED)
         {
-            case ClogStatus::IN_PROGRESS:
-                state_out = TransactionState::ACTIVE;
-                break;
-            case ClogStatus::COMMITTED:
-                state_out = TransactionState::COMMITTED;
-                break;
-            case ClogStatus::ABORTED:
-                state_out = TransactionState::ABORTED;
-                break;
-            case ClogStatus::PREPARED:
-                state_out = TransactionState::PREPARED;
-                break;
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0218",
+                                    "Commit sequence lookup requires COMMITTED transaction state");
+            return Status::INVALID_ARGUMENT;
         }
-        transaction_cache_[xid] = state_out;
 
+        TIPEntry tip_entry{};
+        status = findTipEntry(xid, tip_entry, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (tip_entry.commit_time == 0)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                    "Committed transaction is missing durable commit sequence");
+            return Status::PAGE_CORRUPT;
+        }
+
+        commit_seqno_out = tip_entry.commit_time;
         return Status::OK;
     }
 
@@ -1654,17 +1753,11 @@ namespace scratchbird::core
             return false; // Future XID - invalid!
         }
 
-        // Check if XID is too old (has been vacuumed)
-        // XIDs older than oldest_xid_ should have been frozen by VACUUM
+        // XIDs older than oldest_xid_ are outside the authoritative inventory
+        // window and resolve through the prehistorical-committed path in
+        // getTransactionState().
         if (xid < oldest_xid_)
         {
-            // Old XID that should have been frozen
-            // CORRUPTION LOGGING: This indicates the tuple wasn't frozen by VACUUM
-            LOG_WARNING(
-                VACUUM,
-                "XID %lu is older than oldest_xid %lu - tuple should have been frozen by VACUUM",
-                xid, oldest_xid_);
-            // Allow visibility checks to proceed; treat as in-range to avoid false invisibility
             return true;
         }
 
@@ -2095,6 +2188,7 @@ namespace scratchbird::core
         db_header->oldest_snapshot = oldest_snapshot_;
         db_header->inventory_generation = inventory_generation_;
         db_header->oldest_snapshot_serial = oldest_snapshot_serial_;
+        db_header->latest_commit_seqno = latest_commit_seqno_;
         db_header->page_header.checksum =
             calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), db_->page_size());
 
@@ -2120,7 +2214,7 @@ namespace scratchbird::core
 
         std::lock_guard<std::mutex> lock(mutex_);
         snapshot_out.snapshot_txid_high = next_xid_.load(std::memory_order_acquire);
-        snapshot_out.snapshot_commit_seqno_high = 0;
+        snapshot_out.snapshot_commit_seqno_high = latest_commit_seqno_;
         snapshot_out.snapshot_serial = next_snapshot_serial_++;
 
         ProcArray *proc_array = ProcArrayManager::getInstance();
@@ -2355,14 +2449,6 @@ namespace scratchbird::core
         Status status = getTransactionState(xid, state, nullptr);
         if (status != Status::OK)
         {
-            if (mode == VisibilityMode::READ_CURRENT_TRANSACTION && xid < reader_xid)
-            {
-                decision.visible = true;
-                decision.state = TransactionState::COMMITTED;
-                decision.reason = VisibilityReason::STATE_LOOKUP_ASSUMED_COMMITTED;
-                return decision;
-            }
-
             decision.reason = VisibilityReason::STATE_LOOKUP_FAILED;
             return decision;
         }
@@ -2378,6 +2464,22 @@ namespace scratchbird::core
         switch (state)
         {
             case TransactionState::COMMITTED:
+                if (mode == VisibilityMode::SNAPSHOT && xid >= oldest_xid_)
+                {
+                    uint64_t commit_seqno = 0;
+                    Status commit_seq_status =
+                        getCommittedTransactionSequence(xid, commit_seqno, nullptr);
+                    if (commit_seq_status != Status::OK)
+                    {
+                        decision.reason = VisibilityReason::STATE_LOOKUP_FAILED;
+                        return decision;
+                    }
+                    if (commit_seqno > snapshot->snapshot_commit_seqno_high)
+                    {
+                        decision.reason = VisibilityReason::COMMITTED_AFTER_SNAPSHOT;
+                        return decision;
+                    }
+                }
                 decision.visible = true;
                 decision.reason = VisibilityReason::COMMITTED_VISIBLE;
                 break;
@@ -2425,6 +2527,73 @@ namespace scratchbird::core
 
         decision.visible = decision.create_visible && !decision.delete_visible;
         return decision;
+    }
+
+    auto TransactionManager::resolveVisibilityContext(uint64_t default_reader_xid,
+                                                      const ConnectionContext *conn_ctx) const
+        -> VisibilityContextSelection
+    {
+        VisibilityContextSelection context{};
+        context.valid = true;
+        context.reader_xid = default_reader_xid;
+
+        if (conn_ctx == nullptr)
+        {
+            return context;
+        }
+
+        if (const auto *replay_snapshot = conn_ctx->getForensicReplaySnapshot();
+            replay_snapshot != nullptr)
+        {
+            context.mode = VisibilityMode::SNAPSHOT;
+            context.snapshot = replay_snapshot;
+            return context;
+        }
+
+        switch (conn_ctx->getIsolationLevel())
+        {
+            case IsolationLevel::READ_COMMITTED:
+                context.mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+                return context;
+
+            case IsolationLevel::SNAPSHOT:
+            case IsolationLevel::SNAPSHOT_TABLE_STABILITY:
+                if (const auto *retained_snapshot = conn_ctx->getRetainedTransactionSnapshot();
+                    retained_snapshot != nullptr)
+                {
+                    context.mode = VisibilityMode::SNAPSHOT;
+                    context.snapshot = retained_snapshot;
+                }
+                else
+                {
+                    context.mode = VisibilityMode::READ_CURRENT_VERSION;
+                }
+                return context;
+
+            case IsolationLevel::READ_COMMITTED_READ_CONSISTENCY:
+                context.reader_xid = conn_ctx->getStatementXID();
+                if (conn_ctx->statementTrackingActive())
+                {
+                    if (const auto *statement_snapshot =
+                            conn_ctx->getStatementTransactionSnapshot();
+                        statement_snapshot != nullptr)
+                    {
+                        context.mode = VisibilityMode::SNAPSHOT;
+                        context.snapshot = statement_snapshot;
+                        return context;
+                    }
+
+                    context.valid = false;
+                    context.reason = VisibilityReason::MISSING_SNAPSHOT;
+                    return context;
+                }
+
+                context.mode = VisibilityMode::READ_CURRENT_VERSION;
+                return context;
+        }
+
+        context.mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+        return context;
     }
 
     auto TransactionManager::evaluateReadConsistencyRestart(
@@ -2636,9 +2805,12 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto TransactionManager::writeTipEntry(uint64_t xid, TransactionState state, ErrorContext *ctx)
-        -> Status
+    auto TransactionManager::writeTipEntry(uint64_t xid, TransactionState state,
+                                           uint64_t commit_seqno, ErrorContext *ctx) -> Status
     {
+        const uint64_t tip_commit_seqno =
+            (state == TransactionState::COMMITTED) ? commit_seqno : 0;
+
         // TIP mutations are serialized to avoid concurrent page updates across
         // commit/rollback/job paths that can touch the same TIP chain.
         std::lock_guard<std::mutex> tip_guard(tip_io_mutex_);
@@ -2692,18 +2864,31 @@ namespace scratchbird::core
                     {
                         // FAST PATH: Found entry on cached page - update it
                         entries[idx].state = static_cast<uint8_t>(state);
-                        entries[idx].commit_time =
-                            (state != TransactionState::ACTIVE)
-                                ? std::chrono::duration_cast<std::chrono::microseconds>(
-                                      std::chrono::system_clock::now().time_since_epoch())
-                                      .count()
-                                : 0;
+                        entries[idx].commit_time = tip_commit_seqno;
 
                         // Update checksum
                         tip_header->page_header.checksum = calculatePageChecksum(
                             reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
 
                         buffer_pool_->unpinPage(start_page, true, ctx);
+                        if (state == TransactionState::COMMITTED)
+                        {
+                            void *header_buffer = nullptr;
+                            Status header_status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+                            if (header_status != Status::OK)
+                            {
+                                return header_status;
+                            }
+
+                            auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+                            db_header->latest_commit_seqno =
+                                std::max(db_header->latest_commit_seqno, commit_seqno);
+                            db_header->latest_completed_xid =
+                                std::max(db_header->latest_completed_xid, xid);
+                            db_header->page_header.checksum = calculatePageChecksum(
+                                reinterpret_cast<uint8_t *>(db_header), db_->page_size());
+                            buffer_pool_->unpinPage(0, true, ctx);
+                        }
                         return Status::OK;
                     }
                 }
@@ -2743,12 +2928,7 @@ namespace scratchbird::core
             {
                 // Update existing entry
                 entries[idx].state = static_cast<uint8_t>(state);
-                entries[idx].commit_time =
-                    (state != TransactionState::ACTIVE)
-                        ? std::chrono::duration_cast<std::chrono::microseconds>(
-                              std::chrono::system_clock::now().time_since_epoch())
-                              .count()
-                        : 0;
+                entries[idx].commit_time = tip_commit_seqno;
 
                 // Update checksum
                 tip_header->page_header.checksum = calculatePageChecksum(
@@ -2764,6 +2944,24 @@ namespace scratchbird::core
                 }
 
                 buffer_pool_->unpinPage(current_page, true, ctx);
+                if (state == TransactionState::COMMITTED)
+                {
+                    void *header_buffer = nullptr;
+                    Status header_status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+                    if (header_status != Status::OK)
+                    {
+                        return header_status;
+                    }
+
+                    auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+                    db_header->latest_commit_seqno =
+                        std::max(db_header->latest_commit_seqno, commit_seqno);
+                    db_header->latest_completed_xid =
+                        std::max(db_header->latest_completed_xid, xid);
+                    db_header->page_header.checksum = calculatePageChecksum(
+                        reinterpret_cast<uint8_t *>(db_header), db_->page_size());
+                    buffer_pool_->unpinPage(0, true, ctx);
+                }
                 return Status::OK;
             }
 
@@ -2821,11 +3019,7 @@ namespace scratchbird::core
         entries[idx].state = static_cast<uint8_t>(state);
         entries[idx].flags = 0;
         entries[idx].reserved = 0;
-        entries[idx].commit_time = (state != TransactionState::ACTIVE)
-                                       ? std::chrono::duration_cast<std::chrono::microseconds>(
-                                             std::chrono::system_clock::now().time_since_epoch())
-                                             .count()
-                                       : 0;
+        entries[idx].commit_time = tip_commit_seqno;
 
         // Update min/max XIDs
         if (tip_header->min_xid == 0 || xid < tip_header->min_xid)
@@ -2849,11 +3043,30 @@ namespace scratchbird::core
 
         buffer_pool_->unpinPage(last_page, true, ctx);
 
+        if (state == TransactionState::COMMITTED)
+        {
+            void *header_buffer = nullptr;
+            Status header_status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+            if (header_status != Status::OK)
+            {
+                return header_status;
+            }
+
+            auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+            db_header->latest_commit_seqno =
+                std::max(db_header->latest_commit_seqno, commit_seqno);
+            db_header->latest_completed_xid =
+                std::max(db_header->latest_completed_xid, xid);
+            db_header->page_header.checksum = calculatePageChecksum(
+                reinterpret_cast<uint8_t *>(db_header), db_->page_size());
+            buffer_pool_->unpinPage(0, true, ctx);
+        }
+
         return Status::OK;
     }
 
-    auto TransactionManager::writeTipEntriesBatch(
-        const std::vector<std::pair<uint64_t, TransactionState>> &batch, ErrorContext *ctx) -> Status
+    auto TransactionManager::writeTipEntriesBatch(const std::vector<TipBatchEntry> &batch,
+                                                  ErrorContext *ctx) -> Status
     {
         if (batch.empty())
         {
@@ -2861,19 +3074,20 @@ namespace scratchbird::core
         }
 
         // Sort batch by XID to minimize page pin/unpin cycles
-        std::vector<std::pair<uint64_t, TransactionState>> sorted_batch = batch;
+        std::vector<TipBatchEntry> sorted_batch = batch;
         std::sort(sorted_batch.begin(), sorted_batch.end(),
-                  [](const auto &a, const auto &b) { return a.first < b.first; });
+                  [](const auto &a, const auto &b) { return a.xid < b.xid; });
 
         // Process all XIDs in the batch
-        for (const auto &[xid, state] : sorted_batch)
+        for (const auto &entry : sorted_batch)
         {
             // For each XID, update or insert the TIP entry
             // This reuses the existing writeTipEntry logic but without the fsync
-            Status status = writeTipEntry(xid, state, ctx);
+            Status status = writeTipEntry(entry.xid, entry.state, entry.commit_seqno, ctx);
             if (status != Status::OK)
             {
-                LOG_ERROR(TRANSACTION, "Failed to write TIP entry for XID %lu in batch", xid);
+                LOG_ERROR(TRANSACTION, "Failed to write TIP entry for XID %lu in batch",
+                          entry.xid);
                 return status;
             }
         }
@@ -2938,12 +3152,22 @@ namespace scratchbird::core
             }
         }
 
-        // Build TID batch for TIP writes
-        std::vector<std::pair<uint64_t, TransactionState>> xid_batch;
+        // Build TIP batch and assign durable commit sequence numbers to committed entries.
+        std::vector<TipBatchEntry> xid_batch;
         xid_batch.reserve(batch.size());
-        for (const auto* waiter : batch)
         {
-            xid_batch.push_back({waiter->xid, waiter->state});
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (const auto *waiter : batch)
+            {
+                TipBatchEntry entry{};
+                entry.xid = waiter->xid;
+                entry.state = waiter->state;
+                if (waiter->state == TransactionState::COMMITTED)
+                {
+                    entry.commit_seqno = ++latest_commit_seqno_;
+                }
+                xid_batch.push_back(entry);
+            }
         }
 
         // Write all TIP entries in batch
@@ -3126,7 +3350,7 @@ namespace scratchbird::core
                     entries[i].state = static_cast<uint8_t>(
                         promote_to_prepared ? TransactionState::PREPARED
                                             : TransactionState::ABORTED);
-                    entries[i].commit_time = nowMicros();
+                    entries[i].commit_time = 0;
                     page_mutation = true;
                     any_mutation = true;
                     if (startup_repair_out)
@@ -3354,11 +3578,304 @@ namespace scratchbird::core
         db_header->oldest_snapshot = oldest_snapshot_;
         db_header->inventory_generation = inventory_generation_;
         db_header->oldest_snapshot_serial = oldest_snapshot_serial_;
+        db_header->latest_commit_seqno = latest_commit_seqno_;
         db_header->page_header.checksum = calculatePageChecksum(
             reinterpret_cast<uint8_t *>(db_header), db_->page_size());
 
         buffer_pool_->unpinPage(0, true, ctx);
         return Status::OK;
+    }
+
+    auto TransactionManager::backfillLegacyCommitSequencesLocked(bool *rewrote_tip_out,
+                                                                 ErrorContext *ctx) -> Status
+    {
+        if (rewrote_tip_out != nullptr)
+        {
+            *rewrote_tip_out = false;
+        }
+
+        if (latest_commit_seqno_ != 0 || tip_root_page_ == 0)
+        {
+            return Status::OK;
+        }
+
+        struct LegacyCommittedEntry
+        {
+            uint64_t xid = 0;
+            uint64_t legacy_commit_marker = 0;
+        };
+
+        std::vector<LegacyCommittedEntry> committed_entries;
+        std::unordered_map<uint64_t, uint64_t> assigned_seqnos;
+
+        uint32_t current_page = tip_root_page_;
+        while (current_page != 0)
+        {
+            void *page_buffer = nullptr;
+            Status status = buffer_pool_->pinPage(current_page, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
+            if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
+            {
+                buffer_pool_->unpinPage(current_page, false, ctx);
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                        "Invalid TIP page during commit-sequence backfill");
+                return Status::PAGE_CORRUPT;
+            }
+
+            auto *entries = reinterpret_cast<TIPEntry *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
+            for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
+            {
+                TransactionState state = TransactionState::ACTIVE;
+                if (!decodeTipState(entries[i].state, state))
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                            "Invalid TIP state during commit-sequence backfill");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                if (state == TransactionState::COMMITTED && entries[i].xid > FROZEN_XID)
+                {
+                    committed_entries.push_back({entries[i].xid, entries[i].commit_time});
+                }
+            }
+
+            const uint32_t page_to_unpin = current_page;
+            current_page = tip_header->next_tip_page;
+            buffer_pool_->unpinPage(page_to_unpin, false, ctx);
+        }
+
+        if (committed_entries.empty())
+        {
+            return Status::OK;
+        }
+
+        std::stable_sort(committed_entries.begin(), committed_entries.end(),
+                         [](const auto &lhs, const auto &rhs) {
+                             if (lhs.legacy_commit_marker != rhs.legacy_commit_marker)
+                             {
+                                 return lhs.legacy_commit_marker < rhs.legacy_commit_marker;
+                             }
+                             return lhs.xid < rhs.xid;
+                         });
+
+        uint64_t next_commit_seqno = 1;
+        for (const auto &entry : committed_entries)
+        {
+            assigned_seqnos[entry.xid] = next_commit_seqno++;
+        }
+
+        bool any_page_mutation = false;
+        uint64_t latest_completed_xid = 0;
+        current_page = tip_root_page_;
+        while (current_page != 0)
+        {
+            void *page_buffer = nullptr;
+            Status status = buffer_pool_->pinPage(current_page, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
+            if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
+            {
+                buffer_pool_->unpinPage(current_page, false, ctx);
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                        "Invalid TIP page during commit-sequence rewrite");
+                return Status::PAGE_CORRUPT;
+            }
+
+            bool page_mutation = false;
+            auto *entries = reinterpret_cast<TIPEntry *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
+            for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
+            {
+                TransactionState state = TransactionState::ACTIVE;
+                if (!decodeTipState(entries[i].state, state))
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                            "Invalid TIP state during commit-sequence rewrite");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                if (state != TransactionState::COMMITTED || entries[i].xid <= FROZEN_XID)
+                {
+                    continue;
+                }
+
+                const auto seq_it = assigned_seqnos.find(entries[i].xid);
+                if (seq_it == assigned_seqnos.end())
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                            "Commit-sequence rewrite lost committed xid mapping");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                latest_completed_xid = std::max(latest_completed_xid, entries[i].xid);
+                if (entries[i].commit_time != seq_it->second)
+                {
+                    entries[i].commit_time = seq_it->second;
+                    page_mutation = true;
+                    any_page_mutation = true;
+                }
+            }
+
+            if (page_mutation)
+            {
+                tip_header->page_header.checksum = calculatePageChecksum(
+                    reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
+            }
+
+            const uint32_t page_to_unpin = current_page;
+            current_page = tip_header->next_tip_page;
+            buffer_pool_->unpinPage(page_to_unpin, page_mutation, ctx);
+        }
+
+        latest_commit_seqno_ = next_commit_seqno - 1;
+
+        void *header_buffer = nullptr;
+        Status header_status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+        if (header_status != Status::OK)
+        {
+            return header_status;
+        }
+
+        auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+        db_header->latest_commit_seqno = latest_commit_seqno_;
+        db_header->latest_completed_xid =
+            std::max(db_header->latest_completed_xid, latest_completed_xid);
+        db_header->page_header.checksum = calculatePageChecksum(
+            reinterpret_cast<uint8_t *>(db_header), db_->page_size());
+        buffer_pool_->unpinPage(0, true, ctx);
+
+        if (rewrote_tip_out != nullptr)
+        {
+            *rewrote_tip_out = true;
+        }
+
+        return flushTransactionState(ctx);
+    }
+
+    auto TransactionManager::reconcileCommitSequenceMetadataLocked(bool *startup_repair_out,
+                                                                   ErrorContext *ctx) -> Status
+    {
+        if (startup_repair_out != nullptr)
+        {
+            *startup_repair_out = false;
+        }
+
+        if (tip_root_page_ == 0)
+        {
+            return Status::OK;
+        }
+
+        uint64_t max_commit_seqno = 0;
+        std::unordered_map<uint64_t, uint64_t> seq_owner_xids;
+
+        uint32_t current_page = tip_root_page_;
+        while (current_page != 0)
+        {
+            void *page_buffer = nullptr;
+            Status status = buffer_pool_->pinPage(current_page, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
+            if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
+            {
+                buffer_pool_->unpinPage(current_page, false, ctx);
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                        "Invalid TIP page during commit-sequence reconciliation");
+                return Status::PAGE_CORRUPT;
+            }
+
+            auto *entries = reinterpret_cast<TIPEntry *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
+            for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
+            {
+                TransactionState state = TransactionState::ACTIVE;
+                if (!decodeTipState(entries[i].state, state))
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                            "Invalid TIP state during commit-sequence reconciliation");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                if (state != TransactionState::COMMITTED || entries[i].xid <= FROZEN_XID)
+                {
+                    continue;
+                }
+
+                if (entries[i].commit_time == 0)
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(
+                        ctx,
+                        Status::PAGE_CORRUPT,
+                        "TXN_0215",
+                        "Committed TIP entry missing durable commit sequence during startup reconciliation");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                const auto [seq_it, inserted] =
+                    seq_owner_xids.emplace(entries[i].commit_time, entries[i].xid);
+                if (!inserted && seq_it->second != entries[i].xid)
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(
+                        ctx,
+                        Status::PAGE_CORRUPT,
+                        "TXN_0215",
+                        "Duplicate durable commit sequence detected during startup reconciliation");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                max_commit_seqno = std::max(max_commit_seqno, entries[i].commit_time);
+            }
+
+            const uint32_t page_to_unpin = current_page;
+            current_page = tip_header->next_tip_page;
+            buffer_pool_->unpinPage(page_to_unpin, false, ctx);
+        }
+
+        if (max_commit_seqno <= latest_commit_seqno_)
+        {
+            return Status::OK;
+        }
+
+        latest_commit_seqno_ = max_commit_seqno;
+
+        void *header_buffer = nullptr;
+        Status header_status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+        if (header_status != Status::OK)
+        {
+            return header_status;
+        }
+
+        auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+        db_header->latest_commit_seqno = latest_commit_seqno_;
+        db_header->page_header.checksum = calculatePageChecksum(
+            reinterpret_cast<uint8_t *>(db_header), db_->page_size());
+        buffer_pool_->unpinPage(0, true, ctx);
+
+        if (startup_repair_out != nullptr)
+        {
+            *startup_repair_out = true;
+        }
+
+        return flushTransactionState(ctx);
     }
 
     auto TransactionManager::decodeTipState(uint8_t tip_state, TransactionState &state_out) -> bool
