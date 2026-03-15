@@ -710,23 +710,10 @@ namespace scratchbird::core
             // Get the tuple to check for TOAST pointers
             uint32_t offset = items[item_id].offset;
             uint32_t length = items[item_id].length;
-
-            if (length >= sizeof(TupleHeader) + sizeof(ToastPointer))
+            Status s = toast_mgr_->retireTupleToastValue(page_data_ + offset, length, xmax, ctx);
+            if (s != Status::OK && s != Status::NOT_FOUND)
             {
-                const uint8_t *data_ptr = page_data_ + offset + sizeof(TupleHeader);
-
-                // Check if this is a TOAST pointer
-                if (isToastPointer(data_ptr, sizeof(ToastPointer)))
-                {
-                    const auto *toast_ptr = reinterpret_cast<const ToastPointer *>(data_ptr);
-
-                    // Delete the TOAST data
-                    Status s = toast_mgr_->deleteToastValue(toast_ptr->lob_uuid, xmax, ctx);
-                    if (s != Status::OK && s != Status::NOT_FOUND)
-                    {
-                        return s;
-                    }
-                }
+                return s;
             }
         }
 
@@ -1002,6 +989,111 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto HeapPage::storeBackVersionForMutation(const uint8_t *tuple_data,
+                                               uint32_t tuple_size,
+                                               const TupleHeader &source_old_header,
+                                               uint64_t update_xid,
+                                               GPID primary_gpid,
+                                               uint16_t primary_item_id,
+                                               bool cross_page_back_version,
+                                               uint16_t *item_id_out,
+                                               ErrorContext *ctx) -> Status
+    {
+        if (item_id_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "item_id_out cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        Status insert_status =
+            insertTuple(tuple_data, tuple_size, source_old_header.xmin, item_id_out, ctx);
+        if (insert_status != Status::OK)
+        {
+            return insert_status;
+        }
+
+        return finalizeBackVersionMetadata(*item_id_out,
+                                           source_old_header,
+                                           update_xid,
+                                           primary_gpid,
+                                           primary_item_id,
+                                           cross_page_back_version,
+                                           ctx);
+    }
+
+    auto HeapPage::rewriteStableSlotTuple(uint16_t item_id,
+                                          const uint8_t *tuple_data,
+                                          uint32_t tuple_size,
+                                          bool *tuple_location_moved_out,
+                                          ErrorContext *ctx) -> Status
+    {
+        if (page_data_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Page data is null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (tuple_data == nullptr || tuple_size < sizeof(TupleHeader))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Tuple image is invalid");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (item_id >= getItemCount())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Item ID out of range");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ItemPointer *items = getItemArray();
+        ItemPointer *item_ptr = &items[item_id];
+        if (item_ptr->isDeleted() || item_ptr->isUnused())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Tuple is deleted or unused");
+            return Status::NOT_FOUND;
+        }
+
+        auto *hdr = header();
+        uint32_t old_length = item_ptr->length;
+        bool tuple_location_moved = false;
+
+        if (tuple_size <= old_length)
+        {
+            std::memcpy(page_data_ + item_ptr->offset, tuple_data, tuple_size);
+            item_ptr->length = tuple_size;
+        }
+        else
+        {
+            uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
+            if (tuple_size > free_space)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for tuple rewrite");
+                return Status::PAGE_FULL;
+            }
+
+            uint32_t new_offset = (pageUpper(*hdr) - tuple_size) & ~uint32_t{7};
+            if (new_offset + tuple_size > page_size_ || new_offset < pageLower(*hdr))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                  "Not enough aligned space for tuple rewrite");
+                return Status::PAGE_FULL;
+            }
+
+            std::memcpy(page_data_ + new_offset, tuple_data, tuple_size);
+            item_ptr->offset = new_offset;
+            item_ptr->length = tuple_size;
+            tuple_location_moved = true;
+            pageSetUpper(*hdr, new_offset);
+        }
+
+        updateHeaderStats();
+        if (tuple_location_moved_out != nullptr)
+        {
+            *tuple_location_moved_out = tuple_location_moved;
+        }
+        return Status::OK;
+    }
+
     auto HeapPage::installUpdatedPrimaryVersion(uint16_t item_id,
                                                 const uint8_t *new_tuple_data,
                                                 uint32_t new_tuple_size,
@@ -1033,37 +1125,15 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        auto *hdr = header();
-        uint32_t old_length = item_ptr->length;
         bool tuple_location_moved = false;
-
-        if (new_tuple_size <= old_length)
+        Status rewrite_status = rewriteStableSlotTuple(item_id,
+                                                       new_tuple_data,
+                                                       new_tuple_size,
+                                                       &tuple_location_moved,
+                                                       ctx);
+        if (rewrite_status != Status::OK)
         {
-            std::memcpy(page_data_ + item_ptr->offset, new_tuple_data, new_tuple_size);
-            item_ptr->length = new_tuple_size;
-        }
-        else
-        {
-            uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
-            if (new_tuple_size > free_space)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for updated tuple");
-                return Status::PAGE_FULL;
-            }
-
-            uint32_t new_offset = (pageUpper(*hdr) - new_tuple_size) & ~uint32_t{7};
-            if (new_offset + new_tuple_size > page_size_ || new_offset < pageLower(*hdr))
-            {
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
-                                  "Not enough aligned space for updated tuple");
-                return Status::PAGE_FULL;
-            }
-
-            std::memcpy(page_data_ + new_offset, new_tuple_data, new_tuple_size);
-            item_ptr->offset = new_offset;
-            item_ptr->length = new_tuple_size;
-            tuple_location_moved = true;
-            pageSetUpper(*hdr, new_offset);
+            return rewrite_status;
         }
 
         auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + item_ptr->offset);
@@ -1287,26 +1357,20 @@ namespace scratchbird::core
             const auto *source_old_hdr =
                 reinterpret_cast<const TupleHeader *>(old_tuple_buffer.data());
 
-            Status insert_status =
-                insertTuple(old_tuple_buffer.data(), primary_length, source_old_hdr->xmin,
-                            &back_version_item_id, ctx);
-            if (insert_status != Status::OK)
-            {
-                return insert_status;
-            }
-
-            Status finalize_status =
-                finalizeBackVersionMetadata(back_version_item_id,
+            Status store_status =
+                storeBackVersionForMutation(old_tuple_buffer.data(),
+                                            primary_length,
                                             *source_old_hdr,
                                             xmax,
                                             makeGPID(PRIMARY_TABLESPACE_ID,
                                                      static_cast<uint64_t>(header()->page_id)),
                                             old_item_id,
                                             false,
+                                            &back_version_item_id,
                                             ctx);
-            if (finalize_status != Status::OK)
+            if (store_status != Status::OK)
             {
-                return finalize_status;
+                return store_status;
             }
         }
         else
@@ -1406,6 +1470,30 @@ namespace scratchbird::core
                                             existing_hdr->row_uuid,
                                             nullptr,
                                             ctx);
+    }
+
+    auto HeapPage::restoreTupleImage(uint16_t item_id,
+                                     const uint8_t *tuple_data,
+                                     uint32_t tuple_size,
+                                     ErrorContext *ctx) -> Status
+    {
+        Status rewrite_status = rewriteStableSlotTuple(item_id, tuple_data, tuple_size, nullptr, ctx);
+        if (rewrite_status != Status::OK)
+        {
+            return rewrite_status;
+        }
+
+        ItemPointer *items = getItemArray();
+        ItemPointer *item_ptr = &items[item_id];
+        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + item_ptr->offset);
+        tuple_hdr->setTID(makeGPID(PRIMARY_TABLESPACE_ID,
+                                   static_cast<uint64_t>(header()->page_id)),
+                          item_id);
+
+        ID preferred_row_uuid = tuple_hdr->row_uuid;
+        applyCanonicalRecordContract(tuple_hdr, page_data_ + item_ptr->offset, item_ptr->length,
+                                     &preferred_row_uuid);
+        return Status::OK;
     }
 
     auto HeapPage::findVisibleVersion(uint16_t item_id, uint64_t current_xid,
@@ -1656,26 +1744,11 @@ namespace scratchbird::core
             {
                 TransactionManager *txn_mgr = db_->transaction_manager();
                 ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-                const auto visibility_context =
-                    txn_mgr->resolveVisibilityContext(current_xid, conn_ctx);
-                if (!visibility_context.valid)
-                {
-                    LOG_ERROR(STORAGE,
-                              "Invalid heap visibility context: proc_id=%d xid=%lu reason=%d",
-                              ConnectionContext::getCurrentProcId(),
-                              conn_ctx != nullptr ? conn_ctx->getCurrentXid() : current_xid,
-                              static_cast<int>(visibility_context.reason));
-                    create_visible = false;
-                    delete_visible = true;
-                    continue;
-                }
-
                 const RecordVisibilityDecision visibility_decision =
-                    txn_mgr->evaluateRecordVisibility(tuple_hdr->xmin,
-                                                      effective_xmax,
-                                                      visibility_context.reader_xid,
-                                                      visibility_context.mode,
-                                                      visibility_context.snapshot);
+                    txn_mgr->evaluateRuntimeRecordVisibility(tuple_hdr->xmin,
+                                                             effective_xmax,
+                                                             current_xid,
+                                                             conn_ctx);
                 create_visible = visibility_decision.create_visible;
                 delete_visible = visibility_decision.delete_visible;
             }
@@ -2430,8 +2503,6 @@ namespace scratchbird::core
     auto HeapPage::prunePage(uint64_t oit, uint32_t *tuples_pruned_out,
                              uint32_t *space_reclaimed_out, ErrorContext *ctx) -> Status
     {
-        ItemPointer *items = getItemArray();
-        uint32_t tuples_pruned = 0;
         VersionMaturityScan scan{};
         std::vector<uint16_t> reclaimable_item_ids;
         Status scan_status = scanVersionMaturity(oit, &scan, &reclaimable_item_ids, nullptr, ctx);
@@ -2440,41 +2511,10 @@ namespace scratchbird::core
             return scan_status;
         }
 
-        // Scan all reclaimable versions and reclaim them through one shared
-        // maturity model instead of separate prune heuristics.
-        for (uint16_t item_id : reclaimable_item_ids)
-        {
-            if (item_id >= getItemCount() || items[item_id].isUnused())
-            {
-                continue;
-            }
-
-            items[item_id].setUnused();
-            ++tuples_pruned;
-        }
-
-        if (tuples_pruned_out != nullptr)
-        {
-            *tuples_pruned_out = tuples_pruned;
-        }
-
-        // If we pruned any tuples, defragment the page to reclaim space
-        uint32_t bytes_reclaimed = 0;
-        if (tuples_pruned > 0)
-        {
-            Status status = defragmentPage(&bytes_reclaimed, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
-        }
-
-        if (space_reclaimed_out != nullptr)
-        {
-            *space_reclaimed_out = bytes_reclaimed;
-        }
-
-        return Status::OK;
+        return reclaimVersionSlots(reclaimable_item_ids,
+                                   tuples_pruned_out,
+                                   space_reclaimed_out,
+                                   ctx);
     }
 
     // PHASE 2 TASK 2.6: Collect dead tuple IDs for index cleanup
@@ -2490,6 +2530,69 @@ namespace scratchbird::core
 
         VersionMaturityScan scan{};
         return scanVersionMaturity(oit, &scan, nullptr, dead_tids_out, ctx);
+    }
+
+    auto HeapPage::reclaimVersionSlots(const std::vector<uint16_t> &item_ids,
+                                       uint32_t *tuples_reclaimed_out,
+                                       uint32_t *space_reclaimed_out,
+                                       ErrorContext *ctx) -> Status
+    {
+        if (tuples_reclaimed_out != nullptr)
+        {
+            *tuples_reclaimed_out = 0;
+        }
+        if (space_reclaimed_out != nullptr)
+        {
+            *space_reclaimed_out = 0;
+        }
+
+        if (item_ids.empty())
+        {
+            return Status::OK;
+        }
+
+        ItemPointer *items = getItemArray();
+        std::vector<uint16_t> unique_item_ids = item_ids;
+        std::sort(unique_item_ids.begin(), unique_item_ids.end());
+        unique_item_ids.erase(std::unique(unique_item_ids.begin(), unique_item_ids.end()),
+                              unique_item_ids.end());
+
+        uint32_t tuples_reclaimed = 0;
+        for (uint16_t item_id : unique_item_ids)
+        {
+            if (item_id >= getItemCount())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Item ID out of range");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (items[item_id].isUnused())
+            {
+                continue;
+            }
+
+            items[item_id].setUnused();
+            ++tuples_reclaimed;
+        }
+
+        uint32_t bytes_reclaimed = 0;
+        if (tuples_reclaimed > 0)
+        {
+            Status status = defragmentPage(&bytes_reclaimed, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        if (tuples_reclaimed_out != nullptr)
+        {
+            *tuples_reclaimed_out = tuples_reclaimed;
+        }
+        if (space_reclaimed_out != nullptr)
+        {
+            *space_reclaimed_out = bytes_reclaimed;
+        }
+        return Status::OK;
     }
 
 } // namespace scratchbird::core

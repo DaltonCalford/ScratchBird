@@ -74,13 +74,7 @@ namespace scratchbird
                 return (xmax == 0 || xmax != current_xid);
             }
 
-            return txn_mgr->evaluateRecordVisibility(
-                              xmin,
-                              xmax,
-                              current_xid,
-                              VisibilityMode::READ_CURRENT_VERSION,
-                              nullptr)
-                .visible;
+            return txn_mgr->isRuntimeRecordVisible(xmin, xmax, current_xid);
         }
 
         // ========================================
@@ -780,13 +774,9 @@ namespace scratchbird
 
                 if (!visible)
                 {
-                    visible = txn_manager->evaluateRecordVisibility(
-                                               tuple_header->xmin,
-                                               tuple_header->xmax,
-                                               current_xid,
-                                               VisibilityMode::READ_CURRENT_VERSION,
-                                               nullptr)
-                                  .visible;
+                    visible = txn_manager->isRuntimeRecordVisible(tuple_header->xmin,
+                                                                  tuple_header->xmax,
+                                                                  current_xid);
                 }
 
                 if (visible)

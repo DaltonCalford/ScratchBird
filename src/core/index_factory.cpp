@@ -929,6 +929,10 @@ Status IndexFactory::openIndex(
             }
 
             *index_out = btree.release();  // Transfer ownership to caller
+            if (caps->supports_bloom_attach)
+            {
+                attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            }
             return Status::OK;
         }
 
@@ -966,6 +970,10 @@ Status IndexFactory::openIndex(
             }
 
             *index_out = hash.release();
+            if (caps->supports_bloom_attach)
+            {
+                attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            }
             return Status::OK;
         }
 
@@ -980,6 +988,10 @@ Status IndexFactory::openIndex(
             }
 
             *index_out = gin.release();
+            if (caps->supports_bloom_attach)
+            {
+                attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            }
             return Status::OK;
         }
 

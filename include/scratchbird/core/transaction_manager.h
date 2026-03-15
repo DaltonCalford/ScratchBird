@@ -43,6 +43,20 @@ namespace scratchbird::core
         PREPARED = 3, // For future 2PC support
     };
 
+    enum class TransactionStateDetail : uint8_t
+    {
+        NONE = 0,
+        PREHISTORICAL_COMMITTED,
+        STARTUP_REPAIRED_ABORTED,
+        STARTUP_REPAIRED_PREPARED,
+    };
+
+    struct TransactionStateResolution
+    {
+        TransactionState state = TransactionState::ACTIVE;
+        TransactionStateDetail detail = TransactionStateDetail::NONE;
+    };
+
     // Transaction information
     struct TransactionInfo
     {
@@ -97,6 +111,7 @@ namespace scratchbird::core
         VisibilityMode mode = VisibilityMode::READ_CURRENT_TRANSACTION;
         VisibilityReason reason = VisibilityReason::NONE;
         TransactionState state = TransactionState::ACTIVE;
+        TransactionStateDetail detail = TransactionStateDetail::NONE;
     };
 
     struct RecordVisibilityDecision
@@ -292,6 +307,9 @@ namespace scratchbird::core
         auto getTransactionState(uint64_t xid, TransactionState &state_out,
                                  ErrorContext *ctx = nullptr) -> Status;
 
+        auto getTransactionStateDetailed(uint64_t xid, TransactionStateResolution &state_out,
+                                         ErrorContext *ctx = nullptr) -> Status;
+
         // Resolve the durable commit-sequence number for a committed transaction.
         // LOCKING: Thread-safe. Reads authoritative TIP state under internal synchronization.
         auto getCommittedTransactionSequence(uint64_t xid, uint64_t &commit_seqno_out,
@@ -333,6 +351,27 @@ namespace scratchbird::core
                                       const TransactionSnapshot *snapshot = nullptr)
             -> RecordVisibilityDecision;
 
+        // Authoritative runtime visibility classifier. This resolves the live
+        // visibility context from the current connection and then delegates to
+        // the canonical record-visibility engine.
+        auto evaluateRuntimeRecordVisibility(uint64_t create_xid, uint64_t delete_xid,
+                                             uint64_t default_reader_xid,
+                                             const ConnectionContext *conn_ctx = nullptr)
+            -> RecordVisibilityDecision;
+
+        // Authoritative runtime single-transaction visibility classifier.
+        auto evaluateRuntimeTransactionVisibility(uint64_t xid,
+                                                  uint64_t default_reader_xid,
+                                                  const ConnectionContext *conn_ctx = nullptr)
+            -> TransactionVisibilityDecision;
+
+        auto isRuntimeRecordVisible(uint64_t create_xid, uint64_t delete_xid,
+                                    uint64_t default_reader_xid,
+                                    const ConnectionContext *conn_ctx = nullptr) -> bool;
+
+        auto isRuntimeTransactionVisible(uint64_t xid, uint64_t default_reader_xid,
+                                         const ConnectionContext *conn_ctx = nullptr) -> bool;
+
         auto resolveVisibilityContext(uint64_t default_reader_xid,
                                       const ConnectionContext *conn_ctx) const
             -> VisibilityContextSelection;
@@ -352,6 +391,7 @@ namespace scratchbird::core
         static auto statementRestartReasonName(StatementRestartReason reason) -> const char *;
         static auto formatStatementRestartMessage(const StatementRestartDecision& decision)
             -> std::string;
+        static auto transactionStateDetailName(TransactionStateDetail detail) -> const char *;
 
         // Validate XID is structurally valid (not INVALID_XID)
         // LOCKING: No locks required (static method, no shared state access).
@@ -598,6 +638,7 @@ namespace scratchbird::core
         // Marked mutable since caching is an internal optimization that doesn't affect logical
         // constness
         mutable std::unordered_map<uint64_t, TransactionState> transaction_cache_;
+        std::unordered_map<uint64_t, TransactionStateDetail> transaction_state_details_;
         mutable std::list<uint64_t>
             cache_lru_list_; // LRU list: front = most recent, back = least recent
         mutable std::unordered_map<uint64_t, std::list<uint64_t>::iterator>
@@ -705,6 +746,9 @@ namespace scratchbird::core
 
         static auto snapshotHasActiveXid(const TransactionSnapshot &snapshot, uint64_t xid)
             -> bool;
+
+        auto lookupTransactionStateDetailLocked(uint64_t xid, TransactionState state) const
+            -> TransactionStateDetail;
 
         // Group commit methods
         // LOCKING: No locks required (performs batch TIP writes via writeTipEntry()).

@@ -1310,6 +1310,190 @@ namespace scratchbird::core
         return found ? Status::OK : Status::NOT_FOUND;
     }
 
+    auto BTree::restoreDeleted(const std::vector<uint8_t> &key,
+                               const TID &tid,
+                               uint64_t deleting_xid,
+                               ErrorContext *ctx) -> Status
+    {
+        uint64_t leaf_page_num = 0;
+        Status status = find_leaf_page(key, &leaf_page_num, true, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+        const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
+        LockManager *lock_mgr = db_->lock_manager();
+
+        void *page_buffer = nullptr;
+        status = pinIndexPage(leaf_page_num, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            if (lock_mgr != nullptr)
+            {
+                LockTag leaf_tag{};
+                leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                leaf_tag.object_uuid = index_info_.idx_uuid;
+                leaf_tag.page_num = leaf_page_num;
+                lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+            }
+            return status;
+        }
+
+        auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
+        auto *page_data = reinterpret_cast<uint8_t *>(page_buffer);
+        auto *offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));
+
+        bool restored = false;
+        std::vector<uint8_t> prev_key;
+        for (uint16_t i = 0; i < page->btr_count; ++i)
+        {
+            auto *node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[i]);
+            if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
+            {
+                continue;
+            }
+
+            uint8_t *node_key_data = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
+            std::vector<uint8_t> node_key = decompress_key(prev_key,
+                                                           node_key_data,
+                                                           node->btn_key_len,
+                                                           node->btn_prefix_len);
+            prev_key = node_key;
+
+            if (compare_keys(key, node_key) != 0)
+            {
+                continue;
+            }
+
+            uint8_t *tid_data = node_key_data + node->btn_key_len;
+            auto *tids = reinterpret_cast<OnDiskTID *>(tid_data);
+            for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
+            {
+                if (fromOnDiskTID(tids[j]) != tid)
+                {
+                    continue;
+                }
+
+                if (node->btn_xmax == 0 || node->btn_xmax == deleting_xid)
+                {
+                    node->btn_xmax = 0;
+                    restored = true;
+                }
+                break;
+            }
+
+            if (restored)
+            {
+                break;
+            }
+        }
+
+        unpinIndexPage(leaf_page_num, restored, ctx);
+
+        if (lock_mgr != nullptr)
+        {
+            LockTag leaf_tag{};
+            leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+            leaf_tag.object_uuid = index_info_.idx_uuid;
+            leaf_tag.page_num = leaf_page_num;
+            lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+        }
+
+        return restored ? Status::OK : Status::NOT_FOUND;
+    }
+
+    auto BTree::purge(const std::vector<uint8_t> &key, const TID &tid, ErrorContext *ctx)
+        -> Status
+    {
+        uint64_t leaf_page_num = 0;
+        Status status = find_leaf_page(key, &leaf_page_num, true, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+        const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
+        LockManager *lock_mgr = db_->lock_manager();
+
+        void *page_buffer = nullptr;
+        status = pinIndexPage(leaf_page_num, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            if (lock_mgr != nullptr)
+            {
+                LockTag leaf_tag{};
+                leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                leaf_tag.object_uuid = index_info_.idx_uuid;
+                leaf_tag.page_num = leaf_page_num;
+                lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+            }
+            return status;
+        }
+
+        auto *page = reinterpret_cast<SBBTreePage *>(page_buffer);
+        auto *page_data = reinterpret_cast<uint8_t *>(page_buffer);
+        auto *offsets = reinterpret_cast<uint16_t *>(page_data + sizeof(SBBTreePage));
+
+        bool purged = false;
+        std::vector<uint8_t> prev_key;
+        for (uint16_t i = 0; i < page->btr_count; ++i)
+        {
+            auto *node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[i]);
+            if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
+            {
+                continue;
+            }
+
+            uint8_t *node_key_data = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
+            std::vector<uint8_t> node_key = decompress_key(prev_key,
+                                                           node_key_data,
+                                                           node->btn_key_len,
+                                                           node->btn_prefix_len);
+            prev_key = node_key;
+
+            if (compare_keys(key, node_key) != 0)
+            {
+                continue;
+            }
+
+            uint8_t *tid_data = node_key_data + node->btn_key_len;
+            auto *tids = reinterpret_cast<OnDiskTID *>(tid_data);
+            for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
+            {
+                if (fromOnDiskTID(tids[j]) != tid)
+                {
+                    continue;
+                }
+
+                node->btn_flags |= static_cast<uint16_t>(BTreeNodeFlags::DELETED);
+                page->btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
+                purged = true;
+                break;
+            }
+
+            if (purged)
+            {
+                break;
+            }
+        }
+
+        unpinIndexPage(leaf_page_num, purged, ctx);
+
+        if (lock_mgr != nullptr)
+        {
+            LockTag leaf_tag{};
+            leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+            leaf_tag.object_uuid = index_info_.idx_uuid;
+            leaf_tag.page_num = leaf_page_num;
+            lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+        }
+
+        return purged ? Status::OK : Status::NOT_FOUND;
+    }
+
     // Firebird MGA: Check if index entry is visible using TIP-based visibility
     bool BTree::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const
     {
@@ -1351,13 +1535,7 @@ namespace scratchbird::core
             return true;
         }
 
-        return txn_mgr->evaluateRecordVisibility(
-                          xmin,
-                          xmax,
-                          current_xid,
-                          VisibilityMode::READ_CURRENT_VERSION,
-                          nullptr)
-            .visible;
+        return txn_mgr->isRuntimeRecordVisible(xmin, xmax, current_xid);
     }
 
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API

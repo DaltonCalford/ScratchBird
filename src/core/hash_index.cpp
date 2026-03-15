@@ -1403,13 +1403,10 @@ namespace scratchbird
                             }
                             else
                             {
-                                visible = txn_mgr->evaluateRecordVisibility(
-                                                      entry.he_xmin,
-                                                      entry.he_xmax,
-                                                      current_xid,
-                                                      VisibilityMode::READ_CURRENT_VERSION,
-                                                      nullptr)
-                                              .visible;
+                                visible =
+                                    txn_mgr->isRuntimeRecordVisible(entry.he_xmin,
+                                                                    entry.he_xmax,
+                                                                    current_xid);
                             }
                         }
 
@@ -1505,6 +1502,138 @@ namespace scratchbird
                     return Status::OK;
                 }
 
+                current_page = next_page;
+            }
+
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Entry not found in hash index");
+            return Status::NOT_FOUND;
+        }
+
+        Status HashIndex::restoreDeleted(const void *key_data,
+                                         size_t key_len,
+                                         const TID &tid,
+                                         uint64_t deleting_xid,
+                                         ErrorContext *ctx)
+        {
+            if (!key_data || key_len == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid restore arguments");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint64_t hash = MurmurHash64(key_data, key_len);
+            uint64_t bucket_page = findBucketPageForKey(hash, ctx);
+            if (bucket_page == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Bucket not found");
+                return Status::NOT_FOUND;
+            }
+
+            uint32_t current_page = bucket_page;
+            while (current_page != 0)
+            {
+                uint8_t *page_data = nullptr;
+                Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
+                for (uint16_t i = 0; i < bucket->hbp_entry_count; ++i)
+                {
+                    HashEntry &entry = bucket->hbp_entries[i];
+                    if (entry.he_key_hash != hash || entry.getTID() != tid)
+                    {
+                        continue;
+                    }
+
+                    if (entry.he_xmax == 0 || entry.he_xmax == deleting_xid)
+                    {
+                        if (entry.he_xmax != 0)
+                        {
+                            entry.he_xmax = 0;
+                            if (bucket->hbp_deleted_count > 0)
+                            {
+                                bucket->hbp_deleted_count--;
+                            }
+
+                            uint8_t *meta_data = nullptr;
+                            Status meta_status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
+                            if (meta_status == Status::OK)
+                            {
+                                auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
+                                if (meta->hip_num_deleted > 0)
+                                {
+                                    meta->hip_num_deleted--;
+                                }
+                                unpinIndexPage(meta_page_, true, ctx);
+                            }
+                        }
+
+                        unpinIndexPage(current_page, true, ctx);
+                        return Status::OK;
+                    }
+                }
+
+                uint32_t next_page = bucket->hbp_overflow_page;
+                unpinIndexPage(current_page, false, ctx);
+                current_page = next_page;
+            }
+
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Entry not found in hash index");
+            return Status::NOT_FOUND;
+        }
+
+        Status HashIndex::purge(const void *key_data,
+                                size_t key_len,
+                                const TID &tid,
+                                ErrorContext *ctx)
+        {
+            if (!key_data || key_len == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid purge arguments");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            uint64_t hash = MurmurHash64(key_data, key_len);
+            uint64_t bucket_page = findBucketPageForKey(hash, ctx);
+            if (bucket_page == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Bucket not found");
+                return Status::NOT_FOUND;
+            }
+
+            uint32_t current_page = bucket_page;
+            while (current_page != 0)
+            {
+                uint8_t *page_data = nullptr;
+                Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *bucket = reinterpret_cast<SBHashBucketPage *>(page_data);
+                for (uint16_t i = 0; i < bucket->hbp_entry_count; ++i)
+                {
+                    HashEntry &entry = bucket->hbp_entries[i];
+                    if (entry.he_key_hash != hash || entry.getTID() != tid)
+                    {
+                        continue;
+                    }
+
+                    for (uint16_t j = i + 1; j < bucket->hbp_entry_count; ++j)
+                    {
+                        bucket->hbp_entries[j - 1] = bucket->hbp_entries[j];
+                    }
+                    bucket->hbp_entry_count--;
+                    unpinIndexPage(current_page, true, ctx);
+                    return Status::OK;
+                }
+
+                uint32_t next_page = bucket->hbp_overflow_page;
+                unpinIndexPage(current_page, false, ctx);
                 current_page = next_page;
             }
 

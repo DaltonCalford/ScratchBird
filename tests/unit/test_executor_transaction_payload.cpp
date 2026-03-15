@@ -984,6 +984,13 @@ TEST_F(ExecutorTransactionPayloadTest, UncleanRestartPromotesPreparedEvidenceBac
         << ctx.message;
     EXPECT_EQ(state, scratchbird::core::TransactionState::PREPARED);
 
+    scratchbird::core::TransactionStateResolution resolution{};
+    ASSERT_EQ(txn_manager->getTransactionStateDetailed(prepared_xid, resolution, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(resolution.state, scratchbird::core::TransactionState::PREPARED);
+    EXPECT_EQ(resolution.detail,
+              scratchbird::core::TransactionStateDetail::STARTUP_REPAIRED_PREPARED);
+
     scratchbird::core::CatalogManager::PreparedTransactionInfo info{};
     ASSERT_EQ(db_.catalog_manager()->getPreparedTransactionByGid("gid_restart_promote_test",
                                                                  info,

@@ -160,6 +160,7 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
         snapshot_pins_.clear();
+        transaction_state_details_.clear();
         if (startup_summary != nullptr)
         {
             *startup_summary = {};
@@ -895,6 +896,7 @@ namespace scratchbird::core
             {
                 addToCacheLRU(xid, TransactionState::COMMITTED);
             }
+            transaction_state_details_.erase(xid);
             stats_.transactions_committed++;
         }
 
@@ -1103,6 +1105,7 @@ namespace scratchbird::core
             {
                 addToCacheLRU(xid, TransactionState::PREPARED);
             }
+            transaction_state_details_.erase(xid);
         }
 
         return Status::OK;
@@ -1248,6 +1251,7 @@ namespace scratchbird::core
             {
                 addToCacheLRU(info.txn_id, TransactionState::COMMITTED);
             }
+            transaction_state_details_.erase(info.txn_id);
             stats_.transactions_committed++;
         }
 
@@ -1403,6 +1407,7 @@ namespace scratchbird::core
             {
                 addToCacheLRU(info.txn_id, TransactionState::ABORTED);
             }
+            transaction_state_details_.erase(info.txn_id);
             stats_.transactions_aborted++;
         }
 
@@ -1604,6 +1609,7 @@ namespace scratchbird::core
             {
                 addToCacheLRU(xid, TransactionState::ABORTED);
             }
+            transaction_state_details_.erase(xid);
             stats_.transactions_aborted++;
         }
 
@@ -1613,13 +1619,28 @@ namespace scratchbird::core
     auto TransactionManager::getTransactionState(uint64_t xid, TransactionState &state_out,
                                                  ErrorContext *ctx) -> Status
     {
+        TransactionStateResolution resolution{};
+        Status status = getTransactionStateDetailed(xid, resolution, ctx);
+        if (status == Status::OK)
+        {
+            state_out = resolution.state;
+        }
+        return status;
+    }
+
+    auto TransactionManager::getTransactionStateDetailed(uint64_t xid,
+                                                         TransactionStateResolution &state_out,
+                                                         ErrorContext *ctx) -> Status
+    {
         std::lock_guard<std::mutex> lock(mutex_);
+        state_out = {};
 
         // Check cache first
         auto it = transaction_cache_.find(xid);
         if (it != transaction_cache_.end())
         {
-            state_out = it->second;
+            state_out.state = it->second;
+            state_out.detail = lookupTransactionStateDetailLocked(xid, state_out.state);
             touchCacheEntry(xid); // Mark as recently used
             return Status::OK;
         }
@@ -1629,7 +1650,8 @@ namespace scratchbird::core
         // the inventory window must resolve through TIP.
         if (xid < oldest_xid_)
         {
-            state_out = TransactionState::COMMITTED;
+            state_out.state = TransactionState::COMMITTED;
+            state_out.detail = TransactionStateDetail::PREHISTORICAL_COMMITTED;
             addToCacheLRU(xid, TransactionState::COMMITTED);
             return Status::OK;
         }
@@ -1647,7 +1669,8 @@ namespace scratchbird::core
                 return Status::PAGE_CORRUPT;
             }
             addToCacheLRU(xid, tip_state);
-            state_out = tip_state;
+            state_out.state = tip_state;
+            state_out.detail = lookupTransactionStateDetailLocked(xid, tip_state);
             return Status::OK;
         }
         if (status != Status::NOT_FOUND)
@@ -2445,15 +2468,16 @@ namespace scratchbird::core
             return decision;
         }
 
-        TransactionState state = TransactionState::ACTIVE;
-        Status status = getTransactionState(xid, state, nullptr);
+        TransactionStateResolution resolution{};
+        Status status = getTransactionStateDetailed(xid, resolution, nullptr);
         if (status != Status::OK)
         {
             decision.reason = VisibilityReason::STATE_LOOKUP_FAILED;
             return decision;
         }
 
-        decision.state = state;
+        decision.state = resolution.state;
+        decision.detail = resolution.detail;
 
         if (mode == VisibilityMode::SNAPSHOT && snapshotHasActiveXid(*snapshot, xid))
         {
@@ -2461,7 +2485,7 @@ namespace scratchbird::core
             return decision;
         }
 
-        switch (state)
+        switch (resolution.state)
         {
             case TransactionState::COMMITTED:
                 if (mode == VisibilityMode::SNAPSHOT && xid >= oldest_xid_)
@@ -2527,6 +2551,83 @@ namespace scratchbird::core
 
         decision.visible = decision.create_visible && !decision.delete_visible;
         return decision;
+    }
+
+    auto TransactionManager::evaluateRuntimeRecordVisibility(uint64_t create_xid,
+                                                             uint64_t delete_xid,
+                                                             uint64_t default_reader_xid,
+                                                             const ConnectionContext *conn_ctx)
+        -> RecordVisibilityDecision
+    {
+        if (conn_ctx == nullptr)
+        {
+            conn_ctx = ConnectionContext::getCurrent();
+        }
+
+        const auto visibility_context = resolveVisibilityContext(default_reader_xid, conn_ctx);
+        if (!visibility_context.valid)
+        {
+            RecordVisibilityDecision decision{};
+            decision.mode = visibility_context.mode;
+            decision.create_visible = false;
+            decision.delete_visible = false;
+            decision.visible = false;
+            decision.create_decision.mode = visibility_context.mode;
+            decision.create_decision.reason = visibility_context.reason;
+            decision.delete_decision.mode = visibility_context.mode;
+            decision.delete_decision.reason =
+                (delete_xid == 0) ? VisibilityReason::DELETE_NOT_PRESENT
+                                  : visibility_context.reason;
+            return decision;
+        }
+
+        return evaluateRecordVisibility(create_xid,
+                                        delete_xid,
+                                        visibility_context.reader_xid,
+                                        visibility_context.mode,
+                                        visibility_context.snapshot);
+    }
+
+    auto TransactionManager::evaluateRuntimeTransactionVisibility(
+        uint64_t xid, uint64_t default_reader_xid, const ConnectionContext *conn_ctx)
+        -> TransactionVisibilityDecision
+    {
+        if (conn_ctx == nullptr)
+        {
+            conn_ctx = ConnectionContext::getCurrent();
+        }
+
+        const auto visibility_context = resolveVisibilityContext(default_reader_xid, conn_ctx);
+        if (!visibility_context.valid)
+        {
+            TransactionVisibilityDecision decision{};
+            decision.mode = visibility_context.mode;
+            decision.reason = visibility_context.reason;
+            return decision;
+        }
+
+        return evaluateTransactionVisibility(xid,
+                                             visibility_context.reader_xid,
+                                             visibility_context.mode,
+                                             visibility_context.snapshot);
+    }
+
+    auto TransactionManager::isRuntimeRecordVisible(uint64_t create_xid, uint64_t delete_xid,
+                                                    uint64_t default_reader_xid,
+                                                    const ConnectionContext *conn_ctx) -> bool
+    {
+        return evaluateRuntimeRecordVisibility(create_xid,
+                                              delete_xid,
+                                              default_reader_xid,
+                                              conn_ctx)
+            .visible;
+    }
+
+    auto TransactionManager::isRuntimeTransactionVisible(uint64_t xid,
+                                                         uint64_t default_reader_xid,
+                                                         const ConnectionContext *conn_ctx) -> bool
+    {
+        return evaluateRuntimeTransactionVisibility(xid, default_reader_xid, conn_ctx).visible;
     }
 
     auto TransactionManager::resolveVisibilityContext(uint64_t default_reader_xid,
@@ -2700,6 +2801,24 @@ namespace scratchbird::core
         message += " retry_eligible=";
         message += decision.retry_eligible ? "true" : "false";
         return message;
+    }
+
+    auto TransactionManager::transactionStateDetailName(TransactionStateDetail detail)
+        -> const char *
+    {
+        switch (detail)
+        {
+            case TransactionStateDetail::NONE:
+                return "NONE";
+            case TransactionStateDetail::PREHISTORICAL_COMMITTED:
+                return "PREHISTORICAL_COMMITTED";
+            case TransactionStateDetail::STARTUP_REPAIRED_ABORTED:
+                return "STARTUP_REPAIRED_ABORTED";
+            case TransactionStateDetail::STARTUP_REPAIRED_PREPARED:
+                return "STARTUP_REPAIRED_PREPARED";
+        }
+
+        return "UNKNOWN";
     }
 
     auto TransactionManager::getBackendXid(uint32_t proc_id) const -> uint64_t
@@ -3377,6 +3496,11 @@ namespace scratchbird::core
                                     entries[i].xid);
                     }
 
+                    transaction_state_details_[entries[i].xid] =
+                        promote_to_prepared
+                            ? TransactionStateDetail::STARTUP_REPAIRED_PREPARED
+                            : TransactionStateDetail::STARTUP_REPAIRED_ABORTED;
+
                     auto cache_it = transaction_cache_.find(entries[i].xid);
                     if (cache_it != transaction_cache_.end())
                     {
@@ -3904,6 +4028,24 @@ namespace scratchbird::core
     {
         return std::binary_search(snapshot.active_txid_set.begin(),
                                   snapshot.active_txid_set.end(), xid);
+    }
+
+    auto TransactionManager::lookupTransactionStateDetailLocked(uint64_t xid,
+                                                                TransactionState state) const
+        -> TransactionStateDetail
+    {
+        if (state == TransactionState::COMMITTED && xid < oldest_xid_)
+        {
+            return TransactionStateDetail::PREHISTORICAL_COMMITTED;
+        }
+
+        auto it = transaction_state_details_.find(xid);
+        if (it != transaction_state_details_.end())
+        {
+            return it->second;
+        }
+
+        return TransactionStateDetail::NONE;
     }
 
     void TransactionManager::touchCacheEntry(uint64_t xid) const

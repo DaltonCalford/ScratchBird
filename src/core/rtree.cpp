@@ -1353,13 +1353,7 @@ bool RTree::isEntryVisible(const RTreeEntry& entry, uint64_t current_xid) const
 
     TransactionManager* txn_mgr = db_->transaction_manager();
 
-    return txn_mgr->evaluateRecordVisibility(
-                        entry.xmin,
-                        entry.xmax,
-                        current_xid,
-                        VisibilityMode::READ_CURRENT_VERSION,
-                        nullptr)
-        .visible;
+    return txn_mgr->isRuntimeRecordVisible(entry.xmin, entry.xmax, current_xid);
 }
 
 void RTree::updateStatistics()

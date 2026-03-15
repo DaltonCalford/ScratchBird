@@ -4248,6 +4248,133 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto ConnectionContext::findSavepointBackoutChange(Savepoint &savepoint,
+                                                       const ID &table_id,
+                                                       uint32_t stable_page_id,
+                                                       uint16_t stable_item_id)
+        -> SavepointBackoutAction *
+    {
+        for (auto &change : savepoint.changes)
+        {
+            if (change.matches(table_id, stable_page_id, stable_item_id))
+            {
+                return &change;
+            }
+        }
+        return nullptr;
+    }
+
+    void ConnectionContext::recordSavepointRowRemoval(const ID &table_id,
+                                                      uint32_t stable_page_id,
+                                                      uint16_t stable_item_id)
+    {
+        if (savepoint_stack_.empty())
+        {
+            return;
+        }
+
+        Savepoint &savepoint = savepoint_stack_.back();
+        if (findSavepointBackoutChange(savepoint, table_id, stable_page_id, stable_item_id) !=
+            nullptr)
+        {
+            return;
+        }
+
+        SavepointBackoutAction action;
+        action.kind = SavepointBackoutActionKind::REMOVE_ROW;
+        action.table_id = table_id;
+        action.stable_page_id = stable_page_id;
+        action.stable_item_id = stable_item_id;
+        savepoint.changes.emplace_back(std::move(action));
+
+        LOG_DEBUG(TRANSACTION,
+                  "Tracked savepoint row removal (page=%u, item=%u) in savepoint '%s' (level %u)",
+                  stable_page_id,
+                  stable_item_id,
+                  savepoint.name.c_str(),
+                  savepoint.level);
+    }
+
+    void ConnectionContext::recordSavepointRowRestore(const ID &table_id,
+                                                      uint32_t stable_page_id,
+                                                      uint16_t stable_item_id,
+                                                      const uint8_t *restore_tuple_data,
+                                                      uint32_t restore_tuple_size)
+    {
+        if (savepoint_stack_.empty() || restore_tuple_data == nullptr || restore_tuple_size == 0)
+        {
+            return;
+        }
+
+        Savepoint &savepoint = savepoint_stack_.back();
+        SavepointBackoutAction *existing =
+            findSavepointBackoutChange(savepoint, table_id, stable_page_id, stable_item_id);
+        if (existing != nullptr)
+        {
+            return;
+        }
+
+        SavepointBackoutAction action;
+        action.kind = SavepointBackoutActionKind::RESTORE_ROW;
+        action.table_id = table_id;
+        action.stable_page_id = stable_page_id;
+        action.stable_item_id = stable_item_id;
+        action.restore_tuple_image.assign(restore_tuple_data,
+                                          restore_tuple_data + restore_tuple_size);
+        savepoint.changes.emplace_back(std::move(action));
+
+        LOG_DEBUG(TRANSACTION,
+                  "Tracked savepoint row restore (page=%u, item=%u) in savepoint '%s' (level %u)",
+                  stable_page_id,
+                  stable_item_id,
+                  savepoint.name.c_str(),
+                  savepoint.level);
+    }
+
+    void ConnectionContext::mergeSavepointBackoutChanges(Savepoint &target,
+                                                         const Savepoint &source)
+    {
+        for (const auto &change : source.changes)
+        {
+            if (findSavepointBackoutChange(target,
+                                           change.table_id,
+                                           change.stable_page_id,
+                                           change.stable_item_id) != nullptr)
+            {
+                continue;
+            }
+            target.changes.emplace_back(change);
+        }
+    }
+
+    auto ConnectionContext::collectRollbackBackoutChanges(size_t first_savepoint_index) const
+        -> std::vector<SavepointBackoutAction>
+    {
+        std::vector<SavepointBackoutAction> changes;
+        for (size_t idx = savepoint_stack_.size(); idx > first_savepoint_index; --idx)
+        {
+            const Savepoint &savepoint = savepoint_stack_[idx - 1];
+            for (auto change_it = savepoint.changes.rbegin();
+                 change_it != savepoint.changes.rend();
+                 ++change_it)
+            {
+                const auto &change = *change_it;
+                auto existing = std::find_if(changes.begin(),
+                                             changes.end(),
+                                             [&](const SavepointBackoutAction &candidate) {
+                                                 return candidate.matches(change.table_id,
+                                                                          change.stable_page_id,
+                                                                          change.stable_item_id);
+                                             });
+                if (existing == changes.end())
+                {
+                    changes.emplace_back(change);
+                }
+            }
+        }
+        return changes;
+    }
+
     Status ConnectionContext::rollbackToSavepoint(const std::string &name, ErrorContext *ctx)
     {
         if (current_xid_ == 0)
@@ -4300,33 +4427,18 @@ namespace scratchbird::core
             }
         } rollback_guard(savepoint_rollback_in_progress_);
 
-        // Rollback changes made in target savepoint and nested savepoints, newest first.
-        for (size_t idx = savepoint_stack_.size(); idx-- > target_index;)
+        const auto rollback_changes = collectRollbackBackoutChanges(target_index);
+        Status rollback_status = storage->rollbackSavepointChanges(rollback_changes,
+                                                                  current_xid_,
+                                                                  ctx);
+        if (rollback_status != Status::OK)
         {
-            auto &sp = savepoint_stack_[idx];
-
-            for (auto rit = sp.actions.rbegin(); rit != sp.actions.rend(); ++rit)
-            {
-                ErrorContext restore_ctx;
-                Status restore_status =
-                    storage->rollbackSavepointAction(*rit, current_xid_, &restore_ctx);
-                if (restore_status != Status::OK)
-                {
-                    LOG_WARNING(TRANSACTION,
-                                "Failed to roll back savepoint action: kind=%u table=%s page=%u item=%u status=%d msg=%s",
-                                static_cast<unsigned>(rit->kind),
-                                rit->table_id.toString().c_str(),
-                                rit->page_id,
-                                rit->item_id,
-                                static_cast<int>(restore_status),
-                                restore_ctx.message.c_str());
-                }
-            }
+            return rollback_status;
         }
 
         // Keep the target savepoint active, but clear its post-rollback mutation state.
         sp_it = savepoint_stack_.begin() + static_cast<std::ptrdiff_t>(target_index);
-        sp_it->actions.clear();
+        sp_it->changes.clear();
 
         // Remove nested savepoints.
         auto erase_from = sp_it;
@@ -4376,17 +4488,16 @@ namespace scratchbird::core
         LOG_DEBUG(TRANSACTION, "Releasing savepoint '%s' at level %u: proc_id=%u, xid=%lu",
                   name.c_str(), sp_it->level, proc_id_, current_xid_);
 
-        // If there's a parent savepoint, merge our tuple lists into it
+        // If there's a parent savepoint, merge canonical backout records for the released
+        // savepoint and any nested descendants into it, preserving the earliest pre-change row
+        // state as the authoritative undo image.
         if (sp_index > 0)
         {
             auto &parent = savepoint_stack_[sp_index - 1];
-
-            parent.actions.insert(parent.actions.end(), sp_it->actions.begin(), sp_it->actions.end());
-
-            LOG_DEBUG(TRANSACTION,
-                      "Merged %zu backout actions into parent savepoint '%s'",
-                      sp_it->actions.size(),
-                      parent.name.c_str());
+            for (size_t idx = sp_index; idx < savepoint_stack_.size(); ++idx)
+            {
+                mergeSavepointBackoutChanges(parent, savepoint_stack_[idx]);
+            }
         }
 
         // Remove this savepoint and all nested ones
@@ -4419,17 +4530,7 @@ namespace scratchbird::core
         // If we have active savepoints, track this insertion in the most recent one
         if (!savepoint_stack_.empty())
         {
-            SavepointBackoutAction action;
-            action.kind = SavepointBackoutActionKind::INSERT;
-            action.table_id = table_id;
-            action.page_id = page_id;
-            action.item_id = item_id;
-            savepoint_stack_.back().actions.emplace_back(std::move(action));
-
-            LOG_DEBUG(TRANSACTION,
-                      "Tracked tuple insertion (page=%u, item=%u) in savepoint '%s' (level %u)",
-                      page_id, item_id, savepoint_stack_.back().name.c_str(),
-                      savepoint_stack_.back().level);
+            recordSavepointRowRemoval(table_id, page_id, item_id);
         }
     }
 
@@ -4440,7 +4541,9 @@ namespace scratchbird::core
 
     void ConnectionContext::trackTupleDeletion(const ID& table_id,
                                               uint32_t page_id,
-                                              uint16_t item_id)
+                                              uint16_t item_id,
+                                              const uint8_t *old_tuple_data,
+                                              uint32_t old_tuple_size)
     {
         if (savepoint_rollback_in_progress_)
         {
@@ -4449,23 +4552,16 @@ namespace scratchbird::core
         // If we have active savepoints, track this deletion in the most recent one
         if (!savepoint_stack_.empty())
         {
-            SavepointBackoutAction action;
-            action.kind = SavepointBackoutActionKind::DELETE;
-            action.table_id = table_id;
-            action.page_id = page_id;
-            action.item_id = item_id;
-            savepoint_stack_.back().actions.emplace_back(std::move(action));
-
-            LOG_DEBUG(TRANSACTION,
-                      "Tracked tuple deletion (page=%u, item=%u) in savepoint '%s' (level %u)",
-                      page_id, item_id, savepoint_stack_.back().name.c_str(),
-                      savepoint_stack_.back().level);
+            recordSavepointRowRestore(table_id, page_id, item_id, old_tuple_data, old_tuple_size);
         }
     }
 
-    void ConnectionContext::trackTupleDeletion(uint32_t page_id, uint16_t item_id)
+    void ConnectionContext::trackTupleDeletion(uint32_t page_id,
+                                               uint16_t item_id,
+                                               const uint8_t *old_tuple_data,
+                                               uint32_t old_tuple_size)
     {
-        trackTupleDeletion(ID{}, page_id, item_id);
+        trackTupleDeletion(ID{}, page_id, item_id, old_tuple_data, old_tuple_size);
     }
 
     void ConnectionContext::trackTupleUpdate(const ID& table_id,
@@ -4479,14 +4575,7 @@ namespace scratchbird::core
         {
             return;
         }
-
-        SavepointBackoutAction action;
-        action.kind = SavepointBackoutActionKind::UPDATE;
-        action.table_id = table_id;
-        action.page_id = page_id;
-        action.item_id = item_id;
-        action.old_tuple_image.assign(old_tuple_data, old_tuple_data + old_tuple_size);
-        savepoint_stack_.back().actions.emplace_back(std::move(action));
+        recordSavepointRowRestore(table_id, page_id, item_id, old_tuple_data, old_tuple_size);
     }
 
     // ============================================================================

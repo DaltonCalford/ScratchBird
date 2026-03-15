@@ -1456,13 +1456,7 @@ bool GiSTIndex::isEntryVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xi
         return false;
     }
 
-    return txn_manager_->evaluateRecordVisibility(
-                              xmin,
-                              xmax,
-                              current_xid,
-                              VisibilityMode::READ_CURRENT_VERSION,
-                              nullptr)
-        .visible;
+    return txn_manager_->isRuntimeRecordVisible(xmin, xmax, current_xid);
 }
 
 Status GiSTIndex::loadPage(uint64_t page_num, SBGiSTPage** page, ErrorContext* ctx)

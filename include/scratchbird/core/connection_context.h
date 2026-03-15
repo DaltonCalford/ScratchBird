@@ -803,8 +803,9 @@ namespace scratchbird::core
             // FIREBIRD MGA: No snapshot needed - use XID for visibility
             // XID field above is sufficient for rollback
 
-            // Ordered backout log for rollback-to-savepoint and release-to-parent.
-            std::vector<SavepointBackoutAction> actions;
+            // Canonical per-row backout records. Each stable root TID appears at most once
+            // per savepoint, carrying the earliest pre-savepoint row state needed for undo.
+            std::vector<SavepointBackoutAction> changes;
         };
 
         std::vector<Savepoint> savepoint_stack_;  // Stack of active savepoints
@@ -821,6 +822,21 @@ namespace scratchbird::core
         void applyStagedSettings();
         Status createSnapshot(ErrorContext *ctx);
         void clearStatementRestartState();
+        auto findSavepointBackoutChange(Savepoint &savepoint,
+                                        const ID &table_id,
+                                        uint32_t stable_page_id,
+                                        uint16_t stable_item_id) -> SavepointBackoutAction *;
+        void recordSavepointRowRemoval(const ID &table_id,
+                                       uint32_t stable_page_id,
+                                       uint16_t stable_item_id);
+        void recordSavepointRowRestore(const ID &table_id,
+                                       uint32_t stable_page_id,
+                                       uint16_t stable_item_id,
+                                       const uint8_t *restore_tuple_data,
+                                       uint32_t restore_tuple_size);
+        void mergeSavepointBackoutChanges(Savepoint &target, const Savepoint &source);
+        auto collectRollbackBackoutChanges(size_t first_savepoint_index) const
+            -> std::vector<SavepointBackoutAction>;
 
     public:
         // Savepoint operations (Issue 2.15: Subtransaction Support)
@@ -865,11 +881,20 @@ namespace scratchbird::core
          * Track a tuple deletion for potential savepoint rollback
          * Called by heap_page.cpp after marking a tuple deleted
          * @param table_id Table owning the tuple, or zero if unavailable
-         * @param page_id Page ID where tuple was deleted
-         * @param item_id Item ID of deleted tuple
+         * @param page_id Stable root page ID of the row
+         * @param item_id Stable root item ID of the row
+         * @param old_tuple_data Pre-delete tuple image used for savepoint restore
+         * @param old_tuple_size Pre-delete tuple image size
          */
-        void trackTupleDeletion(const ID& table_id, uint32_t page_id, uint16_t item_id);
-        void trackTupleDeletion(uint32_t page_id, uint16_t item_id);
+        void trackTupleDeletion(const ID& table_id,
+                                uint32_t page_id,
+                                uint16_t item_id,
+                                const uint8_t *old_tuple_data,
+                                uint32_t old_tuple_size);
+        void trackTupleDeletion(uint32_t page_id,
+                                uint16_t item_id,
+                                const uint8_t *old_tuple_data,
+                                uint32_t old_tuple_size);
 
         /**
          * Track a tuple update image for potential savepoint rollback

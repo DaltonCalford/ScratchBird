@@ -30225,6 +30225,59 @@ void* CatalogManager::getIndexPtr(const ID &index_id, IndexType *type_out)
     return it->second.index_ptr;
 }
 
+auto CatalogManager::refreshIndexObject(const ID &index_id, ErrorContext *ctx) -> Status
+{
+    IndexInfo info;
+    {
+        std::lock_guard<CatalogMutex> lock(mutex_);
+        auto it = index_cache_.find(index_id);
+        if (it == index_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
+                              ("Index not found: " + index_id.toString()).c_str());
+            return Status::NOT_FOUND;
+        }
+        info = it->second;
+    }
+
+    IndexHandle previous_handle{};
+    bool had_previous_handle = false;
+    {
+        std::lock_guard<std::mutex> lock(index_object_mutex_);
+        auto it = index_object_cache_.find(index_id);
+        if (it != index_object_cache_.end())
+        {
+            previous_handle = it->second;
+            index_object_cache_.erase(it);
+            had_previous_handle = true;
+        }
+    }
+
+    if (had_previous_handle)
+    {
+        Status close_status =
+            IndexFactory::closeIndex(previous_handle.index_type, previous_handle.index_ptr, ctx);
+        if (close_status != Status::OK)
+        {
+            return close_status;
+        }
+    }
+
+    void *index_ptr = nullptr;
+    Status status = IndexFactory::openIndex(info.index_type, db_, info, &index_ptr, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(index_object_mutex_);
+        index_object_cache_[index_id] = {index_ptr, info.index_type};
+    }
+
+    return Status::OK;
+}
+
 Status CatalogManager::closeAllIndexes(ErrorContext *ctx)
 {
     std::lock_guard<std::mutex> lock(index_object_mutex_);

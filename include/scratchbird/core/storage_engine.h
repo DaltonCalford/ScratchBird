@@ -196,14 +196,12 @@ namespace scratchbird::core
                          uint32_t *new_page_id_out, uint16_t *new_item_id_out,
                          ErrorContext *ctx = nullptr) -> Status;
 
-        // Savepoint/backout helpers. These centralize physical tuple undo so the
-        // connection layer does not directly edit tuple headers.
-        auto markInsertedTupleRolledBack(uint32_t page_id, uint16_t item_id, uint64_t rollback_xid,
-                                         ErrorContext *ctx = nullptr) -> Status;
-        auto clearTupleDeleteMark(uint32_t page_id, uint16_t item_id,
-                                  ErrorContext *ctx = nullptr) -> Status;
-        auto rollbackSavepointAction(const SavepointBackoutAction &action, uint64_t rollback_xid,
-                                     ErrorContext *ctx = nullptr) -> Status;
+        // Savepoint/backout helpers. The connection layer owns savepoint naming and nesting,
+        // but the storage layer owns the lifecycle-native backout semantics for the merged
+        // per-row rollback set.
+        auto rollbackSavepointChanges(const std::vector<SavepointBackoutAction> &actions,
+                                      uint64_t rollback_xid,
+                                      ErrorContext *ctx = nullptr) -> Status;
 
         // Create a sequential scan iterator
         auto createScan(const ID &table_id, ErrorContext *ctx = nullptr)
@@ -279,6 +277,10 @@ namespace scratchbird::core
                                    const Tuple &tuple,
                                    std::vector<uint8_t> *key_out,
                                    ErrorContext *ctx) -> Status;
+        auto getVisibleTupleForStableTid(const ID &table_id,
+                                         const TID &stable_tid,
+                                         Tuple *tuple_out,
+                                         ErrorContext *ctx) -> Status;
         auto filterIndexCandidatesByVisibleHeap(const ID &table_id,
                                                 const std::vector<ID> &indexed_column_ids,
                                                 bool enforce_key_semantics,
@@ -322,6 +324,23 @@ namespace scratchbird::core
                                         uint16_t old_item_id, uint32_t new_page_id,
                                         uint16_t new_item_id, const uint8_t *tuple_data,
                                         uint32_t tuple_size, ErrorContext *ctx) -> Status;
+        auto rollbackInsertedSavepointRow(const SavepointBackoutAction &action,
+                                          uint64_t rollback_xid,
+                                          ErrorContext *ctx) -> Status;
+        auto restoreSavepointRowState(const SavepointBackoutAction &action,
+                                      uint64_t rollback_xid,
+                                      ErrorContext *ctx) -> Status;
+        auto rewriteStableTidIndexesForRollback(const ID &table_id,
+                                                uint16_t tablespace_id,
+                                                uint32_t stable_page_id,
+                                                uint16_t stable_item_id,
+                                                const uint8_t *current_tuple_data,
+                                                uint32_t current_tuple_size,
+                                                const uint8_t *restored_tuple_data,
+                                                uint32_t restored_tuple_size,
+                                                bool restored_row_present,
+                                                uint64_t current_xid,
+                                                ErrorContext *ctx) -> Status;
     };
 
 } // namespace scratchbird::core

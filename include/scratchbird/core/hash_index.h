@@ -146,6 +146,16 @@ namespace scratchbird
             Status remove(const void *key_data, size_t key_len, const TID &tid,
                           uint64_t xid, ErrorContext *ctx = nullptr);
 
+            // Restore a soft-deleted entry when the delete belongs to the
+            // supplied transaction. Used by savepoint rollback.
+            Status restoreDeleted(const void *key_data, size_t key_len, const TID &tid,
+                                  uint64_t deleting_xid, ErrorContext *ctx = nullptr);
+
+            // Physically purge a specific entry. Used only when the stable root
+            // itself is being retired and leaving a candidate behind is unsafe.
+            Status purge(const void *key_data, size_t key_len, const TID &tid,
+                         ErrorContext *ctx = nullptr);
+
             // GC compaction (ScratchBird MGA GC, not PostgreSQL VACUUM)
             Status gcCompact(ErrorContext *ctx = nullptr);
 

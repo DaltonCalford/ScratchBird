@@ -130,40 +130,95 @@ namespace scratchbird::core
             return candidate.page_id < best.page_id;
         }
 
-        auto extractReferencedToastValueId(const uint8_t *tuple_data,
-                                           uint32_t tuple_size,
-                                           ID *value_id_out) -> bool
+        struct PreparedStableHeadTuple
         {
-            if (value_id_out == nullptr)
-            {
-                return false;
-            }
-            *value_id_out = ID{};
+            const uint8_t *storage_tuple_data = nullptr;
+            uint32_t storage_tuple_size = 0;
+            std::vector<uint8_t> owned_storage_tuple;
+            bool toasted = false;
+            ID toast_value_id{};
+        };
 
-            if (tuple_data == nullptr || tuple_size < sizeof(TupleHeader) + sizeof(ToastPointer))
+        auto prepareStableHeadTupleForMutation(const uint8_t *logical_tuple_data,
+                                               uint32_t logical_tuple_size,
+                                               uint64_t new_xmin,
+                                               Database *db,
+                                               ToastManager *toast_mgr,
+                                               PreparedStableHeadTuple *prepared_out,
+                                               ErrorContext *ctx) -> Status
+        {
+            if (prepared_out == nullptr)
             {
-                return false;
-            }
-
-            const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
-            const uint8_t *payload = tuple_data + sizeof(TupleHeader);
-            const size_t payload_size = tuple_size - sizeof(TupleHeader);
-            if (payload_size != sizeof(ToastPointer))
-            {
-                return false;
-            }
-
-            if (!tuple_hdr->hasRecordFlag(TupleHeader::RHD_TOAST_PTR) &&
-                !ToastManager::isToastPointer(payload, payload_size))
-            {
-                return false;
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Prepared stable-head tuple output is null");
+                return Status::INVALID_ARGUMENT;
             }
 
-            const auto *toast_ptr = reinterpret_cast<const ToastPointer *>(payload);
-            *value_id_out = toast_ptr->lob_uuid;
-            return std::any_of(value_id_out->bytes.begin(),
-                               value_id_out->bytes.end(),
-                               [](uint8_t byte) { return byte != 0; });
+            prepared_out->storage_tuple_data = logical_tuple_data;
+            prepared_out->storage_tuple_size = logical_tuple_size;
+            prepared_out->owned_storage_tuple.clear();
+            prepared_out->toasted = false;
+            prepared_out->toast_value_id = ID{};
+
+            if (logical_tuple_data == nullptr || logical_tuple_size < sizeof(TupleHeader))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Logical tuple image is invalid for mutation preparation");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (toast_mgr == nullptr || db == nullptr ||
+                !ToastManager::shouldToast(logical_tuple_size, db->page_size()))
+            {
+                return Status::OK;
+            }
+
+            if (logical_tuple_size <= sizeof(TupleHeader))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Tuple too small to TOAST during mutation preparation");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            try
+            {
+                prepared_out->owned_storage_tuple.resize(sizeof(TupleHeader) +
+                                                         sizeof(ToastPointer));
+            }
+            catch (const std::bad_alloc &)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                  "Out of memory allocating prepared mutation TOAST buffer");
+                return Status::OOM;
+            }
+
+            auto *new_hdr =
+                reinterpret_cast<TupleHeader *>(prepared_out->owned_storage_tuple.data());
+            const auto *orig_hdr = reinterpret_cast<const TupleHeader *>(logical_tuple_data);
+            *new_hdr = *orig_hdr;
+
+            ToastPointer toast_ptr{};
+            Status toast_status = toast_mgr->toastValue(logical_tuple_data + sizeof(TupleHeader),
+                                                        logical_tuple_size - sizeof(TupleHeader),
+                                                        ToastStrategy::EXTERNAL,
+                                                        new_xmin,
+                                                        &toast_ptr,
+                                                        ctx);
+            if (toast_status != Status::OK)
+            {
+                return toast_status;
+            }
+
+            std::memcpy(prepared_out->owned_storage_tuple.data() + sizeof(TupleHeader),
+                        &toast_ptr,
+                        sizeof(ToastPointer));
+
+            prepared_out->storage_tuple_data = prepared_out->owned_storage_tuple.data();
+            prepared_out->storage_tuple_size =
+                static_cast<uint32_t>(prepared_out->owned_storage_tuple.size());
+            prepared_out->toasted = true;
+            prepared_out->toast_value_id = toast_ptr.lob_uuid;
+            return Status::OK;
         }
     }
 
@@ -730,6 +785,105 @@ namespace scratchbird::core
             }
         }
 
+        enum class ExactIndexRetirementMode : uint8_t
+        {
+            SOFT_DELETE,
+            HARD_REMOVE,
+        };
+
+        Status retireExactIndexEntry(CatalogManager::IndexType index_type,
+                                     void *index_ptr,
+                                     const std::vector<uint8_t> &key,
+                                     const TID &tid,
+                                     uint64_t xid,
+                                     ExactIndexRetirementMode mode,
+                                     ErrorContext *ctx)
+        {
+            if (!index_ptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null index pointer");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            switch (index_type)
+            {
+                case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::STL_SORT:
+                case CatalogManager::IndexType::ART:
+                case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                case CatalogManager::IndexType::NEO4J_RANGE:
+                case CatalogManager::IndexType::NEO4J_POINT:
+                case CatalogManager::IndexType::REDIS_LIST:
+                case CatalogManager::IndexType::REDIS_ZSET:
+                case CatalogManager::IndexType::REDIS_STREAM:
+                {
+                    auto *btree = static_cast<BTree *>(index_ptr);
+                    return mode == ExactIndexRetirementMode::SOFT_DELETE
+                        ? btree->markDeleted(key, tid, xid, ctx)
+                        : btree->purge(key, tid, ctx);
+                }
+
+                case CatalogManager::IndexType::HASH:
+                case CatalogManager::IndexType::REDIS_STRING:
+                case CatalogManager::IndexType::REDIS_HASH:
+                case CatalogManager::IndexType::REDIS_SET:
+                case CatalogManager::IndexType::REDIS_HLL:
+                {
+                    auto *hash = static_cast<HashIndex *>(index_ptr);
+                    return mode == ExactIndexRetirementMode::SOFT_DELETE
+                        ? hash->remove(key.data(), key.size(), tid, xid, ctx)
+                        : hash->purge(key.data(), key.size(), tid, ctx);
+                }
+
+                default:
+                    return removeFromIndex(index_type, index_ptr, key, tid, xid, ctx);
+            }
+        }
+
+        Status restoreExactIndexEntry(CatalogManager::IndexType index_type,
+                                      void *index_ptr,
+                                      const std::vector<uint8_t> &key,
+                                      const TID &tid,
+                                      uint64_t deleting_xid,
+                                      ErrorContext *ctx)
+        {
+            if (!index_ptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null index pointer");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            switch (index_type)
+            {
+                case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::STL_SORT:
+                case CatalogManager::IndexType::ART:
+                case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                case CatalogManager::IndexType::NEO4J_RANGE:
+                case CatalogManager::IndexType::NEO4J_POINT:
+                case CatalogManager::IndexType::REDIS_LIST:
+                case CatalogManager::IndexType::REDIS_ZSET:
+                case CatalogManager::IndexType::REDIS_STREAM:
+                {
+                    auto *btree = static_cast<BTree *>(index_ptr);
+                    return btree->restoreDeleted(key, tid, deleting_xid, ctx);
+                }
+
+                case CatalogManager::IndexType::HASH:
+                case CatalogManager::IndexType::REDIS_STRING:
+                case CatalogManager::IndexType::REDIS_HASH:
+                case CatalogManager::IndexType::REDIS_SET:
+                case CatalogManager::IndexType::REDIS_HLL:
+                {
+                    auto *hash = static_cast<HashIndex *>(index_ptr);
+                    return hash->restoreDeleted(key.data(), key.size(), tid, deleting_xid, ctx);
+                }
+
+                default:
+                    return Status::NOT_FOUND;
+            }
+        }
+
         TypeInfo buildTypeInfo(const CatalogManager::ColumnInfo &column)
         {
             TypeInfo info(static_cast<DataType>(column.data_type));
@@ -1130,6 +1284,72 @@ namespace scratchbird::core
                                     key_out, ctx);
     }
 
+    auto StorageEngine::getVisibleTupleForStableTid(const ID &table_id,
+                                                    const TID &stable_tid,
+                                                    Tuple *tuple_out,
+                                                    ErrorContext *ctx) -> Status
+    {
+        if (tuple_out == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid tuple output buffer");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        CatalogManager::TableInfo table_info;
+        Status status = catalog_manager_->getTable(table_id, table_info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Table not found");
+            return Status::NOT_FOUND;
+        }
+
+        uint16_t target_tablespace = getTablespaceID(stable_tid.gpid);
+        if (table_info.migration_in_progress)
+        {
+            TIDResolver *tid_resolver = db_->tid_resolver();
+            if (tid_resolver != nullptr)
+            {
+                target_tablespace = tid_resolver->resolveTablespace(stable_tid,
+                                                                    table_info,
+                                                                    nullptr,
+                                                                    ctx);
+            }
+        }
+
+        uint64_t page_number = getPageNumber(stable_tid.gpid);
+        GPID resolved_gpid = makeGPID(target_tablespace, page_number);
+
+        void *page_buffer = nullptr;
+        status = buffer_pool_->pinPageGlobal(resolved_gpid, &page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *page_data = static_cast<uint8_t *>(page_buffer);
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
+
+        const uint8_t *visible_tuple_data = nullptr;
+        uint32_t visible_tuple_size = 0;
+        TID visible_tid = stable_tid;
+        status = heap_page.findVisibleVersion(stable_tid.slot,
+                                              getCurrentXid(),
+                                              &visible_tuple_data,
+                                              &visible_tuple_size,
+                                              &visible_tid,
+                                              ctx);
+
+        buffer_pool_->unpinPageGlobal(resolved_gpid, false, ctx);
+
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return getTuple(table_id, visible_tid, tuple_out, ctx);
+    }
+
     auto StorageEngine::filterIndexCandidatesByVisibleHeap(
         const ID &table_id,
         const std::vector<ID> &indexed_column_ids,
@@ -1157,7 +1377,8 @@ namespace scratchbird::core
 
             Tuple tuple{};
             ErrorContext tuple_ctx;
-            Status tuple_status = getTuple(table_id, candidate_tid, &tuple, &tuple_ctx);
+            Status tuple_status = getVisibleTupleForStableTid(table_id, candidate_tid,
+                                                              &tuple, &tuple_ctx);
             if (tuple_status == Status::NOT_FOUND)
             {
                 continue;
@@ -2014,6 +2235,11 @@ namespace scratchbird::core
             }
         } tuple_lock_guard{this, table_id, page_id, item_id, proc_id, ctx, true};
 
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        const bool defer_toast_cleanup =
+            conn_ctx != nullptr && conn_ctx->hasActiveSavepoints() &&
+            !conn_ctx->isSavepointRollbackInProgress();
+
         // Pin the page
         GPID gpid = makeGPID(tablespace_id, static_cast<uint64_t>(page_id));
         void *page_buffer;
@@ -2027,7 +2253,7 @@ namespace scratchbird::core
         // Resolve the currently visible physical version for the stable logical TID before
         // applying a delete. Rolled-back updates can leave an aborted head version in the root
         // slot while the committed row lives in the back-version chain.
-        HeapPage heap_page(page_data, db_->page_size(), nullptr, db_, table_id);
+        HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
 
         // Get current XID from connection context
         uint64_t current_xid = ConnectionContext::getCurrentTransactionId();
@@ -2088,15 +2314,22 @@ namespace scratchbird::core
             delete_page_data = static_cast<uint8_t *>(delete_page_buffer);
         }
 
-        HeapPage delete_heap_page(delete_page_data, db_->page_size(), nullptr, db_, table_id);
-        status = delete_heap_page.deleteTuple(delete_target_item_id, current_xid, ctx);
+        HeapPage delete_heap_page(delete_page_data, db_->page_size(), toast_mgr, db_, table_id);
+        status = delete_heap_page.deleteTuple(delete_target_item_id,
+                                              current_xid,
+                                              ctx,
+                                              defer_toast_cleanup);
 
         if (status == Status::OK)
         {
             if (ConnectionContext* active_conn_ctx = ConnectionContext::getCurrent())
             {
                 active_conn_ctx->trackTupleDeletion(
-                    table_id, delete_target_page_id, delete_target_item_id);
+                    table_id,
+                    page_id,
+                    item_id,
+                    deleted_tuple_image.data(),
+                    static_cast<uint32_t>(deleted_tuple_image.size()));
             }
 
             // Sprint 4 Task 5.4.3: Mark page dirty if migrating
@@ -2180,18 +2413,26 @@ namespace scratchbird::core
                                 continue;
                             }
 
-                            // Remove from index using cache
                             CatalogManager::IndexType actual_index_type;
                             void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
 
                             if (index_ptr)
                             {
-                                Status remove_status = removeFromIndex(
-                                    actual_index_type, index_ptr, key, tid, current_xid, ctx);
+                                const bool exact_lookup_family = supportsExactKeyLookup(actual_index_type);
+                                Status retire_status = exact_lookup_family
+                                    ? retireExactIndexEntry(actual_index_type,
+                                                            index_ptr,
+                                                            key,
+                                                            tid,
+                                                            current_xid,
+                                                            ExactIndexRetirementMode::SOFT_DELETE,
+                                                            ctx)
+                                    : removeFromIndex(actual_index_type, index_ptr, key, tid,
+                                                      current_xid, ctx);
 
-                                if (remove_status != Status::OK)
+                                if (retire_status != Status::OK)
                                 {
-                                    LOG_ERROR(STORAGE, "Failed to remove from %s index %s: %s",
+                                    LOG_ERROR(STORAGE, "Failed to retire from %s index %s: %s",
                                               indexTypeToString(actual_index_type).c_str(),
                                               index_info.index_name.c_str(),
                                               ctx ? ctx->message.c_str() : "unknown error");
@@ -2209,7 +2450,7 @@ namespace scratchbird::core
                     }
                     else
                     {
-                        LOG_WARNING(STORAGE, "Skipping index removal due to column layout failure");
+                        LOG_WARNING(STORAGE, "Skipping index lifecycle retirement due to column layout failure");
                     }
                 }
             }
@@ -2231,384 +2472,603 @@ namespace scratchbird::core
         return status;
     }
 
-    auto StorageEngine::markInsertedTupleRolledBack(uint32_t page_id, uint16_t item_id,
-                                                    uint64_t rollback_xid,
-                                                    ErrorContext *ctx) -> Status
+    auto StorageEngine::rollbackSavepointChanges(
+        const std::vector<SavepointBackoutAction> &actions,
+        uint64_t rollback_xid,
+        ErrorContext *ctx) -> Status
     {
-        if (buffer_pool_ == nullptr)
+        for (const auto &action : actions)
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Buffer pool not available");
-            return Status::IO_ERROR;
+            Status status = Status::INVALID_ARGUMENT;
+            switch (action.kind)
+            {
+                case SavepointBackoutActionKind::REMOVE_ROW:
+                    status = rollbackInsertedSavepointRow(action, rollback_xid, ctx);
+                    break;
+
+                case SavepointBackoutActionKind::RESTORE_ROW:
+                    status = restoreSavepointRowState(action, rollback_xid, ctx);
+                    break;
+            }
+
+            if (status != Status::OK)
+            {
+                return status;
+            }
         }
 
-        void *page_buffer = nullptr;
-        Status pin_status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
-        if (pin_status != Status::OK)
-        {
-            return pin_status;
-        }
-
-        bool dirty = false;
-        auto *page_data = static_cast<uint8_t *>(page_buffer);
-        auto *page_header = reinterpret_cast<PageHeader *>(page_data);
-        auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
-        uint16_t item_count = static_cast<uint16_t>(
-            (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
-
-        if (item_id >= item_count || !items[item_id].isValid(db_->page_size()) ||
-            items[item_id].isDeleted())
-        {
-            buffer_pool_->unpinPage(page_id, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                              "Cannot mark rolled back insert for missing tuple");
-            return Status::NOT_FOUND;
-        }
-
-        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
-        tuple_hdr->xmax = rollback_xid;
-        tuple_hdr->infomask = static_cast<uint16_t>(
-            tuple_hdr->infomask &
-            ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
-        tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, true);
-        dirty = true;
-
-        buffer_pool_->unpinPage(page_id, dirty, ctx);
         return Status::OK;
     }
 
-    auto StorageEngine::clearTupleDeleteMark(uint32_t page_id, uint16_t item_id,
-                                             ErrorContext *ctx) -> Status
+    auto StorageEngine::rollbackInsertedSavepointRow(const SavepointBackoutAction &action,
+                                                     uint64_t rollback_xid,
+                                                     ErrorContext *ctx) -> Status
     {
-        if (buffer_pool_ == nullptr)
+        (void)rollback_xid;
+
+        uint16_t tablespace_id = PRIMARY_TABLESPACE_ID;
+        CatalogManager::TableInfo table_info;
+        bool table_info_valid = false;
+        if (!isZeroId(action.table_id) && catalog_manager_ != nullptr)
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Buffer pool not available");
-            return Status::IO_ERROR;
-        }
-
-        void *page_buffer = nullptr;
-        Status pin_status = buffer_pool_->pinPage(page_id, &page_buffer, ctx);
-        if (pin_status != Status::OK)
-        {
-            return pin_status;
-        }
-
-        bool dirty = false;
-        auto *page_data = static_cast<uint8_t *>(page_buffer);
-        auto *page_header = reinterpret_cast<PageHeader *>(page_data);
-        auto *items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
-        uint16_t item_count = static_cast<uint16_t>(
-            (pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
-
-        if (item_id >= item_count || !items[item_id].isValid(db_->page_size()) ||
-            items[item_id].isDeleted())
-        {
-            buffer_pool_->unpinPage(page_id, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
-                              "Cannot clear delete mark for missing tuple");
-            return Status::NOT_FOUND;
-        }
-
-        auto *tuple_hdr = reinterpret_cast<TupleHeader *>(page_data + items[item_id].offset);
-        tuple_hdr->xmax = 0;
-        tuple_hdr->infomask = static_cast<uint16_t>(
-            tuple_hdr->infomask &
-            ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
-        tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
-        dirty = true;
-
-        buffer_pool_->unpinPage(page_id, dirty, ctx);
-        return Status::OK;
-    }
-
-    auto StorageEngine::rollbackSavepointAction(const SavepointBackoutAction &action,
-                                                uint64_t rollback_xid,
-                                                ErrorContext *ctx) -> Status
-    {
-        auto is_zero_id = [](const ID &id) {
-            for (uint8_t byte : id.bytes)
+            table_info_valid = catalog_manager_->getTable(action.table_id, table_info, ctx) == Status::OK;
+            if (table_info_valid)
             {
-                if (byte != 0)
-                {
-                    return false;
-                }
+                tablespace_id = table_info.tablespace_id;
             }
-            return true;
+        }
+
+        auto markDirtyPage = [&](GPID dirty_gpid) {
+            const uint16_t dirty_tablespace_id = getTablespaceID(dirty_gpid);
+            const uint32_t dirty_page_id = static_cast<uint32_t>(getPageNumber(dirty_gpid));
+            if (table_info_valid && table_info.migration_in_progress)
+            {
+                catalog_manager_->markPageDirty(table_info.migration_id, dirty_page_id, ctx);
+            }
+            if (db_->garbage_collector() != nullptr &&
+                dirty_tablespace_id == PRIMARY_TABLESPACE_ID)
+            {
+                db_->garbage_collector()->markPageDirty(dirty_page_id);
+            }
         };
 
-        auto resolve_tablespace_id = [&]() -> uint16_t
+        auto copyTupleImage = [](const uint8_t *tuple_data,
+                                 uint32_t tuple_size,
+                                 std::vector<uint8_t> *out,
+                                 ErrorContext *ctx) -> Status
         {
-            if (is_zero_id(action.table_id) || catalog_manager_ == nullptr)
+            if (out == nullptr || tuple_data == nullptr || tuple_size < sizeof(TupleHeader))
             {
-                return PRIMARY_TABLESPACE_ID;
-            }
-
-            CatalogManager::TableInfo table_info;
-            Status table_status = catalog_manager_->getTable(action.table_id, table_info, ctx);
-            if (table_status != Status::OK)
-            {
-                return PRIMARY_TABLESPACE_ID;
-            }
-
-            return table_info.tablespace_id;
-        };
-
-        auto copy_tuple_image = [](const uint8_t *tuple_data, uint32_t tuple_size,
-                                   std::vector<uint8_t> &out) -> Status
-        {
-            if (tuple_data == nullptr || tuple_size < sizeof(TupleHeader))
-            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Tuple image is invalid");
                 return Status::INVALID_ARGUMENT;
             }
 
             try
             {
-                out.assign(tuple_data, tuple_data + tuple_size);
+                out->assign(tuple_data, tuple_data + tuple_size);
             }
             catch (const std::bad_alloc &)
             {
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate tuple image copy");
                 return Status::OOM;
             }
-
             return Status::OK;
         };
 
-        const uint16_t tablespace_id = resolve_tablespace_id();
         const GPID primary_gpid =
-            makeGPID(tablespace_id, static_cast<uint64_t>(action.page_id));
+            makeGPID(tablespace_id, static_cast<uint64_t>(action.stable_page_id));
+        ToastManager *toast_mgr =
+            isZeroId(action.table_id) ? nullptr : getOrCreateToastManager(action.table_id, ctx);
 
-        switch (action.kind)
+        void *primary_page_buffer = nullptr;
+        Status status = buffer_pool_->pinPageGlobal(primary_gpid, &primary_page_buffer, ctx);
+        if (status != Status::OK)
         {
-            case SavepointBackoutActionKind::INSERT:
-            {
-                void *page_buffer = nullptr;
-                Status status = buffer_pool_->pinPageGlobal(primary_gpid, &page_buffer, ctx);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-
-                bool dirty = false;
-                auto *page_data = static_cast<uint8_t *>(page_buffer);
-                HeapPage heap_page(page_data,
-                                   db_->page_size(),
-                                   is_zero_id(action.table_id)
-                                       ? nullptr
-                                       : getOrCreateToastManager(action.table_id, ctx),
-                                   db_,
-                                   action.table_id);
-                const uint8_t *tuple_data = nullptr;
-                uint32_t tuple_size = 0;
-                status = heap_page.getTuple(action.item_id, &tuple_data, &tuple_size, ctx);
-                if (status == Status::OK)
-                {
-                    const auto *tuple_hdr =
-                        reinterpret_cast<const TupleHeader *>(tuple_data);
-                    if (tuple_hdr->xmin != rollback_xid || tuple_hdr->hasBackVersion())
-                    {
-                        SET_ERROR_CONTEXT(ctx,
-                                          Status::INVALID_ARGUMENT,
-                                          "Insert backout requires a root version created by the current transaction");
-                        status = Status::INVALID_ARGUMENT;
-                    }
-                    else
-                    {
-                        status = heap_page.deleteTuple(action.item_id, UINT64_MAX, ctx, false);
-                        dirty = (status == Status::OK);
-                    }
-                }
-
-                buffer_pool_->unpinPageGlobal(primary_gpid, dirty, ctx);
-                return status;
-            }
-
-            case SavepointBackoutActionKind::DELETE:
-            {
-                void *page_buffer = nullptr;
-                Status status = buffer_pool_->pinPageGlobal(primary_gpid, &page_buffer, ctx);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-
-                bool dirty = false;
-                auto *page_data = static_cast<uint8_t *>(page_buffer);
-                HeapPage heap_page(page_data,
-                                   db_->page_size(),
-                                   is_zero_id(action.table_id)
-                                       ? nullptr
-                                       : getOrCreateToastManager(action.table_id, ctx),
-                                   db_,
-                                   action.table_id);
-                status = heap_page.backoutDeleteTuple(action.item_id, rollback_xid, ctx);
-                dirty = (status == Status::OK);
-                buffer_pool_->unpinPageGlobal(primary_gpid, dirty, ctx);
-                return status;
-            }
-
-            case SavepointBackoutActionKind::UPDATE:
-                if (isZeroId(action.table_id))
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                      "Update backout action is missing table identity");
-                    return Status::INVALID_ARGUMENT;
-                }
-                else
-                {
-                    ToastManager *toast_mgr = getOrCreateToastManager(action.table_id, ctx);
-                    void *primary_page_buffer = nullptr;
-                    Status status =
-                        buffer_pool_->pinPageGlobal(primary_gpid, &primary_page_buffer, ctx);
-                    if (status != Status::OK)
-                    {
-                        return status;
-                    }
-
-                    bool primary_dirty = false;
-                    bool back_dirty = false;
-                    const GPID no_back_page = INVALID_GPID;
-                    GPID back_gpid = no_back_page;
-                    void *back_page_buffer = nullptr;
-
-                    auto *primary_page_data = static_cast<uint8_t *>(primary_page_buffer);
-                    HeapPage primary_heap_page(primary_page_data, db_->page_size(), toast_mgr, db_,
-                                               action.table_id);
-
-                    const uint8_t *current_tuple_data = nullptr;
-                    uint32_t current_tuple_size = 0;
-                    status = primary_heap_page.getTuple(action.item_id,
-                                                        &current_tuple_data,
-                                                        &current_tuple_size,
-                                                        ctx);
-                    std::vector<uint8_t> current_tuple_image;
-                    if (status == Status::OK)
-                    {
-                        status = copy_tuple_image(current_tuple_data,
-                                                  current_tuple_size,
-                                                  current_tuple_image);
-                    }
-
-                    if (status != Status::OK)
-                    {
-                        buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
-                        return status;
-                    }
-
-                    const auto *current_hdr =
-                        reinterpret_cast<const TupleHeader *>(current_tuple_image.data());
-                    if (current_hdr->xmin != rollback_xid || !current_hdr->hasBackVersion())
-                    {
-                        buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
-                        SET_ERROR_CONTEXT(ctx,
-                                          Status::INVALID_ARGUMENT,
-                                          "Update backout requires a current version owned by the rollback XID and a back version");
-                        return Status::INVALID_ARGUMENT;
-                    }
-
-                    ID current_toast_value{};
-                    ID restored_toast_value{};
-                    const bool current_has_toast =
-                        extractReferencedToastValueId(current_tuple_image.data(),
-                                                     static_cast<uint32_t>(current_tuple_image.size()),
-                                                     &current_toast_value);
-
-                    const TID back_tid = current_hdr->getBackVersionTID();
-                    if (back_tid.gpid == INVALID_GPID)
-                    {
-                        buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
-                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                          "Update backout cannot resolve back version");
-                        return Status::PAGE_CORRUPT;
-                    }
-
-                    if (back_tid.gpid == primary_gpid)
-                    {
-                        back_page_buffer = primary_page_buffer;
-                    }
-                    else
-                    {
-                        status = buffer_pool_->pinPageGlobal(back_tid.gpid, &back_page_buffer, ctx);
-                        if (status != Status::OK)
-                        {
-                            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
-                            return status;
-                        }
-                    }
-
-                    auto *back_page_data = static_cast<uint8_t *>(back_page_buffer);
-                    HeapPage back_heap_page(back_page_data, db_->page_size(), toast_mgr, db_,
-                                            action.table_id);
-
-                    const uint8_t *back_tuple_data = nullptr;
-                    uint32_t back_tuple_size = 0;
-                    status = back_heap_page.getTuple(back_tid.slot, &back_tuple_data,
-                                                     &back_tuple_size, ctx);
-                    std::vector<uint8_t> back_tuple_image;
-                    if (status == Status::OK)
-                    {
-                        status = copy_tuple_image(back_tuple_data, back_tuple_size, back_tuple_image);
-                    }
-
-                    if (status == Status::OK)
-                    {
-                        const auto *back_hdr =
-                            reinterpret_cast<const TupleHeader *>(back_tuple_image.data());
-                        const bool restored_has_toast =
-                            extractReferencedToastValueId(back_tuple_image.data(),
-                                                         static_cast<uint32_t>(back_tuple_image.size()),
-                                                         &restored_toast_value);
-                        status = primary_heap_page.overwriteTuple(action.item_id,
-                                                                  back_tuple_image.data(),
-                                                                  back_tuple_size,
-                                                                  rollback_xid,
-                                                                  back_hdr->xmin,
-                                                                  back_hdr->back_version_gpid,
-                                                                  back_hdr->back_version_slot,
-                                                                  ctx);
-                        if (status == Status::OK)
-                        {
-                            primary_dirty = true;
-                            status = updateStableTidIndexesForMutation(action.table_id,
-                                                                       tablespace_id,
-                                                                       action.page_id,
-                                                                       action.item_id,
-                                                                       current_tuple_image.data(),
-                                                                       static_cast<uint32_t>(current_tuple_image.size()),
-                                                                       back_tuple_image.data(),
-                                                                       static_cast<uint32_t>(back_tuple_image.size()),
-                                                                       rollback_xid,
-                                                                       ctx);
-                        }
-                        if (status == Status::OK && current_has_toast &&
-                            (!restored_has_toast || current_toast_value != restored_toast_value))
-                        {
-                            Status cleanup_status =
-                                toast_mgr->deleteToastValue(current_toast_value, rollback_xid, ctx);
-                            if (cleanup_status != Status::OK &&
-                                cleanup_status != Status::NOT_FOUND)
-                            {
-                                LOG_WARNING(STORAGE,
-                                            "Failed to retire rolled-back TOAST value during savepoint backout (status=%d)",
-                                            static_cast<int>(cleanup_status));
-                            }
-                        }
-                        if (status == Status::OK)
-                        {
-                            status = back_heap_page.deleteTuple(back_tid.slot, UINT64_MAX, ctx, true);
-                            back_dirty = (status == Status::OK);
-                        }
-                    }
-
-                    if (back_tid.gpid != primary_gpid)
-                    {
-                        buffer_pool_->unpinPageGlobal(back_tid.gpid, back_dirty, ctx);
-                    }
-                    buffer_pool_->unpinPageGlobal(primary_gpid, primary_dirty, ctx);
-                    return status;
-                }
+            return status;
         }
 
-        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Unknown savepoint backout action");
-        return Status::INVALID_ARGUMENT;
+        auto *primary_page_data = static_cast<uint8_t *>(primary_page_buffer);
+        HeapPage primary_heap_page(primary_page_data, db_->page_size(), toast_mgr, db_,
+                                   action.table_id);
+        const uint8_t *current_tuple_data = nullptr;
+        uint32_t current_tuple_size = 0;
+        status = primary_heap_page.getTuple(action.stable_item_id,
+                                            &current_tuple_data,
+                                            &current_tuple_size,
+                                            ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            return status;
+        }
+
+        std::vector<uint8_t> current_tuple_image;
+        status = copyTupleImage(current_tuple_data, current_tuple_size, &current_tuple_image, ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            return status;
+        }
+
+        const auto *current_hdr =
+            reinterpret_cast<const TupleHeader *>(current_tuple_image.data());
+        std::vector<TID> version_chain_tids;
+        std::vector<std::vector<uint8_t>> version_chain_images;
+        std::vector<TID> visited_tids;
+        for (TID next_tid = current_hdr->getBackVersionTID();
+             next_tid.isValid();
+             )
+        {
+            if (std::find(visited_tids.begin(), visited_tids.end(), next_tid) !=
+                visited_tids.end())
+            {
+                buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Detected cycle while collecting savepoint backout chain");
+                return Status::PAGE_CORRUPT;
+            }
+            visited_tids.push_back(next_tid);
+
+            void *chain_page_buffer = nullptr;
+            Status pin_status = buffer_pool_->pinPageGlobal(next_tid.gpid, &chain_page_buffer, ctx);
+            if (pin_status != Status::OK)
+            {
+                buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                return pin_status;
+            }
+
+            auto *chain_page_data = static_cast<uint8_t *>(chain_page_buffer);
+            HeapPage chain_heap_page(chain_page_data, db_->page_size(), toast_mgr, db_,
+                                     action.table_id);
+            const uint8_t *chain_tuple_data = nullptr;
+            uint32_t chain_tuple_size = 0;
+            Status chain_status = chain_heap_page.getTuple(next_tid.slot,
+                                                           &chain_tuple_data,
+                                                           &chain_tuple_size,
+                                                           ctx);
+            std::vector<uint8_t> chain_tuple_image;
+            if (chain_status == Status::OK)
+            {
+                chain_status = copyTupleImage(chain_tuple_data,
+                                              chain_tuple_size,
+                                              &chain_tuple_image,
+                                              ctx);
+            }
+            buffer_pool_->unpinPageGlobal(next_tid.gpid, false, ctx);
+            if (chain_status != Status::OK)
+            {
+                buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                return chain_status;
+            }
+
+            version_chain_tids.push_back(next_tid);
+            version_chain_images.emplace_back(std::move(chain_tuple_image));
+            next_tid =
+                reinterpret_cast<const TupleHeader *>(version_chain_images.back().data())
+                    ->getBackVersionTID();
+        }
+
+        status = rewriteStableTidIndexesForRollback(action.table_id,
+                                                    tablespace_id,
+                                                    action.stable_page_id,
+                                                    action.stable_item_id,
+                                                    current_tuple_image.data(),
+                                                    static_cast<uint32_t>(current_tuple_image.size()),
+                                                    nullptr,
+                                                    0,
+                                                    false,
+                                                    rollback_xid,
+                                                    ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            return status;
+        }
+
+        std::vector<ID> toast_values_to_delete;
+        ToastManager::queueReferencedToastValueForRetirement(
+            current_tuple_image.data(),
+            static_cast<uint32_t>(current_tuple_image.size()),
+            nullptr,
+            &toast_values_to_delete);
+        for (const auto &chain_image : version_chain_images)
+        {
+            ToastManager::queueReferencedToastValueForRetirement(
+                chain_image.data(),
+                static_cast<uint32_t>(chain_image.size()),
+                nullptr,
+                &toast_values_to_delete);
+        }
+
+        bool primary_dirty = false;
+        std::vector<uint16_t> primary_reclaim_slots;
+        primary_reclaim_slots.push_back(action.stable_item_id);
+        for (const TID &chain_tid : version_chain_tids)
+        {
+            if (chain_tid.gpid == primary_gpid)
+            {
+                primary_reclaim_slots.push_back(chain_tid.slot);
+            }
+        }
+        uint32_t reclaimed_primary_tuples = 0;
+        uint32_t reclaimed_primary_bytes = 0;
+        status = primary_heap_page.reclaimVersionSlots(primary_reclaim_slots,
+                                                       &reclaimed_primary_tuples,
+                                                       &reclaimed_primary_bytes,
+                                                       ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            return status;
+        }
+        primary_dirty = reclaimed_primary_tuples > 0;
+        buffer_pool_->unpinPageGlobal(primary_gpid, primary_dirty, ctx);
+        if (primary_dirty)
+        {
+            markDirtyPage(primary_gpid);
+        }
+
+        for (const TID &chain_tid : version_chain_tids)
+        {
+            if (chain_tid.gpid == primary_gpid)
+            {
+                continue;
+            }
+
+            void *chain_page_buffer = nullptr;
+            Status pin_status = buffer_pool_->pinPageGlobal(chain_tid.gpid, &chain_page_buffer, ctx);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            auto *chain_page_data = static_cast<uint8_t *>(chain_page_buffer);
+            HeapPage chain_heap_page(chain_page_data, db_->page_size(), toast_mgr, db_,
+                                     action.table_id);
+            uint32_t reclaimed_chain_tuples = 0;
+            uint32_t reclaimed_chain_bytes = 0;
+            Status chain_status =
+                chain_heap_page.reclaimVersionSlots({chain_tid.slot},
+                                                    &reclaimed_chain_tuples,
+                                                    &reclaimed_chain_bytes,
+                                                    ctx);
+            buffer_pool_->unpinPageGlobal(chain_tid.gpid,
+                                          chain_status == Status::OK &&
+                                              reclaimed_chain_tuples > 0,
+                                          ctx);
+            if (chain_status != Status::OK)
+            {
+                return chain_status;
+            }
+            if (reclaimed_chain_tuples > 0)
+            {
+                markDirtyPage(chain_tid.gpid);
+            }
+        }
+
+        if (toast_mgr != nullptr)
+        {
+            for (const ID &toast_value_id : toast_values_to_delete)
+            {
+                Status cleanup_status =
+                    toast_mgr->deleteToastValue(toast_value_id, rollback_xid, ctx);
+                if (cleanup_status != Status::OK && cleanup_status != Status::NOT_FOUND)
+                {
+                    LOG_WARNING(STORAGE,
+                                "Failed to retire TOAST value during inserted-row savepoint rollback (status=%d)",
+                                static_cast<int>(cleanup_status));
+                }
+            }
+        }
+
+        return Status::OK;
+    }
+
+    auto StorageEngine::restoreSavepointRowState(const SavepointBackoutAction &action,
+                                                 uint64_t rollback_xid,
+                                                 ErrorContext *ctx) -> Status
+    {
+        if (action.restore_tuple_image.size() < sizeof(TupleHeader))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Savepoint restore image is missing or invalid");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint16_t tablespace_id = PRIMARY_TABLESPACE_ID;
+        CatalogManager::TableInfo table_info;
+        bool table_info_valid = false;
+        if (!isZeroId(action.table_id) && catalog_manager_ != nullptr)
+        {
+            table_info_valid = catalog_manager_->getTable(action.table_id, table_info, ctx) == Status::OK;
+            if (table_info_valid)
+            {
+                tablespace_id = table_info.tablespace_id;
+            }
+        }
+
+        auto markDirtyPage = [&](GPID dirty_gpid) {
+            const uint16_t dirty_tablespace_id = getTablespaceID(dirty_gpid);
+            const uint32_t dirty_page_id = static_cast<uint32_t>(getPageNumber(dirty_gpid));
+            if (table_info_valid && table_info.migration_in_progress)
+            {
+                catalog_manager_->markPageDirty(table_info.migration_id, dirty_page_id, ctx);
+            }
+            if (db_->garbage_collector() != nullptr &&
+                dirty_tablespace_id == PRIMARY_TABLESPACE_ID)
+            {
+                db_->garbage_collector()->markPageDirty(dirty_page_id);
+            }
+        };
+
+        auto copyTupleImage = [](const uint8_t *tuple_data,
+                                 uint32_t tuple_size,
+                                 std::vector<uint8_t> *out,
+                                 ErrorContext *ctx) -> Status
+        {
+            if (out == nullptr || tuple_data == nullptr || tuple_size < sizeof(TupleHeader))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Tuple image is invalid");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            try
+            {
+                out->assign(tuple_data, tuple_data + tuple_size);
+            }
+            catch (const std::bad_alloc &)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate tuple image copy");
+                return Status::OOM;
+            }
+            return Status::OK;
+        };
+
+        const GPID primary_gpid =
+            makeGPID(tablespace_id, static_cast<uint64_t>(action.stable_page_id));
+        ToastManager *toast_mgr =
+            isZeroId(action.table_id) ? nullptr : getOrCreateToastManager(action.table_id, ctx);
+
+        void *primary_page_buffer = nullptr;
+        Status status = buffer_pool_->pinPageGlobal(primary_gpid, &primary_page_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *primary_page_data = static_cast<uint8_t *>(primary_page_buffer);
+        std::vector<uint8_t> primary_page_snapshot(primary_page_data,
+                                                   primary_page_data + db_->page_size());
+        HeapPage primary_heap_page(primary_page_data, db_->page_size(), toast_mgr, db_,
+                                   action.table_id);
+        const uint8_t *current_tuple_data = nullptr;
+        uint32_t current_tuple_size = 0;
+        status = primary_heap_page.getTuple(action.stable_item_id,
+                                            &current_tuple_data,
+                                            &current_tuple_size,
+                                            ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            return status;
+        }
+
+        std::vector<uint8_t> current_tuple_image;
+        status = copyTupleImage(current_tuple_data, current_tuple_size, &current_tuple_image, ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            return status;
+        }
+
+        const auto *current_hdr =
+            reinterpret_cast<const TupleHeader *>(current_tuple_image.data());
+        const auto *restore_hdr =
+            reinterpret_cast<const TupleHeader *>(action.restore_tuple_image.data());
+        const TID preserved_back_tid = restore_hdr->getBackVersionTID();
+
+        std::vector<TID> transient_chain_tids;
+        std::vector<std::vector<uint8_t>> transient_chain_images;
+        std::vector<TID> visited_tids;
+        for (TID next_tid = current_hdr->getBackVersionTID();
+             next_tid.isValid() && next_tid != preserved_back_tid;
+             )
+        {
+            if (std::find(visited_tids.begin(), visited_tids.end(), next_tid) !=
+                visited_tids.end())
+            {
+                buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Detected cycle while collecting transient savepoint versions");
+                return Status::PAGE_CORRUPT;
+            }
+            visited_tids.push_back(next_tid);
+
+            void *chain_page_buffer = nullptr;
+            Status pin_status = buffer_pool_->pinPageGlobal(next_tid.gpid, &chain_page_buffer, ctx);
+            if (pin_status != Status::OK)
+            {
+                buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                return pin_status;
+            }
+
+            auto *chain_page_data = static_cast<uint8_t *>(chain_page_buffer);
+            HeapPage chain_heap_page(chain_page_data, db_->page_size(), toast_mgr, db_,
+                                     action.table_id);
+            const uint8_t *chain_tuple_data = nullptr;
+            uint32_t chain_tuple_size = 0;
+            Status chain_status = chain_heap_page.getTuple(next_tid.slot,
+                                                           &chain_tuple_data,
+                                                           &chain_tuple_size,
+                                                           ctx);
+            std::vector<uint8_t> chain_tuple_image;
+            if (chain_status == Status::OK)
+            {
+                chain_status = copyTupleImage(chain_tuple_data,
+                                              chain_tuple_size,
+                                              &chain_tuple_image,
+                                              ctx);
+            }
+            buffer_pool_->unpinPageGlobal(next_tid.gpid, false, ctx);
+            if (chain_status != Status::OK)
+            {
+                buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                return chain_status;
+            }
+
+            transient_chain_tids.push_back(next_tid);
+            transient_chain_images.emplace_back(std::move(chain_tuple_image));
+            next_tid =
+                reinterpret_cast<const TupleHeader *>(transient_chain_images.back().data())
+                    ->getBackVersionTID();
+        }
+
+        std::vector<ID> toast_values_to_delete;
+        ID restored_toast_value{};
+        const bool restored_has_toast =
+            ToastManager::extractReferencedToastValueId(
+                action.restore_tuple_image.data(),
+                static_cast<uint32_t>(action.restore_tuple_image.size()),
+                &restored_toast_value);
+        ToastManager::queueReferencedToastValueForRetirement(
+            current_tuple_image.data(),
+            static_cast<uint32_t>(current_tuple_image.size()),
+            restored_has_toast ? &restored_toast_value : nullptr,
+            &toast_values_to_delete);
+        for (const auto &chain_image : transient_chain_images)
+        {
+            ToastManager::queueReferencedToastValueForRetirement(
+                chain_image.data(),
+                static_cast<uint32_t>(chain_image.size()),
+                restored_has_toast ? &restored_toast_value : nullptr,
+                &toast_values_to_delete);
+        }
+
+        bool primary_dirty = false;
+        std::vector<uint16_t> primary_reclaim_slots;
+        for (const TID &transient_tid : transient_chain_tids)
+        {
+            if (transient_tid.gpid == primary_gpid)
+            {
+                primary_reclaim_slots.push_back(transient_tid.slot);
+            }
+        }
+        if (!primary_reclaim_slots.empty())
+        {
+            uint32_t reclaimed_bytes = 0;
+            uint32_t reclaimed_tuples = 0;
+            status = primary_heap_page.reclaimVersionSlots(primary_reclaim_slots,
+                                                           &reclaimed_tuples,
+                                                           &reclaimed_bytes,
+                                                           ctx);
+            if (status != Status::OK)
+            {
+                std::memcpy(primary_page_data,
+                            primary_page_snapshot.data(),
+                            primary_page_snapshot.size());
+                buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+                return status;
+            }
+            primary_dirty = reclaimed_tuples > 0;
+        }
+
+        status = primary_heap_page.restoreTupleImage(
+            action.stable_item_id,
+            action.restore_tuple_image.data(),
+            static_cast<uint32_t>(action.restore_tuple_image.size()),
+            ctx);
+        if (status != Status::OK)
+        {
+            std::memcpy(primary_page_data,
+                        primary_page_snapshot.data(),
+                        primary_page_snapshot.size());
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            return status;
+        }
+        primary_dirty = true;
+
+        status = rewriteStableTidIndexesForRollback(action.table_id,
+                                                    tablespace_id,
+                                                    action.stable_page_id,
+                                                    action.stable_item_id,
+                                                    current_tuple_image.data(),
+                                                    static_cast<uint32_t>(current_tuple_image.size()),
+                                                    action.restore_tuple_image.data(),
+                                                    static_cast<uint32_t>(action.restore_tuple_image.size()),
+                                                    true,
+                                                    rollback_xid,
+                                                    ctx);
+        if (status != Status::OK)
+        {
+            std::memcpy(primary_page_data,
+                        primary_page_snapshot.data(),
+                        primary_page_snapshot.size());
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            return status;
+        }
+
+        buffer_pool_->unpinPageGlobal(primary_gpid, primary_dirty, ctx);
+        if (primary_dirty)
+        {
+            markDirtyPage(primary_gpid);
+        }
+
+        for (const TID &transient_tid : transient_chain_tids)
+        {
+            if (transient_tid.gpid == primary_gpid)
+            {
+                continue;
+            }
+
+            void *chain_page_buffer = nullptr;
+            Status pin_status = buffer_pool_->pinPageGlobal(transient_tid.gpid,
+                                                            &chain_page_buffer,
+                                                            ctx);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            auto *chain_page_data = static_cast<uint8_t *>(chain_page_buffer);
+            HeapPage chain_heap_page(chain_page_data, db_->page_size(), toast_mgr, db_,
+                                     action.table_id);
+            uint32_t reclaimed_chain_tuples = 0;
+            uint32_t reclaimed_chain_bytes = 0;
+            Status chain_status =
+                chain_heap_page.reclaimVersionSlots({transient_tid.slot},
+                                                    &reclaimed_chain_tuples,
+                                                    &reclaimed_chain_bytes,
+                                                    ctx);
+            buffer_pool_->unpinPageGlobal(transient_tid.gpid,
+                                          chain_status == Status::OK &&
+                                              reclaimed_chain_tuples > 0,
+                                          ctx);
+            if (chain_status != Status::OK)
+            {
+                return chain_status;
+            }
+            if (reclaimed_chain_tuples > 0)
+            {
+                markDirtyPage(transient_tid.gpid);
+            }
+        }
+
+        if (toast_mgr != nullptr)
+        {
+            for (const ID &toast_value_id : toast_values_to_delete)
+            {
+                Status cleanup_status =
+                    toast_mgr->deleteToastValue(toast_value_id, rollback_xid, ctx);
+                if (cleanup_status != Status::OK && cleanup_status != Status::NOT_FOUND)
+                {
+                    LOG_WARNING(STORAGE,
+                                "Failed to retire TOAST value during savepoint restore backout (status=%d)",
+                                static_cast<int>(cleanup_status));
+                }
+            }
+        }
+
+        return Status::OK;
     }
 
     auto StorageEngine::createScan(const ID &table_id, ErrorContext *ctx)
@@ -2684,21 +3144,7 @@ namespace scratchbird::core
             }
 
             ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-            const auto visibility_context = tm->resolveVisibilityContext(current_xid, conn_ctx);
-            if (!visibility_context.valid)
-            {
-                LOG_ERROR(STORAGE,
-                          "Invalid visibility context: proc_id=%d xid=%lu reason=%d",
-                          ConnectionContext::getCurrentProcId(),
-                          conn_ctx != nullptr ? conn_ctx->getCurrentXid() : current_xid,
-                          static_cast<int>(visibility_context.reason));
-                return false;
-            }
-
-            return tm->evaluateRecordVisibility(
-                         xmin, xmax, visibility_context.reader_xid, visibility_context.mode,
-                         visibility_context.snapshot)
-                .visible;
+            return tm->isRuntimeRecordVisible(xmin, xmax, current_xid, conn_ctx);
         }
 
         // Fallback to simple visibility rules (still validate XIDs)
@@ -3577,6 +4023,8 @@ namespace scratchbird::core
 
         for (const auto &index_info : indexes)
         {
+            extractor.clearCache();
+
             CatalogManager::IndexType actual_index_type;
             void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
             if (index_ptr == nullptr)
@@ -3611,11 +4059,12 @@ namespace scratchbird::core
                     }
 
                     bool is_null = (new_offsets[col_idx] == 0 && new_sizes[col_idx] == 0);
-                    const void *col_value = is_null ? nullptr : (new_tuple_data + new_offsets[col_idx]);
+                    const void *col_value =
+                        is_null ? nullptr : (new_tuple_data + new_offsets[col_idx]);
                     size_t col_value_len = new_sizes[col_idx];
 
-                    Status insert_status = columnstore->insert(
-                        col_id, tid, col_value, col_value_len, is_null, ctx);
+                    Status insert_status =
+                        columnstore->insert(col_id, tid, col_value, col_value_len, is_null, ctx);
                     if (insert_status != Status::OK)
                     {
                         LOG_WARNING(STORAGE, "Failed to insert into columnstore index %s: %s",
@@ -3669,11 +4118,19 @@ namespace scratchbird::core
                 continue;
             }
 
-            Status remove_status = removeFromIndex(actual_index_type, index_ptr, old_key, tid,
-                                                   current_xid, ctx);
-            if (remove_status != Status::OK)
+            const bool exact_lookup_family = supportsExactKeyLookup(actual_index_type);
+            Status retire_status = exact_lookup_family
+                ? retireExactIndexEntry(actual_index_type,
+                                        index_ptr,
+                                        old_key,
+                                        tid,
+                                        current_xid,
+                                        ExactIndexRetirementMode::SOFT_DELETE,
+                                        ctx)
+                : removeFromIndex(actual_index_type, index_ptr, old_key, tid, current_xid, ctx);
+            if (retire_status != Status::OK)
             {
-                LOG_WARNING(STORAGE, "Failed to remove old key from %s index %s: %s",
+                LOG_WARNING(STORAGE, "Failed to retire old key from %s index %s: %s",
                             indexTypeToString(actual_index_type).c_str(),
                             index_info.index_name.c_str(),
                             ctx ? ctx->message.c_str() : "unknown error");
@@ -3687,6 +4144,356 @@ namespace scratchbird::core
                           indexTypeToString(actual_index_type).c_str(),
                           index_info.index_name.c_str(),
                           ctx ? ctx->message.c_str() : "unknown error");
+            }
+        }
+
+        extractor.clearCache();
+        return Status::OK;
+    }
+
+    auto StorageEngine::rewriteStableTidIndexesForRollback(const ID &table_id,
+                                                           uint16_t tablespace_id,
+                                                           uint32_t stable_page_id,
+                                                           uint16_t stable_item_id,
+                                                           const uint8_t *current_tuple_data,
+                                                           uint32_t current_tuple_size,
+                                                           const uint8_t *restored_tuple_data,
+                                                           uint32_t restored_tuple_size,
+                                                           bool restored_row_present,
+                                                           uint64_t current_xid,
+                                                           ErrorContext *ctx) -> Status
+    {
+        if (isZeroId(table_id))
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::IndexInfo> indexes;
+        Status index_status = catalog_manager_->listIndexesForTable(table_id, indexes, ctx, false);
+        if (index_status != Status::OK || indexes.empty())
+        {
+            return Status::OK;
+        }
+
+        std::vector<CatalogManager::ColumnInfo> columns;
+        index_status = catalog_manager_->getColumns(table_id, columns, ctx);
+        if (index_status != Status::OK)
+        {
+            LOG_WARNING(STORAGE, "Skipping savepoint rollback index rewrite due to column lookup failure");
+            return Status::OK;
+        }
+
+        if (current_tuple_data == nullptr || current_tuple_size < sizeof(TupleHeader))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Current tuple image is invalid for savepoint rollback");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        TID tid(makeGPID(tablespace_id, static_cast<uint64_t>(stable_page_id)), stable_item_id);
+        IndexKeyExtractor extractor;
+        ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+
+        std::vector<uint8_t> materialized_current_tuple;
+        const uint8_t *current_key_tuple_data = nullptr;
+        uint32_t current_key_tuple_size = 0;
+        Status current_materialize_status = materializeTupleForKeyExtraction(current_tuple_data,
+                                                                             current_tuple_size,
+                                                                             toast_mgr,
+                                                                             current_xid,
+                                                                             materialized_current_tuple,
+                                                                             &current_key_tuple_data,
+                                                                             &current_key_tuple_size,
+                                                                             ctx);
+        if (current_materialize_status != Status::OK)
+        {
+            LOG_WARNING(STORAGE,
+                        "Skipping savepoint rollback index rewrite due to current tuple materialization failure (status=%d)",
+                        static_cast<int>(current_materialize_status));
+            return Status::OK;
+        }
+
+        std::vector<uint8_t> materialized_restored_tuple;
+        const uint8_t *restored_key_tuple_data = nullptr;
+        uint32_t restored_key_tuple_size = 0;
+        if (restored_row_present)
+        {
+            Status restored_materialize_status =
+                materializeTupleForKeyExtraction(restored_tuple_data,
+                                                restored_tuple_size,
+                                                toast_mgr,
+                                                current_xid,
+                                                materialized_restored_tuple,
+                                                &restored_key_tuple_data,
+                                                &restored_key_tuple_size,
+                                                ctx);
+            if (restored_materialize_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE,
+                            "Skipping savepoint rollback index rewrite due to restored tuple materialization failure (status=%d)",
+                            static_cast<int>(restored_materialize_status));
+                return Status::OK;
+            }
+        }
+
+        std::vector<size_t> current_offsets;
+        std::vector<size_t> current_sizes;
+        Status current_layout_status = computeColumnLayout(current_key_tuple_data,
+                                                           current_key_tuple_size,
+                                                           columns,
+                                                           db_->domain_manager(),
+                                                           current_offsets,
+                                                           current_sizes,
+                                                           ctx);
+        if (current_layout_status != Status::OK)
+        {
+            LOG_WARNING(STORAGE, "Skipping savepoint rollback index rewrite due to current column layout failure");
+            return Status::OK;
+        }
+
+        std::vector<size_t> restored_offsets;
+        std::vector<size_t> restored_sizes;
+        if (restored_row_present)
+        {
+            Status restored_layout_status = computeColumnLayout(restored_key_tuple_data,
+                                                                restored_key_tuple_size,
+                                                                columns,
+                                                                db_->domain_manager(),
+                                                                restored_offsets,
+                                                                restored_sizes,
+                                                                ctx);
+            if (restored_layout_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE, "Skipping savepoint rollback index rewrite due to restored column layout failure");
+                return Status::OK;
+            }
+        }
+
+        std::vector<ID> refreshed_index_ids;
+        for (const auto &index_info : indexes)
+        {
+            CatalogManager::IndexType actual_index_type;
+            void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
+            if (index_ptr == nullptr)
+            {
+                LOG_WARNING(STORAGE, "Index %s not found in cache during savepoint rollback",
+                            index_info.index_name.c_str());
+                continue;
+            }
+
+            if (actual_index_type == CatalogManager::IndexType::COLUMNSTORE)
+            {
+                auto *columnstore = static_cast<ColumnstoreIndex *>(index_ptr);
+                for (const auto &col_id : index_info.column_ids)
+                {
+                    size_t col_idx = 0;
+                    bool found = false;
+                    for (size_t i = 0; i < columns.size(); i++)
+                    {
+                        if (columns[i].column_id == col_id)
+                        {
+                            col_idx = i;
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        LOG_WARNING(STORAGE,
+                                    "Column not found for columnstore rollback rewrite on index %s",
+                                    index_info.index_name.c_str());
+                        continue;
+                    }
+
+                    bool restored_is_null =
+                        (restored_offsets[col_idx] == 0 && restored_sizes[col_idx] == 0);
+                    const void *restored_value = restored_is_null
+                        ? nullptr
+                        : (restored_key_tuple_data + restored_offsets[col_idx]);
+                    size_t restored_value_len = restored_sizes[col_idx];
+                    Status insert_status = columnstore->insert(col_id,
+                                                               tid,
+                                                               restored_value,
+                                                               restored_value_len,
+                                                               restored_is_null,
+                                                               ctx);
+                    if (insert_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE,
+                                    "Failed to insert columnstore value into %s during savepoint rollback: %s",
+                                    index_info.index_name.c_str(),
+                                    ctx ? ctx->message.c_str() : "unknown error");
+                    }
+                }
+                refreshed_index_ids.push_back(index_info.index_id);
+                continue;
+            }
+
+            std::vector<uint16_t> column_indices;
+            for (const auto &col_id : index_info.column_ids)
+            {
+                for (size_t i = 0; i < columns.size(); i++)
+                {
+                    if (columns[i].column_id == col_id)
+                    {
+                        column_indices.push_back(static_cast<uint16_t>(i));
+                        break;
+                    }
+                }
+            }
+
+            std::vector<uint8_t> current_key;
+            Status extract_current_status = extractor.extractKey(current_key_tuple_data,
+                                                                 current_key_tuple_size,
+                                                                 current_offsets,
+                                                                 current_sizes,
+                                                                 column_indices,
+                                                                 toast_mgr,
+                                                                 current_xid,
+                                                                 &current_key,
+                                                                 ctx);
+            if (extract_current_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE, "Failed to extract current key for rollback on index %s: %s",
+                            index_info.index_name.c_str(),
+                            ctx ? ctx->message.c_str() : "unknown error");
+                continue;
+            }
+
+            const bool exact_lookup_family = supportsExactKeyLookup(actual_index_type);
+            std::vector<uint8_t> restored_key;
+            bool have_restored_key = false;
+            if (restored_row_present)
+            {
+                extractor.clearCache();
+                Status extract_restored_status = extractor.extractKey(restored_key_tuple_data,
+                                                                      restored_key_tuple_size,
+                                                                      restored_offsets,
+                                                                      restored_sizes,
+                                                                      column_indices,
+                                                                      toast_mgr,
+                                                                      current_xid,
+                                                                      &restored_key,
+                                                                      ctx);
+                if (extract_restored_status != Status::OK)
+                {
+                    LOG_WARNING(STORAGE, "Failed to extract restored key for rollback on index %s: %s",
+                                index_info.index_name.c_str(),
+                                ctx ? ctx->message.c_str() : "unknown error");
+                    continue;
+                }
+                have_restored_key = true;
+            }
+
+            if (exact_lookup_family)
+            {
+                const bool same_key_restore = have_restored_key && (current_key == restored_key);
+                if (same_key_restore)
+                {
+                    Status restore_status = restoreExactIndexEntry(actual_index_type,
+                                                                  index_ptr,
+                                                                  restored_key,
+                                                                  tid,
+                                                                  current_xid,
+                                                                  ctx);
+                    if (restore_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE, "Failed to restore soft-deleted key in %s during savepoint rollback: %s",
+                                    indexTypeToString(actual_index_type).c_str(),
+                                    index_info.index_name.c_str(),
+                                    ctx ? ctx->message.c_str() : "unknown error");
+                    }
+                    refreshed_index_ids.push_back(index_info.index_id);
+                    continue;
+                }
+
+                Status purge_status = retireExactIndexEntry(actual_index_type,
+                                                            index_ptr,
+                                                            current_key,
+                                                            tid,
+                                                            current_xid,
+                                                            ExactIndexRetirementMode::HARD_REMOVE,
+                                                            ctx);
+                if (purge_status != Status::OK)
+                {
+                    LOG_WARNING(STORAGE, "Failed to purge current key from %s during savepoint rollback: %s",
+                                indexTypeToString(actual_index_type).c_str(),
+                                index_info.index_name.c_str(),
+                                ctx ? ctx->message.c_str() : "unknown error");
+                }
+
+                if (have_restored_key)
+                {
+                    Status restore_status = restoreExactIndexEntry(actual_index_type,
+                                                                  index_ptr,
+                                                                  restored_key,
+                                                                  tid,
+                                                                  current_xid,
+                                                                  ctx);
+                    if (restore_status == Status::NOT_FOUND)
+                    {
+                        Status insert_status = insertIntoIndex(actual_index_type,
+                                                               index_ptr,
+                                                               restored_key,
+                                                               tid,
+                                                               current_xid,
+                                                               ctx);
+                        if (insert_status != Status::OK)
+                        {
+                            LOG_WARNING(STORAGE, "Failed to insert restored key into %s during savepoint rollback: %s",
+                                        indexTypeToString(actual_index_type).c_str(),
+                                        index_info.index_name.c_str(),
+                                        ctx ? ctx->message.c_str() : "unknown error");
+                        }
+                    }
+                    else if (restore_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE, "Failed to restore soft-deleted key in %s during savepoint rollback: %s",
+                                    indexTypeToString(actual_index_type).c_str(),
+                                    index_info.index_name.c_str(),
+                                    ctx ? ctx->message.c_str() : "unknown error");
+                    }
+                }
+
+                refreshed_index_ids.push_back(index_info.index_id);
+                continue;
+            }
+
+            Status remove_status = removeFromIndex(actual_index_type, index_ptr, current_key, tid,
+                                                   current_xid, ctx);
+            if (remove_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE, "Failed to remove current key from %s during savepoint rollback: %s",
+                            indexTypeToString(actual_index_type).c_str(),
+                            index_info.index_name.c_str(),
+                            ctx ? ctx->message.c_str() : "unknown error");
+            }
+
+            if (!have_restored_key)
+            {
+                continue;
+            }
+
+            Status insert_status = insertIntoIndex(actual_index_type, index_ptr, restored_key, tid,
+                                                   current_xid, ctx);
+            if (insert_status != Status::OK)
+            {
+                LOG_WARNING(STORAGE, "Failed to insert restored key into %s during savepoint rollback: %s",
+                            indexTypeToString(actual_index_type).c_str(),
+                            index_info.index_name.c_str(),
+                            ctx ? ctx->message.c_str() : "unknown error");
+            }
+
+            refreshed_index_ids.push_back(index_info.index_id);
+        }
+
+        for (const ID &index_id : refreshed_index_ids)
+        {
+            Status refresh_status = catalog_manager_->refreshIndexObject(index_id, ctx);
+            if (refresh_status != Status::OK)
+            {
+                return refresh_status;
             }
         }
 
@@ -3785,8 +4592,7 @@ namespace scratchbird::core
 
         // Capture the current tuple before update for index key comparison.
         std::vector<uint8_t> old_tuple_buffer;
-        std::vector<uint8_t> rollback_tuple_buffer;
-        const bool capture_savepoint_restore_image =
+        const bool defer_old_toast_cleanup =
             conn_ctx != nullptr && conn_ctx->hasActiveSavepoints() &&
             !conn_ctx->isSavepointRollbackInProgress();
         uint32_t old_tuple_length = 0;
@@ -3812,17 +4618,6 @@ namespace scratchbird::core
 
             old_tuple_buffer.resize(old_tuple_length);
             memcpy(old_tuple_buffer.data(), page_data + old_offset, old_tuple_length);
-
-            if (capture_savepoint_restore_image)
-            {
-                Status restore_capture_status =
-                    snapshot_page.getTupleDetoasted(item_id, &rollback_tuple_buffer, xmax, ctx);
-                if (restore_capture_status != Status::OK)
-                {
-                    buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-                    return restore_capture_status;
-                }
-            }
         }
 
         TID stable_tid = TID(makeGPID(tablespace_id, static_cast<uint64_t>(page_id)), item_id);
@@ -3840,18 +4635,49 @@ namespace scratchbird::core
             return unique_status;
         }
 
+        PreparedStableHeadTuple prepared_head_tuple;
+        status = prepareStableHeadTupleForMutation(tuple_data_ptr,
+                                                  new_tuple_size,
+                                                  new_xmin,
+                                                  db_,
+                                                  toast_mgr,
+                                                  &prepared_head_tuple,
+                                                  ctx);
+        if (status != Status::OK)
+        {
+            buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+            return status;
+        }
+
+        auto cleanupPreparedHeadTuple = [&]()
+        {
+            if (!prepared_head_tuple.toasted || toast_mgr == nullptr)
+            {
+                return;
+            }
+            Status cleanup_status =
+                toast_mgr->deleteToastValue(prepared_head_tuple.toast_value_id, xmax, ctx);
+            if (cleanup_status != Status::OK && cleanup_status != Status::NOT_FOUND)
+            {
+                LOG_WARNING(STORAGE,
+                            "Failed to cleanup prepared stable-head TOAST value (status=%d)",
+                            static_cast<int>(cleanup_status));
+            }
+            prepared_head_tuple.toasted = false;
+        };
+
         // Try to update tuple on same page
         HeapPage heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
         uint16_t new_item_id;
 
         status = heap_page.updateTuple(item_id,
-                                       tuple_data_ptr,
-                                       new_tuple_size,
+                                       prepared_head_tuple.storage_tuple_data,
+                                       prepared_head_tuple.storage_tuple_size,
                                        xmax,
                                        new_xmin,
                                        &new_item_id,
                                        ctx,
-                                       capture_savepoint_restore_image);
+                                       defer_old_toast_cleanup);
 
         if (status == Status::OK)
         {
@@ -3892,13 +4718,9 @@ namespace scratchbird::core
 
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
-                const uint8_t *rollback_image =
-                    rollback_tuple_buffer.empty() ? old_tuple_buffer.data() : rollback_tuple_buffer.data();
-                const uint32_t rollback_image_size =
-                    rollback_tuple_buffer.empty() ? old_tuple_length
-                                                 : static_cast<uint32_t>(rollback_tuple_buffer.size());
                 conn_ctx->trackTupleUpdate(table_id, page_id, item_id,
-                                           rollback_image, rollback_image_size);
+                                           old_tuple_buffer.data(),
+                                           old_tuple_length);
                 conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
             }
 
@@ -3922,107 +4744,14 @@ namespace scratchbird::core
             // ====================================================================
 
             // Step 1: Get OLD tuple data (we need to preserve it in back version)
-            const ItemPointer *items =
-                reinterpret_cast<const ItemPointer *>(page_data + sizeof(PageHeader));
+            uint32_t old_length = old_tuple_length;
 
-            if (item_id >= heap_page.getItemCount())
-            {
-                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
-                return Status::INVALID_ARGUMENT;
-            }
-
-            uint32_t old_offset = items[item_id].offset;
-            uint32_t old_length = items[item_id].length;
-
-            // Allocate buffer for old tuple data (to create back version)
-            std::vector<uint8_t> old_tuple_buffer;
-            try
-            {
-                old_tuple_buffer.resize(old_length);
-            }
-            catch (const std::bad_alloc &)
-            {
-                buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-                SET_ERROR_CONTEXT(ctx, Status::OOM,
-                                  "Failed to allocate buffer for old tuple data");
-                return Status::OOM;
-            }
-
-            // Copy old tuple data (including header)
-            memcpy(old_tuple_buffer.data(), page_data + old_offset, old_length);
-
-            // Get xmin from old tuple (needed for back version)
+            // Get the original header; its xmin and chain metadata are preserved in the
+            // back version stored through the shared mutation primitive.
             auto *old_tuple_hdr = reinterpret_cast<TupleHeader *>(old_tuple_buffer.data());
-            uint64_t old_xmin = old_tuple_hdr->xmin;
 
             // Unpin old page temporarily (will re-pin after creating back version)
             buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-
-            const uint8_t *overwrite_tuple_data = tuple_data_ptr;
-            uint32_t overwrite_tuple_size = new_tuple_size;
-            std::vector<uint8_t> toasted_overwrite_tuple;
-            bool overwrite_tuple_toasted = false;
-            ID overwrite_toast_id{};
-
-            auto cleanupToastedOverwrite = [&]()
-            {
-                if (!overwrite_tuple_toasted || toast_mgr == nullptr)
-                {
-                    return;
-                }
-                Status cleanup_status = toast_mgr->deleteToastValue(overwrite_toast_id, xmax, ctx);
-                if (cleanup_status != Status::OK && cleanup_status != Status::NOT_FOUND)
-                {
-                    LOG_WARNING(STORAGE,
-                                "Failed to cleanup toasted overwrite value (status=%d)",
-                                static_cast<int>(cleanup_status));
-                }
-                overwrite_tuple_toasted = false;
-            };
-
-            if ((toast_mgr != nullptr) && (db_ != nullptr) &&
-                ToastManager::shouldToast(new_tuple_size, db_->page_size()))
-            {
-                if (new_tuple_size <= sizeof(TupleHeader))
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                      "Tuple too small to TOAST during cross-page update");
-                    return Status::INVALID_ARGUMENT;
-                }
-
-                try
-                {
-                    toasted_overwrite_tuple.resize(sizeof(TupleHeader) + sizeof(ToastPointer));
-                }
-                catch (const std::bad_alloc &)
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::OOM,
-                                      "Out of memory allocating TOAST buffer for cross-page update");
-                    return Status::OOM;
-                }
-
-                auto *new_hdr = reinterpret_cast<TupleHeader *>(toasted_overwrite_tuple.data());
-                const auto *orig_hdr = reinterpret_cast<const TupleHeader *>(tuple_data_ptr);
-                *new_hdr = *orig_hdr;
-
-                ToastPointer toast_ptr{};
-                status = toast_mgr->toastValue(tuple_data_ptr + sizeof(TupleHeader),
-                                               new_tuple_size - sizeof(TupleHeader),
-                                               ToastStrategy::EXTERNAL, new_xmin, &toast_ptr, ctx);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-
-                memcpy(toasted_overwrite_tuple.data() + sizeof(TupleHeader), &toast_ptr,
-                       sizeof(ToastPointer));
-
-                overwrite_tuple_data = toasted_overwrite_tuple.data();
-                overwrite_tuple_size = static_cast<uint32_t>(toasted_overwrite_tuple.size());
-                overwrite_tuple_toasted = true;
-                overwrite_toast_id = toast_ptr.lob_uuid;
-            }
 
             // Step 2: Allocate page for BACK version (OLD data)
             uint32_t back_version_page_id;
@@ -4030,7 +4759,7 @@ namespace scratchbird::core
                                                   tablespace_id, &back_version_page_id, ctx);
             if (status != Status::OK)
             {
-                cleanupToastedOverwrite();
+                cleanupPreparedHeadTuple();
                 SET_ERROR_CONTEXT(ctx, status, "Failed to find free page for back version");
                 return status;
             }
@@ -4043,7 +4772,7 @@ namespace scratchbird::core
                 status = allocateHeapPage(table_id, tablespace_id, &back_version_page_id, ctx);
                 if (status != Status::OK)
                 {
-                    cleanupToastedOverwrite();
+                    cleanupPreparedHeadTuple();
                     SET_ERROR_CONTEXT(ctx, status,
                                       "Failed to allocate non-primary page for back version");
                     return status;
@@ -4057,7 +4786,7 @@ namespace scratchbird::core
             status = buffer_pool_->pinPageGlobal(back_version_gpid, &back_page_buffer, ctx);
             if (status != Status::OK)
             {
-                cleanupToastedOverwrite();
+                cleanupPreparedHeadTuple();
                 SET_ERROR_CONTEXT(ctx, status, "Failed to pin page for back version");
                 return status;
             }
@@ -4065,34 +4794,25 @@ namespace scratchbird::core
             auto *back_page_data = static_cast<uint8_t *>(back_page_buffer);
             HeapPage back_heap_page(back_page_data, db_->page_size(), toast_mgr, db_, table_id);
 
-            // Insert OLD tuple data as back version.
+            // Same-page and cross-page updates now share the same stored
+            // back-version primitive instead of maintaining separate storage-side
+            // mini state machines.
             uint16_t back_item_id;
-            status = back_heap_page.insertTuple(old_tuple_buffer.data(), old_length, old_xmin,
-                                                &back_item_id, ctx);
-
+            status = back_heap_page.storeBackVersionForMutation(old_tuple_buffer.data(),
+                                                                old_length,
+                                                                *old_tuple_hdr,
+                                                                xmax,
+                                                                makeGPID(tablespace_id,
+                                                                         static_cast<uint64_t>(page_id)),
+                                                                item_id,
+                                                                true,
+                                                                &back_item_id,
+                                                                ctx);
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
-                cleanupToastedOverwrite();
-                SET_ERROR_CONTEXT(ctx, status, "Failed to insert back version");
-                return status;
-            }
-
-            // Same-page and cross-page updates now share the same back-version
-            // metadata finalization primitive.
-            status = back_heap_page.finalizeBackVersionMetadata(
-                back_item_id,
-                *old_tuple_hdr,
-                xmax,
-                makeGPID(tablespace_id, static_cast<uint64_t>(page_id)),
-                item_id,
-                true,
-                ctx);
-            if (status != Status::OK)
-            {
-                buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
-                cleanupToastedOverwrite();
-                SET_ERROR_CONTEXT(ctx, status, "Failed to finalize back version");
+                cleanupPreparedHeadTuple();
+                SET_ERROR_CONTEXT(ctx, status, "Failed to store back version");
                 return status;
             }
 
@@ -4116,7 +4836,7 @@ namespace scratchbird::core
             status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
             if (status != Status::OK)
             {
-                cleanupToastedOverwrite();
+                cleanupPreparedHeadTuple();
                 SET_ERROR_CONTEXT(ctx, status, "Failed to re-pin primary page");
                 return status;
             }
@@ -4125,14 +4845,19 @@ namespace scratchbird::core
             HeapPage primary_heap_page(page_data, db_->page_size(), toast_mgr, db_, table_id);
 
             // Overwrite primary tuple in-place (NEW data, back version on different page)
-            status = primary_heap_page.overwriteTuple(item_id, overwrite_tuple_data, overwrite_tuple_size,
-                                                     xmax, new_xmin, back_version_gpid,
-                                                     back_item_id, ctx);
+            status = primary_heap_page.overwriteTuple(item_id,
+                                                      prepared_head_tuple.storage_tuple_data,
+                                                      prepared_head_tuple.storage_tuple_size,
+                                                      xmax,
+                                                      new_xmin,
+                                                      back_version_gpid,
+                                                      back_item_id,
+                                                      ctx);
 
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPageGlobal(gpid, false, ctx);
-                cleanupToastedOverwrite();
+                cleanupPreparedHeadTuple();
                 SET_ERROR_CONTEXT(ctx, status, "Failed to overwrite primary tuple");
                 return status;
             }
@@ -4186,17 +4911,11 @@ namespace scratchbird::core
 
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
-                const uint8_t *rollback_image =
-                    rollback_tuple_buffer.empty() ? old_tuple_buffer.data()
-                                                  : rollback_tuple_buffer.data();
-                const uint32_t rollback_image_size =
-                    rollback_tuple_buffer.empty() ? old_length
-                                                  : static_cast<uint32_t>(rollback_tuple_buffer.size());
                 conn_ctx->trackTupleUpdate(table_id,
                                            page_id,
                                            item_id,
-                                           rollback_image,
-                                           rollback_image_size);
+                                           old_tuple_buffer.data(),
+                                           old_length);
                 conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
             }
 
@@ -4205,6 +4924,7 @@ namespace scratchbird::core
         else
         {
             // Other error
+            cleanupPreparedHeadTuple();
             buffer_pool_->unpinPageGlobal(gpid, false, ctx);
             return status;
         }

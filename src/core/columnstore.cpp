@@ -3270,13 +3270,7 @@ bool ColumnstoreIndex::isValueVisible(uint64_t value_xmin,
         return false;  // Fail-safe: treat as invisible if no txn manager
     }
 
-    return txn_mgr->evaluateRecordVisibility(
-                      value_xmin,
-                      value_xmax,
-                      current_xid,
-                      VisibilityMode::READ_CURRENT_VERSION,
-                      nullptr)
-        .visible;
+    return txn_mgr->isRuntimeRecordVisible(value_xmin, value_xmax, current_xid);
 }
 
 Status ColumnstoreIndex::getColumnDataType(const ID &column_uuid,

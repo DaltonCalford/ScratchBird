@@ -429,6 +429,25 @@ namespace scratchbird::core
                            uint64_t back_version_gpid, uint16_t back_version_slot,
                            ErrorContext *ctx = nullptr) -> Status;
 
+        // Restore the stable root slot to an exact prior tuple image during savepoint backout.
+        auto restoreTupleImage(uint16_t item_id,
+                               const uint8_t *tuple_data,
+                               uint32_t tuple_size,
+                               ErrorContext *ctx = nullptr) -> Status;
+
+        // Insert an older tuple image as a back version and stamp the canonical
+        // chain metadata so same-page and cross-page mutation paths share one
+        // back-version creation primitive.
+        auto storeBackVersionForMutation(const uint8_t *tuple_data,
+                                         uint32_t tuple_size,
+                                         const TupleHeader &source_old_header,
+                                         uint64_t update_xid,
+                                         GPID primary_gpid,
+                                         uint16_t primary_item_id,
+                                         bool cross_page_back_version,
+                                         uint16_t *item_id_out,
+                                         ErrorContext *ctx = nullptr) -> Status;
+
         // Finalize a stored back version so same-page and cross-page update paths
         // share one back-version metadata contract.
         auto finalizeBackVersionMetadata(uint16_t item_id,
@@ -504,6 +523,14 @@ namespace scratchbird::core
         auto prunePage(uint64_t oit, uint32_t *tuples_pruned_out, uint32_t *space_reclaimed_out,
                        ErrorContext *ctx = nullptr) -> Status;
 
+        // Reclaim one or more mature or transient version slots and compact the
+        // page once, so GC and savepoint backout consume the same lifecycle
+        // expunge primitive.
+        auto reclaimVersionSlots(const std::vector<uint16_t> &item_ids,
+                                 uint32_t *tuples_reclaimed_out,
+                                 uint32_t *space_reclaimed_out,
+                                 ErrorContext *ctx = nullptr) -> Status;
+
         // PHASE 2 TASK 2.6: Collect dead tuple IDs (for index cleanup)
         // PHASE 1.5 TASK 1.5.3: Migrated to TID struct API
         // Returns vector of TIDs for tuples that are garbage (xmax < oit and xmax committed)
@@ -575,6 +602,11 @@ namespace scratchbird::core
                                           const ID &stable_row_uuid,
                                           bool *tuple_location_moved_out,
                                           ErrorContext *ctx) -> Status;
+        auto rewriteStableSlotTuple(uint16_t item_id,
+                                    const uint8_t *tuple_data,
+                                    uint32_t tuple_size,
+                                    bool *tuple_location_moved_out,
+                                    ErrorContext *ctx) -> Status;
     };
 
 } // namespace scratchbird::core

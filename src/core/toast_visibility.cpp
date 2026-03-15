@@ -84,7 +84,12 @@ namespace scratchbird::core
     bool ToastVisibility::isChunkVisible(uint64_t chunk_xmin, uint64_t chunk_xmax,
                                          uint64_t current_xid, TransactionManager *tm)
     {
-        return evaluateChunkLifecycle(chunk_xmin, chunk_xmax, current_xid, 0, tm).visible;
+        if (tm == nullptr)
+        {
+            return false;
+        }
+
+        return tm->isRuntimeRecordVisible(chunk_xmin, chunk_xmax, current_xid);
     }
 
     bool ToastVisibility::isOwnChunk(uint64_t chunk_xmin, uint64_t current_xid)
@@ -100,11 +105,12 @@ namespace scratchbird::core
             return false;
         }
 
-        return tm->evaluateTransactionVisibility(chunk_xmax,
-                                                 current_xid,
-                                                 VisibilityMode::READ_CURRENT_VERSION,
-                                                 nullptr)
-            .visible;
+        if (tm == nullptr)
+        {
+            return false;
+        }
+
+        return tm->isRuntimeTransactionVisible(chunk_xmax, current_xid);
     }
 
 } // namespace scratchbird::core

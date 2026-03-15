@@ -188,6 +188,24 @@ TEST_F(TransactionVNextContractTest, StartupNormalizesResidualActiveToAborted)
     TransactionState state = TransactionState::ACTIVE;
     ASSERT_EQ(Status::OK, tm_->getTransactionState(xid_active, state, &ctx)) << ctx.message;
     EXPECT_EQ(TransactionState::ABORTED, state);
+
+    TransactionStateResolution resolution{};
+    ASSERT_EQ(Status::OK, tm_->getTransactionStateDetailed(xid_active, resolution, &ctx))
+        << ctx.message;
+    EXPECT_EQ(TransactionState::ABORTED, resolution.state);
+    EXPECT_EQ(TransactionStateDetail::STARTUP_REPAIRED_ABORTED, resolution.detail);
+
+    ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
+    uint64_t reader_xid = 0;
+    ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, reader_xid, &ctx)) << ctx.message;
+    const auto decision = tm_->evaluateTransactionVisibility(
+        xid_active, reader_xid, VisibilityMode::READ_CURRENT_TRANSACTION, nullptr);
+    EXPECT_FALSE(decision.visible);
+    EXPECT_EQ(TransactionState::ABORTED, decision.state);
+    EXPECT_EQ(TransactionStateDetail::STARTUP_REPAIRED_ABORTED, decision.detail);
+    EXPECT_EQ(VisibilityReason::ABORTED_INVISIBLE, decision.reason);
+    ASSERT_EQ(Status::OK, tm_->rollbackTransaction(proc_id, reader_xid, &ctx)) << ctx.message;
+    ProcArrayManager::unregisterBackend(proc_id, &ctx);
 }
 
 TEST_F(TransactionVNextContractTest, MissingInRangeTipFailsClosedEvenIfClogStillCommitted)
@@ -251,6 +269,11 @@ TEST_F(TransactionVNextContractTest, PrehistoricalCommittedXidDoesNotRequireTipE
     ASSERT_EQ(Status::OK, tm_->getTransactionState(xid, state, &ctx)) << ctx.message;
     EXPECT_EQ(TransactionState::COMMITTED, state);
 
+    TransactionStateResolution resolution{};
+    ASSERT_EQ(Status::OK, tm_->getTransactionStateDetailed(xid, resolution, &ctx)) << ctx.message;
+    EXPECT_EQ(TransactionState::COMMITTED, resolution.state);
+    EXPECT_EQ(TransactionStateDetail::PREHISTORICAL_COMMITTED, resolution.detail);
+
     ASSERT_EQ(Status::OK, ProcArrayManager::registerBackend(&proc_id, &ctx)) << ctx.message;
     uint64_t reader_xid = 0;
     ASSERT_EQ(Status::OK, tm_->beginTransaction(proc_id, reader_xid, &ctx)) << ctx.message;
@@ -259,6 +282,7 @@ TEST_F(TransactionVNextContractTest, PrehistoricalCommittedXidDoesNotRequireTipE
         xid, reader_xid, VisibilityMode::READ_CURRENT_TRANSACTION, nullptr);
     EXPECT_TRUE(decision.visible);
     EXPECT_EQ(TransactionState::COMMITTED, decision.state);
+    EXPECT_EQ(TransactionStateDetail::PREHISTORICAL_COMMITTED, decision.detail);
     EXPECT_EQ(VisibilityReason::COMMITTED_VISIBLE, decision.reason);
 
     ASSERT_EQ(Status::OK, tm_->rollbackTransaction(proc_id, reader_xid, &ctx)) << ctx.message;

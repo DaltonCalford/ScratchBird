@@ -218,9 +218,29 @@ namespace scratchbird
              * @return Status::OK on success, Status::NOT_FOUND if entry not found
              */
             Status markDeleted(const std::vector<uint8_t> &key,
-                              const TID &tid,
-                              uint64_t xmax,
-                              ErrorContext *ctx = nullptr);
+                               const TID &tid,
+                               uint64_t xmax,
+                               ErrorContext *ctx = nullptr);
+
+            /**
+             * Restore a soft-deleted entry by clearing btn_xmax when the delete
+             * belongs to the supplied transaction. Used by savepoint rollback to
+             * revive stable-root historical keys without inserting duplicates.
+             */
+            Status restoreDeleted(const std::vector<uint8_t> &key,
+                                  const TID &tid,
+                                  uint64_t deleting_xid,
+                                  ErrorContext *ctx = nullptr);
+
+            /**
+             * Retire an entry immediately from lookup visibility by marking the
+             * node deleted. Used by savepoint/backout paths that must remove a
+             * transient exact-key image instead of leaving it as historical
+             * garbage for later GC compaction.
+             */
+            Status purge(const std::vector<uint8_t> &key,
+                         const TID &tid,
+                         ErrorContext *ctx = nullptr);
 
             // Range scan operations
             // Firebird MGA: Uses TIP-based visibility filtering (NOT snapshots)

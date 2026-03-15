@@ -1006,6 +1006,89 @@ TEST_F(ConnectionContextTest, VisibilityResolverUsesRetainedSnapshotForSnapshotI
     EXPECT_EQ(visibility_context.snapshot, reader->getRetainedTransactionSnapshot());
 }
 
+TEST_F(ConnectionContextTest, RuntimeVisibilityServiceUsesCurrentSnapshotContext)
+{
+    ErrorContext err_ctx;
+    std::unique_ptr<ConnectionContext> writer;
+    std::unique_ptr<ConnectionContext> reader;
+
+    ASSERT_EQ(db_.connect(writer, &err_ctx), Status::OK);
+    uint64_t xid_writer = writer->getCurrentXid();
+
+    ASSERT_EQ(db_.connect(reader, &err_ctx), Status::OK);
+    ASSERT_EQ(reader->startTransaction(false, IsolationLevel::SNAPSHOT, true, &err_ctx),
+              Status::OK);
+    uint64_t xid_reader = reader->getCurrentXid();
+    ASSERT_LT(xid_writer, xid_reader);
+
+    ASSERT_EQ(writer->commit(&err_ctx), Status::OK);
+
+    TransactionManager *txn_mgr = db_.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
+
+    ConnectionContext::setCurrent(reader.get());
+
+    const auto transaction_decision =
+        txn_mgr->evaluateRuntimeTransactionVisibility(xid_writer, xid_reader, nullptr);
+    EXPECT_FALSE(transaction_decision.visible);
+    EXPECT_EQ(transaction_decision.mode, VisibilityMode::SNAPSHOT);
+    EXPECT_EQ(transaction_decision.reason, VisibilityReason::ACTIVE_IN_SNAPSHOT);
+
+    const auto record_decision =
+        txn_mgr->evaluateRuntimeRecordVisibility(xid_writer, 0, xid_reader, nullptr);
+    EXPECT_FALSE(record_decision.visible);
+    EXPECT_FALSE(record_decision.create_visible);
+    EXPECT_FALSE(record_decision.delete_visible);
+    EXPECT_EQ(record_decision.mode, VisibilityMode::SNAPSHOT);
+    EXPECT_EQ(record_decision.create_decision.reason, VisibilityReason::ACTIVE_IN_SNAPSHOT);
+    EXPECT_EQ(record_decision.delete_decision.reason, VisibilityReason::DELETE_NOT_PRESENT);
+}
+
+TEST_F(ConnectionContextTest, RuntimeVisibilityServiceRejectsMissingStatementSnapshot)
+{
+    ErrorContext err_ctx;
+    std::unique_ptr<ConnectionContext> writer;
+    std::unique_ptr<ConnectionContext> reader;
+
+    ASSERT_EQ(db_.connect(writer, &err_ctx), Status::OK);
+    uint64_t xid_writer = writer->getCurrentXid();
+
+    ASSERT_EQ(db_.connect(reader, &err_ctx), Status::OK);
+    ASSERT_EQ(reader->startTransaction(false,
+                                       IsolationLevel::READ_COMMITTED_READ_CONSISTENCY,
+                                       true,
+                                       &err_ctx),
+              Status::OK);
+    uint64_t xid_reader = reader->getCurrentXid();
+    ASSERT_LT(xid_writer, xid_reader);
+
+    ASSERT_EQ(reader->beginStatementTracking("SELECT * FROM users.public.t", &err_ctx),
+              Status::OK);
+    ASSERT_NE(reader->getStatementTransactionSnapshot(), nullptr);
+    ASSERT_EQ(reader->clearStatementXID(&err_ctx), Status::OK);
+    EXPECT_EQ(reader->getStatementTransactionSnapshot(), nullptr);
+
+    ASSERT_EQ(writer->commit(&err_ctx), Status::OK);
+
+    TransactionManager *txn_mgr = db_.transaction_manager();
+    ASSERT_NE(txn_mgr, nullptr);
+
+    ConnectionContext::setCurrent(reader.get());
+
+    const auto transaction_decision =
+        txn_mgr->evaluateRuntimeTransactionVisibility(xid_writer, xid_reader, nullptr);
+    EXPECT_FALSE(transaction_decision.visible);
+    EXPECT_EQ(transaction_decision.reason, VisibilityReason::MISSING_SNAPSHOT);
+
+    const auto record_decision =
+        txn_mgr->evaluateRuntimeRecordVisibility(xid_writer, 0, xid_reader, nullptr);
+    EXPECT_FALSE(record_decision.visible);
+    EXPECT_FALSE(record_decision.create_visible);
+    EXPECT_FALSE(record_decision.delete_visible);
+    EXPECT_EQ(record_decision.create_decision.reason, VisibilityReason::MISSING_SNAPSHOT);
+    EXPECT_EQ(record_decision.delete_decision.reason, VisibilityReason::DELETE_NOT_PRESENT);
+}
+
 TEST_F(ConnectionContextTest, SnapshotMarkersPersistAcrossCleanReopen)
 {
     ErrorContext err_ctx;

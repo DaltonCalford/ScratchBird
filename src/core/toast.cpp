@@ -564,6 +564,20 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto ToastManager::retireTupleToastValue(const uint8_t *tuple_data,
+                                             uint32_t tuple_size,
+                                             uint64_t xmax,
+                                             ErrorContext *ctx) -> Status
+    {
+        ID value_id{};
+        if (!extractReferencedToastValueId(tuple_data, tuple_size, &value_id))
+        {
+            return Status::NOT_FOUND;
+        }
+
+        return deleteToastValue(value_id, xmax, ctx);
+    }
+
     auto ToastManager::deleteToastValueHeapScan(const ID &value_id, uint64_t xmax, ErrorContext *ctx)
         -> Status
     {
@@ -674,6 +688,70 @@ namespace scratchbird::core
             return false;
         }
         return true;
+    }
+
+    auto ToastManager::extractReferencedToastValueId(const uint8_t *tuple_data,
+                                                     uint32_t tuple_size,
+                                                     ID *value_id_out) -> bool
+    {
+        if (value_id_out == nullptr)
+        {
+            return false;
+        }
+        *value_id_out = ID{};
+
+        if (tuple_data == nullptr || tuple_size < sizeof(TupleHeader) + sizeof(ToastPointer))
+        {
+            return false;
+        }
+
+        const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+        const uint8_t *payload = tuple_data + sizeof(TupleHeader);
+        const size_t payload_size = tuple_size - sizeof(TupleHeader);
+        if (payload_size != sizeof(ToastPointer))
+        {
+            return false;
+        }
+
+        if (!tuple_hdr->hasRecordFlag(TupleHeader::RHD_TOAST_PTR) &&
+            !isToastPointer(payload, payload_size))
+        {
+            return false;
+        }
+
+        const auto *toast_ptr = reinterpret_cast<const ToastPointer *>(payload);
+        *value_id_out = toast_ptr->lob_uuid;
+        return std::any_of(value_id_out->bytes.begin(),
+                           value_id_out->bytes.end(),
+                           [](uint8_t byte) { return byte != 0; });
+    }
+
+    void ToastManager::queueReferencedToastValueForRetirement(const uint8_t *tuple_data,
+                                                              uint32_t tuple_size,
+                                                              const ID *preserve_value_id,
+                                                              std::vector<ID> *toast_values_out)
+    {
+        if (toast_values_out == nullptr)
+        {
+            return;
+        }
+
+        ID value_id{};
+        if (!extractReferencedToastValueId(tuple_data, tuple_size, &value_id))
+        {
+            return;
+        }
+
+        if (preserve_value_id != nullptr && value_id == *preserve_value_id)
+        {
+            return;
+        }
+
+        if (std::find(toast_values_out->begin(), toast_values_out->end(), value_id) ==
+            toast_values_out->end())
+        {
+            toast_values_out->push_back(value_id);
+        }
     }
 
     auto ToastManager::detoastIfNeeded(const uint8_t *data, size_t size,

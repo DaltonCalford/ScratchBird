@@ -1088,13 +1088,7 @@ static bool isRangeVisible(uint64_t xmin, uint64_t xmax,
         return false;
     }
 
-    return txn_mgr->evaluateRecordVisibility(
-                        xmin,
-                        xmax,
-                        current_xid,
-                        VisibilityMode::READ_CURRENT_VERSION,
-                        nullptr)
-        .visible;
+    return txn_mgr->isRuntimeRecordVisible(xmin, xmax, current_xid);
 }
 
 // =============================================================================

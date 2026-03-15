@@ -7391,6 +7391,13 @@ public:
         void* getIndexPtr(const ID &index_id, IndexType *type_out = nullptr);
 
         /**
+         * Reopen a cached index object from authoritative catalog metadata.
+         * Used when low-level repair or rollback paths need the runtime handle
+         * to reflect on-disk state changes immediately.
+         */
+        auto refreshIndexObject(const ID &index_id, ErrorContext *ctx = nullptr) -> Status;
+
+        /**
          * Close and remove all cached index objects
          * Called on database shutdown
          *

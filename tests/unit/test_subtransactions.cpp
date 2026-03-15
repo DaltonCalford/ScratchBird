@@ -112,7 +112,8 @@ TEST(SubtransactionsTest, Comprehensive) {
     std::cout << "✓ Created nested savepoint 'sp2'" << std::endl;
 
     ctx.trackTupleInsertion(101, 1);  // Insert in sp2
-    ctx.trackTupleDeletion(100, 1);   // Delete in sp2
+    const uint8_t deleted_row_image[] = {0x01};
+    ctx.trackTupleDeletion(100, 1, deleted_row_image, sizeof(deleted_row_image));   // Delete in sp2
     std::cout << "✓ Tracked 1 insertion and 1 deletion after savepoint sp2" << std::endl;
 
     // Test 4: Rollback to sp2 (should undo nothing, as we're at sp2)

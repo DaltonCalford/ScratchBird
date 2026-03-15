@@ -254,6 +254,12 @@ namespace scratchbird::core
         auto deleteToastValue(const ID &value_id, uint64_t xmax, ErrorContext *ctx = nullptr)
             -> Status;
 
+        // Retire the TOAST value referenced by a tuple image, if any.
+        auto retireTupleToastValue(const uint8_t *tuple_data,
+                                   uint32_t tuple_size,
+                                   uint64_t xmax,
+                                   ErrorContext *ctx = nullptr) -> Status;
+
         // Delete TOASTed value using heap scan (fallback)
         auto deleteToastValueHeapScan(const ID &value_id, uint64_t xmax, ErrorContext *ctx = nullptr)
             -> Status;
@@ -268,6 +274,18 @@ namespace scratchbird::core
         // Check if data is a TOAST pointer (Phase 3: Index TOAST Integration)
         // Returns true if the data is exactly sizeof(ToastPointer) and has TOAST pointer magic
         static auto isToastPointer(const uint8_t *data, size_t size) -> bool;
+
+        // Extract the referenced TOAST value from a tuple image, if the tuple is a
+        // canonical TOAST pointer payload.
+        static auto extractReferencedToastValueId(const uint8_t *tuple_data,
+                                                  uint32_t tuple_size,
+                                                  ID *value_id_out) -> bool;
+
+        // Queue a referenced TOAST value for retirement unless it is explicitly preserved.
+        static void queueReferencedToastValueForRetirement(const uint8_t *tuple_data,
+                                                           uint32_t tuple_size,
+                                                           const ID *preserve_value_id,
+                                                           std::vector<ID> *toast_values_out);
 
         // Detoast a value if it's a TOAST pointer, otherwise return original data
         // (Phase 3: Index TOAST Integration helper for index insert operations)

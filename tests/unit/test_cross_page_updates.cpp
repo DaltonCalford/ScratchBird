@@ -608,6 +608,59 @@ TEST_F(CrossPageUpdateTest, SameAndCrossPageHeadsShareMutationContract)
     db_->buffer_pool()->unpinPage(cross_back_page_id, false, &ctx);
 }
 
+TEST_F(CrossPageUpdateTest, SameAndCrossPageMutationLifecycleLeavesChainAuditClean)
+{
+    ErrorContext ctx;
+
+    auto tuple1 = createTupleData(120, 0x71);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    Status status = storage_engine_->insertTuple(test_table_id_, tuple1.data(),
+                                                 tuple1.size(), &page_id, &item_id, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    auto same_page_tuple = createTupleData(140, 0x72);
+    status = storage_engine_->updateTuple(test_table_id_, page_id, item_id,
+                                          same_page_tuple.data(), same_page_tuple.size(),
+                                          nullptr, nullptr, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    fillPageAlmostFull(page_id, &ctx);
+    auto cross_page_tuple = createCrossPageUpdateTuple(page_id, item_id, 0x73, &ctx);
+    status = storage_engine_->updateTuple(test_table_id_, page_id, item_id,
+                                          cross_page_tuple.data(), cross_page_tuple.size(),
+                                          nullptr, nullptr, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    void *primary_page_buffer = nullptr;
+    ASSERT_EQ(db_->buffer_pool()->pinPage(page_id, &primary_page_buffer, &ctx), Status::OK)
+        << ctx.message;
+    HeapPage primary_page(static_cast<uint8_t *>(primary_page_buffer),
+                          db_->page_size(),
+                          nullptr,
+                          db_.get(),
+                          test_table_id_);
+    HeapPage::VersionChainAuditResult primary_audit{};
+    ASSERT_EQ(primary_page.auditVersionChainMetadata(HeapPage::VersionChainAuditMode::READ_ONLY,
+                                                     &primary_audit,
+                                                     &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(primary_audit.anomaly_count, 0u) << primary_audit.summary;
+
+    const uint8_t *head_tuple = nullptr;
+    uint32_t head_size = 0;
+    ASSERT_EQ(primary_page.getTuple(item_id, &head_tuple, &head_size, &ctx), Status::OK)
+        << ctx.message;
+    const auto *head_hdr = reinterpret_cast<const TupleHeader *>(head_tuple);
+    ASSERT_TRUE(head_hdr->hasBackVersion());
+    TID cross_back_tid = head_hdr->getBackVersionTID();
+    db_->buffer_pool()->unpinPage(page_id, false, &ctx);
+
+    const uint32_t cross_back_page_id =
+        static_cast<uint32_t>(getPageNumber(cross_back_tid.gpid));
+    ASSERT_NE(cross_back_page_id, page_id);
+}
+
 /**
  * Test 5: Verify MVCC visibility with cross-page updates
  */
