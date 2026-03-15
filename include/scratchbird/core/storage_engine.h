@@ -32,6 +32,7 @@ namespace scratchbird::core
     class CatalogManager;
     class HeapPage;
     class StorageEngine;
+    class MgaBackoutEngine;
     class ToastManager;
     struct ErrorContext;
     struct TableInfo;
@@ -196,13 +197,6 @@ namespace scratchbird::core
                          uint32_t *new_page_id_out, uint16_t *new_item_id_out,
                          ErrorContext *ctx = nullptr) -> Status;
 
-        // Savepoint/backout helpers. The connection layer owns savepoint naming and nesting,
-        // but the storage layer owns the lifecycle-native backout semantics for the merged
-        // per-row rollback set.
-        auto rollbackSavepointChanges(const std::vector<SavepointBackoutAction> &actions,
-                                      uint64_t rollback_xid,
-                                      ErrorContext *ctx = nullptr) -> Status;
-
         // Create a sequential scan iterator
         auto createScan(const ID &table_id, ErrorContext *ctx = nullptr)
             -> std::unique_ptr<HeapScanIterator>;
@@ -244,6 +238,7 @@ namespace scratchbird::core
 
     private:
         friend class IndexScanIterator;
+        friend class MgaBackoutEngine;
 
         Database *db_;
         BufferPool *buffer_pool_;
@@ -324,12 +319,28 @@ namespace scratchbird::core
                                         uint16_t old_item_id, uint32_t new_page_id,
                                         uint16_t new_item_id, const uint8_t *tuple_data,
                                         uint32_t tuple_size, ErrorContext *ctx) -> Status;
-        auto rollbackInsertedSavepointRow(const SavepointBackoutAction &action,
-                                          uint64_t rollback_xid,
-                                          ErrorContext *ctx) -> Status;
-        auto restoreSavepointRowState(const SavepointBackoutAction &action,
-                                      uint64_t rollback_xid,
-                                      ErrorContext *ctx) -> Status;
+        // Physical row-backout leaves used by MgaBackoutEngine. Semantic
+        // ownership of savepoint rollback lives outside StorageEngine.
+        auto applyStableHeadBackout(const SavepointBackoutAction &action,
+                                    uint64_t rollback_xid,
+                                    ErrorContext *ctx) -> Status;
+        auto applyStableTidIndexBackout(const ID &table_id,
+                                        uint16_t tablespace_id,
+                                        uint32_t stable_page_id,
+                                        uint16_t stable_item_id,
+                                        const uint8_t *current_tuple_data,
+                                        uint32_t current_tuple_size,
+                                        const uint8_t *prior_tuple_data,
+                                        uint32_t prior_tuple_size,
+                                        bool prior_row_present,
+                                        uint64_t current_xid,
+                                        ErrorContext *ctx) -> Status;
+        auto backoutRemoveStableHeadRow(const SavepointBackoutAction &action,
+                                        uint64_t rollback_xid,
+                                        ErrorContext *ctx) -> Status;
+        auto backoutRestoreStableHeadRow(const SavepointBackoutAction &action,
+                                         uint64_t rollback_xid,
+                                         ErrorContext *ctx) -> Status;
         auto rewriteStableTidIndexesForRollback(const ID &table_id,
                                                 uint16_t tablespace_id,
                                                 uint32_t stable_page_id,

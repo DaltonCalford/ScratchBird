@@ -51,6 +51,7 @@ namespace scratchbird
         class BufferPool;
         class CatalogManager;
         class StorageEngine;
+        class MgaBackoutEngine;
         class TransactionManager;
         class ProcArrayManager;
         class LockManager;
@@ -430,6 +431,15 @@ namespace scratchbird
                 return storage_engine_.get();
             }
 
+            MgaBackoutEngine *mga_backout_engine()
+            {
+                return mga_backout_engine_.get();
+            }
+            const MgaBackoutEngine *mga_backout_engine() const
+            {
+                return mga_backout_engine_.get();
+            }
+
             // Get optimizer statistics manager (Phase 1, Task 1.3)
             optimizer::StatisticsManager *statistics_manager()
             {
@@ -739,6 +749,7 @@ namespace scratchbird
             std::unique_ptr<BufferPool> buffer_pool_;         // Buffer pool manager (owned)
             std::unique_ptr<CatalogManager> catalog_manager_; // System catalog manager (owned)
             std::unique_ptr<StorageEngine> storage_engine_;   // Storage engine (owned)
+            std::unique_ptr<MgaBackoutEngine> mga_backout_engine_; // MGA backout owner (owned)
             std::unique_ptr<TransactionManager> transaction_manager_; // Transaction manager (owned)
             std::unique_ptr<TIDResolver> tid_resolver_;               // TID resolver (Sprint 4, owned)
             std::unique_ptr<LockManager> lock_manager_;               // Lock manager (owned)

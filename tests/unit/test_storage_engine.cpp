@@ -14,9 +14,11 @@
 #include "scratchbird/core/garbage_collector.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/lock_manager.h"
+#include "scratchbird/core/mga_backout_engine.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/toast.h"
+#include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/types.h"
 #include "test_helpers.h"
 
@@ -1101,6 +1103,40 @@ TEST_F(StorageEngineTest, SavepointRollbackRestoresOriginalVersionLifecycleState
     EXPECT_FALSE(restored_hdr->hasBackVersion());
 }
 
+TEST_F(StorageEngineTest, MgaBackoutEngineRemovesInsertedStableHeadRowDirectly)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("mga_backout_remove_row");
+
+    ASSERT_NE(db_->mga_backout_engine(), nullptr);
+
+    auto inserted_tuple = buildIntTuple(77);
+    uint32_t page_id = 0;
+    uint16_t item_id = 0;
+    ASSERT_EQ(engine_->insertTuple(table_id,
+                                   inserted_tuple.data(),
+                                   static_cast<uint32_t>(inserted_tuple.size()),
+                                   &page_id,
+                                   &item_id,
+                                   &ctx),
+              Status::OK) << ctx.message;
+
+    SavepointBackoutAction action;
+    action.table_id = table_id;
+    action.stable_page_id = page_id;
+    action.stable_item_id = item_id;
+
+    ASSERT_EQ(db_->mga_backout_engine()->applySavepointBackout({action},
+                                                               conn_ctx_->getCurrentXid(),
+                                                               &ctx),
+              Status::OK) << ctx.message;
+
+    auto scanner = engine_->createScan(table_id, &ctx);
+    ASSERT_NE(scanner, nullptr);
+    Tuple tuple{};
+    EXPECT_EQ(scanner->next(&tuple, &ctx), Status::NOT_FOUND);
+}
+
 TEST_F(StorageEngineTest, ReadConsistencyNoWaitUpdateRequiresRestart)
 {
     ErrorContext ctx;
@@ -1751,4 +1787,55 @@ TEST_F(StorageEngineTest, ReleasedNestedSavepointPreservesEarliestRestoreImage)
     expectIndexSeekNotFound(index_id, 20);
     expectIndexSeekNotFound(index_id, 30);
     expectIndexSeekNotFound(index_id, 40);
+}
+
+TEST_F(StorageEngineTest, BootstrapVisibilityFallbackIsTransactionManagerOwned)
+{
+    const uint64_t reader_xid = 100;
+
+    const auto visible_row =
+        TransactionManager::evaluateBootstrapRecordVisibility(90, 0, reader_xid);
+    EXPECT_TRUE(visible_row.visible);
+    EXPECT_TRUE(visible_row.create_visible);
+    EXPECT_FALSE(visible_row.delete_visible);
+    EXPECT_EQ(visible_row.create_decision.reason, VisibilityReason::COMMITTED_VISIBLE);
+    EXPECT_EQ(visible_row.delete_decision.reason, VisibilityReason::DELETE_NOT_PRESENT);
+
+    const auto future_delete =
+        TransactionManager::evaluateBootstrapRecordVisibility(90, 150, reader_xid);
+    EXPECT_TRUE(future_delete.visible);
+    EXPECT_TRUE(future_delete.create_visible);
+    EXPECT_FALSE(future_delete.delete_visible);
+    EXPECT_EQ(future_delete.delete_decision.reason, VisibilityReason::FUTURE_XID);
+
+    const auto invalid_create =
+        TransactionManager::evaluateBootstrapRecordVisibility(0, 0, reader_xid);
+    EXPECT_FALSE(invalid_create.visible);
+    EXPECT_FALSE(invalid_create.create_visible);
+    EXPECT_EQ(invalid_create.create_decision.reason, VisibilityReason::INVALID_XID);
+}
+
+TEST_F(StorageEngineTest, IsVisibleUsesAuthoritativeRuntimeSnapshotContext)
+{
+    ErrorContext ctx;
+    const uint64_t xid_writer = conn_ctx_->getCurrentXid();
+
+    std::unique_ptr<ConnectionContext> reader;
+    ASSERT_EQ(db_->connect(reader, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(reader->initialize(&ctx), Status::OK) << ctx.message;
+
+    ID system_user = db_->catalog_manager()->getSystemUserId(&ctx);
+    reader->setCurrentUser(system_user, true);
+
+    ASSERT_EQ(reader->startTransaction(false, IsolationLevel::SNAPSHOT, true, &ctx), Status::OK)
+        << ctx.message;
+    const uint64_t xid_reader = reader->getCurrentXid();
+    ASSERT_LT(xid_writer, xid_reader);
+
+    ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
+
+    ConnectionContext::setCurrent(reader.get());
+    EXPECT_FALSE(engine_->isVisible(xid_writer, 0, xid_reader));
+
+    ConnectionContext::setCurrent(conn_ctx_.get());
 }

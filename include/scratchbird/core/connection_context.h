@@ -826,14 +826,11 @@ namespace scratchbird::core
                                         const ID &table_id,
                                         uint32_t stable_page_id,
                                         uint16_t stable_item_id) -> SavepointBackoutAction *;
-        void recordSavepointRowRemoval(const ID &table_id,
-                                       uint32_t stable_page_id,
-                                       uint16_t stable_item_id);
-        void recordSavepointRowRestore(const ID &table_id,
-                                       uint32_t stable_page_id,
-                                       uint16_t stable_item_id,
-                                       const uint8_t *restore_tuple_data,
-                                       uint32_t restore_tuple_size);
+        void recordSavepointBackoutAction(const ID &table_id,
+                                          uint32_t stable_page_id,
+                                          uint16_t stable_item_id,
+                                          const uint8_t *prior_tuple_data,
+                                          uint32_t prior_tuple_size);
         void mergeSavepointBackoutChanges(Savepoint &target, const Savepoint &source);
         auto collectRollbackBackoutChanges(size_t first_savepoint_index) const
             -> std::vector<SavepointBackoutAction>;
@@ -868,43 +865,19 @@ namespace scratchbird::core
         Status releaseSavepoint(const std::string &name, ErrorContext *ctx = nullptr);
 
         /**
-         * Track a tuple insertion for potential savepoint rollback
-         * Called by heap_page.cpp after inserting a tuple
-         * @param table_id Table owning the tuple, or zero if unavailable
-         * @param page_id Page ID where tuple was inserted
-         * @param item_id Item ID of inserted tuple
+         * Track a stable-head mutation for potential savepoint backout.
+         * If `prior_tuple_data` is null or empty, rollback purges the row.
+         * Otherwise rollback restores the prior stable-head image.
          */
-        void trackTupleInsertion(const ID& table_id, uint32_t page_id, uint16_t item_id);
-        void trackTupleInsertion(uint32_t page_id, uint16_t item_id);
-
-        /**
-         * Track a tuple deletion for potential savepoint rollback
-         * Called by heap_page.cpp after marking a tuple deleted
-         * @param table_id Table owning the tuple, or zero if unavailable
-         * @param page_id Stable root page ID of the row
-         * @param item_id Stable root item ID of the row
-         * @param old_tuple_data Pre-delete tuple image used for savepoint restore
-         * @param old_tuple_size Pre-delete tuple image size
-         */
-        void trackTupleDeletion(const ID& table_id,
+        void trackTupleMutation(const ID& table_id,
                                 uint32_t page_id,
                                 uint16_t item_id,
-                                const uint8_t *old_tuple_data,
-                                uint32_t old_tuple_size);
-        void trackTupleDeletion(uint32_t page_id,
+                                const uint8_t *prior_tuple_data,
+                                uint32_t prior_tuple_size);
+        void trackTupleMutation(uint32_t page_id,
                                 uint16_t item_id,
-                                const uint8_t *old_tuple_data,
-                                uint32_t old_tuple_size);
-
-        /**
-         * Track a tuple update image for potential savepoint rollback
-         * Called by StorageEngine::updateTuple() after a successful update.
-         */
-        void trackTupleUpdate(const ID& table_id,
-                              uint32_t page_id,
-                              uint16_t item_id,
-                              const uint8_t* old_tuple_data,
-                              uint32_t old_tuple_size);
+                                const uint8_t *prior_tuple_data = nullptr,
+                                uint32_t prior_tuple_size = 0);
         [[nodiscard]] bool hasActiveSavepoints() const
         {
             return !savepoint_stack_.empty();

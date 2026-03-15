@@ -23,6 +23,7 @@
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/lock_manager.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/mga_backout_engine.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/brin_index.h"
 #include "scratchbird/core/gin_index.h"
@@ -1775,7 +1776,7 @@ namespace scratchbird::core
         {
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
-                conn_ctx->trackTupleInsertion(table_id, page_id, item_id);
+                conn_ctx->trackTupleMutation(table_id, page_id, item_id, nullptr, 0);
             }
 
             // Sprint 4 Task 5.4.3: Dirty page tracking
@@ -2324,7 +2325,7 @@ namespace scratchbird::core
         {
             if (ConnectionContext* active_conn_ctx = ConnectionContext::getCurrent())
             {
-                active_conn_ctx->trackTupleDeletion(
+                active_conn_ctx->trackTupleMutation(
                     table_id,
                     page_id,
                     item_id,
@@ -2472,37 +2473,18 @@ namespace scratchbird::core
         return status;
     }
 
-    auto StorageEngine::rollbackSavepointChanges(
-        const std::vector<SavepointBackoutAction> &actions,
-        uint64_t rollback_xid,
-        ErrorContext *ctx) -> Status
+    auto StorageEngine::applyStableHeadBackout(const SavepointBackoutAction &action,
+                                               uint64_t rollback_xid,
+                                               ErrorContext *ctx) -> Status
     {
-        for (const auto &action : actions)
-        {
-            Status status = Status::INVALID_ARGUMENT;
-            switch (action.kind)
-            {
-                case SavepointBackoutActionKind::REMOVE_ROW:
-                    status = rollbackInsertedSavepointRow(action, rollback_xid, ctx);
-                    break;
-
-                case SavepointBackoutActionKind::RESTORE_ROW:
-                    status = restoreSavepointRowState(action, rollback_xid, ctx);
-                    break;
-            }
-
-            if (status != Status::OK)
-            {
-                return status;
-            }
-        }
-
-        return Status::OK;
+        return action.restoresPriorState()
+            ? backoutRestoreStableHeadRow(action, rollback_xid, ctx)
+            : backoutRemoveStableHeadRow(action, rollback_xid, ctx);
     }
 
-    auto StorageEngine::rollbackInsertedSavepointRow(const SavepointBackoutAction &action,
-                                                     uint64_t rollback_xid,
-                                                     ErrorContext *ctx) -> Status
+    auto StorageEngine::backoutRemoveStableHeadRow(const SavepointBackoutAction &action,
+                                                   uint64_t rollback_xid,
+                                                   ErrorContext *ctx) -> Status
     {
         (void)rollback_xid;
 
@@ -2648,36 +2630,28 @@ namespace scratchbird::core
                     ->getBackVersionTID();
         }
 
-        status = rewriteStableTidIndexesForRollback(action.table_id,
-                                                    tablespace_id,
-                                                    action.stable_page_id,
-                                                    action.stable_item_id,
-                                                    current_tuple_image.data(),
-                                                    static_cast<uint32_t>(current_tuple_image.size()),
-                                                    nullptr,
-                                                    0,
-                                                    false,
-                                                    rollback_xid,
-                                                    ctx);
+        MgaBackoutEngine *backout_engine = db_->mga_backout_engine();
+        if (backout_engine == nullptr)
+        {
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "MGA backout engine not available");
+            return Status::IO_ERROR;
+        }
+
+        status = backout_engine->applyStableHeadAncillaryBackout(
+            action,
+            tablespace_id,
+            current_tuple_image.data(),
+            static_cast<uint32_t>(current_tuple_image.size()),
+            nullptr,
+            0,
+            version_chain_images,
+            rollback_xid,
+            ctx);
         if (status != Status::OK)
         {
             buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
             return status;
-        }
-
-        std::vector<ID> toast_values_to_delete;
-        ToastManager::queueReferencedToastValueForRetirement(
-            current_tuple_image.data(),
-            static_cast<uint32_t>(current_tuple_image.size()),
-            nullptr,
-            &toast_values_to_delete);
-        for (const auto &chain_image : version_chain_images)
-        {
-            ToastManager::queueReferencedToastValueForRetirement(
-                chain_image.data(),
-                static_cast<uint32_t>(chain_image.size()),
-                nullptr,
-                &toast_values_to_delete);
         }
 
         bool primary_dirty = false;
@@ -2746,32 +2720,17 @@ namespace scratchbird::core
             }
         }
 
-        if (toast_mgr != nullptr)
-        {
-            for (const ID &toast_value_id : toast_values_to_delete)
-            {
-                Status cleanup_status =
-                    toast_mgr->deleteToastValue(toast_value_id, rollback_xid, ctx);
-                if (cleanup_status != Status::OK && cleanup_status != Status::NOT_FOUND)
-                {
-                    LOG_WARNING(STORAGE,
-                                "Failed to retire TOAST value during inserted-row savepoint rollback (status=%d)",
-                                static_cast<int>(cleanup_status));
-                }
-            }
-        }
-
         return Status::OK;
     }
 
-    auto StorageEngine::restoreSavepointRowState(const SavepointBackoutAction &action,
-                                                 uint64_t rollback_xid,
-                                                 ErrorContext *ctx) -> Status
+    auto StorageEngine::backoutRestoreStableHeadRow(const SavepointBackoutAction &action,
+                                                    uint64_t rollback_xid,
+                                                    ErrorContext *ctx) -> Status
     {
-        if (action.restore_tuple_image.size() < sizeof(TupleHeader))
+        if (action.prior_tuple_image.size() < sizeof(TupleHeader))
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                              "Savepoint restore image is missing or invalid");
+                              "Savepoint prior tuple image is missing or invalid");
             return Status::INVALID_ARGUMENT;
         }
 
@@ -2864,7 +2823,7 @@ namespace scratchbird::core
         const auto *current_hdr =
             reinterpret_cast<const TupleHeader *>(current_tuple_image.data());
         const auto *restore_hdr =
-            reinterpret_cast<const TupleHeader *>(action.restore_tuple_image.data());
+            reinterpret_cast<const TupleHeader *>(action.prior_tuple_image.data());
         const TID preserved_back_tid = restore_hdr->getBackVersionTID();
 
         std::vector<TID> transient_chain_tids;
@@ -2923,27 +2882,6 @@ namespace scratchbird::core
                     ->getBackVersionTID();
         }
 
-        std::vector<ID> toast_values_to_delete;
-        ID restored_toast_value{};
-        const bool restored_has_toast =
-            ToastManager::extractReferencedToastValueId(
-                action.restore_tuple_image.data(),
-                static_cast<uint32_t>(action.restore_tuple_image.size()),
-                &restored_toast_value);
-        ToastManager::queueReferencedToastValueForRetirement(
-            current_tuple_image.data(),
-            static_cast<uint32_t>(current_tuple_image.size()),
-            restored_has_toast ? &restored_toast_value : nullptr,
-            &toast_values_to_delete);
-        for (const auto &chain_image : transient_chain_images)
-        {
-            ToastManager::queueReferencedToastValueForRetirement(
-                chain_image.data(),
-                static_cast<uint32_t>(chain_image.size()),
-                restored_has_toast ? &restored_toast_value : nullptr,
-                &toast_values_to_delete);
-        }
-
         bool primary_dirty = false;
         std::vector<uint16_t> primary_reclaim_slots;
         for (const TID &transient_tid : transient_chain_tids)
@@ -2974,8 +2912,8 @@ namespace scratchbird::core
 
         status = primary_heap_page.restoreTupleImage(
             action.stable_item_id,
-            action.restore_tuple_image.data(),
-            static_cast<uint32_t>(action.restore_tuple_image.size()),
+            action.prior_tuple_image.data(),
+            static_cast<uint32_t>(action.prior_tuple_image.size()),
             ctx);
         if (status != Status::OK)
         {
@@ -2987,17 +2925,27 @@ namespace scratchbird::core
         }
         primary_dirty = true;
 
-        status = rewriteStableTidIndexesForRollback(action.table_id,
-                                                    tablespace_id,
-                                                    action.stable_page_id,
-                                                    action.stable_item_id,
-                                                    current_tuple_image.data(),
-                                                    static_cast<uint32_t>(current_tuple_image.size()),
-                                                    action.restore_tuple_image.data(),
-                                                    static_cast<uint32_t>(action.restore_tuple_image.size()),
-                                                    true,
-                                                    rollback_xid,
-                                                    ctx);
+        MgaBackoutEngine *backout_engine = db_->mga_backout_engine();
+        if (backout_engine == nullptr)
+        {
+            std::memcpy(primary_page_data,
+                        primary_page_snapshot.data(),
+                        primary_page_snapshot.size());
+            buffer_pool_->unpinPageGlobal(primary_gpid, false, ctx);
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "MGA backout engine not available");
+            return Status::IO_ERROR;
+        }
+
+        status = backout_engine->applyStableHeadAncillaryBackout(
+            action,
+            tablespace_id,
+            current_tuple_image.data(),
+            static_cast<uint32_t>(current_tuple_image.size()),
+            action.prior_tuple_image.data(),
+            static_cast<uint32_t>(action.prior_tuple_image.size()),
+            transient_chain_images,
+            rollback_xid,
+            ctx);
         if (status != Status::OK)
         {
             std::memcpy(primary_page_data,
@@ -3053,21 +3001,6 @@ namespace scratchbird::core
             }
         }
 
-        if (toast_mgr != nullptr)
-        {
-            for (const ID &toast_value_id : toast_values_to_delete)
-            {
-                Status cleanup_status =
-                    toast_mgr->deleteToastValue(toast_value_id, rollback_xid, ctx);
-                if (cleanup_status != Status::OK && cleanup_status != Status::NOT_FOUND)
-                {
-                    LOG_WARNING(STORAGE,
-                                "Failed to retire TOAST value during savepoint restore backout (status=%d)",
-                                static_cast<int>(cleanup_status));
-                }
-            }
-        }
-
         return Status::OK;
     }
 
@@ -3118,63 +3051,15 @@ namespace scratchbird::core
 
     auto StorageEngine::isVisible(uint64_t xmin, uint64_t xmax, uint64_t current_xid) const -> bool
     {
-        // Use transaction manager for visibility if available
-        if (db_->transaction_manager() != nullptr)
+        TransactionManager *tm = (db_ != nullptr) ? db_->transaction_manager() : nullptr;
+        if (tm != nullptr)
         {
-            // CRITICAL FIX (CRITICAL-2 side-effect): Removed const because visibility methods
-            // modify the transaction cache for performance optimization
-            TransactionManager *tm = db_->transaction_manager();
-
-            // VALIDATE XIDs FIRST - protect against corrupted tuple headers
-            if (!tm->isXidInRange(xmin))
-            {
-                // CORRUPTION LOGGING: Invalid xmin detected
-                LOG_ERROR(STORAGE, "Invalid xmin %lu in StorageEngine::isVisible", xmin);
-                return false; // Invalid xmin - tuple is invisible
-            }
-
-            if (xmax != 0 && !tm->isXidInRange(xmax))
-            {
-                // CORRUPTION LOGGING: Invalid xmax detected
-                LOG_WARNING(
-                    STORAGE,
-                    "Invalid xmax %lu in StorageEngine::isVisible - treating as not deleted", xmax);
-                // Invalid xmax - treat as if not deleted
-                xmax = 0;
-            }
-
             ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-            return tm->isRuntimeRecordVisible(xmin, xmax, current_xid, conn_ctx);
+            return tm->evaluateRuntimeRecordVisibility(xmin, xmax, current_xid, conn_ctx).visible;
         }
 
-        // Fallback to simple visibility rules (still validate XIDs)
-        if (!TransactionManager::isValidXid(xmin))
-        {
-            // CORRUPTION LOGGING: Invalid xmin in fallback path
-            LOG_ERROR(STORAGE, "Invalid xmin %lu in fallback visibility check", xmin);
-            return false; // Invalid xmin
-        }
-
-        if (xmax != 0 && !TransactionManager::isValidXid(xmax))
-        {
-            // CORRUPTION LOGGING: Invalid xmax in fallback path
-            LOG_WARNING(STORAGE,
-                        "Invalid xmax %lu in fallback visibility check - treating as not deleted",
-                        xmax);
-            xmax = 0; // Invalid xmax - treat as not deleted
-        }
-
-        if (xmin > current_xid)
-        {
-            return false; // Created by future transaction
-        }
-
-        if (xmax > 0 && xmax < current_xid)
-        {
-            return false; // Deleted by committed transaction
-        }
-
-        return true;
+        return TransactionManager::evaluateBootstrapRecordVisibility(xmin, xmax, current_xid)
+            .visible;
     }
 
     auto StorageEngine::getCurrentXid() const -> uint64_t
@@ -4151,6 +4036,31 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto StorageEngine::applyStableTidIndexBackout(const ID &table_id,
+                                                   uint16_t tablespace_id,
+                                                   uint32_t stable_page_id,
+                                                   uint16_t stable_item_id,
+                                                   const uint8_t *current_tuple_data,
+                                                   uint32_t current_tuple_size,
+                                                   const uint8_t *prior_tuple_data,
+                                                   uint32_t prior_tuple_size,
+                                                   bool prior_row_present,
+                                                   uint64_t current_xid,
+                                                   ErrorContext *ctx) -> Status
+    {
+        return rewriteStableTidIndexesForRollback(table_id,
+                                                  tablespace_id,
+                                                  stable_page_id,
+                                                  stable_item_id,
+                                                  current_tuple_data,
+                                                  current_tuple_size,
+                                                  prior_tuple_data,
+                                                  prior_tuple_size,
+                                                  prior_row_present,
+                                                  current_xid,
+                                                  ctx);
+    }
+
     auto StorageEngine::rewriteStableTidIndexesForRollback(const ID &table_id,
                                                            uint16_t tablespace_id,
                                                            uint32_t stable_page_id,
@@ -4718,9 +4628,11 @@ namespace scratchbird::core
 
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
-                conn_ctx->trackTupleUpdate(table_id, page_id, item_id,
-                                           old_tuple_buffer.data(),
-                                           old_tuple_length);
+                conn_ctx->trackTupleMutation(table_id,
+                                             page_id,
+                                             item_id,
+                                             old_tuple_buffer.data(),
+                                             old_tuple_length);
                 conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
             }
 
@@ -4911,11 +4823,11 @@ namespace scratchbird::core
 
             if (ConnectionContext* conn_ctx = ConnectionContext::getCurrent())
             {
-                conn_ctx->trackTupleUpdate(table_id,
-                                           page_id,
-                                           item_id,
-                                           old_tuple_buffer.data(),
-                                           old_length);
+                conn_ctx->trackTupleMutation(table_id,
+                                             page_id,
+                                             item_id,
+                                             old_tuple_buffer.data(),
+                                             old_length);
                 conn_ctx->recordTableDmlDelta(table_id, 0, 1, 0);
             }
 

@@ -13,6 +13,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/mga_backout_engine.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/tid_resolver.h" // Sprint 4 Task 5.4.2
 #include "scratchbird/core/lock_manager.h"
@@ -1381,6 +1382,9 @@ namespace scratchbird::core
 
         // Shut down transaction manager
         transaction_manager_.reset();
+
+        // Shut down MGA backout engine before the storage engine it drives.
+        mga_backout_engine_.reset();
 
         // Shut down storage engine
         storage_engine_.reset();
@@ -2846,6 +2850,17 @@ namespace scratchbird::core
         {
             close();
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate StorageEngine");
+            return Status::OOM;
+        }
+
+        try
+        {
+            mga_backout_engine_ = std::make_unique<MgaBackoutEngine>(this);
+        }
+        catch (const std::bad_alloc &)
+        {
+            close();
+            SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate MgaBackoutEngine");
             return Status::OOM;
         }
 

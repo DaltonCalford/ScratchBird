@@ -1692,75 +1692,28 @@ namespace scratchbird::core
                 return Status::NOT_FOUND;
             }
 
-            // VALIDATE XIDs FIRST - protect against corrupted tuple headers
-            bool xmin_valid = TransactionManager::isValidXid(tuple_hdr->xmin);
-            bool xmax_valid =
-                (tuple_hdr->xmax == 0) || TransactionManager::isValidXid(tuple_hdr->xmax);
-
-            if (!xmin_valid)
-            {
-                // Invalid xmin - skip this version and try BACK version
-                // This protects against corrupted data
-                LOG_ERROR(STORAGE,
-                          "Invalid xmin %lu in version chain at page %u - skipping to back version",
-                          tuple_hdr->xmin,
-                          static_cast<uint32_t>(getPageNumber(current_gpid)));
-
-                if (tuple_hdr->hasBackVersion())
-                {
-                    chain_length++;
-                    TID back_tid = tuple_hdr->getBackVersionTID();
-                    if (back_tid.gpid == INVALID_GPID)
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                          "Invalid back version target");
-                        return Status::PAGE_CORRUPT;
-                    }
-
-                    Status switch_status = switchToPage(back_tid.gpid);
-                    if (switch_status != Status::OK)
-                    {
-                        return switch_status;
-                    }
-
-                    current_item_id = back_tid.slot;
-                    continue;
-                }
-                else
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                      "Invalid xmin and no back version");
-                    return Status::PAGE_CORRUPT;
-                }
-            }
-
-            // Treat invalid xmax as 0 (not deleted)
-            uint64_t effective_xmax = xmax_valid ? tuple_hdr->xmax : 0;
-
-            bool create_visible = false;
-            bool delete_visible = false;
-
+            VersionTraversalDecision traversal_decision{};
             if (db_ != nullptr && db_->transaction_manager() != nullptr)
             {
                 TransactionManager *txn_mgr = db_->transaction_manager();
                 ConnectionContext *conn_ctx = ConnectionContext::getCurrent();
-                const RecordVisibilityDecision visibility_decision =
-                    txn_mgr->evaluateRuntimeRecordVisibility(tuple_hdr->xmin,
-                                                             effective_xmax,
-                                                             current_xid,
-                                                             conn_ctx);
-                create_visible = visibility_decision.create_visible;
-                delete_visible = visibility_decision.delete_visible;
+                traversal_decision = txn_mgr->evaluateRuntimeVersionTraversalStep(
+                    tuple_hdr->xmin,
+                    tuple_hdr->xmax,
+                    tuple_hdr->hasBackVersion(),
+                    current_xid,
+                    conn_ctx);
             }
             else
             {
-                create_visible = tuple_hdr->xmin <= current_xid;
-                delete_visible = effective_xmax != 0 && effective_xmax <= current_xid;
+                traversal_decision = TransactionManager::evaluateBootstrapVersionTraversalStep(
+                    tuple_hdr->xmin,
+                    tuple_hdr->xmax,
+                    tuple_hdr->hasBackVersion(),
+                    current_xid);
             }
 
-            const bool visible = create_visible && !delete_visible;
-
-            if (visible)
+            if (traversal_decision.action == VersionTraversalAction::RETURN_VISIBLE)
             {
                 if (current_gpid == primary_gpid)
                 {
@@ -1807,33 +1760,33 @@ namespace scratchbird::core
                 return Status::OK;
             }
 
-            // ====================================================================
-            // NOT VISIBLE: Follow BACK version chain (N2O traversal)
-            // ====================================================================
-            // This version is not visible to our transaction.
-            // Follow back version pointer BACKWARD to older version.
-            if (!create_visible)
+            if (traversal_decision.action == VersionTraversalAction::CORRUPT_VERSION)
             {
-                if (tuple_hdr->hasBackVersion())
+                SET_ERROR_CONTEXT(ctx,
+                                  traversal_decision.status,
+                                  "Version traversal rejected corrupt tuple state");
+                return traversal_decision.status;
+            }
+
+            if (traversal_decision.action == VersionTraversalAction::FOLLOW_BACK_VERSION)
+            {
+                TID back_tid = tuple_hdr->getBackVersionTID();
+                if (back_tid.gpid == INVALID_GPID)
                 {
-                    TID back_tid = tuple_hdr->getBackVersionTID();
-                    if (back_tid.gpid == INVALID_GPID)
-                    {
-                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                                          "Invalid back version target");
-                        return Status::PAGE_CORRUPT;
-                    }
-
-                    Status switch_status = switchToPage(back_tid.gpid);
-                    if (switch_status != Status::OK)
-                    {
-                        return switch_status;
-                    }
-                    current_item_id = back_tid.slot;
-
-                    chain_length++;
-                    continue;
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "Invalid back version target");
+                    return Status::PAGE_CORRUPT;
                 }
+
+                Status switch_status = switchToPage(back_tid.gpid);
+                if (switch_status != Status::OK)
+                {
+                    return switch_status;
+                }
+                current_item_id = back_tid.slot;
+
+                chain_length++;
+                continue;
             }
 
             // End of chain, or this logical row is deleted for the reader snapshot.

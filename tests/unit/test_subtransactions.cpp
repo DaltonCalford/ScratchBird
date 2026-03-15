@@ -97,8 +97,8 @@ TEST(SubtransactionsTest, Comprehensive) {
 
     // Test 2: Track tuple operations
     std::cout << "\n--- Test 2: Track Tuple Operations ---" << std::endl;
-    ctx.trackTupleInsertion(100, 1);  // Simulated insertion at page 100, item 1
-    ctx.trackTupleInsertion(100, 2);  // Another insertion
+    ctx.trackTupleMutation(100, 1);  // Simulated insertion at page 100, item 1
+    ctx.trackTupleMutation(100, 2);  // Another insertion
     std::cout << "✓ Tracked 2 tuple insertions after savepoint sp1" << std::endl;
 
     // Test 3: Create nested savepoint
@@ -111,9 +111,9 @@ TEST(SubtransactionsTest, Comprehensive) {
     }
     std::cout << "✓ Created nested savepoint 'sp2'" << std::endl;
 
-    ctx.trackTupleInsertion(101, 1);  // Insert in sp2
+    ctx.trackTupleMutation(101, 1);  // Insert in sp2
     const uint8_t deleted_row_image[] = {0x01};
-    ctx.trackTupleDeletion(100, 1, deleted_row_image, sizeof(deleted_row_image));   // Delete in sp2
+    ctx.trackTupleMutation(100, 1, deleted_row_image, sizeof(deleted_row_image));   // Delete in sp2
     std::cout << "✓ Tracked 1 insertion and 1 deletion after savepoint sp2" << std::endl;
 
     // Test 4: Rollback to sp2 (should undo nothing, as we're at sp2)
@@ -135,7 +135,7 @@ TEST(SubtransactionsTest, Comprehensive) {
     }
     std::cout << "✓ Created savepoint 'sp3'" << std::endl;
 
-    ctx.trackTupleInsertion(102, 1);
+    ctx.trackTupleMutation(102, 1);
     std::cout << "✓ Tracked 1 insertion after savepoint sp3" << std::endl;
 
     // Test 5: Rollback to sp1 (should undo sp2 and sp3)
@@ -158,7 +158,7 @@ TEST(SubtransactionsTest, Comprehensive) {
     }
     std::cout << "✓ Created savepoint 'sp4' after rollback" << std::endl;
 
-    ctx.trackTupleInsertion(103, 1);
+    ctx.trackTupleMutation(103, 1);
     std::cout << "✓ Tracked insertion in sp4" << std::endl;
 
     // Test 7: Release savepoint (merge changes into parent)

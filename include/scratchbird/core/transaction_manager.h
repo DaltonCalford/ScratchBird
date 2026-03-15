@@ -124,6 +124,22 @@ namespace scratchbird::core
         TransactionVisibilityDecision delete_decision{};
     };
 
+    enum class VersionTraversalAction : uint8_t
+    {
+        RETURN_VISIBLE = 0,
+        FOLLOW_BACK_VERSION = 1,
+        TERMINAL_NOT_VISIBLE = 2,
+        CORRUPT_VERSION = 3,
+    };
+
+    struct VersionTraversalDecision
+    {
+        VersionTraversalAction action = VersionTraversalAction::TERMINAL_NOT_VISIBLE;
+        Status status = Status::OK;
+        VisibilityReason reason = VisibilityReason::NONE;
+        RecordVisibilityDecision record_decision{};
+    };
+
     struct VisibilityContextSelection
     {
         bool valid = false;
@@ -350,6 +366,32 @@ namespace scratchbird::core
                                       uint64_t reader_xid, VisibilityMode mode,
                                       const TransactionSnapshot *snapshot = nullptr)
             -> RecordVisibilityDecision;
+
+        // Bootstrap/no-inventory fallback for callers that must make a bounded
+        // visibility decision before TransactionManager runtime state is
+        // available. This is a TransactionManager-owned leaf fallback so
+        // storage and heap callers do not own separate visibility policy.
+        static auto evaluateBootstrapRecordVisibility(uint64_t create_xid,
+                                                      uint64_t delete_xid,
+                                                      uint64_t reader_xid)
+            -> RecordVisibilityDecision;
+
+        // Runtime version-chain classification used by heap/version traversal.
+        // The caller remains responsible for walking pages and slots, but the
+        // decision about whether the current version is visible, should fall
+        // back to an older version, or is corrupt is owned here.
+        auto evaluateRuntimeVersionTraversalStep(uint64_t create_xid,
+                                                 uint64_t delete_xid,
+                                                 bool has_back_version,
+                                                 uint64_t default_reader_xid,
+                                                 const ConnectionContext *conn_ctx = nullptr)
+            -> VersionTraversalDecision;
+
+        static auto evaluateBootstrapVersionTraversalStep(uint64_t create_xid,
+                                                          uint64_t delete_xid,
+                                                          bool has_back_version,
+                                                          uint64_t reader_xid)
+            -> VersionTraversalDecision;
 
         // Authoritative runtime visibility classifier. This resolves the live
         // visibility context from the current connection and then delegates to

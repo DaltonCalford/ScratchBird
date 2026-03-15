@@ -2553,6 +2553,164 @@ namespace scratchbird::core
         return decision;
     }
 
+    auto TransactionManager::evaluateBootstrapRecordVisibility(uint64_t create_xid,
+                                                               uint64_t delete_xid,
+                                                               uint64_t reader_xid)
+        -> RecordVisibilityDecision
+    {
+        RecordVisibilityDecision decision{};
+        decision.mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+        decision.create_decision.mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+        decision.delete_decision.mode = VisibilityMode::READ_CURRENT_TRANSACTION;
+
+        if (!isValidXid(create_xid))
+        {
+            decision.create_decision.reason = VisibilityReason::INVALID_XID;
+        }
+        else if (create_xid == reader_xid)
+        {
+            decision.create_visible = true;
+            decision.create_decision.visible = true;
+            decision.create_decision.reason = VisibilityReason::OWN_TRANSACTION;
+        }
+        else if (create_xid <= FROZEN_XID)
+        {
+            decision.create_visible = true;
+            decision.create_decision.visible = true;
+            decision.create_decision.state = TransactionState::COMMITTED;
+            decision.create_decision.reason = VisibilityReason::FROZEN_XID;
+        }
+        else if (create_xid > reader_xid)
+        {
+            decision.create_decision.reason = VisibilityReason::FUTURE_XID;
+        }
+        else
+        {
+            decision.create_visible = true;
+            decision.create_decision.visible = true;
+            decision.create_decision.state = TransactionState::COMMITTED;
+            decision.create_decision.reason = VisibilityReason::COMMITTED_VISIBLE;
+        }
+
+        if (delete_xid == 0)
+        {
+            decision.delete_decision.state = TransactionState::COMMITTED;
+            decision.delete_decision.reason = VisibilityReason::DELETE_NOT_PRESENT;
+        }
+        else if (!isValidXid(delete_xid))
+        {
+            decision.delete_decision.reason = VisibilityReason::INVALID_XID;
+        }
+        else if (delete_xid == reader_xid)
+        {
+            decision.delete_visible = true;
+            decision.delete_decision.visible = true;
+            decision.delete_decision.reason = VisibilityReason::OWN_TRANSACTION;
+        }
+        else if (delete_xid <= FROZEN_XID)
+        {
+            decision.delete_visible = true;
+            decision.delete_decision.visible = true;
+            decision.delete_decision.state = TransactionState::COMMITTED;
+            decision.delete_decision.reason = VisibilityReason::FROZEN_XID;
+        }
+        else if (delete_xid > reader_xid)
+        {
+            decision.delete_decision.reason = VisibilityReason::FUTURE_XID;
+        }
+        else
+        {
+            decision.delete_visible = true;
+            decision.delete_decision.visible = true;
+            decision.delete_decision.state = TransactionState::COMMITTED;
+            decision.delete_decision.reason = VisibilityReason::COMMITTED_VISIBLE;
+        }
+
+        decision.visible = decision.create_visible && !decision.delete_visible;
+        return decision;
+    }
+
+    auto TransactionManager::evaluateRuntimeVersionTraversalStep(
+        uint64_t create_xid, uint64_t delete_xid, bool has_back_version,
+        uint64_t default_reader_xid, const ConnectionContext *conn_ctx)
+        -> VersionTraversalDecision
+    {
+        VersionTraversalDecision decision{};
+
+        if (!isValidXid(create_xid))
+        {
+            decision.status = has_back_version ? Status::OK : Status::PAGE_CORRUPT;
+            decision.action = has_back_version ? VersionTraversalAction::FOLLOW_BACK_VERSION
+                                               : VersionTraversalAction::CORRUPT_VERSION;
+            decision.reason = VisibilityReason::INVALID_XID;
+            return decision;
+        }
+
+        decision.record_decision =
+            evaluateRuntimeRecordVisibility(create_xid, delete_xid, default_reader_xid, conn_ctx);
+        decision.reason = decision.record_decision.create_decision.reason;
+
+        if (decision.record_decision.visible)
+        {
+            decision.action = VersionTraversalAction::RETURN_VISIBLE;
+            return decision;
+        }
+
+        if (!decision.record_decision.create_visible && has_back_version)
+        {
+            decision.action = VersionTraversalAction::FOLLOW_BACK_VERSION;
+            return decision;
+        }
+
+        decision.action = VersionTraversalAction::TERMINAL_NOT_VISIBLE;
+        if (decision.record_decision.create_visible)
+        {
+            decision.reason = decision.record_decision.delete_decision.reason;
+        }
+        return decision;
+    }
+
+    auto TransactionManager::evaluateBootstrapVersionTraversalStep(uint64_t create_xid,
+                                                                   uint64_t delete_xid,
+                                                                   bool has_back_version,
+                                                                   uint64_t reader_xid)
+        -> VersionTraversalDecision
+    {
+        VersionTraversalDecision decision{};
+
+        if (!isValidXid(create_xid))
+        {
+            decision.status = has_back_version ? Status::OK : Status::PAGE_CORRUPT;
+            decision.action = has_back_version ? VersionTraversalAction::FOLLOW_BACK_VERSION
+                                               : VersionTraversalAction::CORRUPT_VERSION;
+            decision.reason = VisibilityReason::INVALID_XID;
+            return decision;
+        }
+
+        decision.record_decision =
+            evaluateBootstrapRecordVisibility(create_xid, delete_xid, reader_xid);
+        decision.reason = decision.record_decision.create_decision.reason;
+
+        if (decision.record_decision.visible)
+        {
+            decision.action = VersionTraversalAction::RETURN_VISIBLE;
+            return decision;
+        }
+
+        if (!decision.record_decision.create_visible && has_back_version)
+        {
+            decision.action = VersionTraversalAction::FOLLOW_BACK_VERSION;
+            return decision;
+        }
+
+        decision.action = VersionTraversalAction::TERMINAL_NOT_VISIBLE;
+        if (decision.record_decision.create_visible)
+        {
+            decision.reason = decision.record_decision.delete_decision.reason;
+        }
+        return decision;
+    }
+
     auto TransactionManager::evaluateRuntimeRecordVisibility(uint64_t create_xid,
                                                              uint64_t delete_xid,
                                                              uint64_t default_reader_xid,

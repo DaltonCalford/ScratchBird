@@ -1042,6 +1042,14 @@ TEST_F(ConnectionContextTest, RuntimeVisibilityServiceUsesCurrentSnapshotContext
     EXPECT_EQ(record_decision.mode, VisibilityMode::SNAPSHOT);
     EXPECT_EQ(record_decision.create_decision.reason, VisibilityReason::ACTIVE_IN_SNAPSHOT);
     EXPECT_EQ(record_decision.delete_decision.reason, VisibilityReason::DELETE_NOT_PRESENT);
+
+    const auto traversal_decision =
+        txn_mgr->evaluateRuntimeVersionTraversalStep(xid_writer, 0, true, xid_reader, nullptr);
+    EXPECT_EQ(traversal_decision.action, VersionTraversalAction::FOLLOW_BACK_VERSION);
+    EXPECT_EQ(traversal_decision.status, Status::OK);
+    EXPECT_EQ(traversal_decision.reason, VisibilityReason::ACTIVE_IN_SNAPSHOT);
+    EXPECT_FALSE(traversal_decision.record_decision.visible);
+    EXPECT_FALSE(traversal_decision.record_decision.create_visible);
 }
 
 TEST_F(ConnectionContextTest, RuntimeVisibilityServiceRejectsMissingStatementSnapshot)

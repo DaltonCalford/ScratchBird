@@ -169,6 +169,31 @@ TEST_F(TransactionManagerTest, TransactionVisibility)
     ProcArrayManager::unregisterBackend(proc3, &ctx);
 }
 
+TEST_F(TransactionManagerTest, BootstrapVersionTraversalDecisionOwnsFollowStopAndCorruption)
+{
+    const uint64_t reader_xid = 100;
+
+    const auto follow = TransactionManager::evaluateBootstrapVersionTraversalStep(
+        150, 0, true, reader_xid);
+    EXPECT_EQ(follow.action, VersionTraversalAction::FOLLOW_BACK_VERSION);
+    EXPECT_EQ(follow.status, Status::OK);
+    EXPECT_EQ(follow.reason, VisibilityReason::FUTURE_XID);
+
+    const auto stop = TransactionManager::evaluateBootstrapVersionTraversalStep(
+        90, 95, false, reader_xid);
+    EXPECT_EQ(stop.action, VersionTraversalAction::TERMINAL_NOT_VISIBLE);
+    EXPECT_EQ(stop.status, Status::OK);
+    EXPECT_EQ(stop.reason, VisibilityReason::COMMITTED_VISIBLE);
+    EXPECT_TRUE(stop.record_decision.create_visible);
+    EXPECT_TRUE(stop.record_decision.delete_visible);
+
+    const auto corrupt =
+        TransactionManager::evaluateBootstrapVersionTraversalStep(0, 0, false, reader_xid);
+    EXPECT_EQ(corrupt.action, VersionTraversalAction::CORRUPT_VERSION);
+    EXPECT_EQ(corrupt.status, Status::PAGE_CORRUPT);
+    EXPECT_EQ(corrupt.reason, VisibilityReason::INVALID_XID);
+}
+
 TEST_F(TransactionManagerTest, TransactionPersistence)
 {
     ErrorContext ctx;

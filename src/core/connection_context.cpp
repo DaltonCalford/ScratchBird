@@ -17,6 +17,7 @@
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/mga_backout_engine.h"
 #include "scratchbird/core/heap_page.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
@@ -4264,9 +4265,11 @@ namespace scratchbird::core
         return nullptr;
     }
 
-    void ConnectionContext::recordSavepointRowRemoval(const ID &table_id,
-                                                      uint32_t stable_page_id,
-                                                      uint16_t stable_item_id)
+    void ConnectionContext::recordSavepointBackoutAction(const ID &table_id,
+                                                         uint32_t stable_page_id,
+                                                         uint16_t stable_item_id,
+                                                         const uint8_t *prior_tuple_data,
+                                                         uint32_t prior_tuple_size)
     {
         if (savepoint_stack_.empty())
         {
@@ -4281,50 +4284,18 @@ namespace scratchbird::core
         }
 
         SavepointBackoutAction action;
-        action.kind = SavepointBackoutActionKind::REMOVE_ROW;
         action.table_id = table_id;
         action.stable_page_id = stable_page_id;
         action.stable_item_id = stable_item_id;
+        if (prior_tuple_data != nullptr && prior_tuple_size > 0)
+        {
+            action.prior_tuple_image.assign(prior_tuple_data, prior_tuple_data + prior_tuple_size);
+        }
         savepoint.changes.emplace_back(std::move(action));
 
         LOG_DEBUG(TRANSACTION,
-                  "Tracked savepoint row removal (page=%u, item=%u) in savepoint '%s' (level %u)",
-                  stable_page_id,
-                  stable_item_id,
-                  savepoint.name.c_str(),
-                  savepoint.level);
-    }
-
-    void ConnectionContext::recordSavepointRowRestore(const ID &table_id,
-                                                      uint32_t stable_page_id,
-                                                      uint16_t stable_item_id,
-                                                      const uint8_t *restore_tuple_data,
-                                                      uint32_t restore_tuple_size)
-    {
-        if (savepoint_stack_.empty() || restore_tuple_data == nullptr || restore_tuple_size == 0)
-        {
-            return;
-        }
-
-        Savepoint &savepoint = savepoint_stack_.back();
-        SavepointBackoutAction *existing =
-            findSavepointBackoutChange(savepoint, table_id, stable_page_id, stable_item_id);
-        if (existing != nullptr)
-        {
-            return;
-        }
-
-        SavepointBackoutAction action;
-        action.kind = SavepointBackoutActionKind::RESTORE_ROW;
-        action.table_id = table_id;
-        action.stable_page_id = stable_page_id;
-        action.stable_item_id = stable_item_id;
-        action.restore_tuple_image.assign(restore_tuple_data,
-                                          restore_tuple_data + restore_tuple_size);
-        savepoint.changes.emplace_back(std::move(action));
-
-        LOG_DEBUG(TRANSACTION,
-                  "Tracked savepoint row restore (page=%u, item=%u) in savepoint '%s' (level %u)",
+                  "Tracked savepoint backout action (%s, page=%u, item=%u) in savepoint '%s' (level %u)",
+                  prior_tuple_data != nullptr && prior_tuple_size > 0 ? "restore" : "purge",
                   stable_page_id,
                   stable_item_id,
                   savepoint.name.c_str(),
@@ -4404,10 +4375,10 @@ namespace scratchbird::core
         LOG_DEBUG(TRANSACTION, "Rolling back to savepoint '%s' at level %u: proc_id=%u, xid=%lu",
                   name.c_str(), sp_it->level, proc_id_, current_xid_);
 
-        StorageEngine *storage = db_->storage_engine();
-        if (!storage)
+        MgaBackoutEngine *backout_engine = db_->mga_backout_engine();
+        if (!backout_engine)
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Storage engine not available");
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "MGA backout engine not available");
             return Status::IO_ERROR;
         }
 
@@ -4428,9 +4399,8 @@ namespace scratchbird::core
         } rollback_guard(savepoint_rollback_in_progress_);
 
         const auto rollback_changes = collectRollbackBackoutChanges(target_index);
-        Status rollback_status = storage->rollbackSavepointChanges(rollback_changes,
-                                                                  current_xid_,
-                                                                  ctx);
+        Status rollback_status =
+            backout_engine->applySavepointBackout(rollback_changes, current_xid_, ctx);
         if (rollback_status != Status::OK)
         {
             return rollback_status;
@@ -4519,63 +4489,29 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    void ConnectionContext::trackTupleInsertion(const ID& table_id,
+    void ConnectionContext::trackTupleMutation(const ID& table_id,
                                                uint32_t page_id,
-                                               uint16_t item_id)
-    {
-        if (savepoint_rollback_in_progress_)
-        {
-            return;
-        }
-        // If we have active savepoints, track this insertion in the most recent one
-        if (!savepoint_stack_.empty())
-        {
-            recordSavepointRowRemoval(table_id, page_id, item_id);
-        }
-    }
-
-    void ConnectionContext::trackTupleInsertion(uint32_t page_id, uint16_t item_id)
-    {
-        trackTupleInsertion(ID{}, page_id, item_id);
-    }
-
-    void ConnectionContext::trackTupleDeletion(const ID& table_id,
-                                              uint32_t page_id,
-                                              uint16_t item_id,
-                                              const uint8_t *old_tuple_data,
-                                              uint32_t old_tuple_size)
-    {
-        if (savepoint_rollback_in_progress_)
-        {
-            return;
-        }
-        // If we have active savepoints, track this deletion in the most recent one
-        if (!savepoint_stack_.empty())
-        {
-            recordSavepointRowRestore(table_id, page_id, item_id, old_tuple_data, old_tuple_size);
-        }
-    }
-
-    void ConnectionContext::trackTupleDeletion(uint32_t page_id,
                                                uint16_t item_id,
-                                               const uint8_t *old_tuple_data,
-                                               uint32_t old_tuple_size)
+                                               const uint8_t *prior_tuple_data,
+                                               uint32_t prior_tuple_size)
     {
-        trackTupleDeletion(ID{}, page_id, item_id, old_tuple_data, old_tuple_size);
-    }
-
-    void ConnectionContext::trackTupleUpdate(const ID& table_id,
-                                             uint32_t page_id,
-                                             uint16_t item_id,
-                                             const uint8_t* old_tuple_data,
-                                             uint32_t old_tuple_size)
-    {
-        if (savepoint_rollback_in_progress_ || savepoint_stack_.empty() ||
-            old_tuple_data == nullptr || old_tuple_size == 0)
+        if (savepoint_rollback_in_progress_ || savepoint_stack_.empty())
         {
             return;
         }
-        recordSavepointRowRestore(table_id, page_id, item_id, old_tuple_data, old_tuple_size);
+        recordSavepointBackoutAction(table_id,
+                                     page_id,
+                                     item_id,
+                                     prior_tuple_data,
+                                     prior_tuple_size);
+    }
+
+    void ConnectionContext::trackTupleMutation(uint32_t page_id,
+                                               uint16_t item_id,
+                                               const uint8_t *prior_tuple_data,
+                                               uint32_t prior_tuple_size)
+    {
+        trackTupleMutation(ID{}, page_id, item_id, prior_tuple_data, prior_tuple_size);
     }
 
     // ============================================================================
