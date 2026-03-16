@@ -850,6 +850,46 @@ protected:
         return true;
     }
 
+    bool publishSevereMgaChurn(const std::string &table_name,
+                               size_t advisory_count = 8,
+                               uint64_t reclaimable_bytes = 65536,
+                               uint32_t deleted_slots = 64,
+                               uint16_t chain_depth_hint = 8,
+                               double same_page_update_ratio = 0.05)
+    {
+        if (db_ == nullptr || connection_ctx_ == nullptr)
+        {
+            return false;
+        }
+
+        CatalogManager::TableInfo table_info;
+        if (db_->catalog_manager()->getTable(connection_ctx_->getCurrentSchemaId(),
+                                             table_name,
+                                             table_info,
+                                             nullptr) != Status::OK)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < advisory_count; ++i)
+        {
+            StorageEngine::FragmentationAdvisory advisory{};
+            advisory.page_id = static_cast<uint32_t>(100 + i);
+            advisory.reclaimable_bytes = reclaimable_bytes;
+            advisory.deleted_slots = deleted_slots;
+            advisory.chain_depth_hint = chain_depth_hint;
+            advisory.same_page_back_versions =
+                std::max<uint16_t>(1, chain_depth_hint / 8);
+            advisory.same_page_update_ratio = same_page_update_ratio;
+            advisory.dead_space_ratio = 0.85;
+            advisory.rewrite_recommended = true;
+            db_->storage_engine()->publishFragmentationAdvisory(
+                table_info.table_id, advisory.page_id, advisory);
+        }
+
+        return true;
+    }
+
     std::vector<uint8_t> compileSQL(const std::string &sql)
     {
         auto compile_result = compiler_->compile(sql);
@@ -2448,6 +2488,92 @@ TEST_F(QueryPlannerIntegrationTest, MgaCanonicalTelemetryFeedsPlannerCostingAndR
     ASSERT_NE(trace_it, plan.considered_paths.end());
     EXPECT_NE(trace_it->reason.find("penalty="), std::string::npos);
     EXPECT_GT(trace_it->total_cost, 0.0);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       MgaCanonicalTelemetryRejectsBroadCoveringIndexPathUnderSevereChurn)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_id_name ON users (id, name)").success());
+    for (int i = 1; i <= 4000; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'u" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 40)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(publishSevereMgaChurn("users"));
+
+    auto bytecode =
+        compileSQL("SELECT id, name FROM users WHERE id >= 3800");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto &relation = plan.relations.front();
+    EXPECT_EQ(relation.scan_kind, "SEQ_SCAN");
+    EXPECT_NE(std::find(relation.candidate_scan_families.begin(),
+                        relation.candidate_scan_families.end(),
+                        "INDEX_ONLY_SCAN"),
+              relation.candidate_scan_families.end());
+
+    auto trace_it = std::find_if(
+        plan.rejected_paths.begin(),
+        plan.rejected_paths.end(),
+        [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+            return entry.phase == "MGA_SWITCHOVER" &&
+                   entry.subject == "relation:users" &&
+                   entry.candidate == "INDEX_ONLY_SCAN[idx_users_id_name]";
+        });
+    ASSERT_NE(trace_it, plan.rejected_paths.end());
+    EXPECT_NE(trace_it->reason.find("rewrite-equivalent MGA churn"),
+              std::string::npos);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       MgaCanonicalTelemetryPreservesExactCoveringProbeUnderSevereChurn)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_id_name ON users (id, name)").success());
+    for (int i = 1; i <= 4000; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'u" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 40)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(publishSevereMgaChurn("users"));
+
+    auto bytecode =
+        compileSQL("SELECT id, name FROM users WHERE id = 1777");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_EQ(plan.relations.front().scan_kind, "INDEX_ONLY_SCAN");
+    EXPECT_EQ(plan.relations.front().index_name, "idx_users_id_name");
+
+    const bool rejected_exact_probe =
+        std::any_of(plan.rejected_paths.begin(),
+                    plan.rejected_paths.end(),
+                    [](const scratchbird::optimizer::RuntimePlanTraceEntry &entry) {
+                        return entry.phase == "MGA_SWITCHOVER" &&
+                               entry.candidate ==
+                                   "INDEX_ONLY_SCAN[idx_users_id_name]";
+                    });
+    EXPECT_FALSE(rejected_exact_probe);
 }
 
 TEST_F(QueryPlannerIntegrationTest, HashJoinPlanExecutesAndReturnsExpectedRows)
@@ -5468,6 +5594,16 @@ TEST_F(QueryPlannerIntegrationTest,
     ASSERT_FALSE(plan.relations.empty());
     EXPECT_TRUE(plan.relations.front().parallel_enabled);
     EXPECT_EQ(plan.relations.front().parallel_stage, "SCAN");
+    EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "PARALLEL_SEQ_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+    EXPECT_TRUE(std::any_of(
+        plan.relations.front().candidate_family_identity_signatures.begin(),
+        plan.relations.front().candidate_family_identity_signatures.end(),
+        [](const std::string &entry) {
+            return entry.find("PARALLEL_SEQ_SCAN") != std::string::npos;
+        }));
 
     const auto chosen_it =
         std::find_if(plan.considered_paths.begin(),

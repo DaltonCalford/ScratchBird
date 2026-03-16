@@ -466,6 +466,11 @@ namespace scratchbird::optimizer
         bool parameterized = false;
         std::vector<size_t> required_outer_relation_indexes;
         double interesting_order_score = 0.0;
+        bool parallel_aware = false;
+        bool parallel_enabled = false;
+        uint32_t parallel_workers_planned = 0;
+        bool gather_merge = false;
+        std::string parallel_stage;
     };
 
     inline auto defaultAccessPathFamily(PathType type) -> std::string

@@ -110,11 +110,16 @@ auto joinSearchPropertySignature(const AccessPathDescriptor& descriptor)
         << static_cast<uint32_t>(descriptor.queryability_state) << ':'
         << static_cast<uint32_t>(descriptor.requires_recheck ? 1U : 0U) << ':'
         << static_cast<uint32_t>(descriptor.parameterized ? 1U : 0U) << ':'
+        << static_cast<uint32_t>(descriptor.parallel_aware ? 1U : 0U) << ':'
+        << static_cast<uint32_t>(descriptor.parallel_enabled ? 1U : 0U) << ':'
+        << descriptor.parallel_workers_planned << ':'
+        << static_cast<uint32_t>(descriptor.gather_merge ? 1U : 0U) << ':'
         << static_cast<uint32_t>(descriptor.ordered_output ? 1U : 0U) << ':'
         << descriptor.ordered_prefix_length << ':'
         << static_cast<uint32_t>(descriptor.order_complete ? 1U : 0U) << ':'
         << quantizePropertyScore(descriptor.coverage_fraction) << ':'
         << quantizePropertyScore(descriptor.interesting_order_score) << ':';
+    appendSignatureText(key, descriptor.parallel_stage);
 
     key << descriptor.ordering_keys.size() << ':';
     for (const auto& ordering_key : descriptor.ordering_keys)

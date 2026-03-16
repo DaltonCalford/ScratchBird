@@ -281,6 +281,36 @@ TEST(JoinOrderingPropertySignatureTest,
               joinSearchPropertySignature(limited));
 }
 
+TEST(JoinOrderingPropertySignatureTest,
+     SignatureDistinguishesParallelProperties)
+{
+    AccessPathDescriptor serial_descriptor;
+    serial_descriptor.family = "SEQ_SCAN";
+    serial_descriptor.path_name = "SEQ_SCAN";
+    serial_descriptor.family_kind = PlannerAccessFamily::SEQ_SCAN;
+    serial_descriptor.exactness_class = AccessPathExactnessClass::EXACT_ROW;
+    serial_descriptor.visibility_enforcement =
+        AccessPathVisibilityEnforcement::INDEX_NATIVE;
+    serial_descriptor.queryability_state =
+        AccessPathQueryabilityState::QUERYABLE;
+
+    auto parallel_descriptor = serial_descriptor;
+    parallel_descriptor.path_name = "PARALLEL_SEQ_SCAN";
+    parallel_descriptor.parallel_aware = true;
+    parallel_descriptor.parallel_enabled = true;
+    parallel_descriptor.parallel_workers_planned = 4;
+    parallel_descriptor.parallel_stage = "SCAN";
+
+    auto gather_merge_descriptor = parallel_descriptor;
+    gather_merge_descriptor.gather_merge = true;
+    gather_merge_descriptor.parallel_stage = "GATHER_MERGE";
+
+    EXPECT_NE(joinSearchPropertySignature(serial_descriptor),
+              joinSearchPropertySignature(parallel_descriptor));
+    EXPECT_NE(joinSearchPropertySignature(parallel_descriptor),
+              joinSearchPropertySignature(gather_merge_descriptor));
+}
+
 TEST(JoinOrderingOptimizerTest,
      GreedySearchRetainsFrontierStatesToChooseNonPrimaryBasePath)
 {

@@ -98,6 +98,27 @@ namespace scratchbird::optimizer
             std::unordered_map<std::string, MgaRelationCostSignal> relations;
         };
 
+        struct MgaCostPressure
+        {
+            bool available = false;
+            double cleanup_ratio = 0.0;
+            double retained_ratio = 0.0;
+            double index_backlog_ratio = 0.0;
+            double same_page_penalty = 0.0;
+            double chain_scatter_penalty = 0.0;
+            double chain_depth_penalty = 0.0;
+            double fence_penalty = 0.0;
+            std::string dominant_chain_scatter_bucket;
+            std::string dominant_chain_depth_bucket;
+            bool rewrite_equivalent = false;
+        };
+
+        struct MgaAccessGovernanceDecision
+        {
+            bool reject_candidate = false;
+            std::string reason;
+        };
+
         struct PlannerPartitionBound
         {
             enum class Kind : uint8_t
@@ -802,18 +823,23 @@ namespace scratchbird::optimizer
 
         auto highestBucketWeight(const std::unordered_map<std::string, double> &bucket_counts,
                                  std::initializer_list<std::pair<const char *, double>> weights)
-            -> double
+            -> std::pair<double, std::string>
         {
             double penalty = 0.0;
+            std::string bucket_name;
             for (const auto &[bucket, weight] : weights)
             {
                 auto it = bucket_counts.find(bucket);
                 if (it != bucket_counts.end() && it->second > 0.0)
                 {
-                    penalty = std::max(penalty, weight);
+                    if (weight >= penalty)
+                    {
+                        penalty = weight;
+                        bucket_name = bucket;
+                    }
                 }
             }
-            return penalty;
+            return {penalty, bucket_name};
         }
 
         auto describeMgaCostSignal(const MgaRelationCostSignal &signal,
@@ -856,22 +882,94 @@ namespace scratchbird::optimizer
             return out.str();
         }
 
-        auto applyMgaCostPenalty(CostEstimate &cost,
-                                 const MgaRelationCostSignal *signal,
-                                 double commit_fence_backlog,
-                                 uint64_t base_pages,
-                                 uint64_t base_rows,
-                                 const std::string &scan_kind) -> double
+        auto buildMgaCostPressure(const MgaRelationCostSignal *signal,
+                                  double commit_fence_backlog,
+                                  uint64_t base_pages,
+                                  uint64_t base_rows) -> MgaCostPressure
         {
+            MgaCostPressure pressure;
             if (signal == nullptr || !signal->available)
             {
-                return 0.0;
+                return pressure;
             }
 
             const double relation_bytes =
                 std::max<double>(1.0, static_cast<double>(std::max<uint64_t>(1, base_pages)) * 8192.0);
             const double row_basis =
                 std::max<double>(1.0, static_cast<double>(std::max<uint64_t>(1, base_rows)));
+
+            pressure.available = true;
+            pressure.cleanup_ratio =
+                std::min(1.0, signal->cleanup_debt_bytes / relation_bytes);
+            pressure.retained_ratio =
+                std::min(1.0, signal->retained_dead_bytes / relation_bytes);
+            pressure.index_backlog_ratio =
+                std::min(1.0, signal->index_backlog_entries / row_basis);
+            pressure.same_page_penalty =
+                std::clamp(1.0 - signal->same_page_update_ratio, 0.0, 1.0);
+            const auto [chain_scatter_penalty, chain_scatter_bucket] =
+                highestBucketWeight(
+                signal->chain_scatter_buckets,
+                {{"wide", 0.80}, {"scattered", 0.45}, {"local", 0.15}, {"same_page", 0.0}});
+            pressure.chain_scatter_penalty = chain_scatter_penalty;
+            pressure.dominant_chain_scatter_bucket = chain_scatter_bucket;
+            const auto [chain_depth_penalty, chain_depth_bucket] =
+                highestBucketWeight(
+                signal->chain_depth_buckets,
+                {{"depth_8_plus", 0.90},
+                 {"depth_4_7", 0.55},
+                 {"depth_2_3", 0.20},
+                 {"depth_1", 0.0}});
+            pressure.chain_depth_penalty = chain_depth_penalty;
+            pressure.dominant_chain_depth_bucket = chain_depth_bucket;
+            pressure.fence_penalty =
+                std::min(1.0, commit_fence_backlog / 64.0) * 0.20;
+            pressure.rewrite_equivalent =
+                (std::max(pressure.cleanup_ratio, pressure.retained_ratio) >= 0.25 ||
+                 pressure.chain_depth_penalty >= 0.55 ||
+                 pressure.chain_scatter_penalty >= 0.45) &&
+                (pressure.index_backlog_ratio >= 0.20 ||
+                 pressure.same_page_penalty >= 0.65 ||
+                 commit_fence_backlog >= 64.0);
+            return pressure;
+        }
+
+        auto describeMgaCostPressure(const MgaCostPressure &pressure) -> std::string
+        {
+            if (!pressure.available)
+            {
+                return "unavailable";
+            }
+
+            std::ostringstream out;
+            out << "cleanup_ratio=" << pressure.cleanup_ratio
+                << ", retained_ratio=" << pressure.retained_ratio
+                << ", index_backlog_ratio=" << pressure.index_backlog_ratio
+                << ", same_page_penalty=" << pressure.same_page_penalty
+                << ", chain_scatter_penalty=" << pressure.chain_scatter_penalty;
+            if (!pressure.dominant_chain_scatter_bucket.empty())
+            {
+                out << '[' << pressure.dominant_chain_scatter_bucket << ']';
+            }
+            out << ", chain_depth_penalty=" << pressure.chain_depth_penalty;
+            if (!pressure.dominant_chain_depth_bucket.empty())
+            {
+                out << '[' << pressure.dominant_chain_depth_bucket << ']';
+            }
+            out << ", fence_penalty=" << pressure.fence_penalty
+                << ", rewrite_equivalent="
+                << (pressure.rewrite_equivalent ? "true" : "false");
+            return out.str();
+        }
+
+        auto applyMgaCostPenalty(CostEstimate &cost,
+                                 const MgaCostPressure &pressure,
+                                 const std::string &scan_kind) -> double
+        {
+            if (!pressure.available)
+            {
+                return 0.0;
+            }
 
             double cleanup_weight = 1.0;
             double index_weight = 0.35;
@@ -907,33 +1005,15 @@ namespace scratchbird::optimizer
                 index_weight = 0.75;
             }
 
-            const double cleanup_ratio =
-                std::min(1.0, signal->cleanup_debt_bytes / relation_bytes);
-            const double retained_ratio =
-                std::min(1.0, signal->retained_dead_bytes / relation_bytes);
-            const double index_backlog_ratio =
-                std::min(1.0, signal->index_backlog_entries / row_basis);
-            const double same_page_penalty =
-                std::clamp(1.0 - signal->same_page_update_ratio, 0.0, 1.0);
-            const double chain_scatter_penalty = highestBucketWeight(
-                signal->chain_scatter_buckets,
-                {{"wide", 0.80}, {"scattered", 0.45}, {"local", 0.15}, {"same_page", 0.0}});
-            const double chain_depth_penalty = highestBucketWeight(
-                signal->chain_depth_buckets,
-                {{"depth_8_plus", 0.90},
-                 {"depth_4_7", 0.55},
-                 {"depth_2_3", 0.20},
-                 {"depth_1", 0.0}});
-            const double fence_penalty =
-                std::min(1.0, commit_fence_backlog / 64.0) * 0.20;
-
             const double penalty = std::min(
                 4.0,
-                (cleanup_ratio * 1.50 * cleanup_weight) +
-                    (retained_ratio * 1.00 * cleanup_weight) +
-                    (index_backlog_ratio * 0.80 * index_weight) +
-                    chain_scatter_penalty + chain_depth_penalty +
-                    (same_page_penalty * 0.50) + fence_penalty);
+                (pressure.cleanup_ratio * 1.50 * cleanup_weight) +
+                    (pressure.retained_ratio * 1.00 * cleanup_weight) +
+                    (pressure.index_backlog_ratio * 0.80 * index_weight) +
+                    pressure.chain_scatter_penalty +
+                    pressure.chain_depth_penalty +
+                    (pressure.same_page_penalty * 0.50) +
+                    pressure.fence_penalty);
             if (penalty <= 0.0)
             {
                 return 0.0;
@@ -942,6 +1022,79 @@ namespace scratchbird::optimizer
             cost.run_cost += penalty;
             cost.total_cost = cost.startup_cost + cost.run_cost;
             return penalty;
+        }
+
+        auto evaluateMgaAccessGovernance(
+            const MgaCostPressure &pressure,
+            const PlannerFamilyLoweringResult &lowering,
+            const std::string &scan_kind,
+            bool exact_key_lookup,
+            bool ordered_output,
+            uint64_t estimated_rows,
+            uint64_t base_rows) -> MgaAccessGovernanceDecision
+        {
+            MgaAccessGovernanceDecision decision;
+            if (!pressure.available || !pressure.rewrite_equivalent)
+            {
+                return decision;
+            }
+
+            const bool visibility_sensitive =
+                lowering.visibility_enforcement !=
+                    AccessPathVisibilityEnforcement::INDEX_NATIVE ||
+                scan_kind == "INDEX_ONLY_SCAN" ||
+                scan_kind == "BITMAP_INDEX_SCAN";
+            if (!visibility_sensitive)
+            {
+                return decision;
+            }
+
+            const bool recheck_heavy =
+                lowering.requires_recheck ||
+                scan_kind == "BITMAP_INDEX_SCAN" ||
+                scan_kind == "BITMAP_STORAGE_SCAN" ||
+                scan_kind == "SUMMARY_FILTER_SCAN" ||
+                scan_kind == "GIN_FILTER_SCAN" ||
+                scan_kind == "TEXT_RECHECK_SCAN" ||
+                scan_kind == "TEXT_BITMAP_SCAN";
+            const uint64_t moderate_row_threshold =
+                std::max<uint64_t>(8, std::max<uint64_t>(1, base_rows) / 32);
+            const uint64_t broad_row_threshold =
+                std::max<uint64_t>(32, std::max<uint64_t>(1, base_rows) / 8);
+            const bool moderate_candidate = estimated_rows >= moderate_row_threshold;
+            const bool broad_candidate = estimated_rows >= broad_row_threshold;
+
+            if (scan_kind == "INDEX_ONLY_SCAN" &&
+                !exact_key_lookup &&
+                moderate_candidate &&
+                !ordered_output)
+            {
+                decision.reject_candidate = true;
+                decision.reason =
+                    "rewrite-equivalent MGA churn rejects broad index-only access; " +
+                    describeMgaCostPressure(pressure);
+                return decision;
+            }
+
+            if ((scan_kind == "INDEX_SCAN" ||
+                 scan_kind == "LSM_SCAN" ||
+                 scan_kind == "BITMAP_INDEX_SCAN" ||
+                 scan_kind == "BITMAP_STORAGE_SCAN") &&
+                !exact_key_lookup &&
+                broad_candidate &&
+                !ordered_output &&
+                (recheck_heavy ||
+                 pressure.index_backlog_ratio >= 0.20 ||
+                 pressure.chain_depth_penalty >= 0.55 ||
+                 pressure.same_page_penalty >= 0.65))
+            {
+                decision.reject_candidate = true;
+                decision.reason =
+                    "rewrite-equivalent MGA churn rejects broad visibility-sensitive index path; " +
+                    describeMgaCostPressure(pressure);
+            }
+
+            return decision;
         }
 
         auto loadMgaCostingSnapshot(core::Database *db) -> MgaCostingSnapshot
@@ -4814,6 +4967,26 @@ namespace scratchbird::optimizer
             planned_out.resolved_query.relations.size());
         std::vector<uint64_t> relation_row_width_bytes(
             planned_out.resolved_query.relations.size(), 0);
+        int64_t preview_limit_count = 0;
+        int64_t preview_offset_count = 0;
+        bool query_has_limit = false;
+        bool query_has_offset = false;
+        if (select_stmt->limit != nullptr)
+        {
+            query_has_limit =
+                extractConstantInt64(select_stmt->limit, preview_limit_count);
+        }
+        else if (select_stmt->fetch_row_count != nullptr)
+        {
+            query_has_limit = extractConstantInt64(select_stmt->fetch_row_count,
+                                                  preview_limit_count);
+        }
+        if (select_stmt->offset != nullptr)
+        {
+            query_has_offset =
+                extractConstantInt64(select_stmt->offset, preview_offset_count);
+        }
+        bool parallel_scan_modeled_in_search = false;
         for (size_t relation_index = 0;
              relation_index < planned_out.resolved_query.relations.size();
              ++relation_index)
@@ -4835,6 +5008,17 @@ namespace scratchbird::optimizer
                 query_aggregates = relation_aggregates;
                 query_windows = relation_windows;
             }
+            const bool allow_search_modeled_parallel_scan =
+                planner_controls.enable_parallel &&
+                planner_controls.enable_parallel_scan &&
+                planned_out.resolved_query.relations.size() == 1 &&
+                planned_out.resolved_query.joins.empty() &&
+                relation_aggregates.empty() &&
+                relation_windows.empty() &&
+                select_stmt->group_by.empty() &&
+                select_stmt->order_by.empty() &&
+                !query_has_limit &&
+                !query_has_offset;
 
             for (const auto &join : planned_out.resolved_query.joins)
             {
@@ -5219,6 +5403,11 @@ namespace scratchbird::optimizer
                 pruning.pruned && pruning.rows > 0 ? pruning.rows : unpruned_base_rows;
             const uint64_t base_pages =
                 pruning.pruned && pruning.pages > 0 ? pruning.pages : unpruned_base_pages;
+            const MgaCostPressure relation_mga_pressure =
+                buildMgaCostPressure(mga_relation_signal,
+                                     mga_costing_snapshot.commit_fence_backlog,
+                                     base_pages,
+                                     base_rows);
             const uint64_t relation_row_width =
                 have_relation_table_stats && relation_table_stats.avg_row_size > 0.0f
                     ? std::max<uint64_t>(
@@ -5367,12 +5556,8 @@ namespace scratchbird::optimizer
                                    best_cost.total_cost,
                                    best_cost.rows);
             }
-            const double seq_mga_penalty = applyMgaCostPenalty(best_cost,
-                                                               mga_relation_signal,
-                                                               mga_costing_snapshot.commit_fence_backlog,
-                                                               base_pages,
-                                                               base_rows,
-                                                               "SEQ_SCAN");
+            const double seq_mga_penalty =
+                applyMgaCostPenalty(best_cost, relation_mga_pressure, "SEQ_SCAN");
             if (seq_mga_penalty > 0.0)
             {
                 appendRuntimeTrace(considered_paths,
@@ -5381,7 +5566,9 @@ namespace scratchbird::optimizer
                                    "SEQ_SCAN",
                                    "ADJUSTED",
                                    "canonical MGA telemetry penalty=" +
-                                       std::to_string(seq_mga_penalty),
+                                       std::to_string(seq_mga_penalty) + " " +
+                                       describeMgaCostPressure(
+                                           relation_mga_pressure),
                                    best_cost.startup_cost,
                                    best_cost.total_cost,
                                    best_cost.rows);
@@ -5847,6 +6034,13 @@ namespace scratchbird::optimizer
                         required_outer_relation_indexes;
                     candidate.access_descriptor.interesting_order_score =
                         interesting_order_score;
+                    candidate.access_descriptor.parallel_aware =
+                        allow_search_modeled_parallel_scan &&
+                        scan_kind == "SEQ_SCAN";
+                    candidate.access_descriptor.parallel_stage =
+                        candidate.access_descriptor.parallel_aware
+                            ? "SCAN"
+                            : std::string();
                     candidate.runtime_relation
                         .candidate_family_identity_signatures = {
                             candidateFamilyIdentitySignature(
@@ -5883,6 +6077,174 @@ namespace scratchbird::optimizer
                             signature);
                     }
                     bundle.candidates.push_back(std::move(candidate));
+                };
+            auto registerParallelScanCandidate =
+                [&](const BaseAccessChoice &serial_candidate) -> void {
+                    if (!allow_search_modeled_parallel_scan ||
+                        serial_candidate.path == nullptr ||
+                        serial_candidate.plan == nullptr ||
+                        serial_candidate.path->type() != PathType::SEQ_SCAN)
+                    {
+                        return;
+                    }
+
+                    parallel_scan_modeled_in_search = true;
+
+                    const uint64_t parallel_rows =
+                        std::max<uint64_t>(serial_candidate.runtime_relation.estimated_rows,
+                                           serial_candidate.runtime_relation.base_rows);
+                    const uint64_t parallel_pages =
+                        std::max<uint64_t>(
+                            base_pages,
+                            std::max<uint64_t>(
+                                1,
+                                (std::max<uint64_t>(1, parallel_rows) *
+                                     std::max<uint64_t>(1, relation_row_width) +
+                                 planner_params.planner_page_size_bytes - 1) /
+                                    planner_params.planner_page_size_bytes));
+                    const auto decision = executor::evaluateParallelPlan(
+                        parallel_config,
+                        executor::ParallelStageKind::SCAN,
+                        parallel_rows,
+                        parallel_pages,
+                        false,
+                        false,
+                        true);
+                    constexpr const char *candidate_name = "PARALLEL_SEQ_SCAN";
+                    if (!decision.eligible)
+                    {
+                        appendRuntimeTrace(rejected_paths,
+                                           "PARALLEL",
+                                           relation_subject,
+                                           candidate_name,
+                                           "REJECTED",
+                                           decision.rejection_reason,
+                                           serial_candidate.runtime_relation.startup_cost,
+                                           serial_candidate.runtime_relation.total_cost,
+                                           serial_candidate.runtime_relation.estimated_rows);
+                        return;
+                    }
+
+                    CostEstimate serial_cost;
+                    serial_cost.startup_cost =
+                        serial_candidate.runtime_relation.startup_cost;
+                    serial_cost.total_cost =
+                        serial_candidate.runtime_relation.total_cost;
+                    serial_cost.run_cost = std::max(
+                        0.0,
+                        serial_cost.total_cost - serial_cost.startup_cost);
+                    serial_cost.rows =
+                        serial_candidate.runtime_relation.estimated_rows;
+                    CostEstimate gather_cost = relation_cost_model.costGather(
+                        serial_cost,
+                        std::max<uint64_t>(1, serial_cost.rows),
+                        decision.workers_planned,
+                        planner_controls.parallel_leader_participation,
+                        ctx);
+                    const double skew_penalty_cost =
+                        decision.skew_penalty *
+                        std::max(1.0, gather_cost.total_cost * 0.05);
+                    if (skew_penalty_cost > 0.0)
+                    {
+                        gather_cost.run_cost += skew_penalty_cost;
+                        gather_cost.total_cost =
+                            gather_cost.startup_cost + gather_cost.run_cost;
+                        gather_cost.expanded_terms.push_back(CostFormulaTerm{
+                            "run.parallel_skew_penalty",
+                            1.0,
+                            skew_penalty_cost,
+                            skew_penalty_cost,
+                            "cost"});
+                    }
+
+                    BaseAccessChoice parallel_candidate = serial_candidate;
+                    parallel_candidate.path = std::make_shared<GatherPath>(
+                        serial_candidate.path,
+                        decision.workers_planned,
+                        planner_controls.parallel_leader_participation,
+                        false,
+                        gather_cost);
+                    parallel_candidate.plan = std::make_shared<GatherNode>(
+                        serial_candidate.plan,
+                        decision.workers_planned,
+                        planner_controls.parallel_leader_participation,
+                        false);
+                    parallel_candidate.plan->setCost(gather_cost);
+                    parallel_candidate.plan->setParallelMetadata(
+                        true,
+                        true,
+                        decision.workers_planned,
+                        false,
+                        "SCAN",
+                        "parallel scan candidate modeled in search");
+
+                    parallel_candidate.runtime_relation.path_name =
+                        candidate_name;
+                    parallel_candidate.runtime_relation.parallel_eligible = true;
+                    parallel_candidate.runtime_relation.parallel_enabled = true;
+                    parallel_candidate.runtime_relation.parallel_workers_planned =
+                        decision.workers_planned;
+                    parallel_candidate.runtime_relation.parallel_stage = "SCAN";
+                    parallel_candidate.runtime_relation.parallel_rejection_reason
+                        .clear();
+                    parallel_candidate.runtime_relation.startup_cost =
+                        gather_cost.startup_cost;
+                    parallel_candidate.runtime_relation.total_cost =
+                        gather_cost.total_cost;
+                    parallel_candidate.runtime_relation.estimated_rows =
+                        gather_cost.rows;
+
+                    parallel_candidate.access_descriptor.path_name =
+                        candidate_name;
+                    parallel_candidate.access_descriptor.parallel_aware = true;
+                    parallel_candidate.access_descriptor.parallel_enabled = true;
+                    parallel_candidate.access_descriptor.parallel_workers_planned =
+                        decision.workers_planned;
+                    parallel_candidate.access_descriptor.gather_merge = false;
+                    parallel_candidate.access_descriptor.parallel_stage = "SCAN";
+                    if (std::find(
+                            parallel_candidate.access_descriptor.family_tags.begin(),
+                            parallel_candidate.access_descriptor.family_tags.end(),
+                            "PARALLEL") ==
+                        parallel_candidate.access_descriptor.family_tags.end())
+                    {
+                        parallel_candidate.access_descriptor.family_tags.push_back(
+                            "PARALLEL");
+                    }
+                    parallel_candidate.runtime_relation.scan_family_tags =
+                        parallel_candidate.access_descriptor.family_tags;
+                    parallel_candidate.runtime_relation
+                        .candidate_family_identity_signatures = {
+                            candidateFamilyIdentitySignature(
+                                relation_index,
+                                parallel_candidate.access_descriptor)};
+                    parallel_candidate.runtime_relation
+                        .candidate_family_statistics_signatures = {
+                            candidateFamilyStatisticsSignature(
+                                relation_index,
+                                parallel_candidate.access_descriptor)};
+                    if (parallel_candidate.path)
+                    {
+                        parallel_candidate.path->setAccessDescriptor(
+                            parallel_candidate.access_descriptor);
+                    }
+                    appendUniqueText(parallel_candidate.candidate_scan_families,
+                                     candidate_name);
+                    appendUniqueText(bundle.candidate_scan_families,
+                                     candidate_name);
+                    appendRuntimeTrace(considered_paths,
+                                       "PARALLEL",
+                                       relation_subject,
+                                       candidate_name,
+                                       "CONSIDERED",
+                                       "workers=" +
+                                           std::to_string(
+                                               decision.workers_planned) +
+                                           " modeled alongside serial scan",
+                                       gather_cost.startup_cost,
+                                       gather_cost.total_cost,
+                                       gather_cost.rows);
+                    registerBundleCandidate(std::move(parallel_candidate));
                 };
             appendUniqueText(bundle.candidate_scan_families,
                              best_lowering.family_name);
@@ -5922,6 +6284,7 @@ namespace scratchbird::optimizer
                 0,
                 core::CatalogManager::IndexInfo{},
                 {best_scan_kind, best_scan_family}));
+            registerParallelScanCandidate(bundle.candidates.back());
 
             auto indexCoversColumns =
                 [&](const core::CatalogManager::IndexInfo &index) -> bool {
@@ -6917,10 +7280,7 @@ namespace scratchbird::optimizer
                 }
                 const double candidate_mga_penalty = applyMgaCostPenalty(
                     candidate_cost,
-                    mga_relation_signal,
-                    mga_costing_snapshot.commit_fence_backlog,
-                    base_pages,
-                    base_rows,
+                    relation_mga_pressure,
                     scan_kind);
                 if (candidate_mga_penalty > 0.0)
                 {
@@ -6932,10 +7292,36 @@ namespace scratchbird::optimizer
                                                                 std::string()),
                                        "ADJUSTED",
                                        "canonical MGA telemetry penalty=" +
-                                           std::to_string(candidate_mga_penalty),
+                                           std::to_string(candidate_mga_penalty) + " " +
+                                           describeMgaCostPressure(
+                                               relation_mga_pressure),
                                        candidate_cost.startup_cost,
                                        candidate_cost.total_cost,
                                        candidate_cost.rows);
+                }
+                const MgaAccessGovernanceDecision candidate_mga_governance =
+                    evaluateMgaAccessGovernance(
+                        relation_mga_pressure,
+                        lowered_candidate,
+                        scan_kind,
+                        exact_key_lookup,
+                        candidate_order_complete || ordered_prefix_length > 0,
+                        candidate_cost.rows,
+                        base_rows);
+                if (candidate_mga_governance.reject_candidate)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "MGA_SWITCHOVER",
+                                       relation_subject,
+                                       accessTraceCandidateLabel(scan_kind,
+                                                                index.index_name,
+                                                                std::string()),
+                                       "REJECTED",
+                                       candidate_mga_governance.reason,
+                                       candidate_cost.startup_cost,
+                                       candidate_cost.total_cost,
+                                       candidate_cost.rows);
+                    continue;
                 }
 
                 appendRuntimeTrace(considered_paths,
@@ -7179,6 +7565,29 @@ namespace scratchbird::optimizer
                                    skip_cost.startup_cost,
                                    skip_cost.total_cost,
                                    skip_cost.rows);
+                const MgaAccessGovernanceDecision skip_mga_governance =
+                    evaluateMgaAccessGovernance(relation_mga_pressure,
+                                                skip_lowered,
+                                                "INDEX_SCAN",
+                                                false,
+                                                false,
+                                                skip_cost.rows,
+                                                base_rows);
+                if (skip_mga_governance.reject_candidate)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "MGA_SWITCHOVER",
+                                       relation_subject,
+                                       accessTraceCandidateLabel("SKIP_SCAN",
+                                                                index.index_name,
+                                                                std::string()),
+                                       "REJECTED",
+                                       skip_mga_governance.reason,
+                                       skip_cost.startup_cost,
+                                       skip_cost.total_cost,
+                                       skip_cost.rows);
+                    continue;
+                }
                 auto skip_path = std::make_shared<IndexScanPath>(
                     relation.table_info.table_id,
                     relation_name,
@@ -7389,10 +7798,7 @@ namespace scratchbird::optimizer
                 }
                 const double bitmap_mga_penalty = applyMgaCostPenalty(
                     bitmap_cost,
-                    mga_relation_signal,
-                    mga_costing_snapshot.commit_fence_backlog,
-                    base_pages,
-                    base_rows,
+                    relation_mga_pressure,
                     "BITMAP_INDEX_SCAN");
                 if (bitmap_mga_penalty > 0.0)
                 {
@@ -7406,10 +7812,42 @@ namespace scratchbird::optimizer
                                                                 predicate_or ? "OR" : "AND"),
                                        "ADJUSTED",
                                        "canonical MGA telemetry penalty=" +
-                                           std::to_string(bitmap_mga_penalty),
+                                           std::to_string(bitmap_mga_penalty) + " " +
+                                           describeMgaCostPressure(
+                                               relation_mga_pressure),
                                        bitmap_cost.startup_cost,
                                        bitmap_cost.total_cost,
                                        bitmap_cost.rows);
+                }
+                PlannerFamilyLoweringRequest bitmap_lowering_request;
+                bitmap_lowering_request.bitmap_combine = true;
+                const PlannerFamilyLoweringResult bitmap_lowered =
+                    lowerPlannerFamily(bitmap_lowering_request);
+                const MgaAccessGovernanceDecision bitmap_mga_governance =
+                    evaluateMgaAccessGovernance(
+                        relation_mga_pressure,
+                        bitmap_lowered,
+                        "BITMAP_INDEX_SCAN",
+                        bitmap_exact_lookup,
+                        false,
+                        bitmap_cost.rows,
+                        base_rows);
+                if (bitmap_mga_governance.reject_candidate)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "MGA_SWITCHOVER",
+                                       relation_subject,
+                                       accessTraceCandidateLabel("BITMAP_INDEX_SCAN",
+                                                                bitmap_index_names.empty()
+                                                                    ? std::string()
+                                                                    : bitmap_index_names.front(),
+                                                                predicate_or ? "OR" : "AND"),
+                                       "REJECTED",
+                                       bitmap_mga_governance.reason,
+                                       bitmap_cost.startup_cost,
+                                       bitmap_cost.total_cost,
+                                       bitmap_cost.rows);
+                    continue;
                 }
                 appendRuntimeTrace(considered_paths,
                                    "ACCESS_PATH",
@@ -7431,10 +7869,6 @@ namespace scratchbird::optimizer
                     bitmap_exact_predicate_count == bitmap_predicates.size();
                 if (bitmap_cost.total_cost <= best_cost.total_cost || prefer_exact_bitmap)
                 {
-                    PlannerFamilyLoweringRequest bitmap_lowering_request;
-                    bitmap_lowering_request.bitmap_combine = true;
-                    const PlannerFamilyLoweringResult bitmap_lowered =
-                        lowerPlannerFamily(bitmap_lowering_request);
                     best_cost = bitmap_cost;
                     best_scan_kind = "BITMAP_INDEX_SCAN";
                     best_scan_family = bitmap_lowered.family_name;
@@ -7523,12 +7957,78 @@ namespace scratchbird::optimizer
             }
 
             bundle.selectivity = selectivity;
-            auto chosen_it = std::find_if(
-                bundle.candidates.begin(),
-                bundle.candidates.end(),
-                [&](const BaseAccessChoice &candidate) {
-                    return candidate.path == best_path;
-                });
+            auto bundleSemanticPriority =
+                [](const BaseAccessChoice &candidate) -> int {
+                    const auto &relation = candidate.runtime_relation;
+                    if (relation.scan_kind == "BITMAP_INDEX_SCAN" &&
+                        relation.bitmap_op == "AND" &&
+                        relation.exact_key_lookup &&
+                        relation.index_predicates.size() > 1)
+                    {
+                        return 2;
+                    }
+                    if (relation.exact_key_lookup &&
+                        relation.index_predicates.size() > 1)
+                    {
+                        return 1;
+                    }
+                    return 0;
+                };
+            auto chosen_it =
+                bundle.candidates.empty()
+                    ? bundle.candidates.end()
+                    : std::min_element(
+                          bundle.candidates.begin(),
+                          bundle.candidates.end(),
+                          [&](const BaseAccessChoice &left,
+                              const BaseAccessChoice &right) {
+                              const int left_priority =
+                                  bundleSemanticPriority(left);
+                              const int right_priority =
+                                  bundleSemanticPriority(right);
+                              if (left_priority != right_priority)
+                              {
+                                  return left_priority > right_priority;
+                              }
+                              const size_t left_predicate_count =
+                                  left.runtime_relation.index_predicates.size();
+                              const size_t right_predicate_count =
+                                  right.runtime_relation.index_predicates.size();
+                              if (left.runtime_relation.exact_key_lookup &&
+                                  right.runtime_relation.exact_key_lookup &&
+                                  left_predicate_count != right_predicate_count)
+                              {
+                                  return left_predicate_count >
+                                         right_predicate_count;
+                              }
+                              const double left_cost =
+                                  left.path ? left.path->totalCost()
+                                            : left.runtime_relation.total_cost;
+                              const double right_cost =
+                                  right.path ? right.path->totalCost()
+                                             : right.runtime_relation.total_cost;
+                              if (left_cost != right_cost)
+                              {
+                                  return left_cost < right_cost;
+                              }
+                              const uint64_t left_rows =
+                                  left.path ? left.path->rows()
+                                            : left.runtime_relation.estimated_rows;
+                              const uint64_t right_rows =
+                                  right.path ? right.path->rows()
+                                             : right.runtime_relation.estimated_rows;
+                              if (left_rows != right_rows)
+                              {
+                                  return left_rows < right_rows;
+                              }
+                              if (left.access_descriptor.parallel_enabled !=
+                                  right.access_descriptor.parallel_enabled)
+                              {
+                                  return left.access_descriptor.parallel_enabled;
+                              }
+                              return left.access_descriptor.path_name <
+                                     right.access_descriptor.path_name;
+                          });
             if (chosen_it == bundle.candidates.end())
             {
                 std::vector<std::string> chosen_candidate_scan_families = {
@@ -7560,6 +8060,48 @@ namespace scratchbird::optimizer
                                          chosen_candidate_scan_families));
             }
             BaseAccessChoice chosen_choice = *chosen_it;
+            const auto parallel_scan_it = std::find_if(
+                bundle.candidates.begin(),
+                bundle.candidates.end(),
+                [](const BaseAccessChoice &candidate) {
+                    return candidate.access_descriptor.parallel_enabled &&
+                           candidate.access_descriptor.parallel_stage == "SCAN";
+                });
+            if (parallel_scan_it != bundle.candidates.end())
+            {
+                if (chosen_choice.access_descriptor.parallel_enabled)
+                {
+                    appendRuntimeTrace(
+                        considered_paths,
+                        "PARALLEL",
+                        relation_subject,
+                        "PARALLEL_SEQ_SCAN",
+                        "CHOSEN",
+                        "search-visible parallel scan candidate selected",
+                        chosen_choice.runtime_relation.startup_cost,
+                        chosen_choice.runtime_relation.total_cost,
+                        chosen_choice.runtime_relation.estimated_rows);
+                }
+                else
+                {
+                    chosen_choice.runtime_relation.parallel_eligible = true;
+                    chosen_choice.runtime_relation.parallel_enabled = false;
+                    chosen_choice.runtime_relation.parallel_workers_planned = 0;
+                    chosen_choice.runtime_relation.parallel_stage = "SCAN";
+                    chosen_choice.runtime_relation.parallel_rejection_reason =
+                        "serial base access path cheaper than parallel scan candidate";
+                    appendRuntimeTrace(
+                        rejected_paths,
+                        "PARALLEL",
+                        relation_subject,
+                        "PARALLEL_SEQ_SCAN",
+                        "REJECTED",
+                        chosen_choice.runtime_relation.parallel_rejection_reason,
+                        parallel_scan_it->runtime_relation.startup_cost,
+                        parallel_scan_it->runtime_relation.total_cost,
+                        parallel_scan_it->runtime_relation.estimated_rows);
+                }
+            }
             if (bundle.candidate_scan_families.empty())
             {
                 bundle.candidate_scan_families =
@@ -9881,6 +10423,9 @@ namespace scratchbird::optimizer
         uint64_t parallel_order_key_count = 1;
         bool parallel_candidate_supported = false;
         size_t parallel_scan_relation_index = std::numeric_limits<size_t>::max();
+        const bool current_path_already_parallel =
+            current_path != nullptr &&
+            current_path->accessDescriptor().parallel_enabled;
 
         if (current_plan)
         {
@@ -9946,7 +10491,14 @@ namespace scratchbird::optimizer
             }
         }
 
-        if (current_plan && parallel_candidate_supported)
+        const bool skip_late_parallel_scan_wrapper =
+            parallel_scan_modeled_in_search &&
+            parallel_stage_kind == executor::ParallelStageKind::SCAN;
+
+        if (current_plan &&
+            parallel_candidate_supported &&
+            !current_path_already_parallel &&
+            !skip_late_parallel_scan_wrapper)
         {
             const CostEstimate serial_cost = planCostEstimate(current_plan);
             uint64_t parallel_decision_rows = current_rows;
@@ -10176,6 +10728,18 @@ namespace scratchbird::optimizer
                             gather_descriptor.ordering_keys.clear();
                             gather_descriptor.interesting_order_score = 0.0;
                         }
+                        gather_descriptor.parallel_aware = true;
+                        gather_descriptor.parallel_enabled = true;
+                        gather_descriptor.parallel_workers_planned =
+                            decision.workers_planned;
+                        gather_descriptor.gather_merge =
+                            parallel_ordered_required;
+                        gather_descriptor.parallel_stage =
+                            parallel_ordered_required ? "GATHER_MERGE"
+                                                     : parallel_stage_name;
+                        gather_descriptor.path_name =
+                            stageCandidateName(parallel_stage_kind,
+                                               parallel_ordered_required);
                         gather_path->setAccessDescriptor(
                             std::move(gather_descriptor));
                     }
@@ -10271,7 +10835,10 @@ namespace scratchbird::optimizer
                 }
             }
         }
-        else if (current_plan && planner_controls.enable_parallel)
+        else if (current_plan &&
+                 planner_controls.enable_parallel &&
+                 !current_path_already_parallel &&
+                 !skip_late_parallel_scan_wrapper)
         {
             appendRuntimeTrace(rejected_paths,
                                "PARALLEL",
