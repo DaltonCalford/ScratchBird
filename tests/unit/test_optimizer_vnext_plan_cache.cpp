@@ -23,7 +23,7 @@ auto makeKey() -> PlanCacheKeyInput
     PlanCacheKeyInput key;
     key.profile_id = "native";
     key.profile_version = "3.0";
-    key.taxonomy_contract_id = "sb_runtime_plan/v11";
+    key.taxonomy_contract_id = "sb_runtime_plan/v12";
     key.payload_format = "SQL_TEXT";
     key.payload_hash = "hash_payload";
     key.session_option_signature = "sess_sig";

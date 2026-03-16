@@ -1,11 +1,31 @@
 #include "scratchbird/optimizer/plan_payload.h"
+#include "scratchbird/sblr/v3_plan_cache_key.h"
 
 #include <nlohmann/json.hpp>
+#include <sstream>
 
 namespace scratchbird::optimizer
 {
     namespace
     {
+        auto appendNodeIdentitySeed(std::ostringstream &out,
+                                    const RuntimePlanNode &node) -> void
+        {
+            out << node.node_type << ':'
+                << node.relation_alias << ':'
+                << node.table_path << ':'
+                << node.join_type << ':'
+                << node.index_name << ':'
+                << (node.parallel_enabled ? 1 : 0) << ':'
+                << (node.gather_merge ? 1 : 0) << ':'
+                << node.parallel_stage << '|';
+            for (const auto &child : node.children)
+            {
+                appendNodeIdentitySeed(out, child);
+            }
+            out << '#';
+        }
+
         auto relationToJson(const RuntimePlanRelation &relation) -> nlohmann::json
         {
             nlohmann::json out;
@@ -1094,8 +1114,10 @@ namespace scratchbird::optimizer
             nlohmann::json out;
             out["available"] = feedback.available;
             out["replan_required"] = feedback.replan_required;
+            out["replan_suppressed"] = feedback.replan_suppressed;
             out["stats_refresh_requested"] = feedback.stats_refresh_requested;
             out["stats_refresh_applied"] = feedback.stats_refresh_applied;
+            out["correction_applied"] = feedback.correction_applied;
             out["observation_count"] = feedback.observation_count;
             out["replan_action_count"] = feedback.replan_action_count;
             out["last_estimated_rows"] = feedback.last_estimated_rows;
@@ -1103,6 +1125,7 @@ namespace scratchbird::optimizer
             out["estimation_error_ratio"] = feedback.estimation_error_ratio;
             out["correction_factor"] = feedback.correction_factor;
             out["last_plan_hash"] = feedback.last_plan_hash;
+            out["guardrail_reason"] = feedback.guardrail_reason;
             return out;
         }
 
@@ -1118,10 +1141,14 @@ namespace scratchbird::optimizer
 
             feedback_out.available = json_in.value("available", false);
             feedback_out.replan_required = json_in.value("replan_required", false);
+            feedback_out.replan_suppressed =
+                json_in.value("replan_suppressed", false);
             feedback_out.stats_refresh_requested =
                 json_in.value("stats_refresh_requested", false);
             feedback_out.stats_refresh_applied =
                 json_in.value("stats_refresh_applied", false);
+            feedback_out.correction_applied =
+                json_in.value("correction_applied", false);
             feedback_out.observation_count =
                 json_in.value("observation_count", 0ULL);
             feedback_out.replan_action_count =
@@ -1136,6 +1163,8 @@ namespace scratchbird::optimizer
                 json_in.value("correction_factor", 1.0);
             feedback_out.last_plan_hash =
                 json_in.value("last_plan_hash", std::string());
+            feedback_out.guardrail_reason =
+                json_in.value("guardrail_reason", std::string());
             return true;
         }
 
@@ -1697,6 +1726,64 @@ namespace scratchbird::optimizer
             error_out = ex.what();
             return false;
         }
+    }
+
+    auto adaptiveFeedbackPlanHash(const RuntimePlan &plan) -> std::string
+    {
+        std::ostringstream seed;
+        for (const auto &relation : plan.relations)
+        {
+            seed << relation.source_relation_index << ':'
+                 << (relation.scan_family.empty()
+                         ? relation.scan_kind
+                         : relation.scan_family) << ':'
+                 << accessPathExactnessClassName(relation.exactness_class) << ':'
+                 << (relation.requires_recheck ? 1 : 0) << ':'
+                 << relation.index_name << ':'
+                 << relation.bitmap_op << ':'
+                 << (relation.covering_index ? 1 : 0) << ':'
+                 << (relation.exact_key_lookup ? 1 : 0) << ':'
+                 << (relation.ordered_output ? 1 : 0) << ':'
+                 << relation.ordered_prefix_length << '|';
+            for (size_t outer_index : relation.required_outer_relation_indexes)
+            {
+                seed << outer_index << ';';
+            }
+            seed << '|';
+        }
+
+        for (const auto &join : plan.join_steps)
+        {
+            seed << join.source_join_index << ':'
+                << join.right_relation_index << ':'
+                << join.join_edge_left_relation_index << ':'
+                << join.join_edge_right_relation_index << ':'
+                << join.join_type << ':'
+                << join.method << ':'
+                 << (join.has_hash_keys ? 1 : 0) << ':'
+                 << join.left_hash_key.qualifier << ':'
+                 << join.left_hash_key.column_name << ':'
+                 << join.right_hash_key.qualifier << ':'
+                 << join.right_hash_key.column_name << ':'
+                 << (join.has_merge_keys ? 1 : 0) << ':'
+                 << join.left_merge_key.qualifier << ':'
+                 << join.left_merge_key.column_name << ':'
+                 << join.right_merge_key.qualifier << ':'
+                 << join.right_merge_key.column_name << ':'
+                 << (join.merge_outer_presorted ? 1 : 0) << ':'
+                 << (join.merge_inner_presorted ? 1 : 0) << '|';
+            for (const auto &key_pair : join.equijoin_keys)
+            {
+                seed << key_pair.left_qualifier << '.'
+                     << key_pair.left_column_name << '='
+                     << key_pair.right_qualifier << '.'
+                     << key_pair.right_column_name << ';';
+            }
+            seed << '|';
+        }
+
+        appendNodeIdentitySeed(seed, plan.root);
+        return std::to_string(scratchbird::sblr::v3::stableHash64(seed.str()));
     }
 
 } // namespace scratchbird::optimizer

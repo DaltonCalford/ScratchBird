@@ -117,6 +117,11 @@ public:
         detail::resetQueryCompilerV3PlanCacheStats();
     }
 
+    static auto invalidateAllPlanCache() -> uint64_t
+    {
+        return detail::invalidateAllQueryCompilerV3PlanCache();
+    }
+
     CompileResult compileWithParameters(
         const std::string& sql,
         const optimizer::ParameterBindings& parameter_bindings,

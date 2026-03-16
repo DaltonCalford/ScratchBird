@@ -59,5 +59,6 @@ namespace scratchbird::sblr::detail
 
     auto queryCompilerV3PlanCacheStats() -> optimizer::VNextPlanCacheStats;
     auto resetQueryCompilerV3PlanCacheStats() -> void;
+    auto invalidateAllQueryCompilerV3PlanCache() -> uint64_t;
 
 } // namespace scratchbird::sblr::detail

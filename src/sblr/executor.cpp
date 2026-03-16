@@ -60241,7 +60241,8 @@ namespace scratchbird
                                 optimizer::QueryProfiler::getInstance()
                                     .recordCardinalityFeedback(
                                         runtime_plan.query_feedback_key,
-                                        runtime_plan.plan_hash,
+                                        optimizer::adaptiveFeedbackPlanHash(
+                                            runtime_plan),
                                         runtime_plan.root.estimated_rows,
                                         actual_rows);
                             };
@@ -60588,6 +60589,8 @@ namespace scratchbird
                                         latest_feedback->available;
                                     runtime_plan.adaptive_feedback.replan_required =
                                         latest_feedback->replan_required;
+                                    runtime_plan.adaptive_feedback.replan_suppressed =
+                                        latest_feedback->replan_suppressed;
                                     runtime_plan.adaptive_feedback
                                         .stats_refresh_requested =
                                         latest_feedback->stats_refresh_requested;
@@ -60613,6 +60616,8 @@ namespace scratchbird
                                         latest_feedback->correction_factor;
                                     runtime_plan.adaptive_feedback.last_plan_hash =
                                         latest_feedback->last_plan_hash;
+                                    runtime_plan.adaptive_feedback.guardrail_reason =
+                                        latest_feedback->guardrail_reason;
 
                                     bool have_misestimate_signal = false;
                                     for (const auto& signal :
@@ -66874,10 +66879,14 @@ namespace scratchbird
                                     << (feedback.available ? "true" : "false")
                                     << ",\"replan_required\":"
                                     << (feedback.replan_required ? "true" : "false")
+                                    << ",\"replan_suppressed\":"
+                                    << (feedback.replan_suppressed ? "true" : "false")
                                     << ",\"stats_refresh_requested\":"
                                     << (feedback.stats_refresh_requested ? "true" : "false")
                                     << ",\"stats_refresh_applied\":"
                                     << (feedback.stats_refresh_applied ? "true" : "false")
+                                    << ",\"correction_applied\":"
+                                    << (feedback.correction_applied ? "true" : "false")
                                     << ",\"observation_count\":"
                                     << feedback.observation_count
                                     << ",\"replan_action_count\":"
@@ -66892,6 +66901,8 @@ namespace scratchbird
                                     << feedback.correction_factor
                                     << ",\"last_plan_hash\":\""
                                     << escape_json(feedback.last_plan_hash) << "\""
+                                    << ",\"guardrail_reason\":\""
+                                    << escape_json(feedback.guardrail_reason) << "\""
                                     << "}";
                             };
 
@@ -67601,10 +67612,14 @@ namespace scratchbird
                                     << (feedback.available ? "true" : "false")
                                     << "\" replan_required=\""
                                     << (feedback.replan_required ? "true" : "false")
+                                    << "\" replan_suppressed=\""
+                                    << (feedback.replan_suppressed ? "true" : "false")
                                     << "\" stats_refresh_requested=\""
                                     << (feedback.stats_refresh_requested ? "true" : "false")
                                     << "\" stats_refresh_applied=\""
                                     << (feedback.stats_refresh_applied ? "true" : "false")
+                                    << "\" correction_applied=\""
+                                    << (feedback.correction_applied ? "true" : "false")
                                     << "\" observation_count=\""
                                     << feedback.observation_count
                                     << "\" replan_action_count=\""
@@ -67618,7 +67633,9 @@ namespace scratchbird
                                     << "\" correction_factor=\""
                                     << feedback.correction_factor
                                     << "\" last_plan_hash=\""
-                                    << escape_xml(feedback.last_plan_hash) << "\"/>";
+                                    << escape_xml(feedback.last_plan_hash)
+                                    << "\" guardrail_reason=\""
+                                    << escape_xml(feedback.guardrail_reason) << "\"/>";
                             };
 
                         auto appendControlsXml =
@@ -67772,10 +67789,14 @@ namespace scratchbird
                                     << (feedback.available ? "true" : "false") << "\n"
                                     << "  replan_required: "
                                     << (feedback.replan_required ? "true" : "false") << "\n"
+                                    << "  replan_suppressed: "
+                                    << (feedback.replan_suppressed ? "true" : "false") << "\n"
                                     << "  stats_refresh_requested: "
                                     << (feedback.stats_refresh_requested ? "true" : "false") << "\n"
                                     << "  stats_refresh_applied: "
                                     << (feedback.stats_refresh_applied ? "true" : "false") << "\n"
+                                    << "  correction_applied: "
+                                    << (feedback.correction_applied ? "true" : "false") << "\n"
                                     << "  observation_count: "
                                     << feedback.observation_count << "\n"
                                     << "  replan_action_count: "
@@ -67789,7 +67810,9 @@ namespace scratchbird
                                     << "  correction_factor: "
                                     << feedback.correction_factor << "\n"
                                     << "  last_plan_hash: \""
-                                    << escape_json(feedback.last_plan_hash) << "\"\n";
+                                    << escape_json(feedback.last_plan_hash) << "\"\n"
+                                    << "  guardrail_reason: \""
+                                    << escape_json(feedback.guardrail_reason) << "\"\n";
                             };
 
                         auto appendControlsYaml =
@@ -89597,6 +89620,48 @@ namespace scratchbird
                 // Mirror legacy cache behavior for top-level V3 SELECT statements.
                 if (inst_opcode == scratchbird::sblr::v3::Opcode::SBLR3_SELECT)
                 {
+                    auto record_cached_select_adaptive_feedback =
+                        [&](const scratchbird::sblr::v3::Instruction& select_inst,
+                            uint64_t actual_rows) {
+                            scratchbird::sblr::v3::Value::Object select_payload;
+                            if (!getObject(select_inst.payload,
+                                           select_payload,
+                                           "SBLR3_SELECT"))
+                            {
+                                return;
+                            }
+                            auto it_plan = select_payload.find("plan");
+                            if (it_plan == select_payload.end())
+                            {
+                                return;
+                            }
+                            const auto* bytes =
+                                std::get_if<scratchbird::sblr::v3::Value::Bytes>(
+                                    &it_plan->second.data);
+                            if (bytes == nullptr)
+                            {
+                                return;
+                            }
+
+                            optimizer::RuntimePlan runtime_plan;
+                            std::string plan_error;
+                            if (!optimizer::decodeRuntimePlan(*bytes,
+                                                              runtime_plan,
+                                                              plan_error) ||
+                                runtime_plan.query_feedback_key.empty())
+                            {
+                                return;
+                            }
+
+                            optimizer::QueryProfiler::getInstance()
+                                .recordCardinalityFeedback(
+                                    runtime_plan.query_feedback_key,
+                                    optimizer::adaptiveFeedbackPlanHash(
+                                        runtime_plan),
+                                    runtime_plan.root.estimated_rows,
+                                    actual_rows);
+                        };
+
                     QueryResultCache& cache = QueryResultCacheManager::getInstance();
                     if (cache.isEnabled())
                     {
@@ -89630,6 +89695,14 @@ namespace scratchbird
                         {
                             result = ExecutionResult(buildResultSetFromCache(cached));
                             used_cached_result = true;
+                            if (result.success() &&
+                                result.hasResultSet() &&
+                                result.resultSet() != nullptr)
+                            {
+                                record_cached_select_adaptive_feedback(
+                                    inst,
+                                    result.resultSet()->rowCount());
+                            }
                         }
                         else
                         {

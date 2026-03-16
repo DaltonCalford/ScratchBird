@@ -170,6 +170,48 @@ TEST_F(QueryProfilerTest, CardinalityFeedbackRequestsBoundedReplanAndAcknowledge
     EXPECT_EQ(second.replan_action_count, 1u);
     EXPECT_EQ(second.observation_count, 2u);
     EXPECT_EQ(second.last_plan_hash, "plan-b");
+    EXPECT_FALSE(second.replan_suppressed);
+    EXPECT_TRUE(second.guardrail_reason.empty());
+}
+
+TEST_F(QueryProfilerTest, SuppressesRepeatReplanForSamePlanHashAfterGuardrailLimit) {
+    CardinalityFeedbackPolicy policy;
+    policy.enabled = true;
+    policy.min_observations = 1;
+    policy.max_estimation_error_ratio = 4.0;
+    policy.max_replan_actions = 4;
+    policy.max_same_plan_replans = 1;
+    profiler_.setCardinalityFeedbackPolicy(policy);
+
+    const auto first = profiler_.recordCardinalityFeedback(
+        "feedback:repeat_plan",
+        "plan-a",
+        4,
+        128);
+    ASSERT_TRUE(first.replan_required);
+    auto acknowledged =
+        profiler_.acknowledgeCardinalityFeedback("feedback:repeat_plan", true);
+    ASSERT_TRUE(acknowledged.has_value());
+    EXPECT_EQ(acknowledged->replan_action_count, 1u);
+
+    const auto repeated_same_plan = profiler_.recordCardinalityFeedback(
+        "feedback:repeat_plan",
+        "plan-a",
+        4,
+        256);
+    EXPECT_FALSE(repeated_same_plan.replan_required);
+    EXPECT_TRUE(repeated_same_plan.replan_suppressed);
+    EXPECT_EQ(repeated_same_plan.guardrail_reason,
+              "SAME_PLAN_HASH_REPLAN_LIMIT");
+
+    const auto different_plan = profiler_.recordCardinalityFeedback(
+        "feedback:repeat_plan",
+        "plan-b",
+        4,
+        512);
+    EXPECT_TRUE(different_plan.replan_required);
+    EXPECT_FALSE(different_plan.replan_suppressed);
+    EXPECT_TRUE(different_plan.guardrail_reason.empty());
 }
 
 } // namespace

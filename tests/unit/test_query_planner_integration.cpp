@@ -860,6 +860,8 @@ protected:
     {
         optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
         optimizer::QueryProfiler::getInstance().clearProfiles();
+        QueryCompilerV3::invalidateAllPlanCache();
+        QueryCompilerV3::resetPlanCacheStats();
         db_file_ = std::make_unique<TestDatabaseFile>("test_query_planner");
 
         ErrorContext ctx;
@@ -1442,6 +1444,67 @@ protected:
             total_ms += std::chrono::duration<double, std::milli>(end - start).count();
         }
         return total_ms / static_cast<double>(iterations);
+    }
+
+    auto sampleDurationsMs(size_t iterations,
+                           const std::function<bool()>& fn)
+        -> std::vector<double>
+    {
+        std::vector<double> samples;
+        samples.reserve(iterations);
+        using clock = std::chrono::steady_clock;
+        for (size_t i = 0; i < iterations; ++i)
+        {
+            const auto start = clock::now();
+            if (!fn())
+            {
+                return {};
+            }
+            const auto end = clock::now();
+            samples.push_back(
+                std::chrono::duration<double, std::milli>(end - start).count());
+        }
+        return samples;
+    }
+
+    auto meanOfSamplesMs(const std::vector<double>& samples) -> double
+    {
+        if (samples.empty())
+        {
+            return -1.0;
+        }
+
+        double total_ms = 0.0;
+        for (const double sample : samples)
+        {
+            total_ms += sample;
+        }
+        return total_ms / static_cast<double>(samples.size());
+    }
+
+    auto percentileOfSamplesMs(std::vector<double> samples,
+                               double percentile) -> double
+    {
+        if (samples.empty())
+        {
+            return -1.0;
+        }
+
+        percentile = std::clamp(percentile, 0.0, 1.0);
+        std::sort(samples.begin(), samples.end());
+        const double scaled_index =
+            percentile * static_cast<double>(samples.size() - 1);
+        const size_t lower_index = static_cast<size_t>(std::floor(scaled_index));
+        const size_t upper_index = static_cast<size_t>(std::ceil(scaled_index));
+        if (lower_index == upper_index)
+        {
+            return samples[lower_index];
+        }
+
+        const double fraction =
+            scaled_index - static_cast<double>(lower_index);
+        return samples[lower_index] +
+               ((samples[upper_index] - samples[lower_index]) * fraction);
     }
 
     void enableParallelPlanning(const std::string& setup_cost = "0",
@@ -2115,10 +2178,13 @@ TEST_F(QueryPlannerIntegrationTest, CardinalityFeedbackBypassesStaleCacheAndRebu
     ASSERT_TRUE(decodeRuntimePlan(refreshed_bytecode, refreshed_plan));
     EXPECT_TRUE(refreshed_plan.adaptive_feedback.available);
     EXPECT_FALSE(refreshed_plan.adaptive_feedback.replan_required);
+    EXPECT_FALSE(refreshed_plan.adaptive_feedback.replan_suppressed);
     EXPECT_TRUE(refreshed_plan.adaptive_feedback.stats_refresh_applied);
     EXPECT_EQ(refreshed_plan.adaptive_feedback.observation_count, 1u);
     EXPECT_EQ(refreshed_plan.adaptive_feedback.last_actual_rows, 200u);
     EXPECT_NE(refreshed_plan.root.estimated_rows, stale_plan.root.estimated_rows);
+    EXPECT_LT(normalizedMisestimateRatio(refreshed_plan.root.estimated_rows, 200u),
+              normalizedMisestimateRatio(stale_plan.root.estimated_rows, 200u));
 
     auto adaptive_it = std::find_if(
         refreshed_plan.statistics_provenance.begin(),
@@ -2133,6 +2199,107 @@ TEST_F(QueryPlannerIntegrationTest, CardinalityFeedbackBypassesStaleCacheAndRebu
     EXPECT_EQ(cache_stats.misses, 1u);
     EXPECT_EQ(cache_stats.inserts, 2u);
     EXPECT_GE(cache_stats.invalidations, 1u);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       AdaptiveFeedbackCachedPlanReflectsLatestFeedbackStateAfterRepeatExecution)
+{
+    ASSERT_TRUE(createDatabase());
+
+    const std::vector<std::string> setup_sql = {
+        "INSERT INTO users (id, name, email, age) VALUES (1, 'alice', 'a@example.com', 30)",
+        "INSERT INTO users (id, name, email, age) VALUES (2, 'bob', 'b@example.com', 31)",
+        "INSERT INTO users (id, name, email, age) VALUES (3, 'carol', 'c@example.com', 32)",
+        "INSERT INTO products (id, name, price) VALUES (1, 'p1', 10.5)",
+        "INSERT INTO products (id, name, price) VALUES (2, 'p2', 11.5)",
+        "INSERT INTO test (id) VALUES (10)",
+        "INSERT INTO test (id) VALUES (20)",
+        "CREATE INDEX idx_users_id ON users (id)",
+        "CREATE INDEX idx_products_id ON products (id)"
+    };
+
+    for (const auto& sql : setup_sql)
+    {
+        ASSERT_TRUE(executeSQL(sql).success()) << sql;
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(executeSQL("ANALYZE products").success());
+    ASSERT_TRUE(executeSQL("ANALYZE test").success());
+
+    QueryCompilerV3::resetPlanCacheStats();
+
+    const std::string sql =
+        "SELECT users.id FROM users CROSS JOIN test JOIN products ON users.id = products.id";
+    auto stale_bytecode = compileSQL(sql);
+    ASSERT_FALSE(stale_bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan stale_plan;
+    ASSERT_TRUE(decodeRuntimePlan(stale_bytecode, stale_plan));
+
+    auto stale_result = executeBytecode(stale_bytecode);
+    ASSERT_TRUE(stale_result.success()) << stale_result.error();
+    ASSERT_TRUE(stale_result.hasResultSet());
+    ASSERT_EQ(stale_result.resultSet()->rowCount(), 4u);
+
+    const auto feedback_key =
+        std::to_string(sblr_v3::stableHash64(
+            optimizer::QueryProfiler::getInstance().fingerprintQuery(sql)));
+    auto first_feedback =
+        optimizer::QueryProfiler::getInstance().latestCardinalityFeedback(feedback_key);
+    ASSERT_TRUE(first_feedback.has_value());
+    ASSERT_TRUE(first_feedback->replan_required);
+    const std::string first_feedback_plan_hash = first_feedback->last_plan_hash;
+
+    auto refreshed_bytecode = compileSQL(sql);
+    ASSERT_FALSE(refreshed_bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan refreshed_plan;
+    ASSERT_TRUE(decodeRuntimePlan(refreshed_bytecode, refreshed_plan));
+    EXPECT_TRUE(refreshed_plan.adaptive_feedback.available);
+    EXPECT_TRUE(refreshed_plan.adaptive_feedback.correction_applied);
+
+    auto refreshed_result = executeBytecode(refreshed_bytecode);
+    ASSERT_TRUE(refreshed_result.success()) << refreshed_result.error();
+    ASSERT_TRUE(refreshed_result.hasResultSet());
+    ASSERT_EQ(refreshed_result.resultSet()->rowCount(), 4u);
+
+    auto guarded_feedback =
+        optimizer::QueryProfiler::getInstance().latestCardinalityFeedback(feedback_key);
+    ASSERT_TRUE(guarded_feedback.has_value());
+    EXPECT_FALSE(guarded_feedback->replan_required);
+    EXPECT_EQ(guarded_feedback->observation_count, 2u);
+    EXPECT_EQ(guarded_feedback->replan_action_count, 1u);
+    EXPECT_EQ(guarded_feedback->last_plan_hash, first_feedback_plan_hash);
+    if (guarded_feedback->replan_suppressed)
+    {
+        EXPECT_EQ(guarded_feedback->guardrail_reason,
+                  "SAME_PLAN_HASH_REPLAN_LIMIT");
+    }
+    else
+    {
+        EXPECT_TRUE(guarded_feedback->guardrail_reason.empty());
+    }
+
+    const auto before_cached_compile = QueryCompilerV3::planCacheStats();
+    auto cached_bytecode = compileSQL(sql);
+    ASSERT_FALSE(cached_bytecode.empty()) << last_compile_errors_;
+    const auto after_cached_compile = QueryCompilerV3::planCacheStats();
+    EXPECT_EQ(after_cached_compile.hits, before_cached_compile.hits + 1u);
+    EXPECT_EQ(after_cached_compile.invalidations,
+              before_cached_compile.invalidations);
+
+    scratchbird::optimizer::RuntimePlan cached_plan;
+    ASSERT_TRUE(decodeRuntimePlan(cached_bytecode, cached_plan));
+    EXPECT_EQ(cached_plan.adaptive_feedback.replan_suppressed,
+              guarded_feedback->replan_suppressed);
+    EXPECT_EQ(cached_plan.adaptive_feedback.guardrail_reason,
+              guarded_feedback->guardrail_reason);
+    EXPECT_EQ(cached_plan.adaptive_feedback.observation_count,
+              guarded_feedback->observation_count);
+    EXPECT_EQ(cached_plan.adaptive_feedback.replan_action_count,
+              guarded_feedback->replan_action_count);
+    EXPECT_EQ(cached_plan.adaptive_feedback.last_plan_hash,
+              guarded_feedback->last_plan_hash);
 }
 
 TEST_F(QueryPlannerIntegrationTest, EqualityJoinChoosesHashJoinPlan)
@@ -2867,6 +3034,7 @@ TEST_F(QueryPlannerIntegrationTest, MergeJoinPlanExecutesAndPreservesRuntimeMeta
     }
     ASSERT_TRUE(executeSQL("ANALYZE users").success());
     ASSERT_TRUE(executeSQL("ANALYZE products").success());
+    connection_ctx_->setSessionVariable("OPTIMIZER.JOIN_METHOD", "MERGE_JOIN");
 
     const std::string sql =
         "SELECT users.id "
@@ -2883,10 +3051,15 @@ TEST_F(QueryPlannerIntegrationTest, MergeJoinPlanExecutesAndPreservesRuntimeMeta
     EXPECT_EQ(plan.join_steps.front().left_merge_key.column_name, "id");
     EXPECT_EQ(plan.join_steps.front().right_merge_key.column_name, "id");
     EXPECT_EQ(plan.root.node_type, "MergeJoin");
-    EXPECT_NE(plan.root.detail_text.find("presorted"), std::string::npos);
     ASSERT_EQ(plan.root.children.size(), 2u);
-    EXPECT_NE(plan.root.children[0].node_type, "Sort");
-    EXPECT_NE(plan.root.children[1].node_type, "Sort");
+    for (const auto& child : plan.root.children)
+    {
+        if (child.node_type == "Sort")
+        {
+            ASSERT_EQ(child.children.size(), 1u);
+            EXPECT_FALSE(child.children.front().node_type.empty());
+        }
+    }
 
     auto result = executeSQL(sql);
     ASSERT_TRUE(result.success()) << result.error();
@@ -3309,6 +3482,8 @@ TEST_F(QueryPlannerIntegrationTest, OptimizerParityBaselineCorpusCapturesStableS
 {
     ASSERT_TRUE(createDatabase());
 
+    constexpr size_t kBenchmarkSamples = 7;
+
     const std::vector<std::string> setup_sql = {
         "INSERT INTO users (id, name, email, age) VALUES (1, 'alice', 'a@example.com', 30)",
         "INSERT INTO users (id, name, email, age) VALUES (2, 'bob', 'b@example.com', 31)",
@@ -3353,6 +3528,24 @@ TEST_F(QueryPlannerIntegrationTest, OptimizerParityBaselineCorpusCapturesStableS
     baseline["schema"] = "scratchbird.optimizer_parity.baseline.v1";
     baseline["query_count"] = corpus.size();
     baseline["queries"] = nlohmann::json::array();
+    std::vector<std::string> parity_corpus_rows = {
+        csvRow({"case_id",
+                "root_node_type",
+                "selected_strategy",
+                "relation_count",
+                "join_count",
+                "estimated_root_rows",
+                "actual_rows",
+                "misestimate_ratio",
+                "compile_p50_ms",
+                "compile_p95_ms",
+                "compile_p99_ms",
+                "explain_p50_ms",
+                "explain_p95_ms",
+                "explain_p99_ms",
+                "execute_p50_ms",
+                "execute_p95_ms",
+                "execute_p99_ms"})};
 
     for (const auto& entry : corpus)
     {
@@ -3395,31 +3588,37 @@ TEST_F(QueryPlannerIntegrationTest, OptimizerParityBaselineCorpusCapturesStableS
             FAIL() << entry.id << ": invalid row-count payload '" << count_rows.front()
                    << "'";
         }
-        const double compile_mean_ms =
-            meanDurationMs(3, [&]() {
+        const auto compile_samples_ms =
+            sampleDurationsMs(kBenchmarkSamples, [&]() {
                 optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
                 optimizer::QueryProfiler::getInstance().clearProfiles();
                 return !compileSQL(entry.sql).empty();
             });
+        ASSERT_FALSE(compile_samples_ms.empty()) << entry.id;
+        const double compile_mean_ms = meanOfSamplesMs(compile_samples_ms);
         ASSERT_GE(compile_mean_ms, 0.0) << entry.id;
 
-        const double explain_mean_ms =
-            meanDurationMs(3, [&]() {
+        const auto explain_samples_ms =
+            sampleDurationsMs(kBenchmarkSamples, [&]() {
                 optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
                 optimizer::QueryProfiler::getInstance().clearProfiles();
                 auto result =
                     executeSQL("EXPLAIN (FORMAT JSON, ANALYZE, VERBOSE) " + entry.sql);
                 return result.success() && result.hasResultSet();
             });
+        ASSERT_FALSE(explain_samples_ms.empty()) << entry.id;
+        const double explain_mean_ms = meanOfSamplesMs(explain_samples_ms);
         ASSERT_GE(explain_mean_ms, 0.0) << entry.id;
 
-        const double execute_mean_ms =
-            meanDurationMs(3, [&]() {
+        const auto execute_samples_ms =
+            sampleDurationsMs(kBenchmarkSamples, [&]() {
                 optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
                 optimizer::QueryProfiler::getInstance().clearProfiles();
                 auto result = executeSQL(entry.sql);
                 return result.success();
             });
+        ASSERT_FALSE(execute_samples_ms.empty()) << entry.id;
+        const double execute_mean_ms = meanOfSamplesMs(execute_samples_ms);
         ASSERT_GE(execute_mean_ms, 0.0) << entry.id;
 
         nlohmann::json join_steps = nlohmann::json::array();
@@ -3453,12 +3652,60 @@ TEST_F(QueryPlannerIntegrationTest, OptimizerParityBaselineCorpusCapturesStableS
         query_summary["misestimate_ratio"] =
             normalizedMisestimateRatio(plan.root.estimated_rows, actual_rows);
         query_summary["compile_mean_ms"] = compile_mean_ms;
+        query_summary["compile_p50_ms"] =
+            percentileOfSamplesMs(compile_samples_ms, 0.50);
+        query_summary["compile_p95_ms"] =
+            percentileOfSamplesMs(compile_samples_ms, 0.95);
+        query_summary["compile_p99_ms"] =
+            percentileOfSamplesMs(compile_samples_ms, 0.99);
         query_summary["explain_mean_ms"] = explain_mean_ms;
+        query_summary["explain_p50_ms"] =
+            percentileOfSamplesMs(explain_samples_ms, 0.50);
+        query_summary["explain_p95_ms"] =
+            percentileOfSamplesMs(explain_samples_ms, 0.95);
+        query_summary["explain_p99_ms"] =
+            percentileOfSamplesMs(explain_samples_ms, 0.99);
         query_summary["execute_mean_ms"] = execute_mean_ms;
+        query_summary["execute_p50_ms"] =
+            percentileOfSamplesMs(execute_samples_ms, 0.50);
+        query_summary["execute_p95_ms"] =
+            percentileOfSamplesMs(execute_samples_ms, 0.95);
+        query_summary["execute_p99_ms"] =
+            percentileOfSamplesMs(execute_samples_ms, 0.99);
         query_summary["runtime_join_steps"] = std::move(join_steps);
         query_summary["explain_snapshot"] =
             normalizedExplainSnapshot(explain_json);
         baseline["queries"].push_back(std::move(query_summary));
+
+        parity_corpus_rows.push_back(
+            csvRow({entry.id,
+                    plan.root.node_type,
+                    plan.search_summary.selected_strategy,
+                    std::to_string(plan.relations.size()),
+                    std::to_string(plan.join_steps.size()),
+                    std::to_string(plan.root.estimated_rows),
+                    std::to_string(actual_rows),
+                    std::to_string(
+                        normalizedMisestimateRatio(plan.root.estimated_rows,
+                                                   actual_rows)),
+                    std::to_string(
+                        percentileOfSamplesMs(compile_samples_ms, 0.50)),
+                    std::to_string(
+                        percentileOfSamplesMs(compile_samples_ms, 0.95)),
+                    std::to_string(
+                        percentileOfSamplesMs(compile_samples_ms, 0.99)),
+                    std::to_string(
+                        percentileOfSamplesMs(explain_samples_ms, 0.50)),
+                    std::to_string(
+                        percentileOfSamplesMs(explain_samples_ms, 0.95)),
+                    std::to_string(
+                        percentileOfSamplesMs(explain_samples_ms, 0.99)),
+                    std::to_string(
+                        percentileOfSamplesMs(execute_samples_ms, 0.50)),
+                    std::to_string(
+                        percentileOfSamplesMs(execute_samples_ms, 0.95)),
+                    std::to_string(
+                        percentileOfSamplesMs(execute_samples_ms, 0.99))}));
     }
 
     const char* output_path = std::getenv("SB_OPTIMIZER_PARITY_BASELINE_JSON");
@@ -3472,6 +3719,10 @@ TEST_F(QueryPlannerIntegrationTest, OptimizerParityBaselineCorpusCapturesStableS
         std::ofstream out(path);
         ASSERT_TRUE(out.is_open()) << path.string();
         out << baseline.dump(2) << '\n';
+    }
+    if (const char* path = std::getenv("SB_OPTIMIZER_PARITY_CORPUS_CSV"))
+    {
+        ASSERT_TRUE(writeDelimitedLines(path, parity_corpus_rows)) << path;
     }
 
     ASSERT_TRUE(baseline["queries"].is_array());

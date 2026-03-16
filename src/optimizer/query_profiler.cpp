@@ -778,17 +778,43 @@ CardinalityFeedbackSignal QueryProfiler::recordCardinalityFeedback(
     signal.observation_count += 1;
     signal.last_plan_hash = std::string(plan_hash);
     signal.stats_refresh_applied = false;
+    signal.replan_suppressed = false;
+    signal.guardrail_reason.clear();
 
     const bool mismatch_exceeds_threshold =
         signal.estimation_error_ratio >=
         cardinality_feedback_policy_.max_estimation_error_ratio;
+    const auto same_plan_replan_it =
+        state.replan_actions_by_plan_hash.find(signal.last_plan_hash);
+    const uint64_t same_plan_replan_count =
+        same_plan_replan_it == state.replan_actions_by_plan_hash.end()
+            ? 0
+            : same_plan_replan_it->second;
+    const bool within_same_plan_limit =
+        signal.last_plan_hash.empty() ||
+        same_plan_replan_count <
+            cardinality_feedback_policy_.max_same_plan_replans;
+    const bool within_replan_budget =
+        signal.replan_action_count < cardinality_feedback_policy_.max_replan_actions;
     const bool can_replan =
         cardinality_feedback_policy_.enabled &&
         signal.observation_count >= cardinality_feedback_policy_.min_observations &&
-        signal.replan_action_count < cardinality_feedback_policy_.max_replan_actions &&
+        within_replan_budget &&
+        within_same_plan_limit &&
         signal.observation_count > state.last_consumed_observation;
     signal.replan_required = mismatch_exceeds_threshold && can_replan;
     signal.stats_refresh_requested = signal.replan_required;
+    if (mismatch_exceeds_threshold &&
+        cardinality_feedback_policy_.enabled &&
+        signal.observation_count >= cardinality_feedback_policy_.min_observations &&
+        signal.observation_count > state.last_consumed_observation &&
+        !signal.replan_required)
+    {
+        signal.replan_suppressed = true;
+        signal.guardrail_reason =
+            !within_replan_budget ? "MAX_REPLAN_ACTIONS"
+                                  : "SAME_PLAN_HASH_REPLAN_LIMIT";
+    }
 
     state.signal = signal;
     return signal;
@@ -821,6 +847,10 @@ std::optional<CardinalityFeedbackSignal> QueryProfiler::acknowledgeCardinalityFe
         state.signal.stats_refresh_requested = false;
         state.signal.stats_refresh_applied = stats_refresh_applied;
         state.signal.replan_action_count += 1;
+        if (!state.signal.last_plan_hash.empty())
+        {
+            state.replan_actions_by_plan_hash[state.signal.last_plan_hash] += 1;
+        }
     }
     return state.signal;
 }

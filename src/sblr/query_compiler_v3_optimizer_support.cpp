@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -1264,6 +1265,7 @@ namespace scratchbird::sblr::detail
             optimizer::RuntimePlanAdaptiveFeedback feedback;
             feedback.available = signal.available;
             feedback.replan_required = signal.replan_required;
+            feedback.replan_suppressed = signal.replan_suppressed;
             feedback.stats_refresh_requested = signal.stats_refresh_requested;
             feedback.stats_refresh_applied = signal.stats_refresh_applied;
             feedback.observation_count = signal.observation_count;
@@ -1273,6 +1275,7 @@ namespace scratchbird::sblr::detail
             feedback.estimation_error_ratio = signal.estimation_error_ratio;
             feedback.correction_factor = signal.correction_factor;
             feedback.last_plan_hash = signal.last_plan_hash;
+            feedback.guardrail_reason = signal.guardrail_reason;
             return feedback;
         }
 
@@ -1286,9 +1289,135 @@ namespace scratchbird::sblr::detail
                    << ", error_ratio=" << signal.estimation_error_ratio
                    << ", correction_factor=" << signal.correction_factor
                    << ", replan_required=" << (signal.replan_required ? "true" : "false")
+                   << ", replan_suppressed="
+                   << (signal.replan_suppressed ? "true" : "false")
+                   << ", guardrail_reason=" << signal.guardrail_reason
                    << ", stats_refresh_applied="
                    << (signal.stats_refresh_applied ? "true" : "false");
             return detail.str();
+        }
+
+        auto scaleEstimatedRows(uint64_t current_rows,
+                                double correction_factor) -> uint64_t
+        {
+            if (!std::isfinite(correction_factor) || correction_factor <= 0.0)
+            {
+                return current_rows;
+            }
+
+            const double scaled =
+                std::round(static_cast<double>(current_rows) * correction_factor);
+            if (scaled <= 0.0)
+            {
+                return 0;
+            }
+            if (scaled >= static_cast<double>(std::numeric_limits<uint64_t>::max()))
+            {
+                return std::numeric_limits<uint64_t>::max();
+            }
+            return static_cast<uint64_t>(scaled);
+        }
+
+        auto clearAdaptiveFeedbackAnnotations(optimizer::RuntimePlan &plan) -> void
+        {
+            auto is_adaptive_source =
+                [](const optimizer::RuntimePlanStatisticsProvenance &entry) {
+                    return entry.source == "ADAPTIVE_CARDINALITY_FEEDBACK" ||
+                           entry.source == "ADAPTIVE_CARDINALITY_CORRECTION";
+                };
+            plan.statistics_provenance.erase(
+                std::remove_if(plan.statistics_provenance.begin(),
+                               plan.statistics_provenance.end(),
+                               is_adaptive_source),
+                plan.statistics_provenance.end());
+
+            auto is_adaptive_phase =
+                [](const optimizer::RuntimePlanTraceEntry &entry) {
+                    return entry.phase == "PLAN_CACHE" ||
+                           entry.phase == "ADAPTIVE_REPLAN";
+                };
+            plan.considered_paths.erase(
+                std::remove_if(plan.considered_paths.begin(),
+                               plan.considered_paths.end(),
+                               is_adaptive_phase),
+                plan.considered_paths.end());
+            plan.rejected_paths.erase(
+                std::remove_if(plan.rejected_paths.begin(),
+                               plan.rejected_paths.end(),
+                               is_adaptive_phase),
+                plan.rejected_paths.end());
+        }
+
+        auto applyAdaptiveEstimateCorrection(
+            optimizer::RuntimePlan &plan,
+            const optimizer::CardinalityFeedbackSignal &signal) -> bool
+        {
+            if (!signal.available || signal.estimation_error_ratio <= 1.0 ||
+                signal.last_actual_rows == 0)
+            {
+                return false;
+            }
+
+            const double correction_factor =
+                static_cast<double>(signal.last_actual_rows) /
+                static_cast<double>(std::max<uint64_t>(1, plan.root.estimated_rows));
+            if (!std::isfinite(correction_factor) || correction_factor <= 0.0 ||
+                std::abs(correction_factor - 1.0) < 0.0001)
+            {
+                return false;
+            }
+
+            const auto original_root_rows = plan.root.estimated_rows;
+            for (auto &relation : plan.relations)
+            {
+                relation.estimated_rows =
+                    scaleEstimatedRows(relation.estimated_rows,
+                                       correction_factor);
+            }
+            for (auto &join : plan.join_steps)
+            {
+                join.estimated_rows =
+                    scaleEstimatedRows(join.estimated_rows,
+                                       correction_factor);
+            }
+            auto apply_to_node =
+                [&](auto &&self, optimizer::RuntimePlanNode &node) -> void {
+                    node.estimated_rows =
+                        scaleEstimatedRows(node.estimated_rows,
+                                           correction_factor);
+                    for (auto &child : node.children)
+                    {
+                        self(self, child);
+                    }
+                };
+            apply_to_node(apply_to_node, plan.root);
+            for (auto &entry : plan.considered_paths)
+            {
+                entry.estimated_rows =
+                    scaleEstimatedRows(entry.estimated_rows,
+                                       correction_factor);
+            }
+            for (auto &entry : plan.rejected_paths)
+            {
+                entry.estimated_rows =
+                    scaleEstimatedRows(entry.estimated_rows,
+                                       correction_factor);
+            }
+
+            const bool changed = plan.root.estimated_rows != original_root_rows;
+            if (changed)
+            {
+                std::ostringstream detail;
+                detail << "correction_factor=" << correction_factor
+                       << ", root_estimated_rows=" << original_root_rows
+                       << "->" << plan.root.estimated_rows;
+                plan.statistics_provenance.push_back(
+                    optimizer::RuntimePlanStatisticsProvenance{
+                        "query",
+                        "ADAPTIVE_CARDINALITY_CORRECTION",
+                        detail.str()});
+            }
+            return changed;
         }
 
         auto annotateAdaptiveFeedback(
@@ -1302,6 +1431,8 @@ namespace scratchbird::sblr::detail
             }
 
             plan.adaptive_feedback = toRuntimeAdaptiveFeedback(*signal);
+            plan.adaptive_feedback.correction_applied =
+                applyAdaptiveEstimateCorrection(plan, *signal);
             plan.statistics_provenance.push_back(
                 optimizer::RuntimePlanStatisticsProvenance{
                     "query",
@@ -1320,6 +1451,21 @@ namespace scratchbird::sblr::detail
                         0.0,
                         plan.root.estimated_rows});
             }
+            if (signal->replan_suppressed)
+            {
+                plan.rejected_paths.push_back(
+                    optimizer::RuntimePlanTraceEntry{
+                        "ADAPTIVE_REPLAN",
+                        "query",
+                        "REPLAN_GUARDRAIL",
+                        "REJECTED",
+                        signal->guardrail_reason.empty()
+                            ? "adaptive replan suppressed by guardrail"
+                            : signal->guardrail_reason,
+                        0.0,
+                        0.0,
+                        plan.root.estimated_rows});
+            }
             if (signal->stats_refresh_applied)
             {
                 plan.considered_paths.push_back(
@@ -1333,6 +1479,141 @@ namespace scratchbird::sblr::detail
                         0.0,
                         plan.root.estimated_rows});
             }
+        }
+
+        auto refreshCachedAdaptiveFeedbackPayload(
+            const std::vector<uint8_t> &bytecode,
+            const std::optional<optimizer::CardinalityFeedbackSignal> &signal,
+            std::vector<uint8_t> &bytecode_out,
+            std::string &error_out) -> bool
+        {
+            bytecode_out = bytecode;
+            if (!signal.has_value())
+            {
+                return true;
+            }
+
+            sblr::v3::Container container;
+            if (!sblr::v3::decodeContainer(bytecode.data(),
+                                           bytecode.size(),
+                                           container,
+                                           error_out))
+            {
+                return false;
+            }
+
+            std::vector<sblr::v3::Instruction> instructions;
+            if (!decodeInstructions(container.bytecode_stream, instructions, error_out))
+            {
+                return false;
+            }
+
+            size_t root_index = std::numeric_limits<size_t>::max();
+            for (size_t index = 0; index < instructions.size(); ++index)
+            {
+                const auto opcode =
+                    static_cast<sblr::v3::Opcode>(instructions[index].opcode);
+                if (opcode != sblr::v3::Opcode::SBLR3_VERSION &&
+                    opcode != sblr::v3::Opcode::SBLR3_END)
+                {
+                    root_index = index;
+                    break;
+                }
+            }
+            if (root_index == std::numeric_limits<size_t>::max())
+            {
+                error_out = "Cached V3 container did not contain a root statement";
+                return false;
+            }
+
+            auto patch_payload_plan =
+                [&](sblr::v3::Value::Object &payload) -> bool {
+                    auto plan_it = payload.find("plan");
+                    if (plan_it == payload.end())
+                    {
+                        error_out = "Cached SELECT payload is missing runtime plan";
+                        return false;
+                    }
+
+                    auto *plan_bytes =
+                        std::get_if<sblr::v3::Value::Bytes>(&plan_it->second.data);
+                    if (plan_bytes == nullptr)
+                    {
+                        error_out = "Cached SELECT runtime plan payload is invalid";
+                        return false;
+                    }
+
+                    optimizer::RuntimePlan runtime_plan;
+                    if (!optimizer::decodeRuntimePlan(*plan_bytes,
+                                                     runtime_plan,
+                                                     error_out))
+                    {
+                        return false;
+                    }
+
+                    clearAdaptiveFeedbackAnnotations(runtime_plan);
+                    annotateAdaptiveFeedback(runtime_plan, signal, false);
+
+                    std::vector<uint8_t> refreshed_plan_bytes;
+                    if (!optimizer::encodeRuntimePlan(runtime_plan,
+                                                      refreshed_plan_bytes,
+                                                      error_out))
+                    {
+                        return false;
+                    }
+                    plan_it->second = sblr::v3::Value(std::move(refreshed_plan_bytes));
+                    return true;
+                };
+
+            auto *payload = instructionObject(instructions[root_index]);
+            if (payload == nullptr)
+            {
+                error_out = "Cached root instruction payload is not an object";
+                return false;
+            }
+
+            const auto root_opcode =
+                static_cast<sblr::v3::Opcode>(instructions[root_index].opcode);
+            if (root_opcode == sblr::v3::Opcode::SBLR3_SELECT)
+            {
+                if (!patch_payload_plan(*payload))
+                {
+                    return false;
+                }
+            }
+            else if (root_opcode == sblr::v3::Opcode::SBLR3_EXPLAIN_PLAN)
+            {
+                auto query_it = payload->find("query");
+                if (query_it == payload->end())
+                {
+                    error_out = "Cached EXPLAIN payload is missing query";
+                    return false;
+                }
+                auto *query_ptr =
+                    std::get_if<sblr::v3::Value::InstrPtr>(&query_it->second.data);
+                if (query_ptr == nullptr || !*query_ptr)
+                {
+                    error_out = "Cached EXPLAIN query payload is invalid";
+                    return false;
+                }
+                auto *query_payload = instructionObject(**query_ptr);
+                if (query_payload == nullptr || !patch_payload_plan(*query_payload))
+                {
+                    if (error_out.empty())
+                    {
+                        error_out = "Cached EXPLAIN query payload is invalid";
+                    }
+                    return false;
+                }
+            }
+
+            if (!encodeInstructions(instructions,
+                                    container.bytecode_stream,
+                                    error_out))
+            {
+                return false;
+            }
+            return sblr::v3::encodeContainer(container, bytecode_out, error_out);
         }
 
         auto indexRecommendationTypeName(
@@ -2108,9 +2389,20 @@ namespace scratchbird::sblr::detail
                 auto get_result = planCache().get(selected_variant.cache_key);
                 if (get_result.ok && get_result.hit)
                 {
+                    if (!refreshCachedAdaptiveFeedbackPayload(
+                            get_result.value.sblr_payload,
+                            optimizer::QueryProfiler::getInstance()
+                                .latestCardinalityFeedback(query_feedback_key),
+                            result.bytecode,
+                            instruction_error))
+                    {
+                        result.errors.push_back(instruction_error.empty()
+                            ? "Cached runtime plan adaptive feedback refresh failed"
+                            : instruction_error);
+                        return result;
+                    }
                     result.success = true;
                     result.cache_hit = true;
-                    result.bytecode = std::move(get_result.value.sblr_payload);
                     return result;
                 }
             }
@@ -2159,6 +2451,11 @@ namespace scratchbird::sblr::detail
     auto resetQueryCompilerV3PlanCacheStats() -> void
     {
         planCache().resetStats();
+    }
+
+    auto invalidateAllQueryCompilerV3PlanCache() -> uint64_t
+    {
+        return planCache().invalidateAll();
     }
 
 } // namespace scratchbird::sblr::detail

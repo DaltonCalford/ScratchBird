@@ -2,8 +2,13 @@
 
 #include "scratchbird/optimizer/cost_model.h"
 
+#include <cstdlib>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
 #include <vector>
 
 using scratchbird::optimizer::CostEstimate;
@@ -54,6 +59,58 @@ namespace
         profile.parameters.effective_cache_size = 1024.0;
         return profile;
     }
+
+    auto csvEscape(const std::string& value) -> std::string
+    {
+        std::string escaped = "\"";
+        escaped.reserve(value.size() + 2);
+        for (const char ch : value)
+        {
+            if (ch == '"')
+            {
+                escaped += "\"\"";
+            }
+            else
+            {
+                escaped.push_back(ch);
+            }
+        }
+        escaped.push_back('"');
+        return escaped;
+    }
+
+    auto csvRow(const std::vector<std::string>& columns) -> std::string
+    {
+        std::ostringstream out;
+        for (size_t i = 0; i < columns.size(); ++i)
+        {
+            if (i > 0)
+            {
+                out << ',';
+            }
+            out << csvEscape(columns[i]);
+        }
+        return out.str();
+    }
+
+    auto writeDelimitedLines(const std::filesystem::path& path,
+                             const std::vector<std::string>& lines) -> bool
+    {
+        if (path.has_parent_path())
+        {
+            std::filesystem::create_directories(path.parent_path());
+        }
+        std::ofstream out(path);
+        if (!out.is_open())
+        {
+            return false;
+        }
+        for (const auto& line : lines)
+        {
+            out << line << '\n';
+        }
+        return true;
+    }
 } // namespace
 
 TEST(OptimizerCostCalibrationBenchmarkTest,
@@ -74,12 +131,29 @@ TEST(OptimizerCostCalibrationBenchmarkTest,
 
     CostModel oltp_model(oltp_profile);
     CostModel analytic_model(analytic_profile);
+    const auto corpus = calibrationCorpus();
 
     size_t oltp_prefers_index = 0;
     size_t analytic_prefers_index = 0;
+    std::vector<std::string> benchmark_rows = {
+        csvRow({"profile_id",
+                "workload_profile",
+                "case_id",
+                "table_pages",
+                "table_rows",
+                "index_pages",
+                "index_rows",
+                "correlation",
+                "seq_total_cost",
+                "index_total_cost",
+                "cost_delta",
+                "index_prefers",
+                "formula_profile_id",
+                "calibration_profile_id"})};
 
-    for (const auto &entry : calibrationCorpus())
+    for (size_t case_index = 0; case_index < corpus.size(); ++case_index)
     {
+        const auto& entry = corpus[case_index];
         const CostEstimate oltp_seq =
             oltp_model.costSeqScan(entry.table_pages, entry.table_rows, 0.0);
         const CostEstimate oltp_index = oltp_model.costIndexScan(3,
@@ -116,14 +190,52 @@ TEST(OptimizerCostCalibrationBenchmarkTest,
         {
             ++analytic_prefers_index;
         }
+
+        benchmark_rows.push_back(
+            csvRow({oltp_profile.profile_id,
+                    oltp_profile.workload_profile,
+                    "case_" + std::to_string(case_index + 1),
+                    std::to_string(entry.table_pages),
+                    std::to_string(entry.table_rows),
+                    std::to_string(entry.index_pages),
+                    std::to_string(entry.index_rows),
+                    std::to_string(entry.correlation),
+                    std::to_string(oltp_seq.total_cost),
+                    std::to_string(oltp_index.total_cost),
+                    std::to_string(oltp_seq.total_cost - oltp_index.total_cost),
+                    oltp_index.total_cost < oltp_seq.total_cost ? "true" : "false",
+                    oltp_index.formula_profile_id,
+                    oltp_index.calibration_profile_id}));
+        benchmark_rows.push_back(
+            csvRow({analytic_profile.profile_id,
+                    analytic_profile.workload_profile,
+                    "case_" + std::to_string(case_index + 1),
+                    std::to_string(entry.table_pages),
+                    std::to_string(entry.table_rows),
+                    std::to_string(entry.index_pages),
+                    std::to_string(entry.index_rows),
+                    std::to_string(entry.correlation),
+                    std::to_string(analytic_seq.total_cost),
+                    std::to_string(analytic_index.total_cost),
+                    std::to_string(analytic_seq.total_cost -
+                                   analytic_index.total_cost),
+                    analytic_index.total_cost < analytic_seq.total_cost ? "true"
+                                                                        : "false",
+                    analytic_index.formula_profile_id,
+                    analytic_index.calibration_profile_id}));
     }
 
     std::cout << "[Benchmark] OPW-013 profile=oltp index_prefers="
-              << oltp_prefers_index << "/" << calibrationCorpus().size() << "\n";
+              << oltp_prefers_index << "/" << corpus.size() << "\n";
     std::cout << "[Benchmark] OPW-013 profile=analytic index_prefers="
-              << analytic_prefers_index << "/" << calibrationCorpus().size() << "\n";
+              << analytic_prefers_index << "/" << corpus.size() << "\n";
 
     EXPECT_GT(oltp_prefers_index, 0u);
     EXPECT_GT(analytic_prefers_index, 0u);
     EXPECT_LE(analytic_prefers_index, oltp_prefers_index);
+
+    if (const char* path = std::getenv("SB_OPTIMIZER_COST_BENCHMARK_CSV"))
+    {
+        ASSERT_TRUE(writeDelimitedLines(path, benchmark_rows)) << path;
+    }
 }

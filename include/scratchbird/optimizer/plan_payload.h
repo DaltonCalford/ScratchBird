@@ -10,8 +10,8 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 10;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v11";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 11;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v12";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -234,8 +234,10 @@ namespace scratchbird::optimizer
     {
         bool available = false;
         bool replan_required = false;
+        bool replan_suppressed = false;
         bool stats_refresh_requested = false;
         bool stats_refresh_applied = false;
+        bool correction_applied = false;
         uint64_t observation_count = 0;
         uint64_t replan_action_count = 0;
         uint64_t last_estimated_rows = 0;
@@ -243,6 +245,7 @@ namespace scratchbird::optimizer
         double estimation_error_ratio = 1.0;
         double correction_factor = 1.0;
         std::string last_plan_hash;
+        std::string guardrail_reason;
     };
 
     struct RuntimePlanControlEntry
@@ -391,5 +394,7 @@ namespace scratchbird::optimizer
     auto decodeRuntimePlan(const std::vector<uint8_t> &bytes,
                            RuntimePlan &plan_out,
                            std::string &error_out) -> bool;
+
+    auto adaptiveFeedbackPlanHash(const RuntimePlan &plan) -> std::string;
 
 } // namespace scratchbird::optimizer

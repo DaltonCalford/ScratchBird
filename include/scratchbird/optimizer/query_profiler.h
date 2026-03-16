@@ -70,11 +70,13 @@ struct CardinalityFeedbackPolicy {
     uint64_t min_observations = 1;
     double max_estimation_error_ratio = 4.0;
     uint64_t max_replan_actions = 2;
+    uint64_t max_same_plan_replans = 1;
 };
 
 struct CardinalityFeedbackSignal {
     bool available = false;
     bool replan_required = false;
+    bool replan_suppressed = false;
     bool stats_refresh_requested = false;
     bool stats_refresh_applied = false;
     uint64_t last_estimated_rows = 0;
@@ -84,6 +86,7 @@ struct CardinalityFeedbackSignal {
     uint64_t observation_count = 0;
     uint64_t replan_action_count = 0;
     std::string last_plan_hash;
+    std::string guardrail_reason;
 };
 
 struct QueryHistoryEntry {
@@ -348,6 +351,7 @@ private:
     {
         CardinalityFeedbackSignal signal;
         uint64_t last_consumed_observation = 0;
+        std::unordered_map<std::string, uint64_t> replan_actions_by_plan_hash;
     };
     std::unordered_map<std::string, CardinalityFeedbackState> cardinality_feedback_;
     CardinalityFeedbackPolicy cardinality_feedback_policy_;
