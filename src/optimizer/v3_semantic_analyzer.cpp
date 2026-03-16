@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <limits>
 #include <sstream>
 #include <unordered_map>
 
@@ -443,12 +445,54 @@ namespace scratchbird::optimizer
 
         auto chooseIndexForColumn(const ResolvedRelation &relation,
                                   core::CatalogManager *catalog,
+                                  StatisticsManager *stats_manager,
                                   const core::ID &column_id,
                                   ResolvedPredicateKind predicate_kind,
                                   const std::string &operator_name,
                                   IndexInfo &index_out,
                                   PlannerFamilyLoweringResult &lowering_out) -> bool
         {
+            auto exactness_rank =
+                [](AccessPathExactnessClass exactness_class) -> int {
+                    switch (exactness_class)
+                    {
+                        case AccessPathExactnessClass::EXACT_ROW:
+                            return 5;
+                        case AccessPathExactnessClass::EXACT_KEY:
+                            return 4;
+                        case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+                            return 3;
+                        case AccessPathExactnessClass::CANDIDATE_REGION:
+                            return 2;
+                        case AccessPathExactnessClass::APPROX_TOPK:
+                            return 1;
+                        case AccessPathExactnessClass::UNKNOWN:
+                        default:
+                            return 0;
+                    }
+                };
+            auto queryability_rank =
+                [](AccessPathQueryabilityState queryability_state) -> int {
+                    switch (queryability_state)
+                    {
+                        case AccessPathQueryabilityState::QUERYABLE:
+                            return 3;
+                        case AccessPathQueryabilityState::LIMITED:
+                            return 2;
+                        case AccessPathQueryabilityState::UNKNOWN:
+                            return 1;
+                        case AccessPathQueryabilityState::INVALID:
+                        default:
+                            return 0;
+                    }
+                };
+
+            bool found = false;
+            int best_score = std::numeric_limits<int>::min();
+            double best_recheck_ratio = std::numeric_limits<double>::infinity();
+            double best_coverage_fraction = -1.0;
+            double best_correlation = -1.0;
+
             for (const auto &index : relation.indexes)
             {
                 if (index.column_ids.empty())
@@ -468,15 +512,86 @@ namespace scratchbird::optimizer
                     {
                         continue;
                     }
+
+                    IndexFamilyMetricsPacket metrics_packet;
+                    const bool have_metrics =
+                        stats_manager != nullptr &&
+                        !isZeroId(index.index_id) &&
+                        stats_manager->getIndexFamilyMetrics(index.index_id,
+                                                             metrics_packet,
+                                                             nullptr) ==
+                            core::Status::OK;
+
+                    int candidate_score =
+                        (queryability_rank(lowering_out.queryability_state) * 100) +
+                        (exactness_rank(lowering_out.exactness_class) * 20);
+                    if (!lowering_out.requires_recheck)
+                    {
+                        candidate_score += 12;
+                    }
+                    if (lowering_out.supports_ordering &&
+                        (predicate_kind == ResolvedPredicateKind::RANGE ||
+                         predicate_kind == ResolvedPredicateKind::LIKE_PREFIX))
+                    {
+                        candidate_score += 6;
+                    }
+                    if (lowering_out.supports_covering)
+                    {
+                        candidate_score += 2;
+                    }
+                    if (have_metrics)
+                    {
+                        candidate_score +=
+                            static_cast<int>(std::round(
+                                std::clamp(metrics_packet.coverage_fraction,
+                                           0.0,
+                                           1.0) * 10.0));
+                    }
+
+                    const double candidate_recheck_ratio =
+                        have_metrics ? metrics_packet.recheck_ratio_est
+                                     : (lowering_out.requires_recheck ? 1.0 : 0.0);
+                    const double candidate_coverage_fraction =
+                        have_metrics ? metrics_packet.coverage_fraction : 0.0;
+                    const double candidate_correlation =
+                        have_metrics ? std::abs(metrics_packet.correlation) : 0.0;
+
+                    const bool better_candidate =
+                        !found ||
+                        candidate_score > best_score ||
+                        (candidate_score == best_score &&
+                         candidate_recheck_ratio < best_recheck_ratio) ||
+                        (candidate_score == best_score &&
+                         candidate_recheck_ratio == best_recheck_ratio &&
+                         candidate_coverage_fraction > best_coverage_fraction) ||
+                        (candidate_score == best_score &&
+                         candidate_recheck_ratio == best_recheck_ratio &&
+                         candidate_coverage_fraction == best_coverage_fraction &&
+                         candidate_correlation > best_correlation) ||
+                        (candidate_score == best_score &&
+                         candidate_recheck_ratio == best_recheck_ratio &&
+                         candidate_coverage_fraction == best_coverage_fraction &&
+                         candidate_correlation == best_correlation &&
+                         index.index_name < index_out.index_name);
+                    if (!better_candidate)
+                    {
+                        continue;
+                    }
+
+                    found = true;
+                    best_score = candidate_score;
+                    best_recheck_ratio = candidate_recheck_ratio;
+                    best_coverage_fraction = candidate_coverage_fraction;
+                    best_correlation = candidate_correlation;
                     index_out = index;
-                    return true;
                 }
             }
-            return false;
+            return found;
         }
 
         auto extractSimplePredicate(const parser::v3::Expression *expr,
                                     core::CatalogManager *catalog,
+                                    StatisticsManager *stats_manager,
                                     const parser::v3::StringPool &pool,
                                     std::vector<ResolvedRelation> &relations,
                                     ResolvedScanPredicate &predicate_out) -> bool
@@ -546,6 +661,7 @@ namespace scratchbird::optimizer
                 PlannerFamilyLoweringResult lowering;
                 if (chooseIndexForColumn(relations[*relation_index],
                                          catalog,
+                                         stats_manager,
                                          column_id,
                                          kind,
                                          predicate_out.operator_name,
@@ -610,6 +726,7 @@ namespace scratchbird::optimizer
                 PlannerFamilyLoweringResult lowering;
                 if (chooseIndexForColumn(relations[*relation_index],
                                          catalog,
+                                         stats_manager,
                                          column_id,
                                          ResolvedPredicateKind::LIKE_PREFIX,
                                          predicate_out.operator_name,
@@ -629,6 +746,7 @@ namespace scratchbird::optimizer
 
         auto collectSimplePredicates(const parser::v3::Expression *expr,
                                      core::CatalogManager *catalog,
+                                     StatisticsManager *stats_manager,
                                      const parser::v3::StringPool &pool,
                                      std::vector<ResolvedRelation> &relations,
                                      std::vector<ResolvedScanPredicate> &predicates_out) -> bool
@@ -645,11 +763,13 @@ namespace scratchbird::optimizer
                 {
                     const bool left = collectSimplePredicates(binary->left,
                                                               catalog,
+                                                              stats_manager,
                                                               pool,
                                                               relations,
                                                               predicates_out);
                     const bool right = collectSimplePredicates(binary->right,
                                                                catalog,
+                                                               stats_manager,
                                                                pool,
                                                                relations,
                                                                predicates_out);
@@ -658,7 +778,12 @@ namespace scratchbird::optimizer
             }
 
             ResolvedScanPredicate predicate;
-            if (!extractSimplePredicate(expr, catalog, pool, relations, predicate))
+            if (!extractSimplePredicate(expr,
+                                        catalog,
+                                        stats_manager,
+                                        pool,
+                                        relations,
+                                        predicate))
             {
                 return false;
             }
@@ -1227,6 +1352,7 @@ namespace scratchbird::optimizer
             std::vector<ResolvedScanPredicate> predicates;
             if (collectSimplePredicates(stmt->where,
                                         catalog,
+                                        stats_manager_,
                                         pool,
                                         out.relations,
                                         predicates))

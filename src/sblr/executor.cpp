@@ -66819,6 +66819,25 @@ namespace scratchbird
                                 {
                                     line << " reason=" << rec.reason;
                                 }
+                                if (rec.what_if_replanned)
+                                {
+                                    line << " what_if="
+                                         << rec.baseline_access_family
+                                         << "->"
+                                         << rec.hypothetical_access_family
+                                         << " cost_delta="
+                                         << rec.estimated_cost_delta
+                                         << " speedup="
+                                         << rec.estimated_speedup_ratio;
+                                    if (rec.ordering_improved)
+                                    {
+                                        line << " ordering_improved=true";
+                                    }
+                                    if (rec.covering_improved)
+                                    {
+                                        line << " covering_improved=true";
+                                    }
+                                }
                                 return line.str();
                             };
 
@@ -67029,6 +67048,39 @@ namespace scratchbird
                                         << entry.priority
                                         << ",\"confidence\":"
                                         << entry.confidence
+                                        << ",\"what_if_replanned\":"
+                                        << (entry.what_if_replanned ? "true" : "false")
+                                        << ",\"baseline_access_family\":\""
+                                        << escape_json(entry.baseline_access_family)
+                                        << "\""
+                                        << ",\"baseline_index_name\":\""
+                                        << escape_json(entry.baseline_index_name)
+                                        << "\""
+                                        << ",\"baseline_total_cost\":"
+                                        << entry.baseline_total_cost
+                                        << ",\"baseline_estimated_rows\":"
+                                        << entry.baseline_estimated_rows
+                                        << ",\"hypothetical_access_family\":\""
+                                        << escape_json(entry.hypothetical_access_family)
+                                        << "\""
+                                        << ",\"hypothetical_index_name\":\""
+                                        << escape_json(entry.hypothetical_index_name)
+                                        << "\""
+                                        << ",\"hypothetical_total_cost\":"
+                                        << entry.hypothetical_total_cost
+                                        << ",\"hypothetical_estimated_rows\":"
+                                        << entry.hypothetical_estimated_rows
+                                        << ",\"estimated_cost_delta\":"
+                                        << entry.estimated_cost_delta
+                                        << ",\"estimated_speedup_ratio\":"
+                                        << entry.estimated_speedup_ratio
+                                        << ",\"ordering_improved\":"
+                                        << (entry.ordering_improved ? "true" : "false")
+                                        << ",\"covering_improved\":"
+                                        << (entry.covering_improved ? "true" : "false")
+                                        << ",\"evidence_detail\":\""
+                                        << escape_json(entry.evidence_detail)
+                                        << "\""
                                         << "}";
                                 }
                                 out << "]";

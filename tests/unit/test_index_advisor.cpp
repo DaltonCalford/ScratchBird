@@ -123,6 +123,7 @@ TEST_F(IndexAdvisorQueryV3Test, SuggestsIndexesFromSelectJoinAndWherePredicates)
     bool has_orders_amount = false;
     bool has_orders_user_id = false;
     bool has_users_active = false;
+    bool has_what_if = false;
     for (const auto& rec : recs) {
         if (rec.column_names.empty()) {
             continue;
@@ -138,9 +139,19 @@ TEST_F(IndexAdvisorQueryV3Test, SuggestsIndexesFromSelectJoinAndWherePredicates)
         if (table == "users" && col == "active") {
             has_users_active = true;
         }
+        if (rec.what_if.replanned) {
+            has_what_if = true;
+            EXPECT_FALSE(rec.what_if.baseline_access_family.empty());
+            EXPECT_FALSE(rec.what_if.hypothetical_access_family.empty());
+            EXPECT_GT(rec.what_if.baseline_total_cost,
+                      rec.what_if.hypothetical_total_cost);
+            EXPECT_GT(rec.what_if.estimated_speedup_ratio, 1.0);
+            EXPECT_FALSE(rec.what_if.evidence_detail.empty());
+        }
     }
 
     EXPECT_TRUE(has_orders_amount || has_orders_user_id || has_users_active);
+    EXPECT_TRUE(has_what_if);
 }
 
 TEST_F(IndexAdvisorQueryV3Test, SkipsColumnWhenSingleColumnIndexAlreadyExists) {

@@ -1479,27 +1479,51 @@ namespace scratchbird::sblr::detail
             for (size_t index = 0; index < recommendations.size(); ++index)
             {
                 const auto &rec = recommendations[index];
-                plan.advisor_recommendations.push_back(
-                    optimizer::RuntimePlanAdvisorRecommendation{
-                        static_cast<uint32_t>(index + 1),
-                        indexRecommendationTypeName(rec.type),
-                        rec.table_name,
-                        rec.index_name,
-                        rec.column_names,
-                        rec.create_sql,
-                        rec.drop_sql,
-                        rec.reason,
-                        "INDEX_ADVISOR",
-                        std::string(query_fingerprint),
-                        signal_names,
-                        rec.benefit_score,
-                        rec.cost_score,
-                        rec.net_benefit,
-                        rec.affected_queries,
-                        rec.estimated_size_mb,
-                        rec.estimated_speedup,
-                        rec.priority,
-                        rec.confidence});
+                optimizer::RuntimePlanAdvisorRecommendation runtime_rec{
+                    static_cast<uint32_t>(index + 1),
+                    indexRecommendationTypeName(rec.type),
+                    rec.table_name,
+                    rec.index_name,
+                    rec.column_names,
+                    rec.create_sql,
+                    rec.drop_sql,
+                    rec.reason,
+                    "INDEX_ADVISOR",
+                    std::string(query_fingerprint),
+                    signal_names,
+                    rec.benefit_score,
+                    rec.cost_score,
+                    rec.net_benefit,
+                    rec.affected_queries,
+                    rec.estimated_size_mb,
+                    rec.estimated_speedup,
+                    rec.priority,
+                    rec.confidence};
+                runtime_rec.what_if_replanned = rec.what_if.replanned;
+                runtime_rec.baseline_access_family =
+                    rec.what_if.baseline_access_family;
+                runtime_rec.baseline_index_name = rec.what_if.baseline_index_name;
+                runtime_rec.baseline_total_cost = rec.what_if.baseline_total_cost;
+                runtime_rec.baseline_estimated_rows =
+                    rec.what_if.baseline_estimated_rows;
+                runtime_rec.hypothetical_access_family =
+                    rec.what_if.hypothetical_access_family;
+                runtime_rec.hypothetical_index_name =
+                    rec.what_if.hypothetical_index_name;
+                runtime_rec.hypothetical_total_cost =
+                    rec.what_if.hypothetical_total_cost;
+                runtime_rec.hypothetical_estimated_rows =
+                    rec.what_if.hypothetical_estimated_rows;
+                runtime_rec.estimated_cost_delta =
+                    rec.what_if.estimated_cost_delta;
+                runtime_rec.estimated_speedup_ratio =
+                    rec.what_if.estimated_speedup_ratio;
+                runtime_rec.ordering_improved =
+                    rec.what_if.ordering_improved;
+                runtime_rec.covering_improved =
+                    rec.what_if.covering_improved;
+                runtime_rec.evidence_detail = rec.what_if.evidence_detail;
+                plan.advisor_recommendations.push_back(std::move(runtime_rec));
             }
 
             if (!plan.advisor_signals.empty() || !plan.advisor_recommendations.empty())

@@ -116,6 +116,23 @@ struct IndexUsageStats {
     bool is_foreign_key = false;
 };
 
+struct IndexRecommendationWhatIfEvidence {
+    bool replanned = false;
+    std::string baseline_access_family;
+    std::string baseline_index_name;
+    double baseline_total_cost = 0.0;
+    uint64_t baseline_estimated_rows = 0;
+    std::string hypothetical_access_family;
+    std::string hypothetical_index_name;
+    double hypothetical_total_cost = 0.0;
+    uint64_t hypothetical_estimated_rows = 0;
+    double estimated_cost_delta = 0.0;
+    double estimated_speedup_ratio = 1.0;
+    bool ordering_improved = false;
+    bool covering_improved = false;
+    std::string evidence_detail;
+};
+
 // Index recommendation
 struct IndexRecommendation {
     ID table_id;
@@ -139,6 +156,7 @@ struct IndexRecommendation {
     double priority = 0.0;          // Overall recommendation priority (0.0-100.0)
     double confidence = 0.0;        // Confidence in recommendation (0.0-1.0)
     std::string reason;             // Human-readable explanation
+    IndexRecommendationWhatIfEvidence what_if;
 };
 
 // Query pattern for analysis

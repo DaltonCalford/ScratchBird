@@ -11,7 +11,7 @@ namespace scratchbird::optimizer
 {
 
     inline constexpr uint32_t kRuntimePlanPayloadVersion = 10;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v10";
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v11";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -282,6 +282,20 @@ namespace scratchbird::optimizer
         double estimated_speedup = 0.0;
         double priority = 0.0;
         double confidence = 0.0;
+        bool what_if_replanned = false;
+        std::string baseline_access_family;
+        std::string baseline_index_name;
+        double baseline_total_cost = 0.0;
+        uint64_t baseline_estimated_rows = 0;
+        std::string hypothetical_access_family;
+        std::string hypothetical_index_name;
+        double hypothetical_total_cost = 0.0;
+        uint64_t hypothetical_estimated_rows = 0;
+        double estimated_cost_delta = 0.0;
+        double estimated_speedup_ratio = 1.0;
+        bool ordering_improved = false;
+        bool covering_improved = false;
+        std::string evidence_detail;
     };
 
     struct RuntimePlanCostInputEstimate

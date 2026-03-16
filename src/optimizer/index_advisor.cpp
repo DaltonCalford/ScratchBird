@@ -22,9 +22,11 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/optimizer/index_family_lowering.h"
 #include "scratchbird/parser/parser_v3.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <unordered_set>
 #include <optional>
@@ -84,6 +86,31 @@ struct ColumnToken {
     std::string column_lower;
 };
 
+struct AdvisorWhatIfPlan {
+    PlannerFamilyLoweringResult lowering;
+    std::string index_name;
+    double total_cost = std::numeric_limits<double>::infinity();
+    uint64_t estimated_rows = 0;
+    bool covering = false;
+    bool ordered_output = false;
+    std::string detail;
+};
+
+struct AdvisorTableProfile {
+    const TableBinding* binding = nullptr;
+    const TableUsageStats* table_stats = nullptr;
+    TableStatistics table_statistics;
+    bool have_table_statistics = false;
+    uint64_t table_rows = 0;
+    uint64_t table_pages = 1;
+    uint64_t row_width_bytes = 64;
+    bool needs_ordering = false;
+    uint32_t order_key_count = 0;
+    uint32_t predicate_count = 0;
+    std::vector<CatalogManager::IndexInfo> existing_indexes;
+    std::unordered_set<ID, IDHash> referenced_column_ids;
+};
+
 std::string toLowerAscii(std::string_view value) {
     std::string out(value);
     std::transform(out.begin(), out.end(), out.begin(),
@@ -93,6 +120,580 @@ std::string toLowerAscii(std::string_view value) {
 
 std::string signalKey(const std::string& qualifier_lower, const std::string& column_lower) {
     return qualifier_lower + '\x1F' + column_lower;
+}
+
+auto recommendationIndexType(IndexRecommendationType type)
+    -> CatalogManager::IndexType {
+    switch (type) {
+        case IndexRecommendationType::CREATE_HASH:
+            return CatalogManager::IndexType::HASH;
+        case IndexRecommendationType::CREATE_LSM:
+            return CatalogManager::IndexType::LSM;
+        default:
+            return CatalogManager::IndexType::BTREE;
+    }
+}
+
+bool containsId(const std::vector<ID>& ids, const ID& target) {
+    return std::find(ids.begin(), ids.end(), target) != ids.end();
+}
+
+auto strongestPredicateShape(const ColumnUsage& usage) -> PredicateMatchShape {
+    if (usage.equality_count > 0 || usage.join_count > 0 || usage.in_list_count > 0) {
+        return PredicateMatchShape::EQUALITY;
+    }
+    if (usage.range_count > 0) {
+        return PredicateMatchShape::RANGE;
+    }
+    if (usage.like_count > 0) {
+        return PredicateMatchShape::LIKE_PREFIX;
+    }
+    return PredicateMatchShape::NONE;
+}
+
+auto operatorNameForShape(PredicateMatchShape shape) -> std::string {
+    switch (shape) {
+        case PredicateMatchShape::EQUALITY:
+            return "=";
+        case PredicateMatchShape::RANGE:
+            return ">=";
+        case PredicateMatchShape::LIKE_PREFIX:
+            return "LIKE";
+        case PredicateMatchShape::NONE:
+        default:
+            return "";
+    }
+}
+
+double clampSelectivity(double value) {
+    return std::clamp(value, 1e-6, 1.0);
+}
+
+auto estimatePagesForRows(uint64_t rows, double rows_per_page) -> uint64_t {
+    if (rows == 0) {
+        return 1;
+    }
+    if (rows_per_page <= 0.0) {
+        rows_per_page = 64.0;
+    }
+    return std::max<uint64_t>(1, static_cast<uint64_t>(
+        std::ceil(static_cast<double>(rows) / rows_per_page)));
+}
+
+auto defaultColumnSelectivity(const ColumnUsage& usage,
+                              const ColumnStatistics* stats) -> double {
+    const double distinct = stats && stats->num_distinct > 0
+        ? static_cast<double>(stats->num_distinct)
+        : 100.0;
+    if (usage.equality_count > 0 || usage.join_count > 0) {
+        return clampSelectivity(1.0 / std::max(2.0, distinct));
+    }
+    if (usage.in_list_count > 0) {
+        return clampSelectivity(std::min(0.25, 4.0 / std::max(4.0, distinct)));
+    }
+    if (usage.range_count > 0) {
+        return 0.18;
+    }
+    if (usage.like_count > 0) {
+        return 0.12;
+    }
+    return 1.0;
+}
+
+auto estimateCompositeSelectivity(StatisticsManager* stats_manager,
+                                  const AdvisorTableProfile& profile,
+                                  const std::vector<ID>& column_ids,
+                                  const std::unordered_map<ID, ColumnStatistics, IDHash>&
+                                      column_stats)
+    -> double {
+    if (column_ids.empty()) {
+        return 1.0;
+    }
+
+    double combined = 1.0;
+    for (const auto& column_id : column_ids) {
+        const auto usage_it = profile.table_stats->columns.find(column_id);
+        if (usage_it == profile.table_stats->columns.end()) {
+            continue;
+        }
+        const auto stats_it = column_stats.find(column_id);
+        const ColumnStatistics* stats = stats_it != column_stats.end()
+            ? &stats_it->second
+            : nullptr;
+        combined *= defaultColumnSelectivity(usage_it->second, stats);
+    }
+
+    if (column_ids.size() >= 2 && stats_manager != nullptr) {
+        MultivariateStatistics multi;
+        if (stats_manager->getMultivariateStatistics(profile.binding->table_info.table_id,
+                                                     column_ids,
+                                                     multi,
+                                                     nullptr) == Status::OK &&
+            multi.ndistinct.num_distinct > 0) {
+            combined = std::min(
+                combined,
+                clampSelectivity(
+                    1.0 / static_cast<double>(multi.ndistinct.num_distinct)));
+        }
+    }
+
+    return clampSelectivity(combined);
+}
+
+bool loadAdvisorTableProfile(Database* db,
+                             CatalogManager* catalog,
+                             const TableBinding& binding,
+                             const TableUsageStats& table_stats,
+                             AdvisorTableProfile& profile_out) {
+    if (db == nullptr || catalog == nullptr) {
+        return false;
+    }
+
+    profile_out = AdvisorTableProfile{};
+    profile_out.binding = &binding;
+    profile_out.table_stats = &table_stats;
+    for (const auto& [column_id, _] : table_stats.columns) {
+        profile_out.referenced_column_ids.insert(column_id);
+    }
+
+    profile_out.needs_ordering = std::any_of(
+        table_stats.columns.begin(),
+        table_stats.columns.end(),
+        [](const auto& entry) { return entry.second.order_by_count > 0; });
+    profile_out.order_key_count = static_cast<uint32_t>(std::count_if(
+        table_stats.columns.begin(),
+        table_stats.columns.end(),
+        [](const auto& entry) { return entry.second.order_by_count > 0; }));
+    profile_out.predicate_count = static_cast<uint32_t>(std::count_if(
+        table_stats.columns.begin(),
+        table_stats.columns.end(),
+        [](const auto& entry) {
+            const auto& usage = entry.second;
+            return usage.equality_count > 0 || usage.range_count > 0 ||
+                   usage.like_count > 0 || usage.in_list_count > 0 ||
+                   usage.join_count > 0;
+        }));
+
+    if (db->statistics_manager()->getTableStatistics(binding.table_info.table_id,
+                                                     profile_out.table_statistics,
+                                                     nullptr) == Status::OK) {
+        profile_out.have_table_statistics = true;
+        if (profile_out.table_statistics.avg_row_size > 0.0f) {
+            profile_out.row_width_bytes = std::max<uint64_t>(
+                16,
+                static_cast<uint64_t>(
+                    std::ceil(profile_out.table_statistics.avg_row_size)));
+        }
+        profile_out.table_rows = profile_out.table_statistics.num_rows == 0
+            ? 1000
+            : profile_out.table_statistics.num_rows;
+        profile_out.table_pages = profile_out.table_statistics.num_pages == 0
+            ? estimatePagesForRows(
+                  profile_out.table_rows,
+                  std::max(1.0,
+                           8192.0 / static_cast<double>(profile_out.row_width_bytes)))
+            : profile_out.table_statistics.num_pages;
+    } else {
+        profile_out.table_rows = std::max<uint64_t>(
+            1, binding.table_info.row_count == 0 ? 1000 : binding.table_info.row_count);
+        profile_out.row_width_bytes = 64;
+        profile_out.table_pages = estimatePagesForRows(
+            profile_out.table_rows,
+            std::max(1.0, 8192.0 / static_cast<double>(profile_out.row_width_bytes)));
+    }
+
+    catalog->listIndexesForTable(binding.table_info.table_id,
+                                 profile_out.existing_indexes,
+                                 nullptr);
+    return true;
+}
+
+bool isCoveringIndex(const AdvisorTableProfile& profile,
+                     const std::vector<ID>& index_columns,
+                     const std::vector<ID>& include_columns) {
+    for (const auto& column_id : profile.referenced_column_ids) {
+        if (!containsId(index_columns, column_id) &&
+            !containsId(include_columns, column_id)) {
+            return false;
+        }
+    }
+    return !profile.referenced_column_ids.empty();
+}
+
+bool recommendationIsCovering(const AdvisorTableProfile& profile,
+                              const std::vector<ID>& column_ids) {
+    for (const auto& column_id : profile.referenced_column_ids) {
+        if (!containsId(column_ids, column_id)) {
+            return false;
+        }
+    }
+    return !profile.referenced_column_ids.empty();
+}
+
+auto buildSequentialPlan(CostModel& cost_model,
+                         const AdvisorTableProfile& profile) -> AdvisorWhatIfPlan {
+    AdvisorWhatIfPlan plan;
+    plan.lowering = lowerSequentialPlannerFamily();
+    plan.estimated_rows = profile.table_rows;
+    const double qual_cost = std::max(1U, profile.predicate_count) * 0.0025;
+    const auto seq_cost = cost_model.costSeqScan(profile.table_pages,
+                                                 profile.table_rows,
+                                                 qual_cost,
+                                                 nullptr);
+    double total_cost = seq_cost.total_cost;
+    if (profile.needs_ordering) {
+        const auto sort_cost = cost_model.costSort(profile.table_rows,
+                                                   profile.row_width_bytes,
+                                                   std::max<uint32_t>(1, profile.order_key_count),
+                                                   nullptr);
+        total_cost += sort_cost.total_cost;
+    }
+    plan.total_cost = total_cost;
+    std::ostringstream detail;
+    detail << "SEQ_SCAN baseline, rows=" << plan.estimated_rows
+           << ", cost=" << total_cost;
+    plan.detail = detail.str();
+    return plan;
+}
+
+auto buildExistingIndexPlan(Database* db,
+                            CatalogManager* catalog,
+                            CostModel& cost_model,
+                            const AdvisorTableProfile& profile,
+                            const CatalogManager::IndexInfo& index)
+    -> AdvisorWhatIfPlan {
+    AdvisorWhatIfPlan plan;
+    plan.index_name = index.index_name;
+
+    std::vector<ID> matched_columns;
+    PredicateMatchShape predicate_shape = PredicateMatchShape::NONE;
+    std::string operator_name;
+    bool ordered_output = false;
+    for (const auto& column_id : index.column_ids) {
+        const auto usage_it = profile.table_stats->columns.find(column_id);
+        if (usage_it == profile.table_stats->columns.end()) {
+            break;
+        }
+        const auto shape = strongestPredicateShape(usage_it->second);
+        if (shape == PredicateMatchShape::NONE) {
+            if (profile.needs_ordering && usage_it->second.order_by_count > 0) {
+                ordered_output = true;
+            }
+            continue;
+        }
+        if (predicate_shape == PredicateMatchShape::NONE) {
+            predicate_shape = shape;
+            operator_name = operatorNameForShape(shape);
+        }
+        matched_columns.push_back(column_id);
+        if (shape != PredicateMatchShape::EQUALITY) {
+            break;
+        }
+    }
+
+    if (matched_columns.empty() && !ordered_output) {
+        return plan;
+    }
+
+    const auto request = buildPlannerFamilyLoweringRequest(catalog,
+                                                           index,
+                                                           predicate_shape,
+                                                           operator_name,
+                                                           ordered_output);
+    plan.lowering = lowerPlannerFamily(request);
+    if (plan.lowering.queryability_state == AccessPathQueryabilityState::INVALID) {
+        return plan;
+    }
+
+    std::unordered_map<ID, ColumnStatistics, IDHash> column_stats;
+    for (const auto& column_id : matched_columns) {
+        ColumnStatistics stats;
+        if (db->statistics_manager()->getColumnStatistics(index.table_id,
+                                                          column_id,
+                                                          stats,
+                                                          nullptr) == Status::OK) {
+            column_stats.emplace(column_id, std::move(stats));
+        }
+    }
+
+    const double selectivity = matched_columns.empty()
+        ? 1.0
+        : estimateCompositeSelectivity(db->statistics_manager(),
+                                       profile,
+                                       matched_columns,
+                                       column_stats);
+    const uint64_t estimated_rows = std::max<uint64_t>(
+        1,
+        static_cast<uint64_t>(
+            std::ceil(static_cast<double>(profile.table_rows) * selectivity)));
+
+    IndexFamilyMetricsPacket metrics;
+    const bool have_metrics = db->statistics_manager()->getIndexFamilyMetrics(index.index_id,
+                                                                              metrics,
+                                                                              nullptr) == Status::OK;
+    const uint64_t index_height = have_metrics && metrics.height > 0 ? metrics.height : 3;
+    const uint64_t leaf_pages = have_metrics && metrics.leaf_pages > 0
+        ? metrics.leaf_pages
+        : std::max<uint64_t>(1, static_cast<uint64_t>(
+              std::ceil((estimated_rows * 32.0) / 8192.0)));
+    const double entries_per_page = have_metrics && metrics.leaf_pages > 0 &&
+            metrics.live_entry_count_est > 0
+        ? static_cast<double>(metrics.live_entry_count_est) /
+              static_cast<double>(metrics.leaf_pages)
+        : 128.0;
+    const uint64_t index_tuples = std::max<uint64_t>(
+        estimated_rows,
+        static_cast<uint64_t>(
+            std::ceil(static_cast<double>(estimated_rows) *
+                      (1.0 + (have_metrics ? metrics.recheck_ratio_est : 0.0)))));
+    const uint64_t index_pages_touched = std::max<uint64_t>(
+        1,
+        std::min<uint64_t>(
+            leaf_pages,
+            static_cast<uint64_t>(
+                std::ceil(static_cast<double>(index_tuples) /
+                          std::max(1.0, entries_per_page)))));
+    const double rows_per_page = static_cast<double>(profile.table_rows) /
+        static_cast<double>(std::max<uint64_t>(1, profile.table_pages));
+    const uint64_t heap_pages = estimatePagesForRows(
+        estimated_rows,
+        rows_per_page * std::max(0.1, 1.0 - (have_metrics ? metrics.correlation : 0.0) * 0.25));
+    const bool covering = isCoveringIndex(profile,
+                                          index.column_ids,
+                                          index.include_column_ids);
+
+    const double qual_cost = std::max(1U, profile.predicate_count) * 0.0025;
+    CostEstimate cost;
+    switch (plan.lowering.family) {
+        case PlannerAccessFamily::BRIN_SCAN:
+        case PlannerAccessFamily::SUMMARY_FILTER_SCAN:
+            cost = cost_model.costSummaryScan(index_pages_touched,
+                                              heap_pages,
+                                              estimated_rows,
+                                              qual_cost,
+                                              0.0,
+                                              0.0,
+                                              nullptr);
+            break;
+        case PlannerAccessFamily::BITMAP_STORAGE_SCAN:
+        case PlannerAccessFamily::BITMAP_COMBINE_SCAN:
+            cost = cost_model.costBitmapStorageScan(index_pages_touched,
+                                                    heap_pages,
+                                                    estimated_rows,
+                                                    qual_cost,
+                                                    0.0,
+                                                    have_metrics
+                                                        ? metrics.recheck_ratio_est
+                                                        : 0.0,
+                                                    nullptr);
+            break;
+        case PlannerAccessFamily::LSM_EQ_SCAN:
+        case PlannerAccessFamily::LSM_RANGE_SCAN:
+        case PlannerAccessFamily::LSM_ORDERED_RANGE_SCAN:
+            cost = cost_model.costLSMScan(3,
+                                          2,
+                                          index_tuples,
+                                          heap_pages,
+                                          estimated_rows,
+                                          qual_cost,
+                                          have_metrics ? metrics.correlation : 0.0,
+                                          nullptr);
+            break;
+        default:
+            if (covering || plan.lowering.supports_covering) {
+                cost = cost_model.costIndexOnlyScan(index_height,
+                                                    index_pages_touched,
+                                                    index_tuples,
+                                                    qual_cost,
+                                                    have_metrics
+                                                        ? metrics.correlation
+                                                        : 0.0,
+                                                    nullptr);
+            } else {
+                cost = cost_model.costIndexScan(index_height,
+                                                index_pages_touched,
+                                                index_tuples,
+                                                heap_pages,
+                                                estimated_rows,
+                                                qual_cost,
+                                                have_metrics ? metrics.correlation : 0.0,
+                                                nullptr);
+            }
+            break;
+    }
+
+    double total_cost = cost.total_cost;
+    if (profile.needs_ordering && !plan.lowering.supports_ordering) {
+        const auto sort_cost = cost_model.costSort(estimated_rows,
+                                                   profile.row_width_bytes,
+                                                   std::max<uint32_t>(1, profile.order_key_count),
+                                                   nullptr);
+        total_cost += sort_cost.total_cost;
+    }
+
+    plan.total_cost = total_cost;
+    plan.estimated_rows = estimated_rows;
+    plan.covering = covering || plan.lowering.supports_covering;
+    plan.ordered_output = plan.lowering.supports_ordering;
+    std::ostringstream detail;
+    detail << plannerAccessFamilyName(plan.lowering.family)
+           << " using existing index " << index.index_name
+           << ", rows=" << estimated_rows
+           << ", cost=" << total_cost;
+    plan.detail = detail.str();
+    return plan;
+}
+
+auto buildHypotheticalRecommendationPlan(Database* db,
+                                         CostModel& cost_model,
+                                         const AdvisorTableProfile& profile,
+                                         const IndexRecommendation& recommendation)
+    -> AdvisorWhatIfPlan {
+    AdvisorWhatIfPlan plan;
+    plan.index_name = recommendation.index_name;
+
+    std::vector<ID> column_ids;
+    column_ids.reserve(recommendation.column_names.size());
+    for (const auto& column_name : recommendation.column_names) {
+        const auto lower_name = toLowerAscii(column_name);
+        const auto column_it = profile.binding->columns_by_lower.find(lower_name);
+        if (column_it != profile.binding->columns_by_lower.end()) {
+            column_ids.push_back(column_it->second.column_id);
+        }
+    }
+    if (column_ids.empty()) {
+        return plan;
+    }
+
+    const auto usage_it = profile.table_stats->columns.find(column_ids.front());
+    const auto predicate_shape = usage_it != profile.table_stats->columns.end()
+        ? strongestPredicateShape(usage_it->second)
+        : PredicateMatchShape::NONE;
+
+    PlannerFamilyLoweringRequest request;
+    request.index_type = recommendationIndexType(recommendation.type);
+    request.ordered_output = profile.needs_ordering &&
+        recommendation.type != IndexRecommendationType::CREATE_HASH;
+    request.predicate_shape = predicate_shape;
+    plan.lowering = lowerPlannerFamily(request);
+    if (plan.lowering.queryability_state == AccessPathQueryabilityState::INVALID) {
+        return plan;
+    }
+
+    std::unordered_map<ID, ColumnStatistics, IDHash> column_stats;
+    for (const auto& column_id : column_ids) {
+        ColumnStatistics stats;
+        if (db->statistics_manager()->getColumnStatistics(profile.binding->table_info.table_id,
+                                                          column_id,
+                                                          stats,
+                                                          nullptr) == Status::OK) {
+            column_stats.emplace(column_id, std::move(stats));
+        }
+    }
+
+    const double selectivity = estimateCompositeSelectivity(db->statistics_manager(),
+                                                            profile,
+                                                            column_ids,
+                                                            column_stats);
+    const uint64_t estimated_rows = std::max<uint64_t>(
+        1,
+        static_cast<uint64_t>(
+            std::ceil(static_cast<double>(profile.table_rows) * selectivity)));
+    const bool covering = recommendationIsCovering(profile, column_ids);
+    const uint64_t estimated_index_pages = std::max<uint64_t>(
+        1,
+        static_cast<uint64_t>(
+            std::ceil((recommendation.estimated_size_mb * 1024.0 * 1024.0) /
+                      8192.0)));
+    const uint64_t index_height = estimated_index_pages > 4096 ? 4 : 3;
+    const uint64_t index_tuples = estimated_rows;
+    const double rows_per_page = static_cast<double>(profile.table_rows) /
+        static_cast<double>(std::max<uint64_t>(1, profile.table_pages));
+    const uint64_t heap_pages = estimatePagesForRows(estimated_rows, rows_per_page);
+    const double qual_cost = std::max(1U, profile.predicate_count) * 0.0025;
+
+    CostEstimate cost;
+    switch (plan.lowering.family) {
+        case PlannerAccessFamily::HASH_EQ_SCAN:
+            cost = cost_model.costIndexScan(2,
+                                            1,
+                                            index_tuples,
+                                            heap_pages,
+                                            estimated_rows,
+                                            qual_cost,
+                                            0.0,
+                                            nullptr);
+            break;
+        case PlannerAccessFamily::LSM_EQ_SCAN:
+        case PlannerAccessFamily::LSM_RANGE_SCAN:
+        case PlannerAccessFamily::LSM_ORDERED_RANGE_SCAN:
+            cost = cost_model.costLSMScan(3,
+                                          2,
+                                          index_tuples,
+                                          heap_pages,
+                                          estimated_rows,
+                                          qual_cost,
+                                          0.0,
+                                          nullptr);
+            break;
+        default:
+            if (covering || plan.lowering.supports_covering) {
+                cost = cost_model.costIndexOnlyScan(index_height,
+                                                    estimated_index_pages,
+                                                    index_tuples,
+                                                    qual_cost,
+                                                    0.2,
+                                                    nullptr);
+            } else {
+                cost = cost_model.costIndexScan(index_height,
+                                                estimated_index_pages,
+                                                index_tuples,
+                                                heap_pages,
+                                                estimated_rows,
+                                                qual_cost,
+                                                0.2,
+                                                nullptr);
+            }
+            break;
+    }
+
+    double total_cost = cost.total_cost;
+    if (profile.needs_ordering && !plan.lowering.supports_ordering) {
+        const auto sort_cost = cost_model.costSort(estimated_rows,
+                                                   profile.row_width_bytes,
+                                                   std::max<uint32_t>(1, profile.order_key_count),
+                                                   nullptr);
+        total_cost += sort_cost.total_cost;
+    }
+
+    plan.total_cost = total_cost;
+    plan.estimated_rows = estimated_rows;
+    plan.covering = covering || plan.lowering.supports_covering;
+    plan.ordered_output = plan.lowering.supports_ordering;
+    std::ostringstream detail;
+    detail << plannerAccessFamilyName(plan.lowering.family)
+           << " using hypothetical index " << recommendation.index_name
+           << ", rows=" << estimated_rows
+           << ", cost=" << total_cost;
+    plan.detail = detail.str();
+    return plan;
+}
+
+auto chooseBetterPlan(const AdvisorWhatIfPlan& left, const AdvisorWhatIfPlan& right)
+    -> const AdvisorWhatIfPlan& {
+    if (left.total_cost < right.total_cost) {
+        return left;
+    }
+    if (right.total_cost < left.total_cost) {
+        return right;
+    }
+    if (left.covering != right.covering) {
+        return left.covering ? left : right;
+    }
+    if (left.ordered_output != right.ordered_output) {
+        return left.ordered_output ? left : right;
+    }
+    return left;
 }
 
 void recordSignal(std::unordered_map<std::string, SignalEntry>& signals,
@@ -1107,6 +1708,11 @@ Status IndexAdvisor::suggestIndexesForQuery(const std::string& sql_text,
         return Status::OK;
     }
 
+    std::unordered_map<ID, const TableBinding*, IDHash> binding_by_table;
+    for (const auto& binding : bindings) {
+        binding_by_table.emplace(binding.table_info.table_id, &binding);
+    }
+
     for (auto& [table_id, table_stats] : usage_by_table) {
         std::vector<const ColumnUsage*> equality_candidates;
         for (auto& [column_id, col_usage] : table_stats.columns) {
@@ -1157,8 +1763,97 @@ Status IndexAdvisor::suggestIndexesForQuery(const std::string& sql_text,
         }
     }
 
+    std::unordered_map<ID, AdvisorTableProfile, IDHash> profile_by_table;
+    for (const auto& [table_id, table_stats] : usage_by_table) {
+        const auto binding_it = binding_by_table.find(table_id);
+        if (binding_it == binding_by_table.end()) {
+            continue;
+        }
+
+        AdvisorTableProfile profile;
+        if (loadAdvisorTableProfile(db_,
+                                    catalog_,
+                                    *binding_it->second,
+                                    table_stats,
+                                    profile)) {
+            profile_by_table.emplace(table_id, std::move(profile));
+        }
+    }
+
+    std::vector<IndexRecommendation> replanned;
+    replanned.reserve(recommendations->size());
+    for (auto& rec : *recommendations) {
+        const auto profile_it = profile_by_table.find(rec.table_id);
+        if (profile_it == profile_by_table.end()) {
+            continue;
+        }
+
+        auto baseline = buildSequentialPlan(*cost_model_, profile_it->second);
+        for (const auto& existing_index : profile_it->second.existing_indexes) {
+            const auto candidate = buildExistingIndexPlan(db_,
+                                                          catalog_,
+                                                          *cost_model_,
+                                                          profile_it->second,
+                                                          existing_index);
+            baseline = chooseBetterPlan(baseline, candidate);
+        }
+
+        const auto hypothetical = buildHypotheticalRecommendationPlan(db_,
+                                                                      *cost_model_,
+                                                                      profile_it->second,
+                                                                      rec);
+        if (!std::isfinite(hypothetical.total_cost) ||
+            hypothetical.total_cost >= baseline.total_cost * 0.99) {
+            continue;
+        }
+
+        rec.what_if.replanned = true;
+        rec.what_if.baseline_access_family =
+            plannerAccessFamilyName(baseline.lowering.family);
+        rec.what_if.baseline_index_name = baseline.index_name;
+        rec.what_if.baseline_total_cost = baseline.total_cost;
+        rec.what_if.baseline_estimated_rows = baseline.estimated_rows;
+        rec.what_if.hypothetical_access_family =
+            plannerAccessFamilyName(hypothetical.lowering.family);
+        rec.what_if.hypothetical_index_name = hypothetical.index_name;
+        rec.what_if.hypothetical_total_cost = hypothetical.total_cost;
+        rec.what_if.hypothetical_estimated_rows = hypothetical.estimated_rows;
+        rec.what_if.estimated_cost_delta =
+            baseline.total_cost - hypothetical.total_cost;
+        rec.what_if.estimated_speedup_ratio = hypothetical.total_cost > 0.0
+            ? baseline.total_cost / hypothetical.total_cost
+            : baseline.total_cost;
+        rec.what_if.ordering_improved =
+            !baseline.ordered_output && hypothetical.ordered_output;
+        rec.what_if.covering_improved =
+            !baseline.covering && hypothetical.covering;
+        std::ostringstream evidence;
+        evidence << baseline.detail << " -> " << hypothetical.detail;
+        rec.what_if.evidence_detail = evidence.str();
+        rec.estimated_speedup = std::max(rec.estimated_speedup,
+                                         rec.what_if.estimated_speedup_ratio);
+        rec.priority = std::max(rec.priority,
+                                rec.net_benefit +
+                                    rec.what_if.estimated_cost_delta +
+                                    (rec.what_if.ordering_improved ? 5.0 : 0.0) +
+                                    (rec.what_if.covering_improved ? 3.0 : 0.0));
+        rec.reason += " What-if delta: " + rec.what_if.evidence_detail;
+        replanned.push_back(std::move(rec));
+    }
+    recommendations->swap(replanned);
+
     std::sort(recommendations->begin(), recommendations->end(),
               [](const IndexRecommendation& a, const IndexRecommendation& b) {
+                  if (a.what_if.estimated_speedup_ratio !=
+                      b.what_if.estimated_speedup_ratio) {
+                      return a.what_if.estimated_speedup_ratio >
+                             b.what_if.estimated_speedup_ratio;
+                  }
+                  if (a.what_if.estimated_cost_delta !=
+                      b.what_if.estimated_cost_delta) {
+                      return a.what_if.estimated_cost_delta >
+                             b.what_if.estimated_cost_delta;
+                  }
                   return a.priority > b.priority;
               });
 

@@ -3615,16 +3615,24 @@ namespace scratchbird::optimizer
                 return false;
             }
 
-            if (path->accessDescriptor().order_complete ||
-                path->accessDescriptor().ordered_output)
+            const auto &descriptor = path->accessDescriptor();
+            const bool exact_ordered_access =
+                descriptor.ordered_output &&
+                descriptor.ordered_prefix_length > 0 &&
+                !descriptor.requires_recheck &&
+                (descriptor.exactness_class ==
+                     AccessPathExactnessClass::EXACT_KEY ||
+                 descriptor.exactness_class ==
+                     AccessPathExactnessClass::LOWER_BOUND_ORDERED ||
+                 descriptor.exactness_class ==
+                     AccessPathExactnessClass::EXACT_ROW);
+            if (descriptor.order_complete || exact_ordered_access)
             {
                 return true;
             }
 
             switch (path->type())
             {
-                case PathType::INDEX_SCAN:
-                case PathType::INDEX_ONLY_SCAN:
                 case PathType::SORT:
                 case PathType::GATHER_MERGE:
                 case PathType::MERGE_JOIN:
@@ -5079,12 +5087,17 @@ namespace scratchbird::optimizer
                     return out.str();
                 };
 
-            auto makeRuntimePredicate = [](const ResolvedScanPredicate &predicate)
+            auto makeRuntimePredicate =
+                [](const ResolvedScanPredicate &predicate,
+                   const core::CatalogManager::IndexInfo *runtime_index)
                 -> RuntimePlanIndexPredicate {
                 RuntimePlanIndexPredicate out;
                 out.valid = true;
-                out.index_name = predicate.matched_index.index_name;
-                out.index_id_text = predicate.matched_index.index_id.toString();
+                const auto &resolved_index =
+                    runtime_index != nullptr ? *runtime_index
+                                             : predicate.matched_index;
+                out.index_name = resolved_index.index_name;
+                out.index_id_text = resolved_index.index_id.toString();
                 out.column_name = predicate.column_name;
                 out.operator_name = predicate.operator_name;
                 out.literal_kind = predicate.literal_kind;
@@ -6436,6 +6449,10 @@ namespace scratchbird::optimizer
             const bool query_requests_text_ranking = queryRequestsTextRanking();
             const bool query_requests_ann_order =
                 queryRequestsVectorNearestOrder();
+            const uint64_t requested_order_key_count =
+                select_stmt != nullptr
+                    ? static_cast<uint64_t>(select_stmt->order_by.size())
+                    : 0;
 
             auto supportsExactLookup =
                 [&](const PlannerFamilyLoweringResult &lowering,
@@ -6661,14 +6678,28 @@ namespace scratchbird::optimizer
                 }
                 const auto candidate_ordering_keys =
                     indexOrderingKeys(index, lowered_candidate);
-                const bool candidate_order_complete =
+                const uint64_t candidate_ordered_prefix_length =
+                    std::min<uint64_t>(ordered_prefix_length,
+                                       candidate_ordering_keys.size());
+                const bool candidate_exact_ordered =
                     lowered_candidate.supports_ordering &&
-                    !candidate_ordering_keys.empty();
+                    candidate_ordered_prefix_length > 0 &&
+                    !lowered_candidate.requires_recheck &&
+                    (lowered_candidate.exactness_class ==
+                         AccessPathExactnessClass::EXACT_KEY ||
+                     lowered_candidate.exactness_class ==
+                         AccessPathExactnessClass::LOWER_BOUND_ORDERED ||
+                     lowered_candidate.exactness_class ==
+                         AccessPathExactnessClass::EXACT_ROW);
+                const bool candidate_order_complete =
+                    candidate_exact_ordered &&
+                    requested_order_key_count > 0 &&
+                    candidate_ordered_prefix_length >=
+                        requested_order_key_count;
+                const bool candidate_ordered_output = candidate_exact_ordered;
                 const double candidate_interesting_order_score =
-                    candidate_order_complete
-                        ? static_cast<double>(
-                              std::max<uint64_t>(ordered_prefix_length,
-                                                 candidate_ordering_keys.size()))
+                    candidate_ordered_output
+                        ? static_cast<double>(candidate_ordered_prefix_length)
                         : 0.0;
                 const IndexFamilyCostCalibrationInput family_cost_input =
                     buildIndexFamilyCostInput(
@@ -6680,7 +6711,7 @@ namespace scratchbird::optimizer
                         relation_row_width,
                         relation_heap_rows_per_page,
                         covering_index,
-                        candidate_order_complete);
+                        candidate_ordered_output);
                 CostModel candidate_cost_model(
                     deriveIndexFamilyFormulaProfile(planner_params,
                                                     family_cost_input));
@@ -7270,6 +7301,35 @@ namespace scratchbird::optimizer
                     appendUniqueText(candidate_scan_families,
                                      "EXPRESSION_INDEX_SCAN");
                 }
+                std::vector<std::string> candidate_scan_family_tags =
+                    candidate_scan_families;
+                if (lowered_candidate.requires_recheck)
+                {
+                    appendUniqueText(candidate_scan_family_tags,
+                                     "RECHECK_REQUIRED");
+                }
+                if (candidate_order_complete)
+                {
+                    appendUniqueText(candidate_scan_family_tags,
+                                     "ORDER_COMPLETE");
+                }
+                else if (candidate_ordered_output)
+                {
+                    appendUniqueText(candidate_scan_family_tags,
+                                     "ORDER_PREFIX_ONLY");
+                }
+                else if (candidate_ordered_prefix_length > 0 &&
+                         lowered_candidate.supports_ordering)
+                {
+                    appendUniqueText(candidate_scan_family_tags,
+                                     "ORDER_ENFORCEMENT_REQUIRED");
+                }
+                if (lowered_candidate.exactness_class ==
+                    AccessPathExactnessClass::APPROX_TOPK)
+                {
+                    appendUniqueText(candidate_scan_family_tags,
+                                     "APPROX_TOPK");
+                }
                 std::string candidate_scan_family =
                     lowered_candidate.family_name.empty()
                         ? scan_kind
@@ -7305,7 +7365,7 @@ namespace scratchbird::optimizer
                         lowered_candidate,
                         scan_kind,
                         exact_key_lookup,
-                        candidate_order_complete || ordered_prefix_length > 0,
+                        candidate_ordered_output,
                         candidate_cost.rows,
                         base_rows);
                 if (candidate_mga_governance.reject_candidate)
@@ -7336,7 +7396,7 @@ namespace scratchbird::optimizer
                                    candidate_cost.total_cost,
                                    candidate_cost.rows);
                 const RuntimePlanIndexPredicate candidate_runtime_predicate =
-                    makeRuntimePredicate(predicate);
+                    makeRuntimePredicate(predicate, &index);
                 const std::vector<RuntimePlanIndexPredicate>
                     candidate_runtime_predicates = {candidate_runtime_predicate};
                 std::shared_ptr<Path> candidate_path;
@@ -7400,13 +7460,13 @@ namespace scratchbird::optimizer
                     scan_kind,
                     candidate_scan_family,
                     lowered_candidate,
-                    candidate_scan_families,
+                    candidate_scan_family_tags,
                     candidate_runtime_predicates,
                     std::string(),
                     covering_index,
                     exact_key_lookup,
-                    candidate_order_complete || ordered_prefix_length > 0,
-                    ordered_prefix_length,
+                    candidate_ordered_output,
+                    candidate_ordered_prefix_length,
                     candidate_ordering_keys,
                     candidate_order_complete,
                     candidate_interesting_order_score,
@@ -7438,7 +7498,7 @@ namespace scratchbird::optimizer
                 best_scan_kind = scan_kind;
                 best_scan_family = candidate_scan_family;
                 best_lowering = lowered_candidate;
-                best_scan_family_tags = candidate_scan_families;
+                best_scan_family_tags = candidate_scan_family_tags;
                 best_scan_family_tags.erase(
                     std::remove(best_scan_family_tags.begin(),
                                 best_scan_family_tags.end(),
@@ -7450,9 +7510,8 @@ namespace scratchbird::optimizer
                 best_exact_key_lookup = exact_key_lookup;
                 best_coverage_fraction = runtime_coverage_fraction;
                 best_candidate_budget = runtime_candidate_budget;
-                best_ordered_output =
-                    candidate_order_complete || ordered_prefix_length > 0;
-                best_ordered_prefix_length = ordered_prefix_length;
+                best_ordered_output = candidate_ordered_output;
+                best_ordered_prefix_length = candidate_ordered_prefix_length;
                 best_ordering_keys = candidate_ordering_keys;
                 best_order_complete = candidate_order_complete;
                 best_interesting_order_score = candidate_interesting_order_score;
@@ -7620,7 +7679,7 @@ namespace scratchbird::optimizer
                     skip_lowered.family_name,
                     skip_lowered,
                     {"SKIP_SCAN"},
-                    {makeRuntimePredicate(*skip_predicate_it)},
+                    {makeRuntimePredicate(*skip_predicate_it, &index)},
                     std::string(),
                     false,
                     false,
@@ -7658,7 +7717,7 @@ namespace scratchbird::optimizer
                 best_lowering = skip_lowered;
                 best_scan_family_tags = {"SKIP_SCAN"};
                 best_runtime_predicates = {
-                    makeRuntimePredicate(*skip_predicate_it)};
+                    makeRuntimePredicate(*skip_predicate_it, &index)};
                 best_bitmap_op.clear();
                 best_covering_index = false;
                 best_exact_key_lookup = false;
@@ -7709,7 +7768,8 @@ namespace scratchbird::optimizer
                 }
                 bitmap_index_ids.push_back(predicate.matched_index.index_id);
                 bitmap_index_names.push_back(predicate.matched_index.index_name);
-                bitmap_predicates.push_back(makeRuntimePredicate(predicate));
+                bitmap_predicates.push_back(
+                    makeRuntimePredicate(predicate, &predicate.matched_index));
                 bitmap_predicate_texts.push_back(predicate.predicate_text);
                 bitmap_total_index_pages += std::max<uint64_t>(1, base_pages / 8);
                 const bool predicate_exact_lookup = predicateSupportsExactLookup(predicate);
@@ -7957,22 +8017,95 @@ namespace scratchbird::optimizer
             }
 
             bundle.selectivity = selectivity;
+            auto exactnessPreferenceScore =
+                [](AccessPathExactnessClass exactness_class) -> int {
+                    switch (exactness_class)
+                    {
+                        case AccessPathExactnessClass::EXACT_ROW:
+                            return 5;
+                        case AccessPathExactnessClass::EXACT_KEY:
+                            return 4;
+                        case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+                            return 3;
+                        case AccessPathExactnessClass::CANDIDATE_REGION:
+                            return 2;
+                        case AccessPathExactnessClass::APPROX_TOPK:
+                            return 1;
+                        case AccessPathExactnessClass::UNKNOWN:
+                        default:
+                            return 0;
+                    }
+                };
             auto bundleSemanticPriority =
-                [](const BaseAccessChoice &candidate) -> int {
+                [&](const BaseAccessChoice &candidate) -> int {
                     const auto &relation = candidate.runtime_relation;
+                    const auto &descriptor = candidate.access_descriptor;
+                    int priority = 0;
                     if (relation.scan_kind == "BITMAP_INDEX_SCAN" &&
                         relation.bitmap_op == "AND" &&
                         relation.exact_key_lookup &&
                         relation.index_predicates.size() > 1)
                     {
-                        return 2;
+                        priority += 32;
+                    }
+                    if (query_requests_text_ranking &&
+                        descriptor.family_kind ==
+                            PlannerAccessFamily::TEXT_SCORE_SCAN)
+                    {
+                        priority += 24;
+                    }
+                    if (query_requests_ann_order)
+                    {
+                        switch (descriptor.family_kind)
+                        {
+                            case PlannerAccessFamily::VECTOR_FLAT_SCAN:
+                            case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+                                priority += 24;
+                                break;
+                            case PlannerAccessFamily::ANN_RERANK_SCAN:
+                                priority += 18;
+                                break;
+                            case PlannerAccessFamily::HNSW_SCAN:
+                            case PlannerAccessFamily::IVF_SCAN:
+                            case PlannerAccessFamily::GIST_NEAREST_SCAN:
+                            case PlannerAccessFamily::SPGIST_NEAREST_SCAN:
+                            case PlannerAccessFamily::RTREE_NEAREST_SCAN:
+                                priority += 12;
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                    if (requested_order_key_count > 0 &&
+                        descriptor.order_complete &&
+                        !descriptor.requires_recheck)
+                    {
+                        priority += 16;
+                    }
+                    else if (requested_order_key_count > 0 &&
+                             descriptor.ordered_output &&
+                             descriptor.ordered_prefix_length > 0 &&
+                             !descriptor.requires_recheck)
+                    {
+                        priority += 10;
                     }
                     if (relation.exact_key_lookup &&
-                        relation.index_predicates.size() > 1)
+                        !descriptor.requires_recheck &&
+                        (descriptor.exactness_class ==
+                             AccessPathExactnessClass::EXACT_KEY ||
+                         descriptor.exactness_class ==
+                             AccessPathExactnessClass::EXACT_ROW))
                     {
-                        return 1;
+                        priority += 8;
                     }
-                    return 0;
+                    else if (relation.exact_key_lookup &&
+                             descriptor.requires_recheck)
+                    {
+                        priority -= 4;
+                    }
+                    priority +=
+                        exactnessPreferenceScore(descriptor.exactness_class);
+                    return priority;
                 };
             auto chosen_it =
                 bundle.candidates.empty()
@@ -8000,6 +8133,27 @@ namespace scratchbird::optimizer
                               {
                                   return left_predicate_count >
                                          right_predicate_count;
+                              }
+                              if (requested_order_key_count > 0 &&
+                                  left.access_descriptor.order_complete !=
+                                      right.access_descriptor.order_complete)
+                              {
+                                  return left.access_descriptor.order_complete;
+                              }
+                              if (requested_order_key_count > 0 &&
+                                  left.access_descriptor.interesting_order_score !=
+                                      right.access_descriptor
+                                          .interesting_order_score)
+                              {
+                                  return left.access_descriptor
+                                             .interesting_order_score >
+                                         right.access_descriptor
+                                             .interesting_order_score;
+                              }
+                              if (left.access_descriptor.requires_recheck !=
+                                  right.access_descriptor.requires_recheck)
+                              {
+                                  return !left.access_descriptor.requires_recheck;
                               }
                               const double left_cost =
                                   left.path ? left.path->totalCost()

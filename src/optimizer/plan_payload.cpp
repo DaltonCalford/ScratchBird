@@ -1221,6 +1221,27 @@ namespace scratchbird::optimizer
             out["estimated_speedup"] = recommendation.estimated_speedup;
             out["priority"] = recommendation.priority;
             out["confidence"] = recommendation.confidence;
+            out["what_if_replanned"] = recommendation.what_if_replanned;
+            out["baseline_access_family"] =
+                recommendation.baseline_access_family;
+            out["baseline_index_name"] = recommendation.baseline_index_name;
+            out["baseline_total_cost"] = recommendation.baseline_total_cost;
+            out["baseline_estimated_rows"] =
+                recommendation.baseline_estimated_rows;
+            out["hypothetical_access_family"] =
+                recommendation.hypothetical_access_family;
+            out["hypothetical_index_name"] =
+                recommendation.hypothetical_index_name;
+            out["hypothetical_total_cost"] =
+                recommendation.hypothetical_total_cost;
+            out["hypothetical_estimated_rows"] =
+                recommendation.hypothetical_estimated_rows;
+            out["estimated_cost_delta"] = recommendation.estimated_cost_delta;
+            out["estimated_speedup_ratio"] =
+                recommendation.estimated_speedup_ratio;
+            out["ordering_improved"] = recommendation.ordering_improved;
+            out["covering_improved"] = recommendation.covering_improved;
+            out["evidence_detail"] = recommendation.evidence_detail;
             return out;
         }
 
@@ -1292,6 +1313,34 @@ namespace scratchbird::optimizer
                 json_in.value("estimated_speedup", 0.0);
             recommendation_out.priority = json_in.value("priority", 0.0);
             recommendation_out.confidence = json_in.value("confidence", 0.0);
+            recommendation_out.what_if_replanned =
+                json_in.value("what_if_replanned", false);
+            recommendation_out.baseline_access_family =
+                json_in.value("baseline_access_family", std::string());
+            recommendation_out.baseline_index_name =
+                json_in.value("baseline_index_name", std::string());
+            recommendation_out.baseline_total_cost =
+                json_in.value("baseline_total_cost", 0.0);
+            recommendation_out.baseline_estimated_rows =
+                json_in.value("baseline_estimated_rows", 0ULL);
+            recommendation_out.hypothetical_access_family =
+                json_in.value("hypothetical_access_family", std::string());
+            recommendation_out.hypothetical_index_name =
+                json_in.value("hypothetical_index_name", std::string());
+            recommendation_out.hypothetical_total_cost =
+                json_in.value("hypothetical_total_cost", 0.0);
+            recommendation_out.hypothetical_estimated_rows =
+                json_in.value("hypothetical_estimated_rows", 0ULL);
+            recommendation_out.estimated_cost_delta =
+                json_in.value("estimated_cost_delta", 0.0);
+            recommendation_out.estimated_speedup_ratio =
+                json_in.value("estimated_speedup_ratio", 1.0);
+            recommendation_out.ordering_improved =
+                json_in.value("ordering_improved", false);
+            recommendation_out.covering_improved =
+                json_in.value("covering_improved", false);
+            recommendation_out.evidence_detail =
+                json_in.value("evidence_detail", std::string());
             return true;
         }
 

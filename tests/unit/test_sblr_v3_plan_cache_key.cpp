@@ -8,7 +8,7 @@ TEST(SBLRV3PlanCacheKey, DeterministicForSameInput) {
     PlanCacheKeyInput in;
     in.profile_id = "native";
     in.profile_version = "3.0";
-    in.taxonomy_contract_id = "sb_runtime_plan/v10";
+    in.taxonomy_contract_id = "sb_runtime_plan/v11";
     in.payload_format = "SQL_TEXT";
     in.payload_hash = "p:def456";
     in.session_option_signature = "sess:aa";
@@ -40,7 +40,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenEpochChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
-    base.taxonomy_contract_id = "sb_runtime_plan/v10";
+    base.taxonomy_contract_id = "sb_runtime_plan/v11";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -76,7 +76,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenCapabilityOrRuleBindingChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
-    base.taxonomy_contract_id = "sb_runtime_plan/v10";
+    base.taxonomy_contract_id = "sb_runtime_plan/v11";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -126,7 +126,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenPlanProfileChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
-    base.taxonomy_contract_id = "sb_runtime_plan/v10";
+    base.taxonomy_contract_id = "sb_runtime_plan/v11";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -160,7 +160,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenStatsCostOrPolicySnapshotChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
-    base.taxonomy_contract_id = "sb_runtime_plan/v10";
+    base.taxonomy_contract_id = "sb_runtime_plan/v11";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -201,7 +201,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenTaxonomyOrFamilyIdentityChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
-    base.taxonomy_contract_id = "sb_runtime_plan/v10";
+    base.taxonomy_contract_id = "sb_runtime_plan/v11";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -227,7 +227,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenTaxonomyOrFamilyIdentityChanges) {
     base.policy_snapshot_id = "policy:g1:t1";
 
     PlanCacheKeyInput changed_taxonomy = base;
-    changed_taxonomy.taxonomy_contract_id = "sb_runtime_plan/v11";
+    changed_taxonomy.taxonomy_contract_id = "sb_runtime_plan/v12";
     EXPECT_NE(buildPlanCacheKey(base), buildPlanCacheKey(changed_taxonomy));
 
     PlanCacheKeyInput changed_family = base;

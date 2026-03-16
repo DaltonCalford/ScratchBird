@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 using namespace scratchbird;
 using namespace scratchbird::core;
@@ -58,6 +59,90 @@ namespace
         const double actual =
             static_cast<double>(std::max<uint64_t>(actual_rows, 1));
         return std::max(estimated, actual) / std::min(estimated, actual);
+    }
+
+    auto runtimeNodeContainsType(const optimizer::RuntimePlanNode& node,
+                                 const std::string& node_type) -> bool
+    {
+        if (node.node_type == node_type)
+        {
+            return true;
+        }
+        for (const auto& child : node.children)
+        {
+            if (runtimeNodeContainsType(child, node_type))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    auto joinStrings(const std::vector<std::string>& values,
+                     const std::string& separator) -> std::string
+    {
+        std::ostringstream out;
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            if (i > 0)
+            {
+                out << separator;
+            }
+            out << values[i];
+        }
+        return out.str();
+    }
+
+    auto csvEscape(const std::string& value) -> std::string
+    {
+        std::string escaped = "\"";
+        escaped.reserve(value.size() + 2);
+        for (const char ch : value)
+        {
+            if (ch == '"')
+            {
+                escaped += "\"\"";
+            }
+            else
+            {
+                escaped.push_back(ch);
+            }
+        }
+        escaped.push_back('"');
+        return escaped;
+    }
+
+    auto csvRow(const std::vector<std::string>& columns) -> std::string
+    {
+        std::ostringstream out;
+        for (size_t i = 0; i < columns.size(); ++i)
+        {
+            if (i > 0)
+            {
+                out << ',';
+            }
+            out << csvEscape(columns[i]);
+        }
+        return out.str();
+    }
+
+    auto writeDelimitedLines(const std::filesystem::path& path,
+                             const std::vector<std::string>& lines) -> bool
+    {
+        if (path.has_parent_path())
+        {
+            std::filesystem::create_directories(path.parent_path());
+        }
+        std::ofstream out(path);
+        if (!out.is_open())
+        {
+            return false;
+        }
+        for (const auto& line : lines)
+        {
+            out << line << '\n';
+        }
+        return true;
     }
 
     auto normalizedExplainSnapshot(const nlohmann::json& explain_json)
@@ -3004,6 +3089,13 @@ TEST_F(QueryPlannerIntegrationTest,
     EXPECT_FALSE(recommendation.at("provenance_source").get<std::string>().empty());
     EXPECT_FALSE(recommendation.at("query_fingerprint").get<std::string>().empty());
     ASSERT_TRUE(recommendation.at("signal_names").is_array());
+    EXPECT_TRUE(recommendation.at("what_if_replanned").get<bool>());
+    EXPECT_FALSE(recommendation.at("baseline_access_family").get<std::string>().empty());
+    EXPECT_FALSE(recommendation.at("hypothetical_access_family").get<std::string>().empty());
+    EXPECT_GT(recommendation.at("baseline_total_cost").get<double>(),
+              recommendation.at("hypothetical_total_cost").get<double>());
+    EXPECT_GT(recommendation.at("estimated_speedup_ratio").get<double>(), 1.0);
+    EXPECT_FALSE(recommendation.at("evidence_detail").get<std::string>().empty());
 
     ASSERT_TRUE(optimizer_trace.contains("statistics_provenance"));
     const auto& statistics_provenance =
@@ -3035,6 +3127,13 @@ TEST_F(QueryPlannerIntegrationTest, CompiledRuntimePlanCarriesAdvisorRecommendat
     EXPECT_FALSE(recommendation.recommendation_type.empty());
     EXPECT_EQ(recommendation.provenance_source, "INDEX_ADVISOR");
     EXPECT_FALSE(recommendation.query_fingerprint.empty());
+    EXPECT_TRUE(recommendation.what_if_replanned);
+    EXPECT_FALSE(recommendation.baseline_access_family.empty());
+    EXPECT_FALSE(recommendation.hypothetical_access_family.empty());
+    EXPECT_GT(recommendation.baseline_total_cost,
+              recommendation.hypothetical_total_cost);
+    EXPECT_GT(recommendation.estimated_speedup_ratio, 1.0);
+    EXPECT_FALSE(recommendation.evidence_detail.empty());
 }
 
 TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesFormulaProfileAndExpandedCostTerms)
@@ -3243,7 +3342,7 @@ TEST_F(QueryPlannerIntegrationTest, OptimizerParityBaselineCorpusCapturesStableS
         {"left_join_barrier",
          "SELECT users.id FROM users LEFT JOIN products ON users.id = products.id"},
         {"disconnected_cross_bridge",
-         "SELECT users.id FROM users JOIN products ON users.id = products.id, test"},
+         "SELECT users.id FROM users CROSS JOIN test JOIN products ON users.id = products.id"},
         {"ordered_inner_join",
          "SELECT users.id FROM users JOIN products ON users.id = products.id ORDER BY users.id"},
         {"grouped_aggregate",
@@ -3389,6 +3488,327 @@ TEST_F(QueryPlannerIntegrationTest, OptimizerParityBaselineCorpusCapturesStableS
     }
 }
 
+TEST_F(QueryPlannerIntegrationTest,
+       OptimizerQualityHarnessCapturesPhysicalCorrectnessAndPlanQuality)
+{
+    ASSERT_TRUE(createDatabase());
+
+    const std::vector<std::string> setup_sql = {
+        "CREATE TABLE cover_users (id INTEGER, name VARCHAR(100), email VARCHAR(100), age INTEGER)",
+        "CREATE TABLE merge_users (id INTEGER, name VARCHAR(100))",
+        "CREATE TABLE merge_products (id INTEGER, name VARCHAR(100))",
+        "CREATE TABLE search_users (id INTEGER, age INTEGER, city VARCHAR(64), cohort VARCHAR(32))",
+        "CREATE TABLE order_users (id INTEGER, name VARCHAR(100), email VARCHAR(100), age INTEGER)",
+        "GRANT SELECT ON cover_users TO PUBLIC",
+        "GRANT SELECT ON merge_users TO PUBLIC",
+        "GRANT SELECT ON merge_products TO PUBLIC",
+        "GRANT SELECT ON search_users TO PUBLIC",
+        "GRANT SELECT ON order_users TO PUBLIC",
+        "CREATE INDEX idx_cover_users_id_name ON cover_users (id, name)",
+        "CREATE INDEX idx_search_users_age ON search_users (age)",
+        "CREATE INDEX idx_search_users_city ON search_users (city)",
+        "CREATE INDEX idx_order_users_age_brin ON order_users USING BRIN (age)",
+        "CREATE INDEX idx_order_users_age_btree ON order_users (age)"
+    };
+
+    for (const auto& sql : setup_sql)
+    {
+        ASSERT_TRUE(executeSQL(sql).success()) << sql;
+    }
+
+    for (int i = 1; i <= 1200; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO cover_users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'cover" + std::to_string(i) +
+                               "', 'cover" + std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 40)) + ")")
+                        .success());
+    }
+
+    for (int i = 1; i <= 4; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO merge_users (id, name) VALUES (" +
+                               std::to_string(i) + ", 'user" + std::to_string(i) +
+                               "')")
+                        .success());
+        ASSERT_TRUE(executeSQL("INSERT INTO merge_products (id, name) VALUES (" +
+                               std::to_string(i) + ", 'product" +
+                               std::to_string(i) + "')")
+                        .success());
+    }
+
+    for (int i = 1; i <= 1600; ++i)
+    {
+        const int age = 20 + (i % 8);
+        const std::string city = (i % 4 == 0) ? "Seattle"
+                                 : (i % 4 == 1) ? "Austin"
+                                 : (i % 4 == 2) ? "Boston"
+                                                : "Denver";
+        ASSERT_TRUE(executeSQL("INSERT INTO search_users (id, age, city, cohort) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(age) + ", '" +
+                               city + "', 'c" + std::to_string(i % 5) + "')")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO search_users (id, age, city, cohort) VALUES (9001, 30, 'Seattle', 'target')")
+                    .success());
+
+    for (int i = 1; i <= 4096; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO order_users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'order" +
+                               std::to_string(i) + "', 'order" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 80)) + ")")
+                        .success());
+    }
+
+    ASSERT_TRUE(executeSQL("ANALYZE cover_users").success());
+    ASSERT_TRUE(executeSQL("ANALYZE merge_users").success());
+    ASSERT_TRUE(executeSQL("ANALYZE merge_products").success());
+    ASSERT_TRUE(executeSQL("ANALYZE search_users").success());
+    ASSERT_TRUE(executeSQL("ANALYZE order_users").success());
+
+    struct QualityHarnessCase
+    {
+        std::string id;
+        std::string objective;
+        std::string sql;
+        size_t expected_rows = 0;
+        double max_misestimate_ratio = 1.0;
+        std::function<void()> before_compile;
+        std::function<void()> after_execute;
+        std::function<void(const scratchbird::optimizer::RuntimePlan&,
+                           const nlohmann::json&,
+                           const ExecutionResult&)>
+            validate;
+    };
+
+    const std::vector<QualityHarnessCase> corpus = {
+        {"covering_index_lookup",
+         "index-only covering probe remains physically exact",
+         "SELECT id, name FROM cover_users WHERE id = 777",
+         1,
+         16.0,
+         nullptr,
+         nullptr,
+         [&](const scratchbird::optimizer::RuntimePlan& plan,
+             const nlohmann::json& explain_json,
+             const ExecutionResult& result) {
+             ASSERT_EQ(plan.relations.size(), 1u);
+             const auto& relation = plan.relations.front();
+             EXPECT_EQ(plan.root.node_type, "IndexOnlyScan");
+             EXPECT_EQ(explain_json.at("plan_root").at("node_type").get<std::string>(),
+                       "IndexOnlyScan");
+             EXPECT_EQ(relation.scan_kind, "INDEX_ONLY_SCAN");
+             EXPECT_EQ(relation.index_name, "idx_cover_users_id_name");
+             EXPECT_TRUE(relation.covering_index);
+             EXPECT_TRUE(relation.exact_key_lookup);
+             EXPECT_FALSE(relation.requires_recheck);
+             ASSERT_TRUE(result.success()) << result.error();
+             ASSERT_TRUE(result.hasResultSet());
+             ASSERT_EQ(result.resultSet()->rowCount(), 1u);
+             EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "777");
+         }},
+        {"forced_merge_explicit_sort",
+         "merge enforcement remains explicit in the physical plan tree",
+         "SELECT merge_users.id FROM merge_users JOIN merge_products "
+         "ON merge_users.id = merge_products.id",
+         4,
+         100000.0,
+         [&]() { connection_ctx_->setSessionVariable("OPTIMIZER.JOIN_METHOD", "MERGE_JOIN"); },
+         [&]() { connection_ctx_->clearSessionVariable("OPTIMIZER.JOIN_METHOD"); },
+         [&](const scratchbird::optimizer::RuntimePlan& plan,
+             const nlohmann::json& explain_json,
+             const ExecutionResult& result) {
+             ASSERT_EQ(plan.join_steps.size(), 1u);
+             EXPECT_EQ(plan.join_steps.front().method, "MERGE_JOIN");
+             EXPECT_FALSE(plan.join_steps.front().merge_outer_presorted);
+             EXPECT_FALSE(plan.join_steps.front().merge_inner_presorted);
+             ASSERT_EQ(plan.root.node_type, "MergeJoin");
+             ASSERT_EQ(plan.root.children.size(), 2u);
+             EXPECT_EQ(plan.root.children[0].node_type, "Sort");
+             EXPECT_EQ(plan.root.children[1].node_type, "Sort");
+             EXPECT_EQ(explain_json.at("plan_root").at("node_type").get<std::string>(),
+                       "MergeJoin");
+             ASSERT_TRUE(result.success()) << result.error();
+             ASSERT_TRUE(result.hasResultSet());
+             EXPECT_EQ(result.resultSet()->rowCount(), 4u);
+         }},
+        {"bitmap_exact_probe",
+         "bitmap conjunctions remain exact-key probes with post-filter visibility",
+         "SELECT id FROM search_users WHERE age = 30 AND city = 'Seattle'",
+         1,
+         32.0,
+         nullptr,
+         nullptr,
+         [&](const scratchbird::optimizer::RuntimePlan& plan,
+             const nlohmann::json& explain_json,
+             const ExecutionResult& result) {
+             ASSERT_EQ(plan.relations.size(), 1u);
+             const auto& relation = plan.relations.front();
+             EXPECT_EQ(relation.scan_kind, "BITMAP_INDEX_SCAN");
+             EXPECT_EQ(relation.scan_family, "BITMAP_COMBINE_SCAN");
+             EXPECT_EQ(relation.bitmap_op, "AND");
+             EXPECT_TRUE(relation.exact_key_lookup);
+             EXPECT_EQ(relation.visibility_enforcement,
+                       scratchbird::optimizer::AccessPathVisibilityEnforcement::POST_FILTER);
+             EXPECT_EQ(explain_json.at("plan_root").at("node_type").get<std::string>(),
+                       "BitmapIndexScan");
+             const auto rows = resultStrings(result);
+             EXPECT_EQ(rows.size(), 1u);
+             EXPECT_NE(std::find(rows.begin(), rows.end(), "9001"), rows.end());
+         }},
+        {"ordered_btree_over_summary",
+         "exact ordered B-tree access beats summary family matches when it avoids sort",
+         "SELECT id, age FROM order_users WHERE age >= 40 AND age <= 41 ORDER BY age",
+         102,
+         16.0,
+         nullptr,
+         nullptr,
+         [&](const scratchbird::optimizer::RuntimePlan& plan,
+             const nlohmann::json& explain_json,
+             const ExecutionResult& result) {
+             ASSERT_EQ(plan.relations.size(), 1u);
+             const auto& relation = plan.relations.front();
+             EXPECT_EQ(relation.scan_family, "BTREE_ORDERED_SCAN");
+             EXPECT_EQ(relation.index_name, "idx_order_users_age_btree");
+             EXPECT_FALSE(relation.requires_recheck);
+             EXPECT_NE(plan.root.node_type, "Sort");
+             EXPECT_NE(explain_json.at("plan_root").at("node_type").get<std::string>(),
+                       "Sort");
+             EXPECT_EQ(resultRowCount(result), 102u);
+         }},
+    };
+
+    std::vector<std::string> physical_results = {
+        csvRow({"case_id",
+                "objective",
+                "root_node_type",
+                "scan_families",
+                "index_names",
+                "exactness_classes",
+                "requires_recheck_count",
+                "covering_relation_count",
+                "explicit_sort_present",
+                "actual_rows",
+                "status"})};
+    std::vector<std::string> plan_quality = {
+        csvRow({"case_id",
+                "objective",
+                "estimated_root_rows",
+                "actual_rows",
+                "misestimate_ratio",
+                "root_total_cost",
+                "relation_count",
+                "join_count",
+                "root_node_type",
+                "notes"})};
+
+    for (const auto& entry : corpus)
+    {
+        optimizer::QueryProfiler::getInstance().clearCardinalityFeedback();
+        optimizer::QueryProfiler::getInstance().clearProfiles();
+        connection_ctx_->clearSessionVariable("OPTIMIZER.JOIN_METHOD");
+        if (entry.before_compile)
+        {
+            entry.before_compile();
+        }
+
+        auto bytecode = compileSQL(entry.sql);
+        ASSERT_FALSE(bytecode.empty()) << entry.id << ": " << last_compile_errors_;
+
+        scratchbird::optimizer::RuntimePlan plan;
+        ASSERT_TRUE(decodeRuntimePlan(bytecode, plan)) << entry.id;
+
+        auto explain_result =
+            executeSQL("EXPLAIN (FORMAT JSON, ANALYZE, VERBOSE) " + entry.sql);
+        ASSERT_TRUE(explain_result.success()) << entry.id << ": "
+                                              << explain_result.error();
+        ASSERT_TRUE(explain_result.hasResultSet()) << entry.id;
+        const auto explain_lines = resultStrings(explain_result);
+        ASSERT_EQ(explain_lines.size(), 1u) << entry.id;
+        const auto explain_json = nlohmann::json::parse(explain_lines.front());
+
+        auto result = executeSQL(entry.sql);
+        ASSERT_TRUE(result.success()) << entry.id << ": " << result.error();
+        ASSERT_TRUE(result.hasResultSet()) << entry.id;
+
+        entry.validate(plan, explain_json, result);
+        if (entry.after_execute)
+        {
+            entry.after_execute();
+        }
+
+        const size_t actual_rows = resultRowCount(result);
+        ASSERT_EQ(actual_rows, entry.expected_rows) << entry.id;
+
+        const double misestimate_ratio =
+            normalizedMisestimateRatio(plan.root.estimated_rows,
+                                       static_cast<uint64_t>(actual_rows));
+        EXPECT_LE(misestimate_ratio, entry.max_misestimate_ratio) << entry.id;
+
+        std::vector<std::string> scan_families;
+        std::vector<std::string> index_names;
+        std::vector<std::string> exactness_classes;
+        size_t requires_recheck_count = 0;
+        size_t covering_relation_count = 0;
+        for (const auto& relation : plan.relations)
+        {
+            scan_families.push_back(relation.scan_family);
+            if (!relation.index_name.empty())
+            {
+                index_names.push_back(relation.index_name);
+            }
+            exactness_classes.push_back(
+                scratchbird::optimizer::accessPathExactnessClassName(
+                    relation.exactness_class));
+            if (relation.requires_recheck)
+            {
+                ++requires_recheck_count;
+            }
+            if (relation.covering_index)
+            {
+                ++covering_relation_count;
+            }
+        }
+
+        physical_results.push_back(
+            csvRow({entry.id,
+                    entry.objective,
+                    plan.root.node_type,
+                    joinStrings(scan_families, ";"),
+                    joinStrings(index_names, ";"),
+                    joinStrings(exactness_classes, ";"),
+                    std::to_string(requires_recheck_count),
+                    std::to_string(covering_relation_count),
+                    runtimeNodeContainsType(plan.root, "Sort") ? "true" : "false",
+                    std::to_string(actual_rows),
+                    "pass"}));
+
+        plan_quality.push_back(
+            csvRow({entry.id,
+                    entry.objective,
+                    std::to_string(plan.root.estimated_rows),
+                    std::to_string(actual_rows),
+                    std::to_string(misestimate_ratio),
+                    std::to_string(plan.root.total_cost),
+                    std::to_string(plan.relations.size()),
+                    std::to_string(plan.join_steps.size()),
+                    plan.root.node_type,
+                    plan.search_summary.selected_strategy}));
+    }
+
+    if (const char* path = std::getenv("SB_OPTIMIZER_PHYSICAL_CORRECTNESS_CSV"))
+    {
+        ASSERT_TRUE(writeDelimitedLines(path, physical_results)) << path;
+    }
+    if (const char* path = std::getenv("SB_OPTIMIZER_PLAN_QUALITY_MATRIX_CSV"))
+    {
+        ASSERT_TRUE(writeDelimitedLines(path, plan_quality)) << path;
+    }
+}
+
 TEST_F(QueryPlannerIntegrationTest, CoveringIndexPlanUsesIndexOnlyScan)
 {
     ASSERT_TRUE(createDatabase());
@@ -3477,6 +3897,138 @@ TEST_F(QueryPlannerIntegrationTest,
     ASSERT_TRUE(result.hasResultSet());
     ASSERT_EQ(result.resultSet()->rowCount(), 201u);
     EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "1000");
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       PartialOrderedPrefixRetainsExplicitSortGovernance)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_age ON users (age)").success());
+    for (int i = 1; i <= 512; ++i)
+    {
+        const int age = 20 + (i % 4);
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'mix" +
+                               std::to_string(512 - i) + "', 'mix" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(age) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    const std::string sql =
+        "SELECT age, name FROM users "
+        "WHERE age >= 20 AND age <= 23 "
+        "ORDER BY age, name";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto &relation = plan.relations.front();
+    EXPECT_EQ(relation.scan_family, "BTREE_ORDERED_SCAN");
+    EXPECT_TRUE(relation.ordered_output);
+    EXPECT_EQ(relation.ordered_prefix_length, 1u);
+    EXPECT_NE(std::find(relation.scan_family_tags.begin(),
+                        relation.scan_family_tags.end(),
+                        "ORDER_PREFIX_ONLY"),
+              relation.scan_family_tags.end());
+    EXPECT_EQ(plan.root.node_type, "Sort");
+    ASSERT_EQ(plan.root.children.size(), 1u);
+    EXPECT_EQ(plan.root.children.front().node_type, "IndexScan");
+
+    auto result = executeSQL(sql);
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    EXPECT_GT(result.resultSet()->rowCount(), 0u);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       ExactOrderedBtreeBeatsEarlierSummaryFamilyMatch)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_age_brin ON users USING BRIN (age)")
+            .success());
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_age_btree ON users (age)").success());
+    for (int i = 1; i <= 4096; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'sum" +
+                               std::to_string(i) + "', 'sum" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 80)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    const std::string sql =
+        "SELECT id, age FROM users "
+        "WHERE age >= 40 AND age <= 41 "
+        "ORDER BY age";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto &relation = plan.relations.front();
+    EXPECT_EQ(relation.scan_family, "BTREE_ORDERED_SCAN");
+    EXPECT_EQ(relation.index_name, "idx_users_age_btree");
+    EXPECT_FALSE(relation.requires_recheck);
+    EXPECT_NE(plan.root.node_type, "Sort");
+
+    auto result = executeSQL(sql);
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    EXPECT_GT(result.resultSet()->rowCount(), 0u);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       ExactBtreeEqualityBeatsEarlierBitmapStorageMatch)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_age_bitmap ON users USING BITMAP (age)")
+            .success());
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_age_btree ON users (age)").success());
+    for (int i = 1; i <= 2048; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'eq" +
+                               std::to_string(i) + "', 'eq" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 12)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    const std::string sql = "SELECT id FROM users WHERE age = 25";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto &relation = plan.relations.front();
+    EXPECT_EQ(relation.scan_family, "BTREE_EQ_SCAN");
+    EXPECT_EQ(relation.index_name, "idx_users_age_btree");
+    EXPECT_FALSE(relation.requires_recheck);
+    EXPECT_EQ(std::find(relation.scan_family_tags.begin(),
+                        relation.scan_family_tags.end(),
+                        "RECHECK_REQUIRED"),
+              relation.scan_family_tags.end());
+
+    auto result = executeSQL(sql);
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    EXPECT_GT(result.resultSet()->rowCount(), 0u);
 }
 
 TEST_F(QueryPlannerIntegrationTest,
