@@ -87,6 +87,34 @@ TEST_F(StatisticsCRUDTest, TableStatisticsDefaults) {
     EXPECT_EQ(stats.auto_analyze_threshold, 0u);
 }
 
+TEST_F(StatisticsCRUDTest, MultivariateStatisticsDefaults) {
+    MultivariateStatistics stats;
+
+    EXPECT_EQ(stats.table_id, ID{});
+    EXPECT_TRUE(stats.column_ids.empty());
+    EXPECT_TRUE(stats.column_names.empty());
+    EXPECT_EQ(stats.sample_size, 0u);
+    EXPECT_EQ(stats.last_analyzed_time, 0u);
+    EXPECT_EQ(stats.ndistinct.num_distinct, 0u);
+    EXPECT_TRUE(stats.ndistinct.column_ids.empty());
+    EXPECT_TRUE(stats.ndistinct.column_names.empty());
+    EXPECT_TRUE(stats.mcv_list.empty());
+    EXPECT_TRUE(stats.dependencies.empty());
+    EXPECT_TRUE(stats.pairwise_correlations.empty());
+}
+
+TEST_F(StatisticsCRUDTest, FunctionalDependencyDefaults) {
+    FunctionalDependencyStatistics stats;
+
+    EXPECT_TRUE(stats.determinant_column_ids.empty());
+    EXPECT_TRUE(stats.dependent_column_ids.empty());
+    EXPECT_TRUE(stats.determinant_column_names.empty());
+    EXPECT_TRUE(stats.dependent_column_names.empty());
+    EXPECT_DOUBLE_EQ(stats.strength, 0.0);
+    EXPECT_EQ(stats.sample_size, 0u);
+    EXPECT_EQ(stats.last_analyzed_time, 0u);
+}
+
 // Test HistogramType enum
 TEST_F(StatisticsCRUDTest, HistogramTypes) {
     EXPECT_EQ(static_cast<uint8_t>(HistogramType::EQUAL_HEIGHT), 0);

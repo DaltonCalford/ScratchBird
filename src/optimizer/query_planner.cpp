@@ -353,6 +353,40 @@ namespace scratchbird::optimizer
             return !item->ascending;
         }
 
+        auto runtimeMergeKeyExpressionText(const RuntimePlanMergeKey &key)
+            -> std::string
+        {
+            if (!key.qualifier.empty() && !key.column_name.empty())
+            {
+                return key.qualifier + "." + key.column_name;
+            }
+            return key.column_name;
+        }
+
+        auto buildSyntheticSortOrderingKeys(const RuntimePlanMergeKey &key)
+            -> std::vector<AccessPathDescriptor::OrderingKey>
+        {
+            std::vector<AccessPathDescriptor::OrderingKey> ordering_keys;
+            const std::string expression_text = runtimeMergeKeyExpressionText(key);
+            if (!expression_text.empty())
+            {
+                ordering_keys.push_back(makeOrderingKey(expression_text));
+            }
+            return ordering_keys;
+        }
+
+        auto buildSyntheticSortKeyTexts(const RuntimePlanMergeKey &key)
+            -> std::vector<std::string>
+        {
+            std::vector<std::string> sort_keys;
+            const std::string expression_text = runtimeMergeKeyExpressionText(key);
+            if (!expression_text.empty())
+            {
+                sort_keys.push_back(expression_text);
+            }
+            return sort_keys;
+        }
+
         auto orderingSatisfiesOrderBy(
             const AccessPathDescriptor &descriptor,
             const std::vector<parser::v3::OrderByItem *> &order_by_items,
@@ -3902,7 +3936,7 @@ namespace scratchbird::optimizer
                     if (sort)
                     {
                         node.detail_text =
-                            std::to_string(sort->orderByItems().size()) + " keys";
+                            std::to_string(sort->sortKeyCount()) + " keys";
                         node.children.push_back(toRuntimePlanNode(sort->childPlan()));
                     }
                     break;
@@ -4122,7 +4156,7 @@ namespace scratchbird::optimizer
                             resource_cost = cost_model.costSort(
                                 input_rows,
                                 row_width,
-                                std::max<uint64_t>(1, sort->orderByItems().size()),
+                                std::max<uint64_t>(1, sort->sortKeyCount()),
                                 top_n,
                                 nullptr);
                         }
@@ -4131,7 +4165,7 @@ namespace scratchbird::optimizer
                             resource_cost = cost_model.costSort(
                                 input_rows,
                                 row_width,
-                                std::max<uint64_t>(1, sort->orderByItems().size()),
+                                std::max<uint64_t>(1, sort->sortKeyCount()),
                                 nullptr);
                         }
                         have_resource_cost = true;
@@ -4159,7 +4193,7 @@ namespace scratchbird::optimizer
                                     gather->childPlan()))
                             {
                                 order_keys = std::max<uint64_t>(
-                                    1, sort->orderByItems().size());
+                                    1, sort->sortKeyCount());
                             }
                         }
                         resource_cost =
@@ -4778,6 +4812,8 @@ namespace scratchbird::optimizer
         std::vector<RuntimePlanStatisticsProvenance> statistics_provenance;
         std::vector<BaseRelationCandidateBundle> access_bundles(
             planned_out.resolved_query.relations.size());
+        std::vector<uint64_t> relation_row_width_bytes(
+            planned_out.resolved_query.relations.size(), 0);
         for (size_t relation_index = 0;
              relation_index < planned_out.resolved_query.relations.size();
              ++relation_index)
@@ -5183,6 +5219,26 @@ namespace scratchbird::optimizer
                 pruning.pruned && pruning.rows > 0 ? pruning.rows : unpruned_base_rows;
             const uint64_t base_pages =
                 pruning.pruned && pruning.pages > 0 ? pruning.pages : unpruned_base_pages;
+            const uint64_t relation_row_width =
+                have_relation_table_stats && relation_table_stats.avg_row_size > 0.0f
+                    ? std::max<uint64_t>(
+                          16,
+                          static_cast<uint64_t>(
+                              std::ceil(relation_table_stats.avg_row_size)))
+                    : std::max<uint64_t>(
+                          16,
+                          static_cast<uint64_t>(
+                              std::max<size_t>(1, relation.columns.size()) * 16));
+            relation_row_width_bytes[relation_index] = relation_row_width;
+            const double relation_heap_rows_per_page =
+                std::max(1.0,
+                         static_cast<double>(base_rows) /
+                             static_cast<double>(std::max<uint64_t>(1, base_pages)));
+            CostParameters relation_cost_params = planner_params;
+            relation_cost_params.default_row_width_bytes = relation_row_width;
+            relation_cost_params.calibrated_heap_rows_per_page =
+                relation_heap_rows_per_page;
+            CostModel relation_cost_model(relation_cost_params);
             const uint64_t seq_rows = relationOutputRows(base_rows, selectivity);
             if (mga_relation_signal != nullptr)
             {
@@ -5296,7 +5352,7 @@ namespace scratchbird::optimizer
                 }
             }
             CostEstimate best_cost =
-                active_cost_model.costSeqScan(base_pages, seq_rows, qual_cost, ctx);
+                relation_cost_model.costSeqScan(base_pages, seq_rows, qual_cost, ctx);
             if (relation_stats_penalty > 1.0)
             {
                 best_cost.startup_cost *= relation_stats_penalty;
@@ -5488,7 +5544,10 @@ namespace scratchbird::optimizer
                 };
             auto buildIndexFamilyCostInput =
                 [&](const PlannerFamilyLoweringResult &lowering,
+                    const core::CatalogManager::IndexInfo &index_info,
                     const IndexFamilyMetricsPacket *packet,
+                    uint64_t row_width_bytes,
+                    double heap_rows_per_page,
                     bool covering_index,
                     bool ordered_output) -> IndexFamilyCostCalibrationInput {
                     IndexFamilyCostCalibrationInput input;
@@ -5518,6 +5577,38 @@ namespace scratchbird::optimizer
                     input.ordered_output = ordered_output;
                     input.covering_index = covering_index;
                     input.requires_recheck = lowering.requires_recheck;
+                    input.row_width_bytes = row_width_bytes;
+                    input.heap_rows_per_page = heap_rows_per_page;
+                    input.index_entries_per_page =
+                        packet != nullptr && packet->leaf_pages > 0
+                            ? std::max(
+                                  1.0,
+                                  static_cast<double>(std::max<uint64_t>(
+                                      1, packet->live_entry_count_est)) /
+                                      static_cast<double>(packet->leaf_pages))
+                            : 0.0;
+                    input.dead_fraction =
+                        packet != nullptr ? packet->dead_fraction : 0.0;
+                    input.duplicate_density = familyMetricDouble(
+                        index_info,
+                        packet,
+                        "duplicate_density",
+                        0.0);
+                    input.avg_probe_pages = familyMetricDouble(
+                        index_info,
+                        packet,
+                        "avg_probe_pages",
+                        packet != nullptr
+                            ? static_cast<double>(std::max<uint16_t>(1, packet->height))
+                            : 0.0);
+                    input.false_positive_ratio = familyMetricDouble(
+                        index_info,
+                        packet,
+                        "bitmap_false_positive_ratio",
+                        familyMetricDouble(index_info,
+                                           packet,
+                                           "tombstone_fraction",
+                                           0.0));
                     return input;
                 };
             auto makeBaseAccessChoice =
@@ -6219,9 +6310,12 @@ namespace scratchbird::optimizer
                 const IndexFamilyCostCalibrationInput family_cost_input =
                     buildIndexFamilyCostInput(
                         lowered_candidate,
+                        index,
                         have_costing_index_metrics
                             ? &costing_index_metrics_packet
                             : nullptr,
+                        relation_row_width,
+                        relation_heap_rows_per_page,
                         covering_index,
                         candidate_order_complete);
                 CostModel candidate_cost_model(
@@ -7016,15 +7110,44 @@ namespace scratchbird::optimizer
                                        static_cast<uint64_t>(
                                            static_cast<double>(base_pages) *
                                            predicate_selectivity));
+                PlannerFamilyLoweringRequest skip_lowering_request;
+                skip_lowering_request =
+                    loweringRequestForPredicate(index,
+                                               *skip_predicate_it,
+                                               false,
+                                               true);
+                const PlannerFamilyLoweringResult skip_lowered =
+                    lowerPlannerFamily(skip_lowering_request);
+                if (skip_lowered.queryability_state ==
+                        AccessPathQueryabilityState::INVALID ||
+                    skip_lowered.family != PlannerAccessFamily::BTREE_SKIP_SCAN)
+                {
+                    continue;
+                }
+                IndexFamilyMetricsPacket skip_metrics_packet;
+                const bool have_skip_metrics =
+                    loadIndexFamilyMetricsPacket(index, skip_metrics_packet);
+                const IndexFamilyCostCalibrationInput skip_cost_input =
+                    buildIndexFamilyCostInput(
+                        skip_lowered,
+                        index,
+                        have_skip_metrics ? &skip_metrics_packet : nullptr,
+                        relation_row_width,
+                        relation_heap_rows_per_page,
+                        false,
+                        false);
+                CostModel skip_cost_model(
+                    deriveIndexFamilyFormulaProfile(planner_params,
+                                                    skip_cost_input));
                 CostEstimate skip_cost =
-                    active_cost_model.costIndexScan(3,
-                                                    index_pages,
-                                                    expected_rows,
-                                                    heap_pages,
-                                                    expected_rows,
-                                                    qual_cost,
-                                                    0.15,
-                                                    ctx);
+                    skip_cost_model.costIndexScan(3,
+                                                  index_pages,
+                                                  expected_rows,
+                                                  heap_pages,
+                                                  expected_rows,
+                                                  qual_cost,
+                                                  0.15,
+                                                  ctx);
                 skip_cost.startup_cost *= 1.20;
                 skip_cost.total_cost *= 1.20;
                 if (relation_stats_penalty > 1.0)
@@ -7042,20 +7165,6 @@ namespace scratchbird::optimizer
                                        skip_cost.startup_cost,
                                        skip_cost.total_cost,
                                        skip_cost.rows);
-                }
-                PlannerFamilyLoweringRequest skip_lowering_request;
-                skip_lowering_request =
-                    loweringRequestForPredicate(index,
-                                               *skip_predicate_it,
-                                               false,
-                                               true);
-                const PlannerFamilyLoweringResult skip_lowered =
-                    lowerPlannerFamily(skip_lowering_request);
-                if (skip_lowered.queryability_state ==
-                        AccessPathQueryabilityState::INVALID ||
-                    skip_lowered.family != PlannerAccessFamily::BTREE_SKIP_SCAN)
-                {
-                    continue;
                 }
                 appendUniqueText(bundle.candidate_scan_families,
                                  skip_lowered.family_name);
@@ -7210,14 +7319,56 @@ namespace scratchbird::optimizer
                     std::max<uint64_t>(1,
                                        static_cast<uint64_t>(static_cast<double>(base_pages) *
                                                              selectivity));
+                double bitmap_false_positive_ratio = 0.0;
+                double bitmap_dead_fraction = 0.0;
+                size_t bitmap_metric_count = 0;
+                for (const auto &predicate : predicates)
+                {
+                    if (!predicate.has_index_match)
+                    {
+                        continue;
+                    }
+                    IndexFamilyMetricsPacket bitmap_metrics_packet;
+                    if (!loadIndexFamilyMetricsPacket(predicate.matched_index,
+                                                      bitmap_metrics_packet))
+                    {
+                        continue;
+                    }
+                    bitmap_false_positive_ratio += familyMetricDouble(
+                        predicate.matched_index,
+                        &bitmap_metrics_packet,
+                        "bitmap_false_positive_ratio",
+                        bitmap_metrics_packet.recheck_ratio_est);
+                    bitmap_dead_fraction += bitmap_metrics_packet.dead_fraction;
+                    ++bitmap_metric_count;
+                }
+                CostParameters bitmap_cost_params = planner_params;
+                bitmap_cost_params.default_row_width_bytes = relation_row_width;
+                bitmap_cost_params.calibrated_heap_rows_per_page =
+                    relation_heap_rows_per_page;
+                if (bitmap_metric_count > 0)
+                {
+                    bitmap_cost_params.calibrated_false_positive_ratio =
+                        bitmap_false_positive_ratio /
+                        static_cast<double>(bitmap_metric_count);
+                    bitmap_cost_params.calibrated_dead_fraction =
+                        bitmap_dead_fraction /
+                        static_cast<double>(bitmap_metric_count);
+                    bitmap_cost_params.calibrated_visibility_tuple_cost =
+                        planner_params.cpu_operator_cost *
+                        (0.10 + (bitmap_cost_params.calibrated_dead_fraction * 0.40) +
+                         (bitmap_cost_params.calibrated_false_positive_ratio * 0.30));
+                }
+                CostModel bitmap_cost_model(bitmap_cost_params);
                 CostEstimate bitmap_cost =
-                    active_cost_model.costBitmapScan(bitmap_index_ids.size(),
-                                               std::max<uint64_t>(1, bitmap_total_index_pages),
-                                               bitmap_heap_pages,
-                                               bitmap_rows,
-                                               qual_cost,
-                                               predicate_or ? "OR" : "AND",
-                                               ctx);
+                    bitmap_cost_model.costBitmapScan(bitmap_index_ids.size(),
+                                                     std::max<uint64_t>(1,
+                                                                        bitmap_total_index_pages),
+                                                     bitmap_heap_pages,
+                                                     bitmap_rows,
+                                                     qual_cost,
+                                                     predicate_or ? "OR" : "AND",
+                                                     ctx);
                 if (relation_stats_penalty > 1.0)
                 {
                     bitmap_cost.startup_cost *= relation_stats_penalty;
@@ -8198,6 +8349,72 @@ namespace scratchbird::optimizer
                     }
                 }
 
+                auto wrapMergeInputSort =
+                    [&](const std::shared_ptr<PlanNode> &input_plan,
+                        const std::shared_ptr<Path> &input_path,
+                        const RuntimePlanMergeKey &merge_key,
+                        uint64_t input_rows,
+                        bool requires_sort)
+                        -> std::pair<std::shared_ptr<PlanNode>, std::shared_ptr<Path>> {
+                    if (!requires_sort)
+                    {
+                        return {input_plan, input_path};
+                    }
+
+                    const auto ordering_keys =
+                        buildSyntheticSortOrderingKeys(merge_key);
+                    const auto sort_key_texts =
+                        buildSyntheticSortKeyTexts(merge_key);
+                    const CostEstimate child_cost =
+                        input_path
+                            ? input_path->cost()
+                            : (input_plan && input_plan->costEvidence().has_value()
+                                   ? *input_plan->costEvidence()
+                                   : CostEstimate{});
+                    const uint64_t child_row_width =
+                        child_cost.row_width_bytes > 0
+                            ? child_cost.row_width_bytes
+                            : std::max<uint64_t>(32,
+                                                 std::max<uint64_t>(
+                                                     1,
+                                                     merge_cost.row_width_bytes / 2));
+                    const CostEstimate sort_cost = active_cost_model.costSort(
+                        input_rows,
+                        child_row_width,
+                        std::max<uint64_t>(1, ordering_keys.size()),
+                        ctx);
+
+                    auto sort_plan =
+                        std::make_shared<SortNode>(input_plan, sort_key_texts);
+                    sort_plan->setCost(sort_cost);
+
+                    auto sort_path = std::make_shared<SortPath>(
+                        input_path,
+                        ordering_keys,
+                        child_row_width,
+                        sort_cost);
+                    AccessPathDescriptor sort_descriptor;
+                    sort_descriptor.family = "SORT";
+                    sort_descriptor.parameterized =
+                        input_path &&
+                        input_path->accessDescriptor().parameterized;
+                    if (input_path)
+                    {
+                        sort_descriptor.required_outer_relation_indexes =
+                            input_path->accessDescriptor()
+                                .required_outer_relation_indexes;
+                    }
+                    sort_descriptor.ordered_output = true;
+                    sort_descriptor.order_complete = true;
+                    sort_descriptor.ordered_prefix_length =
+                        std::max<uint64_t>(1, ordering_keys.size());
+                    sort_descriptor.interesting_order_score =
+                        static_cast<double>(sort_descriptor.ordered_prefix_length);
+                    sort_descriptor.ordering_keys = ordering_keys;
+                    sort_path->setAccessDescriptor(std::move(sort_descriptor));
+                    return {std::move(sort_plan), std::move(sort_path)};
+                };
+
                 if (chosen_method == ChosenJoinMethod::HASH_JOIN)
                 {
                     std::vector<parser::v3::Expression *> hash_keys_outer;
@@ -8226,10 +8443,22 @@ namespace scratchbird::optimizer
                 {
                     std::vector<parser::v3::Expression *> merge_keys_outer;
                     std::vector<parser::v3::Expression *> merge_keys_inner;
+                    auto [merge_outer_plan, merge_outer_path] = wrapMergeInputSort(
+                        left_tree.plan,
+                        left_tree.path,
+                        decision.runtime_join.left_merge_key,
+                        left_tree.rows,
+                        merge_legality.requires_sort_outer);
+                    auto [merge_inner_plan, merge_inner_path] = wrapMergeInputSort(
+                        right_tree.plan,
+                        right_tree.path,
+                        decision.runtime_join.right_merge_key,
+                        right_tree.rows,
+                        merge_legality.requires_sort_inner);
                     auto merge_plan = std::make_shared<MergeJoinNode>(
                         join_type,
-                        left_tree.plan,
-                        right_tree.plan,
+                        merge_outer_plan,
+                        merge_inner_plan,
                         const_cast<parser::v3::Expression *>(join.condition),
                         merge_keys_outer,
                         merge_keys_inner,
@@ -8240,8 +8469,8 @@ namespace scratchbird::optimizer
                     decision.plan = merge_plan;
                     decision.path = std::make_shared<MergeJoinPath>(
                         join_type,
-                        left_tree.path,
-                        right_tree.path,
+                        merge_outer_path,
+                        merge_inner_path,
                         const_cast<parser::v3::Expression *>(join.condition),
                         merge_keys_outer,
                         merge_keys_inner,
@@ -8932,7 +9161,7 @@ namespace scratchbird::optimizer
             uint64_t width = 0;
             if (relations.empty())
             {
-                return 64;
+                return planner_params.default_row_width_bytes;
             }
             for (size_t relation_index : relations)
             {
@@ -8940,10 +9169,21 @@ namespace scratchbird::optimizer
                 {
                     continue;
                 }
+                if (relation_index < relation_row_width_bytes.size() &&
+                    relation_row_width_bytes[relation_index] > 0)
+                {
+                    width += relation_row_width_bytes[relation_index];
+                    continue;
+                }
                 width += static_cast<uint64_t>(
-                    std::max<size_t>(1, planned_out.resolved_query.relations[relation_index].columns.size()) * 16);
+                    std::max<size_t>(
+                        1,
+                        planned_out.resolved_query.relations[relation_index]
+                            .columns.size()) *
+                    16);
             }
-            return std::max<uint64_t>(64, width);
+            return std::max<uint64_t>(planner_params.default_row_width_bytes,
+                                      width);
         };
 
         const uint64_t row_width = estimateRowWidth(relation_order);

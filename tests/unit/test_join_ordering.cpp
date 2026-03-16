@@ -246,6 +246,83 @@ TEST(JoinOrderingOptimizerTest,
     EXPECT_FALSE(containsLeafPathIdentity(plan, broad_scan));
 }
 
+TEST(JoinOrderingPropertySignatureTest,
+     SignatureDistinguishesOrderingCoverageAndQueryability)
+{
+    AccessPathDescriptor descriptor;
+    descriptor.family = "BTREE_ORDERED_SCAN";
+    descriptor.path_name = "BTREE_ORDERED_SCAN";
+    descriptor.family_kind = PlannerAccessFamily::BTREE_ORDERED_SCAN;
+    descriptor.exactness_class = AccessPathExactnessClass::EXACT_KEY;
+    descriptor.visibility_enforcement = AccessPathVisibilityEnforcement::HYBRID;
+    descriptor.queryability_state = AccessPathQueryabilityState::QUERYABLE;
+    descriptor.ordered_output = true;
+    descriptor.ordered_prefix_length = 1;
+    descriptor.order_complete = true;
+    descriptor.coverage_fraction = 0.50;
+    descriptor.interesting_order_score = 0.80;
+    descriptor.ordering_keys.push_back(
+        {"users.last_name", false, false, "STRING"});
+
+    auto alternate_order = descriptor;
+    alternate_order.ordering_keys[0].expression_text = "users.created_at";
+
+    auto higher_coverage = descriptor;
+    higher_coverage.coverage_fraction = 1.0;
+
+    auto limited = descriptor;
+    limited.queryability_state = AccessPathQueryabilityState::LIMITED;
+
+    EXPECT_NE(joinSearchPropertySignature(descriptor),
+              joinSearchPropertySignature(alternate_order));
+    EXPECT_NE(joinSearchPropertySignature(descriptor),
+              joinSearchPropertySignature(higher_coverage));
+    EXPECT_NE(joinSearchPropertySignature(descriptor),
+              joinSearchPropertySignature(limited));
+}
+
+TEST(JoinOrderingOptimizerTest,
+     GreedySearchRetainsFrontierStatesToChooseNonPrimaryBasePath)
+{
+    CostModel cost_model;
+    SelectivityEstimator selectivity_estimator(nullptr, nullptr);
+    JoinOrderingOptimizer optimizer(cost_model, selectivity_estimator);
+
+    JoinPlanningControls controls;
+    controls.strategy = JoinSearchStrategy::HEURISTIC_GREEDY;
+    optimizer.setPlanningControls(controls);
+
+    auto broad_scan = makeSeqScanPath("users", 5000, 5.0);
+    auto selective_ordered = makeSeqScanPath("users", 5, 15.0);
+    AccessPathDescriptor ordered_descriptor = selective_ordered->accessDescriptor();
+    ordered_descriptor.family = "BTREE_ORDERED_SCAN";
+    ordered_descriptor.path_name = "BTREE_ORDERED_SCAN";
+    ordered_descriptor.family_kind = PlannerAccessFamily::BTREE_ORDERED_SCAN;
+    ordered_descriptor.ordered_output = true;
+    ordered_descriptor.ordered_prefix_length = 1;
+    ordered_descriptor.interesting_order_score = 1.0;
+    selective_ordered->setAccessDescriptor(std::move(ordered_descriptor));
+
+    optimizer.addRelation(core::ID{},
+                          "users",
+                          "users",
+                          std::vector<std::shared_ptr<Path>>{
+                              broad_scan,
+                              selective_ordered});
+    optimizer.addRelation(core::ID{},
+                          "orders",
+                          "orders",
+                          makeSeqScanPath("orders", 10000, 100.0));
+    optimizer.addJoinEdge(0, 1, parser::JoinType::INNER, nullptr);
+    optimizer.setJoinSelectivity(0, 0.0001);
+
+    auto plan = optimizer.optimize();
+    ASSERT_NE(plan, nullptr);
+    EXPECT_EQ(optimizer.lastStrategyUsed(), JoinSearchStrategy::HEURISTIC_GREEDY);
+    EXPECT_TRUE(containsLeafPathIdentity(plan, selective_ordered));
+    EXPECT_FALSE(containsLeafPathIdentity(plan, broad_scan));
+}
+
 TEST(JoinOrderingOptimizerTest, HypergraphGreedyCanBuildBushyJoinTree)
 {
     CostModel cost_model;

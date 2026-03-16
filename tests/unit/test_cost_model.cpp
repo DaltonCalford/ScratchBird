@@ -2,6 +2,9 @@
 
 #include "scratchbird/optimizer/cost_model.h"
 
+#include <algorithm>
+#include <string>
+
 using scratchbird::optimizer::CostEstimate;
 using scratchbird::optimizer::CostFormulaProfile;
 using scratchbird::optimizer::CostModel;
@@ -21,6 +24,18 @@ namespace
         params.cpu_operator_cost = 0.0025;
         params.effective_cache_size = 128.0;
         return CostModel(params);
+    }
+
+    auto findInputEstimate(const CostEstimate &cost, const std::string &name)
+        -> const scratchbird::optimizer::CostInputEstimate *
+    {
+        const auto it = std::find_if(
+            cost.input_estimates.begin(),
+            cost.input_estimates.end(),
+            [&](const scratchbird::optimizer::CostInputEstimate &estimate) {
+                return estimate.name == name;
+            });
+        return it == cost.input_estimates.end() ? nullptr : &(*it);
     }
 } // namespace
 
@@ -149,6 +164,12 @@ TEST(CostModelTest, DerivedIndexFamilyProfilesEncodeFamilyIdentityAndAdjustCoeff
     input.coverage_fraction = 1.0;
     input.ordered_output = true;
     input.covering_index = true;
+    input.row_width_bytes = 192;
+    input.heap_rows_per_page = 28.0;
+    input.index_entries_per_page = 144.0;
+    input.dead_fraction = 0.18;
+    input.duplicate_density = 0.35;
+    input.avg_probe_pages = 4.0;
 
     const CostFormulaProfile profile =
         deriveIndexFamilyFormulaProfile(params, input);
@@ -163,11 +184,19 @@ TEST(CostModelTest, DerivedIndexFamilyProfilesEncodeFamilyIdentityAndAdjustCoeff
               "sb_cost_calibration/index_family/ordered_exact/btree_ordered_scan/v7");
     EXPECT_EQ(profile.storage_profile, "ordered_exact");
     EXPECT_EQ(profile.workload_profile, "ordered_read");
+    EXPECT_EQ(profile.parameters.default_row_width_bytes, 192u);
+    EXPECT_DOUBLE_EQ(profile.parameters.calibrated_heap_rows_per_page, 28.0);
+    EXPECT_DOUBLE_EQ(profile.parameters.calibrated_index_entries_per_page, 144.0);
+    EXPECT_DOUBLE_EQ(profile.parameters.calibrated_avg_probe_pages, 4.0);
+    EXPECT_DOUBLE_EQ(profile.parameters.calibrated_dead_fraction, 0.18);
+    EXPECT_DOUBLE_EQ(profile.parameters.calibrated_duplicate_density, 0.35);
+    EXPECT_GT(profile.parameters.calibrated_visibility_tuple_cost, 0.0);
     EXPECT_LT(profile.parameters.random_page_cost, params.random_page_cost * 1.5);
     EXPECT_LT(profile.parameters.cpu_tuple_cost, params.cpu_tuple_cost * 1.5);
     EXPECT_GT(profile.parameters.cpu_index_tuple_cost, params.cpu_index_tuple_cost);
     EXPECT_EQ(index_only.formula_profile_id, profile.profile_id);
     EXPECT_EQ(index_only.calibration_profile_id, profile.calibration_profile_id);
+    EXPECT_EQ(index_only.row_width_bytes, 192u);
 }
 
 TEST(CostModelTest, EffectiveRandomPageCostUsesCacheModel)
@@ -327,6 +356,115 @@ TEST(CostModelTest, HashJoinCostMarksSpillWhenBuildSideExceedsBudget)
     EXPECT_GT(spilled.spill_bytes, 0u);
     EXPECT_GT(spilled.total_cost, in_memory.total_cost);
     EXPECT_LT(spilled.memory_budget_bytes, spilled.memory_bytes);
+}
+
+TEST(CostModelTest, PhysicalCalibrationChangesIndexTraversalAndVisibilityCosts)
+{
+    CostParameters params;
+    params.seq_page_cost = 1.0;
+    params.random_page_cost = 4.0;
+    params.cpu_tuple_cost = 0.01;
+    params.cpu_index_tuple_cost = 0.005;
+    params.cpu_operator_cost = 0.0025;
+
+    CostModel baseline_model(params);
+    const auto baseline =
+        baseline_model.costIndexScan(3, 6, 240, 24, 240, baseline_model.operatorCost("="), 0.15);
+
+    IndexFamilyCostCalibrationInput input;
+    input.planner_family = "BTREE_ORDERED_SCAN";
+    input.metrics_type_name = "ORDERED_EXACT";
+    input.family_metrics_version = 9;
+    input.metrics_confidence_class = "HIGH";
+    input.correlation = 0.15;
+    input.row_width_bytes = 224;
+    input.heap_rows_per_page = 12.0;
+    input.index_entries_per_page = 40.0;
+    input.dead_fraction = 0.30;
+    input.duplicate_density = 0.40;
+    input.avg_probe_pages = 5.0;
+
+    CostModel calibrated_model(deriveIndexFamilyFormulaProfile(params, input));
+    const auto calibrated =
+        calibrated_model.costIndexScan(3, 6, 240, 24, 240, calibrated_model.operatorCost("="), 0.15);
+
+    EXPECT_EQ(calibrated.row_width_bytes, 224u);
+    EXPECT_GT(calibrated.startup_cost, baseline.startup_cost);
+    EXPECT_GT(calibrated.total_cost, baseline.total_cost);
+
+    const auto *row_width = findInputEstimate(calibrated, "row_width_bytes");
+    const auto *heap_rows = findInputEstimate(calibrated, "heap_rows_per_page");
+    const auto *probe_pages = findInputEstimate(calibrated, "avg_probe_pages");
+    ASSERT_NE(row_width, nullptr);
+    ASSERT_NE(heap_rows, nullptr);
+    ASSERT_NE(probe_pages, nullptr);
+    EXPECT_DOUBLE_EQ(row_width->value, 224.0);
+    EXPECT_DOUBLE_EQ(heap_rows->value, 12.0);
+    EXPECT_DOUBLE_EQ(probe_pages->value, 5.0);
+}
+
+TEST(CostModelTest, WiderRowsIncreaseHashJoinSpillAndCost)
+{
+    CostParameters params;
+    params.seq_page_cost = 1.0;
+    params.random_page_cost = 4.0;
+    params.cpu_tuple_cost = 0.01;
+    params.cpu_index_tuple_cost = 0.005;
+    params.cpu_operator_cost = 0.0025;
+    params.work_mem_bytes = 128 * 1024;
+
+    CostFormulaProfile narrow_profile;
+    narrow_profile.parameters = params;
+    narrow_profile.parameters.default_row_width_bytes = 64;
+    narrow_profile.profile_id = "sb_cost_formula/test_narrow";
+    narrow_profile.calibration_profile_id = "sb_cost_calibration/test_narrow";
+
+    CostFormulaProfile wide_profile = narrow_profile;
+    wide_profile.parameters.default_row_width_bytes = 512;
+    wide_profile.profile_id = "sb_cost_formula/test_wide";
+    wide_profile.calibration_profile_id = "sb_cost_calibration/test_wide";
+
+    CostModel narrow_model(narrow_profile);
+    CostModel wide_model(wide_profile);
+
+    const auto narrow_outer = narrow_model.costSeqScan(256, 12000, 0.0);
+    const auto narrow_inner = narrow_model.costSeqScan(256, 12000, 0.0);
+    const auto wide_outer = wide_model.costSeqScan(256, 12000, 0.0);
+    const auto wide_inner = wide_model.costSeqScan(256, 12000, 0.0);
+
+    const auto narrow_hash = narrow_model.costHashJoin(
+        narrow_outer, narrow_inner, 12000, 12000, 0.01, scratchbird::parser::JoinType::INNER);
+    const auto wide_hash = wide_model.costHashJoin(
+        wide_outer, wide_inner, 12000, 12000, 0.01, scratchbird::parser::JoinType::INNER);
+
+    EXPECT_TRUE(narrow_hash.spill_expected);
+    EXPECT_TRUE(wide_hash.spill_expected);
+    EXPECT_GT(wide_hash.memory_bytes, narrow_hash.memory_bytes);
+    EXPECT_GT(wide_hash.total_cost, narrow_hash.total_cost);
+}
+
+TEST(CostModelTest, SortSpillPublishesMergeFanoutEvidence)
+{
+    CostParameters params;
+    params.seq_page_cost = 1.0;
+    params.random_page_cost = 4.0;
+    params.cpu_tuple_cost = 0.01;
+    params.cpu_index_tuple_cost = 0.005;
+    params.cpu_operator_cost = 0.0025;
+    params.work_mem_bytes = 64 * 1024;
+
+    CostModel model(params);
+    const auto spilled = model.costSort(16384, 256, 3);
+
+    EXPECT_TRUE(spilled.spill_expected);
+    EXPECT_GT(spilled.spill_passes, 0u);
+
+    const auto *initial_runs = findInputEstimate(spilled, "spill_initial_runs");
+    const auto *merge_fanout = findInputEstimate(spilled, "spill_merge_fanout");
+    ASSERT_NE(initial_runs, nullptr);
+    ASSERT_NE(merge_fanout, nullptr);
+    EXPECT_GT(initial_runs->value, 1.0);
+    EXPECT_GE(merge_fanout->value, 2.0);
 }
 
 TEST(CostModelTest, OuterJoinPaddingKeepsOutputRowsAtLeastInputSide)

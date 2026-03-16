@@ -125,6 +125,9 @@ struct JoinPlanningTelemetry
     size_t fallback_threshold_value = 0;
 };
 
+auto joinSearchPropertySignature(const AccessPathDescriptor& descriptor)
+    -> std::string;
+
 /**
  * JoinOrderingOptimizer - Finds optimal join order (V3)
  *

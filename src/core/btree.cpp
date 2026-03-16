@@ -12,9 +12,11 @@
 #include <set>
 #include <unordered_set>
 #include <algorithm>  // for std::sort
+#include <thread>
 
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/btree_page.h"
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/page_manager.h"
@@ -26,6 +28,89 @@
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        constexpr uint32_t kSplitRetryLimit = 16;
+
+        auto currentProcIdForIndexLocks() -> uint32_t
+        {
+            const int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+            return (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0u;
+        }
+
+        auto makeIndexPageLockTag(const UuidV7Bytes &index_uuid, uint64_t page_num) -> LockTag
+        {
+            LockTag tag{};
+            tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+            tag.object_uuid = index_uuid;
+            tag.page_num = page_num;
+            return tag;
+        }
+
+        auto acquireIndexPageLock(Database *db,
+                                  const UuidV7Bytes &index_uuid,
+                                  uint64_t page_num,
+                                  LockMode mode,
+                                  bool wait,
+                                  ErrorContext *ctx) -> Status
+        {
+            if (db == nullptr || db->lock_manager() == nullptr || page_num == 0)
+            {
+                return Status::OK;
+            }
+            return db->lock_manager()->acquireLock(currentProcIdForIndexLocks(),
+                                                  makeIndexPageLockTag(index_uuid, page_num),
+                                                  mode, wait, 0, ctx);
+        }
+
+        void releaseIndexPageLock(Database *db,
+                                  const UuidV7Bytes &index_uuid,
+                                  uint64_t page_num,
+                                  LockMode mode,
+                                  ErrorContext *ctx)
+        {
+            if (db == nullptr || db->lock_manager() == nullptr || page_num == 0)
+            {
+                return;
+            }
+            (void)db->lock_manager()->releaseLock(currentProcIdForIndexLocks(),
+                                                 makeIndexPageLockTag(index_uuid, page_num),
+                                                 mode, ctx);
+        }
+
+        auto pinIndexPageGlobal(Database *db,
+                                uint16_t tablespace_id,
+                                uint64_t page_num,
+                                void **buffer,
+                                ErrorContext *ctx) -> Status
+        {
+            if (db == nullptr || db->buffer_pool() == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Database/buffer pool unavailable for B-tree page pin");
+                return Status::INVALID_ARGUMENT;
+            }
+            return db->buffer_pool()->pinPageGlobal(makeGPID(tablespace_id, page_num), buffer,
+                                                    ctx);
+        }
+
+        auto unpinIndexPageGlobal(Database *db,
+                                  uint16_t tablespace_id,
+                                  uint64_t page_num,
+                                  bool dirty,
+                                  ErrorContext *ctx) -> Status
+        {
+            if (db == nullptr || db->buffer_pool() == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Database/buffer pool unavailable for B-tree page unpin");
+                return Status::INVALID_ARGUMENT;
+            }
+            return db->buffer_pool()->unpinPageGlobal(makeGPID(tablespace_id, page_num), dirty,
+                                                      ctx);
+        }
+    } // namespace
+
 
     // ============================================================================
     // B-TREE PREFIX COMPRESSION HELPER FUNCTIONS
@@ -178,6 +263,9 @@ namespace scratchbird::core
         uint64_t xmax = 0;
     };
 
+    constexpr uint16_t kLeafSearchRestartInterval = 8;
+    constexpr uint16_t kInternalSearchRestartInterval = 8;
+
     static Status rebuild_leaf_page(SBBTreePage *page,
                                     uint32_t page_size,
                                     const std::vector<LeafEntryData> &entries,
@@ -199,14 +287,17 @@ namespace scratchbird::core
         std::vector<uint8_t> prev_key;
         uint16_t min_prefix = 0;
 
-        for (const auto &entry : entries)
+        for (size_t entry_index = 0; entry_index < entries.size(); ++entry_index)
         {
+            const auto &entry = entries[entry_index];
             uint16_t prefix_len = 0;
             std::vector<uint8_t> stored_key = entry.key;
+            const bool force_restart_anchor =
+                (entry_index % kLeafSearchRestartInterval) == 0;
             const auto compression = static_cast<BTreeCompressionType>(new_header.btr_compression);
-            if (compression == BTreeCompressionType::PREFIX ||
-                compression == BTreeCompressionType::BOTH ||
-                compression == BTreeCompressionType::ADAPTIVE)
+            if (!force_restart_anchor && (compression == BTreeCompressionType::PREFIX ||
+                                          compression == BTreeCompressionType::BOTH ||
+                                          compression == BTreeCompressionType::ADAPTIVE))
             {
                 stored_key = compress_key(prev_key, entry.key, &prefix_len);
             }
@@ -299,11 +390,31 @@ namespace scratchbird::core
 
         std::memcpy(temp.data(), &new_header, sizeof(SBBTreePage));
         auto *offsets = reinterpret_cast<uint16_t *>(temp.data() + sizeof(SBBTreePage));
+        std::vector<uint8_t> prev_key;
+        uint16_t min_prefix = 0;
 
         for (size_t i = 0; i < keys.size(); ++i)
         {
             uint16_t prefix_len = 0;
             std::vector<uint8_t> stored_key = keys[i].key;
+            const bool force_restart_anchor =
+                (i % kInternalSearchRestartInterval) == 0;
+            const auto compression = static_cast<BTreeCompressionType>(new_header.btr_compression);
+            if (!force_restart_anchor && (compression == BTreeCompressionType::PREFIX ||
+                                          compression == BTreeCompressionType::BOTH ||
+                                          compression == BTreeCompressionType::ADAPTIVE))
+            {
+                stored_key = compress_key(prev_key, keys[i].key, &prefix_len);
+            }
+
+            if (prefix_len > 0)
+            {
+                new_header.btr_prefix_total += prefix_len;
+                if (min_prefix == 0 || prefix_len < min_prefix)
+                {
+                    min_prefix = prefix_len;
+                }
+            }
 
             const uint32_t node_size =
                 sizeof(SBBTreeNode) + stored_key.size() + sizeof(uint64_t);
@@ -335,6 +446,7 @@ namespace scratchbird::core
             new_header.btr_count++;
             new_header.btr_free_space -= (node_size + sizeof(uint16_t));
             new_header.btr_suffix_total += keys[i].suffix_trunc;
+            prev_key = keys[i].key;
         }
 
         uint64_t rightmost = children.back();
@@ -350,9 +462,16 @@ namespace scratchbird::core
             }
         }
         new_header.btr_rightmost_child = rightmost;
-        new_header.btr_min_prefix_len = 0;
+        new_header.btr_min_prefix_len = min_prefix;
 
-        new_header.btr_flags &= ~static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+        if (new_header.btr_prefix_total > 0 || new_header.btr_suffix_total > 0)
+        {
+            new_header.btr_flags |= static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+        }
+        else
+        {
+            new_header.btr_flags &= ~static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+        }
 
         std::memcpy(temp.data(), &new_header, sizeof(SBBTreePage));
         std::memcpy(page, temp.data(), page_size);
@@ -521,24 +640,53 @@ namespace scratchbird::core
         SBBTreeIndex index_info;
         std::memcpy(index_info.idx_uuid.bytes.data(), page->btr_index_uuid.bytes.data(), 16);
         std::memcpy(index_info.idx_table_uuid.bytes.data(), page->btr_table_uuid.bytes.data(), 16);
-
-        // Note: column_ids are not stored on the B-tree page itself,
-        // they would typically be retrieved from the catalog.
-        // For now, we initialize with an empty vector.
-        index_info.idx_column_ids.clear();
-
-        index_info.idx_flags = 0;
         index_info.idx_root_page = root_page;
         index_info.idx_tablespace_id = getTablespaceID(root_gpid);
-
-        // Calculate tree height by traversing from root
-        // For now, we'll set it based on the root's level
         index_info.idx_height = page->btr_level + 1;
-
-        // Initialize statistics (would need to be calculated by scanning)
+        index_info.idx_column_ids.clear();
+        index_info.idx_flags = 0;
         index_info.idx_tuple_count = 0;
-        index_info.idx_page_count = 1; // At least the root page
+        index_info.idx_page_count = 1;
         index_info.idx_deleted_count = 0;
+        index_info.idx_collation_id = 100;
+
+        CatalogManager::IndexInfo catalog_info;
+        ErrorContext catalog_ctx;
+        auto *catalog = db->catalog_manager();
+        if (catalog && catalog->getIndex(index_info.idx_uuid, catalog_info, &catalog_ctx) == Status::OK)
+        {
+            if (catalog_info.index_type != CatalogManager::IndexType::BTREE)
+            {
+                buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog index type mismatch for B-tree open");
+                return nullptr;
+            }
+
+            if (catalog_info.root_gpid != 0 && catalog_info.root_gpid != root_gpid)
+            {
+                buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog/root GPID mismatch for B-tree open");
+                return nullptr;
+            }
+
+            if (catalog_info.table_id != ID{} && catalog_info.table_id != index_info.idx_table_uuid)
+            {
+                buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "Catalog/root table UUID mismatch for B-tree open");
+                return nullptr;
+            }
+
+            index_info.idx_table_uuid = catalog_info.table_id;
+            index_info.idx_column_ids = catalog_info.column_ids;
+            index_info.idx_flags = catalog_info.is_unique ? 1u : 0u;
+            index_info.idx_tablespace_id =
+                catalog_info.tablespace_id != 0 ? catalog_info.tablespace_id
+                                                : getTablespaceID(root_gpid);
+            index_info.idx_collation_id = catalog_info.collation_id;
+        }
 
         // Step 5: Unpin page
         buffer_pool->unpinPageGlobal(root_gpid, false, ctx);
@@ -563,6 +711,54 @@ namespace scratchbird::core
         return db_->buffer_pool()->unpinPageGlobal(indexGPID(page_num), dirty, ctx);
     }
 
+    auto BTree::updateSplitSiblingLinks(uint64_t left_page_num,
+                                        uint64_t right_page_num,
+                                        SBBTreePage *left_page,
+                                        SBBTreePage *right_page,
+                                        ErrorContext *ctx) -> Status
+    {
+        const uint64_t old_right_sibling = left_page->btr_right_sibling;
+        if (old_right_sibling != 0)
+        {
+            Status status = acquireIndexPageLock(db_, index_info_.idx_uuid, old_right_sibling,
+                                                 LockMode::LOCK_EXCLUSIVE, false, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status,
+                                  "Failed to acquire old right sibling lock during B-tree split");
+                return status;
+            }
+
+            void *old_right_data_ptr = nullptr;
+            status = pinIndexPageGlobal(db_, index_info_.idx_tablespace_id, old_right_sibling,
+                                        &old_right_data_ptr, ctx);
+            if (status != Status::OK)
+            {
+                releaseIndexPageLock(db_, index_info_.idx_uuid, old_right_sibling,
+                                     LockMode::LOCK_EXCLUSIVE, ctx);
+                return status;
+            }
+
+            auto *old_right_page = reinterpret_cast<SBBTreePage *>(old_right_data_ptr);
+            old_right_page->btr_left_sibling = right_page_num;
+            unpinIndexPageGlobal(db_, index_info_.idx_tablespace_id, old_right_sibling, true, ctx);
+            releaseIndexPageLock(db_, index_info_.idx_uuid, old_right_sibling,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
+        }
+
+        left_page->btr_right_sibling = right_page_num;
+        right_page->btr_left_sibling = left_page_num;
+        right_page->btr_right_sibling = old_right_sibling;
+
+        if ((left_page->btr_flags & static_cast<uint16_t>(BTreeFlags::RIGHTMOST)) != 0)
+        {
+            left_page->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+            right_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+        }
+
+        return Status::OK;
+    }
+
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
     // Task 17 MGA Phase 3.1: Added xid parameter for transaction tracking
     auto BTree::insert(const std::vector<uint8_t> &key, const TID &tid, uint64_t xid,
@@ -577,141 +773,140 @@ namespace scratchbird::core
         // - IndexKeyExtractor caches detoasted values for efficiency
         // - No ToastManager reference needed in index classes
 
-        // Find the appropriate leaf page for this key
-        uint64_t leaf_page_num;
-        Status status = find_leaf_page(key, &leaf_page_num, true, ctx);
-        if (status != Status::OK)
+        for (uint32_t attempt = 0; attempt < kSplitRetryLimit; ++attempt)
         {
-            return status;
-        }
-
-        // Get proc_id from ConnectionContext (Phase 2 complete)
-        int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
-        const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
-        LockManager *lock_mgr = db_->lock_manager();
-
-        BufferPool *bp = db_->buffer_pool();
-        void *page_data_ptr;
-        status = pinIndexPage(leaf_page_num, &page_data_ptr, ctx);
-        if (status != Status::OK)
-        {
-            // Release lock acquired by find_leaf_page
-            if (lock_mgr != nullptr)
+            // Find the appropriate leaf page for this key
+            uint64_t leaf_page_num = 0;
+            Status status = find_leaf_page(key, &leaf_page_num, true, ctx);
+            if (status != Status::OK)
             {
-                LockTag leaf_tag{};
-                leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                leaf_tag.object_uuid = index_info_.idx_uuid;
-                leaf_tag.page_num = leaf_page_num;
-                lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
-            }
-            return status;
-        }
-
-        // Wrap the page in a BTreePage helper
-        auto *page = reinterpret_cast<SBBTreePage *>(page_data_ptr);
-        uint32_t page_size = page->btr_header.page_size;
-
-        // Create a Tuple for the add_node call
-        // PHASE 1.5: Tuple struct now uses TID directly
-        Tuple tuple;
-        tuple.tid = tid;
-        tuple.data = nullptr; // Not used by add_node
-        tuple.data_size = 0;  // Not used by add_node
-
-        try
-        {
-            BTreePage btree_page(reinterpret_cast<uint8_t *>(page_data_ptr), page_size);
-
-            // Task 17 MGA Phase 3.1: Pass xid to add_node for btn_xmin tracking
-            status = btree_page.add_node(key, tuple, xid, ctx);
-            if (status == Status::PAGE_FULL)
-            {
-                // Page is full - need to split
-                unpinIndexPage(leaf_page_num, false, ctx);
-
-                // Release lock before split (split will re-acquire locks)
-                if (lock_mgr != nullptr)
-                {
-                    LockTag leaf_tag{};
-                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                    leaf_tag.object_uuid = index_info_.idx_uuid;
-                    leaf_tag.page_num = leaf_page_num;
-                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
-                }
-
-                // Split the leaf page
-                status = split_leaf_page(leaf_page_num, key, tid, ctx);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-
-                // After split, retry the insert (will re-acquire locks)
-                // Task 17 MGA Phase 3.1: Pass xid through recursive call
-                return insert(key, tid, xid, ctx);
-            }
-            else if (status != Status::OK)
-            {
-                unpinIndexPage(leaf_page_num, false, ctx);
-
-                // Release lock on error
-                if (lock_mgr != nullptr)
-                {
-                    LockTag leaf_tag{};
-                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                    leaf_tag.object_uuid = index_info_.idx_uuid;
-                    leaf_tag.page_num = leaf_page_num;
-                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
-                }
-
                 return status;
             }
 
-            // Mark page as dirty since we modified it
-            unpinIndexPage(leaf_page_num, true, ctx);
+            // Get proc_id from ConnectionContext (Phase 2 complete)
+            int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
+            const uint32_t proc_id =
+                (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
+            LockManager *lock_mgr = db_->lock_manager();
 
-            // Release lock after successful insert
-            if (lock_mgr != nullptr)
+            void *page_data_ptr = nullptr;
+            status = pinIndexPage(leaf_page_num, &page_data_ptr, ctx);
+            if (status != Status::OK)
             {
-                LockTag leaf_tag{};
-                leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                leaf_tag.object_uuid = index_info_.idx_uuid;
-                leaf_tag.page_num = leaf_page_num;
-                lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
-            }
-
-            if (bloom_filter_)
-            {
-                Status bf_status = bloom_filter_->insert(key.data(), key.size(), ctx);
-                if (bf_status != Status::OK)
+                if (lock_mgr != nullptr)
                 {
-                    LOG_WARNING(STORAGE, "B-Tree bloom filter insert failed: %d", static_cast<int>(bf_status));
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
                 }
+                return status;
             }
 
-            return Status::OK;
-        }
-        catch (const std::exception &e)
-        {
-            unpinIndexPage(leaf_page_num, false, ctx);
+            auto *page = reinterpret_cast<SBBTreePage *>(page_data_ptr);
+            uint32_t page_size = page->btr_header.page_size;
 
-            // Release lock on exception
-            if (lock_mgr != nullptr)
+            Tuple tuple;
+            tuple.tid = tid;
+            tuple.data = nullptr;
+            tuple.data_size = 0;
+
+            try
             {
-                LockTag leaf_tag{};
-                leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                leaf_tag.object_uuid = index_info_.idx_uuid;
-                leaf_tag.page_num = leaf_page_num;
-                lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
-            }
+                BTreePage btree_page(reinterpret_cast<uint8_t *>(page_data_ptr), page_size);
+                status = btree_page.add_node(key, tuple, xid, ctx);
+                if (status == Status::PAGE_FULL)
+                {
+                    unpinIndexPage(leaf_page_num, false, ctx);
 
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
-            return Status::INVALID_ARGUMENT;
+                    // Keep the hot leaf lock through split propagation so the version we
+                    // observed as full remains protected while we fix up siblings/parents.
+                    status = split_leaf_page(leaf_page_num, key, tid, ctx);
+
+                    if (lock_mgr != nullptr)
+                    {
+                        LockTag leaf_tag{};
+                        leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                        leaf_tag.object_uuid = index_info_.idx_uuid;
+                        leaf_tag.page_num = leaf_page_num;
+                        lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                    }
+
+                    if (status == Status::OK || status == Status::LOCK_CONFLICT ||
+                        status == Status::LOCK_TIMEOUT || status == Status::DEADLOCK)
+                    {
+                        std::this_thread::yield();
+                        continue;
+                    }
+                    return status;
+                }
+                else if (status != Status::OK)
+                {
+                    unpinIndexPage(leaf_page_num, false, ctx);
+
+                    if (lock_mgr != nullptr)
+                    {
+                        LockTag leaf_tag{};
+                        leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                        leaf_tag.object_uuid = index_info_.idx_uuid;
+                        leaf_tag.page_num = leaf_page_num;
+                        lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                    }
+
+                    return status;
+                }
+
+                unpinIndexPage(leaf_page_num, true, ctx);
+
+                if (lock_mgr != nullptr)
+                {
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                }
+
+                if (bloom_filter_)
+                {
+                    Status bf_status = bloom_filter_->insert(key.data(), key.size(), ctx);
+                    if (bf_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE, "B-Tree bloom filter insert failed: %d",
+                                    static_cast<int>(bf_status));
+                    }
+                }
+
+                return Status::OK;
+            }
+            catch (const std::exception &e)
+            {
+                unpinIndexPage(leaf_page_num, false, ctx);
+
+                if (lock_mgr != nullptr)
+                {
+                    LockTag leaf_tag{};
+                    leaf_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
+                    leaf_tag.object_uuid = index_info_.idx_uuid;
+                    leaf_tag.page_num = leaf_page_num;
+                    lock_mgr->releaseLock(proc_id, leaf_tag, LockMode::LOCK_EXCLUSIVE, ctx);
+                }
+
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
+                return Status::INVALID_ARGUMENT;
+            }
         }
+
+        SET_ERROR_CONTEXT(ctx, Status::LOCK_TIMEOUT,
+                          "B-tree insert exceeded split retry budget under hot-page contention");
+        return Status::LOCK_TIMEOUT;
     }
 
-    // Searches for a key within a single B-Tree page using binary search.
-    // Handles prefix-compressed keys by decompressing them before comparison.
+    // Searches for a key within a single B-Tree leaf page by binary-searching
+    // deterministic restart anchors and then scanning within the bounded block.
+    // Pages that do not satisfy the restart-anchor contract fall back to the
+    // full linear/decompress path for compatibility.
     // PHASE 1.5 TASK 1.5.2a: Migrated to TID struct API
     // Task 17 MGA Phase 3.3: Added snapshot parameter for visibility filtering
     auto BTree::searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
@@ -720,29 +915,150 @@ namespace scratchbird::core
     {
         const auto *page_data = reinterpret_cast<const uint8_t *>(page);
 
-        // Get the node offsets array
         const auto *offsets = reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
-
-        // Track previous key for decompression
-        std::vector<uint8_t> prev_key;
-        bool found_any = false;
-
-        for (uint16_t i = 0; i < page->btr_count; ++i)
+        auto linear_scan = [&]() -> bool
         {
-            const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
-
-            if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
+            std::vector<uint8_t> prev_key;
+            bool found_any = false;
+            for (uint16_t i = 0; i < page->btr_count; ++i)
             {
-                continue;
-            }
+                const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
+                if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
+                {
+                    continue;
+                }
 
+                const uint8_t *node_key_data =
+                    reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+                std::vector<uint8_t> full_key = decompress_key(prev_key, node_key_data,
+                                                               node->btn_key_len,
+                                                               node->btn_prefix_len);
+                int cmp = compare_keys(key, full_key.data(), full_key.size());
+                if (cmp == 0)
+                {
+                    if (isEntryVisible(node->btn_xmin, node->btn_xmax, current_xid))
+                    {
+                        const auto *tuple_ids_ptr = reinterpret_cast<const OnDiskTID *>(
+                            node_key_data + node->btn_key_len);
+                        for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
+                        {
+                            tids_out->push_back(fromOnDiskTID(tuple_ids_ptr[j]));
+                        }
+                        found_any = true;
+                    }
+                }
+                else if (cmp < 0)
+                {
+                    break;
+                }
+                prev_key = full_key;
+            }
+            return found_any;
+        };
+
+        if (page->btr_count == 0)
+        {
+            return false;
+        }
+
+        bool restart_contract_ready = true;
+        for (uint16_t anchor_index = 0; anchor_index < page->btr_count;
+             anchor_index = static_cast<uint16_t>(anchor_index + kLeafSearchRestartInterval))
+        {
+            const auto *anchor_node =
+                reinterpret_cast<const SBBTreeNode *>(page_data + offsets[anchor_index]);
+            if (anchor_node->btn_prefix_len != 0)
+            {
+                restart_contract_ready = false;
+                break;
+            }
+        }
+
+        if (!restart_contract_ready)
+        {
+            return linear_scan();
+        }
+
+        const uint16_t anchor_count = static_cast<uint16_t>(
+            (page->btr_count + kLeafSearchRestartInterval - 1) / kLeafSearchRestartInterval);
+        auto anchor_node_index = [](uint16_t anchor_slot) -> uint16_t
+        {
+            return static_cast<uint16_t>(anchor_slot * kLeafSearchRestartInterval);
+        };
+        auto compare_anchor = [&](uint16_t anchor_slot) -> int
+        {
+            const uint16_t node_index = anchor_node_index(anchor_slot);
+            const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[node_index]);
             const uint8_t *node_key_data =
                 reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+            return compare_keys(key, node_key_data, node->btn_key_len);
+        };
 
-            std::vector<uint8_t> full_key = decompress_key(prev_key, node_key_data,
-                                                           node->btn_key_len,
-                                                           node->btn_prefix_len);
+        uint16_t low = 0;
+        uint16_t high = anchor_count;
+        while (low < high)
+        {
+            const uint16_t mid = static_cast<uint16_t>(low + ((high - low) / 2));
+            if (compare_anchor(mid) > 0)
+            {
+                low = static_cast<uint16_t>(mid + 1);
+            }
+            else
+            {
+                high = mid;
+            }
+        }
 
+        const uint16_t first_not_less_anchor = low;
+        low = 0;
+        high = anchor_count;
+        while (low < high)
+        {
+            const uint16_t mid = static_cast<uint16_t>(low + ((high - low) / 2));
+            if (compare_anchor(mid) < 0)
+            {
+                high = mid;
+            }
+            else
+            {
+                low = static_cast<uint16_t>(mid + 1);
+            }
+        }
+
+        const uint16_t first_greater_anchor = low;
+        if (first_greater_anchor == 0)
+        {
+            return false;
+        }
+
+        uint16_t start_anchor = static_cast<uint16_t>(first_greater_anchor - 1);
+        if (first_not_less_anchor < anchor_count && compare_anchor(first_not_less_anchor) == 0)
+        {
+            start_anchor =
+                (first_not_less_anchor == 0) ? 0 : static_cast<uint16_t>(first_not_less_anchor - 1);
+        }
+
+        const uint16_t start_index = anchor_node_index(start_anchor);
+        const uint16_t end_index =
+            (first_greater_anchor < anchor_count) ? anchor_node_index(first_greater_anchor)
+                                                  : page->btr_count;
+        const auto *start_node =
+            reinterpret_cast<const SBBTreeNode *>(page_data + offsets[start_index]);
+        const uint8_t *start_key_data =
+            reinterpret_cast<const uint8_t *>(start_node) + sizeof(SBBTreeNode);
+        std::vector<uint8_t> prev_key(start_key_data, start_key_data + start_node->btn_key_len);
+        bool found_any = false;
+
+        for (uint16_t i = start_index; i < end_index; ++i)
+        {
+            const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
+            const uint8_t *node_key_data =
+                reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+            std::vector<uint8_t> full_key =
+                (i == start_index)
+                    ? prev_key
+                    : decompress_key(prev_key, node_key_data, node->btn_key_len,
+                                     node->btn_prefix_len);
             int cmp = compare_keys(key, full_key.data(), full_key.size());
             if (cmp == 0)
             {
@@ -750,7 +1066,6 @@ namespace scratchbird::core
                 {
                     const auto *tuple_ids_ptr =
                         reinterpret_cast<const OnDiskTID *>(node_key_data + node->btn_key_len);
-
                     for (uint32_t j = 0; j < node->btn_tuple_count; ++j)
                     {
                         tids_out->push_back(fromOnDiskTID(tuple_ids_ptr[j]));
@@ -760,10 +1075,8 @@ namespace scratchbird::core
             }
             else if (cmp < 0)
             {
-                // Keys are sorted; once current key exceeds target, we can stop.
                 break;
             }
-
             prev_key = full_key;
         }
 
@@ -926,42 +1239,115 @@ namespace scratchbird::core
                 return Status::OK;
             }
 
-            // This is an internal page, find the correct child to descend to
             const auto *page_data = reinterpret_cast<const uint8_t *>(page);
             uint64_t next_page_num = 0;
-
-            // Get the node offsets array
             const auto *offsets =
                 reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
 
-            // Track previous key for decompression
-            std::vector<uint8_t> prev_key;
-
-            // Linear search through nodes to find the correct child
-            // Each internal node has a key and a child pointer to the left of that key
-            for (uint16_t i = 0; i < page->btr_count; ++i)
+            bool restart_contract_ready = true;
+            for (uint16_t i = 0; i < page->btr_count;
+                 i = static_cast<uint16_t>(i + kInternalSearchRestartInterval))
             {
                 const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
-
-                // Extract the node's key
-                const uint8_t *node_key_data =
-                    reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
-
-                // Decompress key if compressed
-                std::vector<uint8_t> full_key = decompress_key(prev_key, node_key_data,
-                                                               node->btn_key_len,
-                                                               node->btn_prefix_len);
-
-                // Compare decompressed key
-                int cmp = compare_keys(key, full_key.data(), full_key.size());
-                if (cmp < 0)
+                if (node->btn_prefix_len != 0)
                 {
-                    next_page_num = node->btn_child_page;
+                    restart_contract_ready = false;
                     break;
                 }
+            }
 
-                // Update prev_key for next iteration
-                prev_key = full_key;
+            if (restart_contract_ready)
+            {
+                const uint16_t anchor_count = static_cast<uint16_t>(
+                    (page->btr_count + kInternalSearchRestartInterval - 1) /
+                    kInternalSearchRestartInterval);
+                auto anchor_node_index = [](uint16_t anchor_slot) -> uint16_t
+                {
+                    return static_cast<uint16_t>(anchor_slot * kInternalSearchRestartInterval);
+                };
+                auto compare_anchor = [&](uint16_t anchor_slot) -> int
+                {
+                    const uint16_t node_index = anchor_node_index(anchor_slot);
+                    const auto *node =
+                        reinterpret_cast<const SBBTreeNode *>(page_data + offsets[node_index]);
+                    const uint8_t *node_key_data =
+                        reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+                    return compare_keys(key, node_key_data, node->btn_key_len);
+                };
+
+                uint16_t low_anchor = 0;
+                uint16_t high_anchor = anchor_count;
+                while (low_anchor < high_anchor)
+                {
+                    const uint16_t mid_anchor = static_cast<uint16_t>(
+                        low_anchor + ((high_anchor - low_anchor) / 2));
+                    if (compare_anchor(mid_anchor) < 0)
+                    {
+                        high_anchor = mid_anchor;
+                    }
+                    else
+                    {
+                        low_anchor = static_cast<uint16_t>(mid_anchor + 1);
+                    }
+                }
+
+                const uint16_t first_greater_anchor = low_anchor;
+                const uint16_t start_anchor =
+                    (first_greater_anchor == 0) ? 0
+                                                : static_cast<uint16_t>(first_greater_anchor - 1);
+                const uint16_t start_index = anchor_node_index(start_anchor);
+                const uint16_t next_anchor_slot = std::min<uint16_t>(
+                    anchor_count, static_cast<uint16_t>(start_anchor + 2));
+                const uint16_t end_index =
+                    (next_anchor_slot < anchor_count)
+                        ? anchor_node_index(next_anchor_slot)
+                        : page->btr_count;
+
+                const auto *start_node =
+                    reinterpret_cast<const SBBTreeNode *>(page_data + offsets[start_index]);
+                const uint8_t *start_key_data =
+                    reinterpret_cast<const uint8_t *>(start_node) + sizeof(SBBTreeNode);
+                std::vector<uint8_t> prev_key(start_key_data,
+                                              start_key_data + start_node->btn_key_len);
+
+                for (uint16_t i = start_index; i < end_index; ++i)
+                {
+                    const auto *node =
+                        reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
+                    const uint8_t *node_key_data =
+                        reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+                    std::vector<uint8_t> full_key =
+                        (i == start_index)
+                            ? prev_key
+                            : decompress_key(prev_key, node_key_data, node->btn_key_len,
+                                             node->btn_prefix_len);
+                    if (compare_keys(key, full_key.data(), full_key.size()) < 0)
+                    {
+                        next_page_num = node->btn_child_page;
+                        break;
+                    }
+                    prev_key = full_key;
+                }
+            }
+
+            if (next_page_num == 0)
+            {
+                std::vector<uint8_t> prev_key;
+                for (uint16_t i = 0; i < page->btr_count; ++i)
+                {
+                    const auto *node =
+                        reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
+                    const uint8_t *node_key_data =
+                        reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
+                    std::vector<uint8_t> full_key = decompress_key(
+                        prev_key, node_key_data, node->btn_key_len, node->btn_prefix_len);
+                    if (compare_keys(key, full_key.data(), full_key.size()) < 0)
+                    {
+                        next_page_num = node->btn_child_page;
+                        break;
+                    }
+                    prev_key = full_key;
+                }
             }
 
             // If we didn't find a suitable child (key >= all keys), use the rightmost child
@@ -1688,70 +2074,15 @@ namespace scratchbird::core
                 left_entries.push_back(std::move(entry));
             }
 
-            // Update sibling pointers
-            uint64_t old_right_sibling = left_page->btr_right_sibling;
-            left_page->btr_right_sibling = right_page_num;
-            right_page->btr_left_sibling = left_page_num;
-            right_page->btr_right_sibling = old_right_sibling;
             right_page->btr_parent_page = left_page->btr_parent_page;
-
-            // Update old right sibling's left pointer if it exists
-            // CRITICAL FIX: Acquire lock before modifying to prevent race condition
-            if (old_right_sibling != 0)
+            status = updateSplitSiblingLinks(left_page_num, right_page_num, left_page, right_page,
+                                             ctx);
+            if (status != Status::OK)
             {
-                // Get proc_id from ConnectionContext (thread-local storage)
-                int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
-                const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
-                LockManager *lock_mgr = db_->lock_manager();
-
-                // Acquire exclusive lock on old right sibling before modification
-                if (lock_mgr != nullptr)
-                {
-                    LockTag sibling_tag{};
-                    sibling_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                    sibling_tag.object_uuid = index_info_.idx_uuid;
-                    sibling_tag.page_num = old_right_sibling;
-
-                    status = lock_mgr->acquireLock(proc_id, sibling_tag, LockMode::LOCK_EXCLUSIVE,
-                                                   true, 0, ctx);
-                    if (status != Status::OK)
-                    {
-                        // CRITICAL FIX (Issue 2.7): Failed to acquire lock - MUST NOT continue
-                        // Continuing without lock can cause B-tree corruption via race condition
-                        // Two concurrent splits could both try to update the same sibling pointer
-                        unpinIndexPage(left_page_num, false, ctx);
-                        unpinIndexPage(right_page_num, false, ctx);
-                        pm->freePageGlobal(right_gpid, ctx);
-                        SET_ERROR_CONTEXT(ctx, status, "Failed to acquire lock on old right sibling during leaf split");
-                        return status;
-                    }
-                }
-
-                void *old_right_data_ptr;
-                status = pinIndexPage(old_right_sibling, &old_right_data_ptr, ctx);
-                if (status == Status::OK)
-                {
-                    auto *old_right_page = reinterpret_cast<SBBTreePage *>(old_right_data_ptr);
-                    old_right_page->btr_left_sibling = right_page_num;
-                    unpinIndexPage(old_right_sibling, true, ctx);
-                }
-
-                // Release lock on old right sibling
-                if (lock_mgr != nullptr)
-                {
-                    LockTag sibling_tag{};
-                    sibling_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                    sibling_tag.object_uuid = index_info_.idx_uuid;
-                    sibling_tag.page_num = old_right_sibling;
-                    lock_mgr->releaseLock(proc_id, sibling_tag, LockMode::LOCK_EXCLUSIVE, ctx);
-                }
-            }
-
-            // Update rightmost flag
-            if ((left_page->btr_flags & static_cast<uint16_t>(BTreeFlags::RIGHTMOST)) != 0)
-            {
-                left_page->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
-                right_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+                unpinIndexPage(left_page_num, false, ctx);
+                unpinIndexPage(right_page_num, false, ctx);
+                pm->freePageGlobal(right_gpid, ctx);
+                return status;
             }
 
             // Rebuild left page to compact and apply compression
@@ -1794,7 +2125,8 @@ namespace scratchbird::core
             }
 
             uint16_t separator_suffix_trunc = 0;
-            std::vector<uint8_t> separator_key = right_min_key;
+            std::vector<uint8_t> separator_key =
+                minimal_separator_key(left_max_key, right_min_key, &separator_suffix_trunc);
 
             // Unpin both pages (mark as dirty)
             unpinIndexPage(left_page_num, true, ctx);
@@ -1822,12 +2154,21 @@ namespace scratchbird::core
                                     ErrorContext *ctx) -> Status
     {
         PageManager *pm = db_->page_manager();
+        const Status parent_lock_status =
+            acquireIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, false, ctx);
+        if (parent_lock_status != Status::OK)
+        {
+            return parent_lock_status;
+        }
 
         // Allocate new right internal page
         GPID new_right_gpid = 0;
         Status status = pm->allocatePageInTablespace(index_info_.idx_tablespace_id, &new_right_gpid, ctx);
         if (status != Status::OK)
         {
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
             SET_ERROR_CONTEXT(ctx, status, "Failed to allocate new internal page for split");
             return status;
         }
@@ -1841,6 +2182,8 @@ namespace scratchbird::core
         status = pinIndexPage(parent_page_num, &parent_page_data_ptr, ctx);
         if (status != Status::OK)
         {
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
             pm->freePageGlobal(new_right_gpid, ctx);
             return status;
         }
@@ -1849,6 +2192,8 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             unpinIndexPage(parent_page_num, false, ctx);
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
             pm->freePageGlobal(new_right_gpid, ctx);
             return status;
         }
@@ -1930,6 +2275,8 @@ namespace scratchbird::core
             {
                 unpinIndexPage(parent_page_num, false, ctx);
                 unpinIndexPage(new_right_page_num, false, ctx);
+                releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                     LockMode::LOCK_EXCLUSIVE, ctx);
                 pm->freePageGlobal(new_right_gpid, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED,
                                   "Parent child pointer not found during internal split");
@@ -1965,6 +2312,8 @@ namespace scratchbird::core
             {
                 unpinIndexPage(parent_page_num, false, ctx);
                 unpinIndexPage(new_right_page_num, false, ctx);
+                releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                     LockMode::LOCK_EXCLUSIVE, ctx);
                 pm->freePageGlobal(new_right_gpid, ctx);
                 return status;
             }
@@ -1974,6 +2323,8 @@ namespace scratchbird::core
             {
                 unpinIndexPage(parent_page_num, false, ctx);
                 unpinIndexPage(new_right_page_num, false, ctx);
+                releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                     LockMode::LOCK_EXCLUSIVE, ctx);
                 pm->freePageGlobal(new_right_gpid, ctx);
                 return status;
             }
@@ -1990,64 +2341,17 @@ namespace scratchbird::core
                 }
             }
 
-            // Update sibling pointers
-            uint64_t old_right_sibling = parent_page->btr_right_sibling;
-            parent_page->btr_right_sibling = new_right_page_num;
-            new_right_page->btr_left_sibling = parent_page_num;
-            new_right_page->btr_right_sibling = old_right_sibling;
             new_right_page->btr_parent_page = parent_page->btr_parent_page;
-
-            // Update old right sibling's left pointer if it exists
-            if (old_right_sibling != 0)
+            status = updateSplitSiblingLinks(parent_page_num, new_right_page_num, parent_page,
+                                             new_right_page, ctx);
+            if (status != Status::OK)
             {
-                int32_t proc_id_signed = ConnectionContext::getCurrentProcId();
-                const uint32_t proc_id = (proc_id_signed >= 0) ? static_cast<uint32_t>(proc_id_signed) : 0;
-                LockManager *lock_mgr = db_->lock_manager();
-
-                if (lock_mgr != nullptr)
-                {
-                    LockTag sibling_tag{};
-                    sibling_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                    sibling_tag.object_uuid = index_info_.idx_uuid;
-                    sibling_tag.page_num = old_right_sibling;
-
-                    status = lock_mgr->acquireLock(proc_id, sibling_tag, LockMode::LOCK_EXCLUSIVE,
-                                                   true, 0, ctx);
-                    if (status != Status::OK)
-                    {
-                        unpinIndexPage(parent_page_num, false, ctx);
-                        unpinIndexPage(new_right_page_num, false, ctx);
-                        pm->freePageGlobal(new_right_gpid, ctx);
-                        SET_ERROR_CONTEXT(ctx, status,
-                                          "Failed to acquire lock on old right sibling during internal split");
-                        return status;
-                    }
-                }
-
-                void *old_right_data_ptr = nullptr;
-                status = pinIndexPage(old_right_sibling, &old_right_data_ptr, ctx);
-                if (status == Status::OK)
-                {
-                    auto *old_right_page = reinterpret_cast<SBBTreePage *>(old_right_data_ptr);
-                    old_right_page->btr_left_sibling = new_right_page_num;
-                    unpinIndexPage(old_right_sibling, true, ctx);
-                }
-
-                if (lock_mgr != nullptr)
-                {
-                    LockTag sibling_tag{};
-                    sibling_tag.target_type = LockTarget::LOCK_TARGET_PAGE;
-                    sibling_tag.object_uuid = index_info_.idx_uuid;
-                    sibling_tag.page_num = old_right_sibling;
-                    lock_mgr->releaseLock(proc_id, sibling_tag, LockMode::LOCK_EXCLUSIVE, ctx);
-                }
-            }
-
-            // Update RIGHTMOST flag
-            if ((parent_page->btr_flags & static_cast<uint16_t>(BTreeFlags::RIGHTMOST)) != 0)
-            {
-                parent_page->btr_flags &= ~static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
-                new_right_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::RIGHTMOST);
+                unpinIndexPage(parent_page_num, false, ctx);
+                unpinIndexPage(new_right_page_num, false, ctx);
+                releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                     LockMode::LOCK_EXCLUSIVE, ctx);
+                pm->freePageGlobal(new_right_gpid, ctx);
+                return status;
             }
 
             // Unpin both pages (mark dirty)
@@ -2055,13 +2359,18 @@ namespace scratchbird::core
             unpinIndexPage(new_right_page_num, true, ctx);
 
             // Insert promoted key into parent
-            return insert_into_parent(parent_page_num, promoted.key, new_right_page_num,
-                                      promoted.suffix_trunc, ctx);
+            status = insert_into_parent(parent_page_num, promoted.key, new_right_page_num,
+                                        promoted.suffix_trunc, ctx);
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
+            return status;
         }
         catch (const std::exception &e)
         {
             unpinIndexPage(parent_page_num, false, ctx);
             unpinIndexPage(new_right_page_num, false, ctx);
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
             pm->freePageGlobal(new_right_gpid, ctx);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, e.what());
             return Status::INVALID_ARGUMENT;
@@ -2095,11 +2404,20 @@ namespace scratchbird::core
                                    separator_suffix_trunc, ctx);
         }
 
+        Status lock_status = acquireIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                                  LockMode::LOCK_EXCLUSIVE, false, ctx);
+        if (lock_status != Status::OK)
+        {
+            return lock_status;
+        }
+
         // Pin parent page
         void *parent_page_data_ptr;
         status = pinIndexPage(parent_page_num, &parent_page_data_ptr, ctx);
         if (status != Status::OK)
         {
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
             return status;
         }
 
@@ -2166,6 +2484,8 @@ namespace scratchbird::core
         if (!found_child)
         {
             unpinIndexPage(parent_page_num, false, ctx);
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
             SET_ERROR_CONTEXT(ctx, Status::INDEX_CORRUPTED,
                               "Parent child pointer not found during insert");
             return Status::INDEX_CORRUPTED;
@@ -2185,12 +2505,17 @@ namespace scratchbird::core
         if (status == Status::PAGE_FULL)
         {
             unpinIndexPage(parent_page_num, false, ctx);
-            return split_internal_page(parent_page_num, left_page_num, separator_key,
-                                       right_page_num, separator_suffix_trunc, ctx);
+            status = split_internal_page(parent_page_num, left_page_num, separator_key,
+                                         right_page_num, separator_suffix_trunc, ctx);
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
+            return status;
         }
         if (status != Status::OK)
         {
             unpinIndexPage(parent_page_num, false, ctx);
+            releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                                 LockMode::LOCK_EXCLUSIVE, ctx);
             return status;
         }
 
@@ -2205,6 +2530,8 @@ namespace scratchbird::core
 
         // Unpin parent (mark as dirty)
         unpinIndexPage(parent_page_num, true, ctx);
+        releaseIndexPageLock(db_, index_info_.idx_uuid, parent_page_num,
+                             LockMode::LOCK_EXCLUSIVE, ctx);
 
         return Status::OK;
     }
@@ -2307,6 +2634,11 @@ namespace scratchbird::core
             // Update root header
             new_root_page->btr_count = 1;
             new_root_page->btr_free_space -= (node_size + sizeof(uint16_t));
+            new_root_page->btr_suffix_total = separator_suffix_trunc;
+            if (separator_suffix_trunc > 0)
+            {
+                new_root_page->btr_flags |= static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+            }
 
             // CRITICAL FIX: Set the rightmost child pointer to right_page_num
             // The root now has one separator key that points left to left_page_num (stored in

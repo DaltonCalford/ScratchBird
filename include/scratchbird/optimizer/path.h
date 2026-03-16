@@ -1538,6 +1538,17 @@ namespace scratchbird::optimizer
         {
         }
 
+        SortPath(std::shared_ptr<Path> input_path,
+                 const std::vector<AccessPathDescriptor::OrderingKey>& synthetic_keys,
+                 uint64_t row_width,
+                 const CostEstimate& cost)
+            : Path(PathType::SORT, cost),
+              input_path_(std::move(input_path)),
+              row_width_(row_width),
+              synthetic_ordering_keys_(synthetic_keys)
+        {
+        }
+
         /**
          * Get input path
          */
@@ -1551,6 +1562,19 @@ namespace scratchbird::optimizer
             return order_by_items_;
         }
 
+        const std::vector<AccessPathDescriptor::OrderingKey>& syntheticOrderingKeys()
+            const
+        {
+            return synthetic_ordering_keys_;
+        }
+
+        size_t sortKeyCount() const
+        {
+            return synthetic_ordering_keys_.empty()
+                       ? order_by_items_.size()
+                       : synthetic_ordering_keys_.size();
+        }
+
         /**
          * Get row width
          */
@@ -1561,7 +1585,7 @@ namespace scratchbird::optimizer
          */
         auto toString() const -> std::string override
         {
-            return "SortPath(keys=" + std::to_string(order_by_items_.size()) +
+            return "SortPath(keys=" + std::to_string(sortKeyCount()) +
                    ", cost=" + std::to_string(cost_.total_cost) +
                    ", rows=" + std::to_string(cost_.rows) + ")";
         }
@@ -1570,6 +1594,7 @@ namespace scratchbird::optimizer
         std::shared_ptr<Path> input_path_;
         std::vector<parser::v3::OrderByItem*> order_by_items_;
         uint64_t row_width_;
+        std::vector<AccessPathDescriptor::OrderingKey> synthetic_ordering_keys_;
     };
 
     class GatherPath : public Path

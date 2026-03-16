@@ -20,11 +20,28 @@
 #include "scratchbird/core/debug.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <queue>
 #include <sstream>
 
 namespace scratchbird::optimizer
 {
+namespace
+{
+    auto quantizePropertyScore(double value) -> int64_t
+    {
+        if (!std::isfinite(value))
+        {
+            return 0;
+        }
+        return static_cast<int64_t>(std::llround(value * 1000.0));
+    }
+
+    auto appendSignatureText(std::ostringstream& out, const std::string& text) -> void
+    {
+        out << text.size() << '#' << text << ';';
+    }
+} // namespace
 
 JoinOrderingOptimizer::JoinOrderingOptimizer(CostModel& cost_model,
                                              SelectivityEstimator& selectivity_estimator)
@@ -81,6 +98,49 @@ JoinSearchStrategy JoinOrderingOptimizer::chooseHeuristicStrategy() const
     return JoinSearchStrategy::HYPERGRAPH_GREEDY;
 }
 
+auto joinSearchPropertySignature(const AccessPathDescriptor& descriptor)
+    -> std::string
+{
+    std::ostringstream key;
+    key << static_cast<uint32_t>(descriptor.family_kind) << ':';
+    appendSignatureText(key, descriptor.family);
+    appendSignatureText(key, descriptor.path_name);
+    key << static_cast<uint32_t>(descriptor.exactness_class) << ':'
+        << static_cast<uint32_t>(descriptor.visibility_enforcement) << ':'
+        << static_cast<uint32_t>(descriptor.queryability_state) << ':'
+        << static_cast<uint32_t>(descriptor.requires_recheck ? 1U : 0U) << ':'
+        << static_cast<uint32_t>(descriptor.parameterized ? 1U : 0U) << ':'
+        << static_cast<uint32_t>(descriptor.ordered_output ? 1U : 0U) << ':'
+        << descriptor.ordered_prefix_length << ':'
+        << static_cast<uint32_t>(descriptor.order_complete ? 1U : 0U) << ':'
+        << quantizePropertyScore(descriptor.coverage_fraction) << ':'
+        << quantizePropertyScore(descriptor.interesting_order_score) << ':';
+
+    key << descriptor.ordering_keys.size() << ':';
+    for (const auto& ordering_key : descriptor.ordering_keys)
+    {
+        appendSignatureText(key, ordering_key.expression_text);
+        key << static_cast<uint32_t>(ordering_key.descending ? 1U : 0U) << ':'
+            << static_cast<uint32_t>(ordering_key.nulls_first ? 1U : 0U) << ':';
+        appendSignatureText(key, ordering_key.comparator_family);
+    }
+
+    auto family_tags = descriptor.family_tags;
+    std::sort(family_tags.begin(), family_tags.end());
+    key << family_tags.size() << ':';
+    for (const auto& tag : family_tags)
+    {
+        appendSignatureText(key, tag);
+    }
+
+    key << descriptor.required_outer_relation_indexes.size() << ':';
+    for (size_t relation_index : descriptor.required_outer_relation_indexes)
+    {
+        key << relation_index << ',';
+    }
+    return key.str();
+}
+
 auto JoinOrderingOptimizer::frontierSignature(const DPEntry& entry) const
     -> std::string
 {
@@ -89,19 +149,7 @@ auto JoinOrderingOptimizer::frontierSignature(const DPEntry& entry) const
         return "NULL";
     }
 
-    const auto& descriptor = entry.best_path->accessDescriptor();
-    std::ostringstream key;
-    key << static_cast<uint32_t>(descriptor.exactness_class) << ':'
-        << static_cast<uint32_t>(descriptor.requires_recheck ? 1U : 0U) << ':'
-        << static_cast<uint32_t>(descriptor.parameterized ? 1U : 0U) << ':'
-        << static_cast<uint32_t>(descriptor.ordered_output ? 1U : 0U) << ':'
-        << descriptor.ordered_prefix_length << ':'
-        << static_cast<uint32_t>(descriptor.order_complete ? 1U : 0U) << ':';
-    for (size_t relation_index : descriptor.required_outer_relation_indexes)
-    {
-        key << relation_index << ',';
-    }
-    return key.str();
+    return joinSearchPropertySignature(entry.best_path->accessDescriptor());
 }
 
 void JoinOrderingOptimizer::pushFrontierEntry(DPFrontier& frontier, DPEntry entry)
@@ -619,9 +667,12 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
     {
         // Find the next best relation to join
         double best_cost = std::numeric_limits<double>::max();
+        uint64_t best_rows = std::numeric_limits<uint64_t>::max();
         size_t best_rel = 0;
-        DPEntry best_join_entry;
+        size_t best_frontier_size = 0;
+        DPFrontier best_frontier;
         size_t round_candidates = 0;
+        size_t round_retained = 0;
 
         for (size_t i = 0; i < relations_.size(); ++i)
         {
@@ -631,6 +682,8 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
             {
                 continue;
             }
+
+            DPFrontier candidate_frontier;
 
             // Find join edge connecting current set to this relation
             for (size_t e = 0; e < join_edges_.size(); ++e)
@@ -651,27 +704,48 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
                 }
 
                 if (!connects) continue;
+                bool evaluated_edge = false;
+                for (const auto& left_entry : current_frontier)
                 for (const auto& relation_entry : relation_frontier)
                 {
                     ++telemetry_.pair_evaluation_count;
                     ++round_candidates;
-                    const auto join_entry = costJoin(current_entry,
+                    const auto join_entry = costJoin(left_entry,
                                                      relation_entry,
                                                      edge,
                                                      ctx,
                                                      true);
-                    if (!join_entry.best_path || join_entry.cost >= best_cost)
-                    {
-                        continue;
-                    }
-                    best_cost = join_entry.cost;
+                    pushFrontierEntry(candidate_frontier, join_entry);
+                    evaluated_edge = true;
+                }
+                if (evaluated_edge)
+                {
+                    continue;
+                }
+            }
+
+            if (!candidate_frontier.empty())
+            {
+                round_retained += candidate_frontier.size();
+                const auto* candidate_best = frontierBestEntry(candidate_frontier);
+                if (candidate_best != nullptr &&
+                    (candidate_best->cost < best_cost ||
+                     (candidate_best->cost == best_cost &&
+                      candidate_best->rows < best_rows) ||
+                     (candidate_best->cost == best_cost &&
+                      candidate_best->rows == best_rows &&
+                      candidate_frontier.size() > best_frontier_size)))
+                {
+                    best_cost = candidate_best->cost;
+                    best_rows = candidate_best->rows;
                     best_rel = i;
-                    best_join_entry = join_entry;
+                    best_frontier_size = candidate_frontier.size();
+                    best_frontier = std::move(candidate_frontier);
                 }
             }
         }
 
-        if (!best_join_entry.best_path)
+        if (best_frontier.empty())
         {
             // No connecting edge found - bridge the next disconnected component
             // with the cheapest explicit cross join.
@@ -679,41 +753,66 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
             {
                 if (joined[i]) continue;
                 const auto relation_frontier = baseFrontierForRelation(relations_[i]);
-                for (const auto& relation_entry : relation_frontier)
+                DPFrontier candidate_frontier;
+                for (const auto& left_entry : current_frontier)
                 {
-                    ++telemetry_.pair_evaluation_count;
-                    ++round_candidates;
-                    const auto join_entry =
-                        costCrossJoin(current_entry, relation_entry, ctx);
-                    if (!join_entry.best_path || join_entry.cost >= best_cost)
+                    for (const auto& relation_entry : relation_frontier)
                     {
-                        continue;
+                        ++telemetry_.pair_evaluation_count;
+                        ++round_candidates;
+                        const auto join_entry =
+                            costCrossJoin(left_entry, relation_entry, ctx);
+                        pushFrontierEntry(candidate_frontier, join_entry);
                     }
+                }
 
-                    best_cost = join_entry.cost;
+                if (candidate_frontier.empty())
+                {
+                    continue;
+                }
+
+                round_retained += candidate_frontier.size();
+                const auto* candidate_best = frontierBestEntry(candidate_frontier);
+                if (candidate_best != nullptr &&
+                    (candidate_best->cost < best_cost ||
+                     (candidate_best->cost == best_cost &&
+                      candidate_best->rows < best_rows) ||
+                     (candidate_best->cost == best_cost &&
+                      candidate_best->rows == best_rows &&
+                      candidate_frontier.size() > best_frontier_size)))
+                {
+                    best_cost = candidate_best->cost;
+                    best_rows = candidate_best->rows;
                     best_rel = i;
-                    best_join_entry = join_entry;
+                    best_frontier_size = candidate_frontier.size();
+                    best_frontier = std::move(candidate_frontier);
                 }
             }
         }
 
-        if (best_join_entry.best_path)
+        if (!best_frontier.empty())
         {
             joined[best_rel] = true;
-            current_entry = best_join_entry;
+            current_frontier = std::move(best_frontier);
+            current_best = frontierBestEntry(current_frontier);
+            if (current_best == nullptr)
+            {
+                return nullptr;
+            }
+            current_entry = *current_best;
 
             DEBUG_LOG_DB("JoinOrdering: Greedy added " + relations_[best_rel].table_name +
-                         ", total cost=" + std::to_string(best_join_entry.cost));
+                         ", total cost=" + std::to_string(current_entry.cost));
         }
 
         telemetry_.considered_state_count += round_candidates;
-        if (round_candidates > 1)
+        if (round_candidates > round_retained)
         {
-            telemetry_.pruned_state_count += round_candidates - 1;
+            telemetry_.pruned_state_count += round_candidates - round_retained;
         }
     }
 
-    return current_entry.best_path;
+    return frontierBestPath(current_frontier);
 }
 
 std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(

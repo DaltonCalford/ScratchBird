@@ -147,6 +147,11 @@ namespace scratchbird::optimizer
                                      ExpressionStatistics &stats_out,
                                      ErrorContext *ctx = nullptr) -> Status;
 
+        auto getMultivariateStatistics(const ID &table_id,
+                                       const std::vector<ID> &column_ids,
+                                       MultivariateStatistics &stats_out,
+                                       ErrorContext *ctx = nullptr) -> Status;
+
         /**
          * dropStatistics - Remove statistics for a table
          *
@@ -200,6 +205,7 @@ namespace scratchbird::optimizer
         std::unordered_map<uint64_t, TableStatistics> table_stats_cache_;
         std::unordered_map<std::string, ColumnCorrelationStatistics> correlation_stats_cache_;
         std::unordered_map<std::string, ExpressionStatistics> expression_stats_cache_;
+        std::unordered_map<std::string, MultivariateStatistics> multivariate_stats_cache_;
         std::unordered_map<uint64_t, IndexFamilyMetricsPacket> index_family_metrics_cache_;
         mutable std::mutex cache_mutex_;
 
@@ -349,6 +355,9 @@ namespace scratchbird::optimizer
         auto getExpressionCacheKey(const ID &table_id,
                                    const std::string &expression_key) const -> std::string;
 
+        auto getMultivariateCacheKey(const ID &table_id,
+                                     const std::vector<ID> &column_ids) const -> std::string;
+
         static auto makeSyntheticStatisticId(const ID &table_id,
                                              const std::string &kind,
                                              const std::string &key) -> ID;
@@ -364,6 +373,14 @@ namespace scratchbird::optimizer
                                       const ID &right_column_id,
                                       ColumnCorrelationStatistics &stats_out,
                                       ErrorContext *ctx = nullptr) -> Status;
+
+        auto storeMultivariateStatistics(const MultivariateStatistics &stats,
+                                         ErrorContext *ctx = nullptr) -> Status;
+
+        auto loadMultivariateStatistics(const ID &table_id,
+                                        const std::vector<ID> &column_ids,
+                                        MultivariateStatistics &stats_out,
+                                        ErrorContext *ctx = nullptr) -> Status;
 
         auto maybeAutoAnalyze(const ID &table_id,
                               AnalyzeLifecycleDecision *decision_out = nullptr,
@@ -405,6 +422,14 @@ namespace scratchbird::optimizer
             const std::vector<core::CatalogManager::ColumnInfo> &columns,
             const std::vector<std::vector<uint8_t>> &sample_rows,
             uint64_t analyzed_time,
+            ErrorContext *ctx = nullptr) -> void;
+
+        auto computeMultivariateStatistics(
+            const ID &table_id,
+            const std::vector<core::CatalogManager::ColumnInfo> &columns,
+            const std::vector<std::vector<uint8_t>> &sample_rows,
+            uint64_t analyzed_time,
+            uint64_t table_row_estimate,
             ErrorContext *ctx = nullptr) -> void;
     };
 

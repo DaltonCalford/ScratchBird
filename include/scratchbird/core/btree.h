@@ -174,6 +174,8 @@ namespace scratchbird
             BTree(Database *db, SBBTreeIndex index_info);
             ~BTree();
 
+            const SBBTreeIndex &getIndexInfo() const { return index_info_; }
+
             // Static factory methods
             static Status create(Database *db, const UuidV7Bytes &index_uuid,
                                  const UuidV7Bytes &table_uuid,
@@ -342,8 +344,8 @@ namespace scratchbird
             Status find_leaf_page(const std::vector<uint8_t> &key, uint64_t *page_num_out,
                                   bool write_lock, ErrorContext *ctx);
 
-            // Searches for a key within a single B-Tree page using binary search.
-            // Firebird MGA: Uses TIP-based visibility filtering
+            // Searches for a key within a single B-Tree leaf page by using the
+            // page's restart-anchor contract and TIP-based visibility filtering.
             // Per MGA_RULES.md Rule 11: Use TransactionId, NOT Snapshot*
             bool searchPage(const SBBTreePage *page, const std::vector<uint8_t> &key,
                             uint64_t current_xid,
@@ -369,6 +371,11 @@ namespace scratchbird
                                    uint64_t right_page_num,
                                    uint16_t separator_suffix_trunc,
                                    ErrorContext *ctx);
+            Status updateSplitSiblingLinks(uint64_t left_page_num,
+                                           uint64_t right_page_num,
+                                           SBBTreePage *left_page,
+                                           SBBTreePage *right_page,
+                                           ErrorContext *ctx);
 
             // Firebird MGA: TIP-based visibility checking for index entries
             /**

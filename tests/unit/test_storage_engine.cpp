@@ -745,6 +745,32 @@ TEST_F(StorageEngineTest, IndexScanFiltersHeapInvisibleOrMismatchedCandidates)
     EXPECT_EQ(scan->next(&found, &ctx), Status::NOT_FOUND);
 }
 
+TEST_F(StorageEngineTest, BTreeOpenHydratesCatalogMetadataWhenIndexExists)
+{
+    ErrorContext ctx;
+    ID table_id = createSingleIntTable("btree_open_catalog_metadata");
+    ID index_id = createSingleIntIndex(table_id, "uq_btree_open_catalog_metadata", true);
+
+    CatalogManager::IndexInfo catalog_index;
+    ASSERT_EQ(db_->catalog_manager()->getIndex(index_id, catalog_index, &ctx), Status::OK)
+        << ctx.message;
+
+    auto btree = BTree::open(db_.get(), index_id, catalog_index.root_gpid, &ctx);
+    ASSERT_NE(btree, nullptr) << ctx.message;
+
+    const auto &open_info = btree->getIndexInfo();
+    EXPECT_EQ(open_info.idx_uuid, catalog_index.index_id);
+    EXPECT_EQ(open_info.idx_table_uuid, catalog_index.table_id);
+    ASSERT_EQ(open_info.idx_column_ids.size(), catalog_index.column_ids.size());
+    ASSERT_EQ(open_info.idx_column_ids.size(), 1u);
+    EXPECT_EQ(open_info.idx_column_ids.front(), catalog_index.column_ids.front());
+    EXPECT_EQ(open_info.idx_root_page,
+              static_cast<uint64_t>(getPageNumber(catalog_index.root_gpid)));
+    EXPECT_EQ(open_info.idx_tablespace_id, catalog_index.tablespace_id);
+    EXPECT_EQ(open_info.idx_collation_id, catalog_index.collation_id);
+    EXPECT_EQ(open_info.idx_flags & 1u, 1u);
+}
+
 TEST_F(StorageEngineTest, UniqueInsertIgnoresStaleIndexEntryWithMismatchedHeapKey)
 {
     ErrorContext ctx;

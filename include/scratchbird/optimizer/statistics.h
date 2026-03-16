@@ -263,6 +263,46 @@ namespace scratchbird::optimizer
         ColumnStatistics stats;
     };
 
+    struct MultivariateMCVEntry
+    {
+        std::vector<std::vector<uint8_t>> values;
+        float frequency = 0.0f;
+    };
+
+    struct MultiColumnNDistinctStatistics
+    {
+        std::vector<ID> column_ids;
+        std::vector<std::string> column_names;
+        uint64_t num_distinct = 0;
+        double distinct_fraction = 0.0;
+        uint64_t sample_size = 0;
+        uint64_t last_analyzed_time = 0;
+    };
+
+    struct FunctionalDependencyStatistics
+    {
+        std::vector<ID> determinant_column_ids;
+        std::vector<ID> dependent_column_ids;
+        std::vector<std::string> determinant_column_names;
+        std::vector<std::string> dependent_column_names;
+        double strength = 0.0;
+        uint64_t sample_size = 0;
+        uint64_t last_analyzed_time = 0;
+    };
+
+    struct MultivariateStatistics
+    {
+        ID table_id;
+        std::vector<ID> column_ids;
+        std::vector<std::string> column_names;
+        uint64_t sample_size = 0;
+        uint64_t last_analyzed_time = 0;
+        MultiColumnNDistinctStatistics ndistinct;
+        std::vector<MultivariateMCVEntry> mcv_list;
+        std::vector<FunctionalDependencyStatistics> dependencies;
+        std::vector<ColumnCorrelationStatistics> pairwise_correlations;
+    };
+
     struct IndexFamilyMetricsPacket
     {
         ID index_id;

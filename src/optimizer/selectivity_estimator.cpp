@@ -30,6 +30,18 @@ namespace scratchbird::optimizer
             uint16_t data_type = 0;
         };
 
+        struct EqualityPredicateTerm
+        {
+            ResolvedColumnRef column;
+            std::vector<uint8_t> value;
+        };
+
+        struct JoinEqualityColumnPair
+        {
+            core::ID left_column_id{};
+            core::ID right_column_id{};
+        };
+
         auto isZeroId(const core::ID &id) -> bool
         {
             return id == core::ID{};
@@ -835,7 +847,627 @@ namespace scratchbird::optimizer
             }
             return literal;
         }
+
+        auto resolveEqualityPredicateTerm(core::Database *db,
+                                          const core::ID &table_id,
+                                          const parser::v3::Expression *expr,
+                                          const parser::v3::StringPool *pool,
+                                          const ParameterBindings *bindings,
+                                          EqualityPredicateTerm &out,
+                                          core::ErrorContext *ctx) -> bool
+        {
+            const auto *current = unwrapCasts(expr);
+            if (current == nullptr ||
+                current->kind() != parser::v3::ASTKind::BinaryExpr)
+            {
+                return false;
+            }
+
+            const auto *binary = static_cast<const parser::v3::BinaryExpr *>(current);
+            if (binary->op != parser::v3::BinaryOp::EQ)
+            {
+                return false;
+            }
+
+            auto try_resolve =
+                [&](const parser::v3::Expression *column_expr,
+                    const parser::v3::Expression *literal_expr) -> bool {
+                    auto column = resolveColumnRef(db, table_id, column_expr, pool, ctx);
+                    if (!column.has_value())
+                    {
+                        return false;
+                    }
+
+                    std::vector<uint8_t> encoded_value;
+                    if (!literalExprToBytes(literal_expr,
+                                            pool,
+                                            bindings,
+                                            column->data_type,
+                                            encoded_value))
+                    {
+                        return false;
+                    }
+
+                    out.column = *column;
+                    out.value = std::move(encoded_value);
+                    return true;
+                };
+
+            return try_resolve(binary->left, binary->right) ||
+                   try_resolve(binary->right, binary->left);
+        }
+
+        auto collectEquiJoinPairs(core::Database *db,
+                                  const core::ID &left_table_id,
+                                  const core::ID &right_table_id,
+                                  const parser::v3::Expression *expr,
+                                  const parser::v3::StringPool *pool,
+                                  std::vector<JoinEqualityColumnPair> &pairs_out,
+                                  core::ErrorContext *ctx) -> bool
+        {
+            const auto *current = unwrapCasts(expr);
+            if (current == nullptr)
+            {
+                return false;
+            }
+
+            if (current->kind() != parser::v3::ASTKind::BinaryExpr)
+            {
+                return false;
+            }
+
+            const auto *binary = static_cast<const parser::v3::BinaryExpr *>(current);
+            if (binary->op == parser::v3::BinaryOp::AND)
+            {
+                const size_t baseline = pairs_out.size();
+                if (!collectEquiJoinPairs(db,
+                                          left_table_id,
+                                          right_table_id,
+                                          binary->left,
+                                          pool,
+                                          pairs_out,
+                                          ctx) ||
+                    !collectEquiJoinPairs(db,
+                                          left_table_id,
+                                          right_table_id,
+                                          binary->right,
+                                          pool,
+                                          pairs_out,
+                                          ctx))
+                {
+                    pairs_out.resize(baseline);
+                    return false;
+                }
+                return pairs_out.size() > baseline;
+            }
+
+            if (binary->op != parser::v3::BinaryOp::EQ)
+            {
+                return false;
+            }
+
+            JoinEqualityColumnPair pair;
+            if (!resolveColumnPairForJoin(db,
+                                          left_table_id,
+                                          right_table_id,
+                                          binary->left,
+                                          binary->right,
+                                          pool,
+                                          pair.left_column_id,
+                                          pair.right_column_id,
+                                          ctx))
+            {
+                return false;
+            }
+
+            pairs_out.push_back(pair);
+            return true;
+        }
+
+        auto reorderMultivariateValues(const std::vector<core::ID> &source_column_ids,
+                                       const std::vector<std::vector<uint8_t>> &source_values,
+                                       const std::vector<core::ID> &target_column_ids,
+                                       std::vector<std::vector<uint8_t>> &values_out) -> bool
+        {
+            if (source_column_ids.size() != source_values.size())
+            {
+                return false;
+            }
+
+            values_out.clear();
+            values_out.reserve(target_column_ids.size());
+            for (const auto &target_column_id : target_column_ids)
+            {
+                const auto it =
+                    std::find(source_column_ids.begin(), source_column_ids.end(), target_column_id);
+                if (it == source_column_ids.end())
+                {
+                    return false;
+                }
+                const size_t index =
+                    static_cast<size_t>(std::distance(source_column_ids.begin(), it));
+                values_out.push_back(source_values[index]);
+            }
+            return true;
+        }
+
+        auto valuesMatch(const std::vector<std::vector<uint8_t>> &left_values,
+                         const std::vector<std::vector<uint8_t>> &right_values) -> bool
+        {
+            if (left_values.size() != right_values.size())
+            {
+                return false;
+            }
+            for (size_t index = 0; index < left_values.size(); ++index)
+            {
+                if (left_values[index] != right_values[index])
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto bestDependencyStrength(const MultivariateStatistics &stats,
+                                    const core::ID &first_column_id,
+                                    const core::ID &second_column_id) -> double
+        {
+            double strength = 0.0;
+            for (const auto &dependency : stats.dependencies)
+            {
+                if (dependency.determinant_column_ids.size() != 1 ||
+                    dependency.dependent_column_ids.size() != 1)
+                {
+                    continue;
+                }
+
+                const core::ID determinant = dependency.determinant_column_ids.front();
+                const core::ID dependent = dependency.dependent_column_ids.front();
+                if ((determinant == first_column_id && dependent == second_column_id) ||
+                    (determinant == second_column_id && dependent == first_column_id))
+                {
+                    strength = std::max(strength, dependency.strength);
+                }
+            }
+            return std::max(0.0, std::min(1.0, strength));
+        }
+
+        auto averageRemainingFrequency(const MultivariateStatistics &stats) -> double
+        {
+            double mcv_total = 0.0;
+            for (const auto &entry : stats.mcv_list)
+            {
+                mcv_total += entry.frequency;
+            }
+
+            if (stats.ndistinct.num_distinct == 0 ||
+                stats.ndistinct.num_distinct <= stats.mcv_list.size())
+            {
+                return 0.0;
+            }
+
+            const uint64_t remaining_distinct =
+                stats.ndistinct.num_distinct - static_cast<uint64_t>(stats.mcv_list.size());
+            if (remaining_distinct == 0)
+            {
+                return 0.0;
+            }
+
+            const double remaining_mass = std::max(0.0, 1.0 - mcv_total);
+            return remaining_mass / static_cast<double>(remaining_distinct);
+        }
+
+        auto singleColumnMcvOverlapSelectivity(const ColumnStatistics &left_stats,
+                                               const ColumnStatistics &right_stats) -> double
+        {
+            double overlap = 0.0;
+            double left_mcv_total = 0.0;
+            double right_mcv_total = 0.0;
+
+            for (const auto &left_entry : left_stats.mcv_list)
+            {
+                left_mcv_total += left_entry.frequency;
+                for (const auto &right_entry : right_stats.mcv_list)
+                {
+                    if (left_entry.value_data == right_entry.value_data)
+                    {
+                        overlap += static_cast<double>(left_entry.frequency) *
+                                   static_cast<double>(right_entry.frequency);
+                    }
+                }
+            }
+
+            for (const auto &right_entry : right_stats.mcv_list)
+            {
+                right_mcv_total += right_entry.frequency;
+            }
+
+            const double left_remaining_mass =
+                std::max(0.0, 1.0 - left_mcv_total - left_stats.null_fraction);
+            const double right_remaining_mass =
+                std::max(0.0, 1.0 - right_mcv_total - right_stats.null_fraction);
+
+            const uint64_t left_remaining_distinct =
+                left_stats.num_distinct > left_stats.mcv_list.size()
+                    ? (left_stats.num_distinct -
+                       static_cast<uint64_t>(left_stats.mcv_list.size()))
+                    : 0;
+            const uint64_t right_remaining_distinct =
+                right_stats.num_distinct > right_stats.mcv_list.size()
+                    ? (right_stats.num_distinct -
+                       static_cast<uint64_t>(right_stats.mcv_list.size()))
+                    : 0;
+
+            double unseen = 0.0;
+            if (left_remaining_distinct > 0 && right_remaining_distinct > 0)
+            {
+                unseen = (left_remaining_mass * right_remaining_mass) /
+                         static_cast<double>(
+                             std::max(left_remaining_distinct, right_remaining_distinct));
+            }
+
+            return std::max(0.0, std::min(1.0, overlap + unseen));
+        }
+
+        auto multivariateMcvOverlapSelectivity(const MultivariateStatistics &left_stats,
+                                               const std::vector<core::ID> &left_join_columns,
+                                               const MultivariateStatistics &right_stats,
+                                               const std::vector<core::ID> &right_join_columns)
+            -> double
+        {
+            double overlap = 0.0;
+            double left_mcv_total = 0.0;
+            double right_mcv_total = 0.0;
+
+            std::vector<std::vector<uint8_t>> left_values;
+            std::vector<std::vector<uint8_t>> right_values;
+
+            for (const auto &left_entry : left_stats.mcv_list)
+            {
+                left_mcv_total += left_entry.frequency;
+                if (!reorderMultivariateValues(left_stats.column_ids,
+                                               left_entry.values,
+                                               left_join_columns,
+                                               left_values))
+                {
+                    continue;
+                }
+
+                for (const auto &right_entry : right_stats.mcv_list)
+                {
+                    if (!reorderMultivariateValues(right_stats.column_ids,
+                                                   right_entry.values,
+                                                   right_join_columns,
+                                                   right_values))
+                    {
+                        continue;
+                    }
+                    if (valuesMatch(left_values, right_values))
+                    {
+                        overlap += static_cast<double>(left_entry.frequency) *
+                                   static_cast<double>(right_entry.frequency);
+                    }
+                }
+            }
+
+            for (const auto &right_entry : right_stats.mcv_list)
+            {
+                right_mcv_total += right_entry.frequency;
+            }
+
+            const uint64_t left_remaining_distinct =
+                left_stats.ndistinct.num_distinct > left_stats.mcv_list.size()
+                    ? (left_stats.ndistinct.num_distinct -
+                       static_cast<uint64_t>(left_stats.mcv_list.size()))
+                    : 0;
+            const uint64_t right_remaining_distinct =
+                right_stats.ndistinct.num_distinct > right_stats.mcv_list.size()
+                    ? (right_stats.ndistinct.num_distinct -
+                       static_cast<uint64_t>(right_stats.mcv_list.size()))
+                    : 0;
+
+            double unseen = 0.0;
+            if (left_remaining_distinct > 0 && right_remaining_distinct > 0)
+            {
+                unseen =
+                    (std::max(0.0, 1.0 - left_mcv_total) *
+                     std::max(0.0, 1.0 - right_mcv_total)) /
+                    static_cast<double>(
+                        std::max(left_remaining_distinct, right_remaining_distinct));
+            }
+
+            return std::max(0.0, std::min(1.0, overlap + unseen));
+        }
     } // namespace
+
+    auto SelectivityEstimator::hasSampledRefresh(const core::ID &table_id) const -> bool
+    {
+        return std::find(sampled_refresh_tables_.begin(),
+                         sampled_refresh_tables_.end(),
+                         table_id) != sampled_refresh_tables_.end();
+    }
+
+    auto SelectivityEstimator::rememberSampledRefresh(const core::ID &table_id) -> void
+    {
+        if (!hasSampledRefresh(table_id))
+        {
+            sampled_refresh_tables_.push_back(table_id);
+        }
+    }
+
+    auto SelectivityEstimator::maybeRefreshTableSample(const core::ID &table_id,
+                                                       const ColumnStatistics &stats,
+                                                       core::ErrorContext *ctx)
+        -> core::Status
+    {
+        if (stats_manager_ == nullptr || isZeroId(table_id) || hasSampledRefresh(table_id))
+        {
+            return core::Status::OK;
+        }
+
+        const bool needs_refresh =
+            stats.last_analyzed_time == 0 ||
+            stats.staleness_class == StatisticsStalenessClass::STALE ||
+            stats.staleness_class == StatisticsStalenessClass::EXPIRED ||
+            stats.confidence_class == StatisticsConfidenceClass::LOW;
+        if (!needs_refresh)
+        {
+            return core::Status::OK;
+        }
+
+        core::ErrorContext refresh_ctx;
+        const core::Status refresh_status =
+            stats_manager_->analyzeTable(table_id, 0.25f, &refresh_ctx);
+        if (refresh_status != core::Status::OK)
+        {
+            if (ctx != nullptr && ctx->message.empty())
+            {
+                ctx->message = refresh_ctx.message;
+            }
+            return refresh_status;
+        }
+
+        rememberSampledRefresh(table_id);
+        return core::Status::OK;
+    }
+
+    auto SelectivityEstimator::ensureColumnStatisticsForEstimation(const core::ID &table_id,
+                                                                   const core::ID &column_id,
+                                                                   ColumnStatistics &stats,
+                                                                   core::ErrorContext *ctx)
+        -> core::Status
+    {
+        if (stats_manager_ == nullptr)
+        {
+            return core::Status::INVALID_ARGUMENT;
+        }
+
+        core::Status status =
+            stats_manager_->getColumnStatistics(table_id, column_id, stats, ctx);
+        if (status != core::Status::OK)
+        {
+            return status;
+        }
+
+        const bool needs_refresh =
+            stats.last_analyzed_time == 0 ||
+            stats.staleness_class == StatisticsStalenessClass::STALE ||
+            stats.staleness_class == StatisticsStalenessClass::EXPIRED ||
+            stats.confidence_class == StatisticsConfidenceClass::LOW;
+        if (!needs_refresh)
+        {
+            return core::Status::OK;
+        }
+
+        status = maybeRefreshTableSample(table_id, stats, ctx);
+        if (status != core::Status::OK || !hasSampledRefresh(table_id))
+        {
+            return status;
+        }
+
+        return stats_manager_->getColumnStatistics(table_id, column_id, stats, ctx);
+    }
+
+    auto SelectivityEstimator::estimateDependencyAwareConjunction(
+        const parser::v3::Expression *left_expr,
+        const parser::v3::Expression *right_expr,
+        const core::ID &table_id,
+        const parser::v3::StringPool *pool,
+        core::ErrorContext *ctx) -> std::optional<double>
+    {
+        if (stats_manager_ == nullptr || db_ == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        EqualityPredicateTerm left_term;
+        EqualityPredicateTerm right_term;
+        if (!resolveEqualityPredicateTerm(db_,
+                                          table_id,
+                                          left_expr,
+                                          pool,
+                                          parameter_bindings_,
+                                          left_term,
+                                          ctx) ||
+            !resolveEqualityPredicateTerm(db_,
+                                          table_id,
+                                          right_expr,
+                                          pool,
+                                          parameter_bindings_,
+                                          right_term,
+                                          ctx))
+        {
+            return std::nullopt;
+        }
+
+        if (left_term.column.column_id == right_term.column.column_id)
+        {
+            return std::nullopt;
+        }
+
+        ColumnStatistics left_stats;
+        ColumnStatistics right_stats;
+        if (ensureColumnStatisticsForEstimation(table_id,
+                                                left_term.column.column_id,
+                                                left_stats,
+                                                ctx) != core::Status::OK ||
+            ensureColumnStatisticsForEstimation(table_id,
+                                                right_term.column.column_id,
+                                                right_stats,
+                                                ctx) != core::Status::OK)
+        {
+            return std::nullopt;
+        }
+
+        MultivariateStatistics multivariate_stats;
+        if (stats_manager_->getMultivariateStatistics(table_id,
+                                                      {left_term.column.column_id,
+                                                       right_term.column.column_id},
+                                                      multivariate_stats,
+                                                      ctx) != core::Status::OK)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<std::vector<uint8_t>> ordered_values;
+        if (!reorderMultivariateValues({left_term.column.column_id, right_term.column.column_id},
+                                       {left_term.value, right_term.value},
+                                       multivariate_stats.column_ids,
+                                       ordered_values))
+        {
+            return std::nullopt;
+        }
+
+        double mcv_total = 0.0;
+        for (const auto &entry : multivariate_stats.mcv_list)
+        {
+            mcv_total += entry.frequency;
+            if (valuesMatch(entry.values, ordered_values))
+            {
+                return std::max(0.0, std::min(1.0, static_cast<double>(entry.frequency)));
+            }
+        }
+
+        if (multivariate_stats.ndistinct.num_distinct > 0 &&
+            multivariate_stats.ndistinct.num_distinct <= multivariate_stats.mcv_list.size())
+        {
+            return 0.0;
+        }
+
+        const double left_sel =
+            estimateEquality(table_id, left_term.column.column_id, left_term.value, ctx);
+        const double right_sel =
+            estimateEquality(table_id, right_term.column.column_id, right_term.value, ctx);
+        const double base = std::max(0.0, std::min(1.0, left_sel * right_sel));
+        const double dependency_strength =
+            bestDependencyStrength(multivariate_stats,
+                                   left_term.column.column_id,
+                                   right_term.column.column_id);
+        double combined =
+            base + dependency_strength * (std::min(left_sel, right_sel) - base);
+
+        const double average_remaining = averageRemainingFrequency(multivariate_stats);
+        if (average_remaining > 0.0)
+        {
+            combined = std::max(combined, average_remaining);
+        }
+
+        return std::max(0.0, std::min(std::min(left_sel, right_sel), combined));
+    }
+
+    auto SelectivityEstimator::estimateMultiColumnJoinSelectivity(
+        const parser::v3::Expression *join_condition,
+        const core::ID &left_table_id,
+        const core::ID &right_table_id,
+        const parser::v3::StringPool *pool,
+        core::ErrorContext *ctx) -> std::optional<double>
+    {
+        if (stats_manager_ == nullptr || db_ == nullptr)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<JoinEqualityColumnPair> join_pairs;
+        if (!collectEquiJoinPairs(db_,
+                                  left_table_id,
+                                  right_table_id,
+                                  join_condition,
+                                  pool,
+                                  join_pairs,
+                                  ctx) ||
+            join_pairs.size() < 2)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<core::ID> left_join_columns;
+        std::vector<core::ID> right_join_columns;
+        left_join_columns.reserve(join_pairs.size());
+        right_join_columns.reserve(join_pairs.size());
+        for (const auto &pair : join_pairs)
+        {
+            left_join_columns.push_back(pair.left_column_id);
+            right_join_columns.push_back(pair.right_column_id);
+        }
+
+        for (const auto &column_id : left_join_columns)
+        {
+            ColumnStatistics column_stats;
+            if (ensureColumnStatisticsForEstimation(left_table_id,
+                                                    column_id,
+                                                    column_stats,
+                                                    ctx) != core::Status::OK)
+            {
+                return std::nullopt;
+            }
+        }
+
+        for (const auto &column_id : right_join_columns)
+        {
+            ColumnStatistics column_stats;
+            if (ensureColumnStatisticsForEstimation(right_table_id,
+                                                    column_id,
+                                                    column_stats,
+                                                    ctx) != core::Status::OK)
+            {
+                return std::nullopt;
+            }
+        }
+
+        MultivariateStatistics left_stats;
+        MultivariateStatistics right_stats;
+        if (stats_manager_->getMultivariateStatistics(left_table_id,
+                                                      left_join_columns,
+                                                      left_stats,
+                                                      ctx) != core::Status::OK ||
+            stats_manager_->getMultivariateStatistics(right_table_id,
+                                                      right_join_columns,
+                                                      right_stats,
+                                                      ctx) != core::Status::OK)
+        {
+            return std::nullopt;
+        }
+
+        const double selectivity =
+            multivariateMcvOverlapSelectivity(left_stats,
+                                              left_join_columns,
+                                              right_stats,
+                                              right_join_columns);
+        if (left_stats.ndistinct.num_distinct > 0 || right_stats.ndistinct.num_distinct > 0 ||
+            !left_stats.mcv_list.empty() || !right_stats.mcv_list.empty())
+        {
+            return selectivity;
+        }
+
+        if (left_stats.ndistinct.num_distinct == 0 || right_stats.ndistinct.num_distinct == 0)
+        {
+            return std::nullopt;
+        }
+
+        return 1.0 /
+               static_cast<double>(std::max(left_stats.ndistinct.num_distinct,
+                                            right_stats.ndistinct.num_distinct));
+    }
 
     auto SelectivityEstimator::estimateWhereClause(
         const parser::v3::Expression *where_clause,
@@ -864,6 +1496,17 @@ namespace scratchbird::optimizer
                 double left_sel = estimateWhereClause(binary->left, table_id, pool, ctx);
                 double right_sel = estimateWhereClause(binary->right, table_id, pool, ctx);
                 double combined = estimateAnd(left_sel, right_sel);
+
+                if (auto dependency_aware =
+                        estimateDependencyAwareConjunction(binary->left,
+                                                           binary->right,
+                                                           table_id,
+                                                           pool,
+                                                           ctx);
+                    dependency_aware.has_value())
+                {
+                    return *dependency_aware;
+                }
 
                 if (stats_manager_ != nullptr)
                 {
@@ -1153,8 +1796,8 @@ namespace scratchbird::optimizer
 
         // Get column statistics
         ColumnStatistics col_stats;
-        core::Status status = stats_manager_->getColumnStatistics(
-            table_id, column_id, col_stats, ctx);
+        core::Status status =
+            ensureColumnStatisticsForEstimation(table_id, column_id, col_stats, ctx);
 
         if (status != core::Status::OK)
         {
@@ -1242,8 +1885,8 @@ namespace scratchbird::optimizer
 
         // Get column statistics
         ColumnStatistics col_stats;
-        core::Status status = stats_manager_->getColumnStatistics(
-            table_id, column_id, col_stats, ctx);
+        core::Status status =
+            ensureColumnStatisticsForEstimation(table_id, column_id, col_stats, ctx);
 
         if (status != core::Status::OK || col_stats.histogram_buckets.empty())
         {
@@ -1672,6 +2315,20 @@ namespace scratchbird::optimizer
         const auto *expr = unwrapCasts(join_condition);
         if (auto* binary_expr = dynamic_cast<const parser::v3::BinaryExpr*>(expr))
         {
+            if (binary_expr->op == parser::v3::BinaryOp::AND)
+            {
+                if (auto multivariate_sel =
+                        estimateMultiColumnJoinSelectivity(join_condition,
+                                                           left_table_id,
+                                                           right_table_id,
+                                                           pool,
+                                                           ctx);
+                    multivariate_sel.has_value())
+                {
+                    return *multivariate_sel;
+                }
+            }
+
             // Check for equality (equi-join)
             if (binary_expr->op == parser::v3::BinaryOp::EQ)
             {
@@ -1757,10 +2414,10 @@ namespace scratchbird::optimizer
         // Get statistics for both columns
         ColumnStatistics left_stats, right_stats;
 
-        core::Status left_status = stats_manager_->getColumnStatistics(
-            left_table_id, left_col_id, left_stats, ctx);
-        core::Status right_status = stats_manager_->getColumnStatistics(
-            right_table_id, right_col_id, right_stats, ctx);
+        core::Status left_status =
+            ensureColumnStatisticsForEstimation(left_table_id, left_col_id, left_stats, ctx);
+        core::Status right_status =
+            ensureColumnStatisticsForEstimation(right_table_id, right_col_id, right_stats, ctx);
 
         if (left_status != core::Status::OK || right_status != core::Status::OK)
         {
@@ -1770,12 +2427,16 @@ namespace scratchbird::optimizer
             return DEFAULT_EQUALITY_SEL;
         }
 
-        // Equi-join selectivity formula:
-        // selectivity = 1 / MAX(n_distinct(left_col), n_distinct(right_col))
-        //
-        // Rationale: Each value in the smaller domain matches approximately
-        // 1/n_distinct of the larger domain
+        double selectivity = 0.0;
+        if (left_stats.num_distinct > 0 || right_stats.num_distinct > 0 ||
+            !left_stats.mcv_list.empty() || !right_stats.mcv_list.empty())
+        {
+            selectivity = singleColumnMcvOverlapSelectivity(left_stats, right_stats);
+            return selectivity;
+        }
 
+        // Equi-join selectivity formula fallback:
+        // selectivity = 1 / MAX(n_distinct(left_col), n_distinct(right_col))
         uint64_t max_distinct = std::max(left_stats.num_distinct, right_stats.num_distinct);
 
         if (max_distinct == 0)
@@ -1786,7 +2447,7 @@ namespace scratchbird::optimizer
             return DEFAULT_EQUALITY_SEL;
         }
 
-        double selectivity = 1.0 / static_cast<double>(max_distinct);
+        selectivity = 1.0 / static_cast<double>(max_distinct);
 
         DEBUG_LOG_DB("Equi-join selectivity: 1 / MAX(" +
                    std::to_string(left_stats.n_distinct) + ", " +

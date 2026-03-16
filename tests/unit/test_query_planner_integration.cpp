@@ -2673,6 +2673,9 @@ TEST_F(QueryPlannerIntegrationTest, MergeJoinPlanExecutesAndPreservesRuntimeMeta
     EXPECT_EQ(plan.join_steps.front().right_merge_key.column_name, "id");
     EXPECT_EQ(plan.root.node_type, "MergeJoin");
     EXPECT_NE(plan.root.detail_text.find("presorted"), std::string::npos);
+    ASSERT_EQ(plan.root.children.size(), 2u);
+    EXPECT_NE(plan.root.children[0].node_type, "Sort");
+    EXPECT_NE(plan.root.children[1].node_type, "Sort");
 
     auto result = executeSQL(sql);
     ASSERT_TRUE(result.success()) << result.error();
@@ -2716,6 +2719,14 @@ TEST_F(QueryPlannerIntegrationTest, ForcedMergeJoinUsesExplicitSortToMergeCandid
     ASSERT_EQ(plan.join_steps.front().method_enablers.size(), 2u);
     EXPECT_EQ(plan.join_steps.front().method_enablers[0], "SORT_OUTER");
     EXPECT_EQ(plan.join_steps.front().method_enablers[1], "SORT_INNER");
+    ASSERT_EQ(plan.root.node_type, "MergeJoin");
+    ASSERT_EQ(plan.root.children.size(), 2u);
+    EXPECT_EQ(plan.root.children[0].node_type, "Sort");
+    EXPECT_EQ(plan.root.children[1].node_type, "Sort");
+    ASSERT_EQ(plan.root.children[0].children.size(), 1u);
+    ASSERT_EQ(plan.root.children[1].children.size(), 1u);
+    EXPECT_EQ(plan.root.children[0].children[0].node_type, "SeqScan");
+    EXPECT_EQ(plan.root.children[1].children[0].node_type, "SeqScan");
 }
 
 TEST_F(QueryPlannerIntegrationTest, ForcedHashJoinFailsClosedOnNonEquiJoin)

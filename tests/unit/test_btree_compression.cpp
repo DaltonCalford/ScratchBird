@@ -20,6 +20,7 @@
 #include <filesystem>
 #include "test_helpers.h"
 #include "scratchbird/core/btree.h"
+#include "scratchbird/core/btree_page.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/error_context.h"
@@ -91,6 +92,31 @@ protected:
         return BTree::open(db_.get(), index_uuid, root_gpid, ctx);
     }
 
+    std::unique_ptr<BTree> createBTreeWithRoot(GPID *root_gpid_out, ErrorContext* ctx = nullptr) {
+        ErrorContext local_ctx;
+        if (!ctx) ctx = &local_ctx;
+
+        UuidV7Bytes index_uuid = generateUuidV7();
+        UuidV7Bytes table_uuid = generateUuidV7();
+        std::vector<UuidV7Bytes> column_uuids = { generateUuidV7() };
+
+        GPID root_gpid = allocateRootGpid(ctx);
+        if (root_gpid == 0) {
+            return nullptr;
+        }
+
+        if (root_gpid_out) {
+            *root_gpid_out = root_gpid;
+        }
+
+        Status status = BTree::create(db_.get(), index_uuid, table_uuid, column_uuids, root_gpid, ctx);
+        if (status != Status::OK) {
+            return nullptr;
+        }
+
+        return BTree::open(db_.get(), index_uuid, root_gpid, ctx);
+    }
+
     static TID makeTestTID(uint64_t id) {
         return TID(makeGPID(PRIMARY_TABLESPACE_ID, id), 1);
     }
@@ -113,9 +139,139 @@ protected:
         return gpid;
     }
 
+    GPID resolveCurrentRootGpid(GPID known_page_gpid, ErrorContext* ctx) const {
+        if (!db_ || known_page_gpid == 0) {
+            if (ctx) ctx->message = "Cannot resolve root without database and seed page";
+            return 0;
+        }
+
+        GPID current = known_page_gpid;
+        while (current != 0) {
+            const uint32_t page_num = static_cast<uint32_t>(getPageNumber(current));
+            void *page_buffer = nullptr;
+            Status status = db_->buffer_pool()->pinPage(page_num, &page_buffer, ctx);
+            if (status != Status::OK) {
+                return 0;
+            }
+
+            const auto *page = reinterpret_cast<const SBBTreePage *>(page_buffer);
+            const uint64_t parent_page_num = page->btr_parent_page;
+            const bool is_root =
+                (page->btr_flags & static_cast<uint16_t>(BTreeFlags::ROOT)) != 0 ||
+                parent_page_num == 0;
+            db_->buffer_pool()->unpinPage(page_num, false, ctx);
+
+            if (is_root) {
+                return makeGPID(PRIMARY_TABLESPACE_ID, page_num);
+            }
+            current = makeGPID(PRIMARY_TABLESPACE_ID, parent_page_num);
+        }
+
+        return 0;
+    }
+
     uint64_t currentXid() const {
         auto *tm = db_ ? db_->transaction_manager() : nullptr;
         return tm ? tm->getCurrentXid() : 1;
+    }
+
+    uint64_t findLeftmostLeafPage(GPID root_gpid, ErrorContext *ctx) const {
+        if (!db_ || root_gpid == 0) {
+            if (ctx) ctx->message = "Cannot resolve leftmost leaf without database/root";
+            return 0;
+        }
+
+        uint64_t current_page_num = getPageNumber(root_gpid);
+        while (current_page_num != 0) {
+            void *page_buffer = nullptr;
+            Status status = db_->buffer_pool()->pinPage(static_cast<uint32_t>(current_page_num),
+                                                        &page_buffer, ctx);
+            if (status != Status::OK) {
+                return 0;
+            }
+
+            const auto *page = reinterpret_cast<const SBBTreePage *>(page_buffer);
+            if ((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0) {
+                db_->buffer_pool()->unpinPage(static_cast<uint32_t>(current_page_num), false, ctx);
+                return current_page_num;
+            }
+
+            const auto *page_data = reinterpret_cast<const uint8_t *>(page_buffer);
+            const auto *offsets =
+                reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
+            uint64_t next_page_num = 0;
+            if (page->btr_count > 0) {
+                const auto *node =
+                    reinterpret_cast<const SBBTreeNode *>(page_data + offsets[0]);
+                next_page_num = node->btn_child_page;
+            } else {
+                next_page_num = page->btr_rightmost_child;
+            }
+
+            db_->buffer_pool()->unpinPage(static_cast<uint32_t>(current_page_num), false, ctx);
+            current_page_num = next_page_num;
+        }
+
+        return 0;
+    }
+
+    std::vector<std::vector<uint8_t>> collectLeafChainKeys(GPID root_gpid,
+                                                           std::vector<uint64_t> *leaf_pages_out,
+                                                           ErrorContext *ctx) const {
+        std::vector<std::vector<uint8_t>> keys_out;
+        if (leaf_pages_out) {
+            leaf_pages_out->clear();
+        }
+
+        uint64_t current_page_num = findLeftmostLeafPage(root_gpid, ctx);
+        if (current_page_num == 0) {
+            return keys_out;
+        }
+
+        uint64_t previous_page_num = 0;
+        while (current_page_num != 0) {
+            void *page_buffer = nullptr;
+            Status status = db_->buffer_pool()->pinPage(static_cast<uint32_t>(current_page_num),
+                                                        &page_buffer, ctx);
+            if (status != Status::OK) {
+                keys_out.clear();
+                return keys_out;
+            }
+
+            const auto *page = reinterpret_cast<const SBBTreePage *>(page_buffer);
+            if (leaf_pages_out) {
+                leaf_pages_out->push_back(current_page_num);
+            }
+
+            EXPECT_TRUE((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0);
+            if (previous_page_num == 0) {
+                EXPECT_TRUE((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEFTMOST)) != 0);
+            } else {
+                EXPECT_EQ(page->btr_left_sibling, previous_page_num);
+                EXPECT_NE(page->btr_parent_page, 0u) << "non-root leaf should keep parent pointer";
+            }
+
+            for (uint16_t i = 0; i < page->btr_count; ++i) {
+                std::vector<uint8_t> key;
+                std::vector<TID> tids;
+                status = BTreePage::get_node(reinterpret_cast<const uint8_t *>(page_buffer),
+                                             page->btr_header.page_size, i, key, tids);
+                EXPECT_EQ(status, Status::OK) << (ctx ? ctx->message : "");
+                if (status == Status::OK) {
+                    keys_out.push_back(std::move(key));
+                }
+            }
+
+            const uint64_t next_page_num = page->btr_right_sibling;
+            if (next_page_num == 0) {
+                EXPECT_TRUE((page->btr_flags & static_cast<uint16_t>(BTreeFlags::RIGHTMOST)) != 0);
+            }
+            db_->buffer_pool()->unpinPage(static_cast<uint32_t>(current_page_num), false, ctx);
+            previous_page_num = current_page_num;
+            current_page_num = next_page_num;
+        }
+
+        return keys_out;
     }
 
     // Helper: Generate UUIDv7 keys (high prefix similarity due to timestamp)
@@ -343,6 +499,212 @@ TEST_F(BTreeCompressionTest, StringKeysWithCommonPrefix) {
         ASSERT_EQ(status, Status::OK) << "Search " << i << " failed: " << ctx.message;
         ASSERT_EQ(tuple_ids.size(), 1);
         ASSERT_EQ(tuple_ids[0], makeTestTID(i + 2000));
+    }
+}
+
+TEST_F(BTreeCompressionTest, LeafRestartAnchorsBoundCompressedSearchBlocks) {
+    ErrorContext ctx;
+    GPID root_gpid = 0;
+    auto btree = createBTreeWithRoot(&root_gpid, &ctx);
+    ASSERT_NE(btree, nullptr) << "Failed to create B-tree: " << ctx.message;
+
+    auto keys = generateStringKeys("customer-order-region-", 40);
+    for (size_t i = 0; i < keys.size(); ++i) {
+        Status status = btree->insert(keys[i], makeTestTID(i + 1), currentXid(), &ctx);
+        ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
+    }
+
+    void *page_buffer = nullptr;
+    const uint32_t root_page_num = static_cast<uint32_t>(getPageNumber(root_gpid));
+    ASSERT_EQ(db_->buffer_pool()->pinPage(root_page_num, &page_buffer, &ctx), Status::OK)
+        << ctx.message;
+
+    const auto *page = reinterpret_cast<const SBBTreePage *>(page_buffer);
+    ASSERT_TRUE((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0);
+    ASSERT_GE(page->btr_count, 16);
+
+    const auto *page_data = reinterpret_cast<const uint8_t *>(page_buffer);
+    const auto *offsets = reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
+    size_t restart_anchor_count = 0;
+    size_t compressed_node_count = 0;
+
+    for (uint16_t i = 0; i < page->btr_count; ++i) {
+        const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
+        if (node->btn_prefix_len == 0) {
+            restart_anchor_count++;
+        } else {
+            compressed_node_count++;
+        }
+
+        if ((i % 8) == 0) {
+            EXPECT_EQ(node->btn_prefix_len, 0) << "restart anchor missing at node " << i;
+        }
+    }
+
+    EXPECT_GT(restart_anchor_count, 1u);
+    EXPECT_GT(compressed_node_count, 0u);
+    db_->buffer_pool()->unpinPage(root_page_num, false, &ctx);
+}
+
+TEST_F(BTreeCompressionTest, SearchAcrossRestartAnchorsAndSplitPages) {
+    ErrorContext ctx;
+    auto btree = createBTree(&ctx);
+    ASSERT_NE(btree, nullptr) << "Failed to create B-tree: " << ctx.message;
+
+    auto keys = generateStringKeys("customer-order-region-", 512);
+    for (size_t i = 0; i < keys.size(); ++i) {
+        Status status = btree->insert(keys[i], makeTestTID(i + 1000), currentXid(), &ctx);
+        ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
+    }
+
+    for (size_t index : {size_t(0), size_t(7), size_t(8), size_t(63), size_t(64), size_t(255), size_t(511)}) {
+        std::vector<TID> tuple_ids;
+        Status status = btree->search(keys[index], 0, &tuple_ids, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Search failed for key " << index << ": " << ctx.message;
+        ASSERT_EQ(tuple_ids.size(), 1u);
+        EXPECT_EQ(tuple_ids[0], makeTestTID(index + 1000));
+    }
+
+    std::vector<uint8_t> missing_key{'c','u','s','t','o','m','e','r','-','o','r','d','e','r','-',
+                                     'r','e','g','i','o','n','-','9','9','9','9'};
+    std::vector<TID> tuple_ids;
+    Status status = btree->search(missing_key, 0, &tuple_ids, &ctx);
+    ASSERT_EQ(status, Status::NOT_FOUND) << "Missing-key search failed: " << ctx.message;
+    EXPECT_TRUE(tuple_ids.empty());
+}
+
+TEST_F(BTreeCompressionTest, InternalSeparatorsTruncateAndCompressWithRestartAnchors) {
+    ErrorContext ctx;
+    GPID seed_root_gpid = 0;
+    auto btree = createBTreeWithRoot(&seed_root_gpid, &ctx);
+    ASSERT_NE(btree, nullptr) << "Failed to create B-tree: " << ctx.message;
+
+    std::vector<std::vector<uint8_t>> keys;
+    keys.reserve(2048);
+    for (size_t i = 0; i < 2048; ++i) {
+        std::ostringstream oss;
+        oss << "customer-region-" << std::setw(4) << std::setfill('0') << i
+            << "-payload-shared-tail";
+        const std::string key_str = oss.str();
+        keys.emplace_back(key_str.begin(), key_str.end());
+    }
+
+    for (size_t i = 0; i < keys.size(); ++i) {
+        Status status = btree->insert(keys[i], makeTestTID(i + 6000), currentXid(), &ctx);
+        ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
+    }
+
+    const GPID root_gpid = resolveCurrentRootGpid(seed_root_gpid, &ctx);
+    ASSERT_NE(root_gpid, 0) << "Failed to resolve current root: " << ctx.message;
+
+    void *page_buffer = nullptr;
+    const uint32_t root_page_num = static_cast<uint32_t>(getPageNumber(root_gpid));
+    ASSERT_EQ(db_->buffer_pool()->pinPage(root_page_num, &page_buffer, &ctx), Status::OK)
+        << ctx.message;
+
+    const auto *page = reinterpret_cast<const SBBTreePage *>(page_buffer);
+    ASSERT_FALSE((page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0);
+    ASSERT_GE(page->btr_count, 8);
+
+    const auto *page_data = reinterpret_cast<const uint8_t *>(page_buffer);
+    const auto *offsets = reinterpret_cast<const uint16_t *>(page_data + sizeof(SBBTreePage));
+    size_t prefix_compressed_nodes = 0;
+    size_t suffix_truncated_nodes = 0;
+    size_t restart_anchor_nodes = 0;
+
+    for (uint16_t i = 0; i < page->btr_count; ++i) {
+        const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
+        if (node->btn_prefix_len == 0) {
+            restart_anchor_nodes++;
+        } else {
+            prefix_compressed_nodes++;
+        }
+        if (node->btn_suffix_trunc > 0) {
+            suffix_truncated_nodes++;
+        }
+        if ((i % 8) == 0) {
+            EXPECT_EQ(node->btn_prefix_len, 0) << "missing internal restart anchor at " << i;
+        }
+    }
+
+    EXPECT_GT(page->btr_prefix_total, 0u);
+    EXPECT_GT(page->btr_suffix_total, 0u);
+    EXPECT_GT(prefix_compressed_nodes, 0u);
+    EXPECT_GT(suffix_truncated_nodes, 0u);
+    EXPECT_GT(restart_anchor_nodes, 1u);
+    db_->buffer_pool()->unpinPage(root_page_num, false, &ctx);
+
+    for (size_t index : {size_t(0), size_t(255), size_t(256), size_t(1023), size_t(1024), size_t(2047)}) {
+        std::vector<TID> tuple_ids;
+        Status status = btree->search(keys[index], 0, &tuple_ids, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Search failed for key " << index << ": " << ctx.message;
+        ASSERT_EQ(tuple_ids.size(), 1u);
+        EXPECT_EQ(tuple_ids[0], makeTestTID(index + 6000));
+    }
+}
+
+TEST_F(BTreeCompressionTest, SplitPropagationPreservesLeafChainAndParentPointers) {
+    ErrorContext ctx;
+    GPID seed_root_gpid = 0;
+    auto btree = createBTreeWithRoot(&seed_root_gpid, &ctx);
+    ASSERT_NE(btree, nullptr) << "Failed to create B-tree: " << ctx.message;
+
+    auto keys = generateStringKeys("hot-account-prefix-", 2048);
+    for (size_t i = 0; i < keys.size(); ++i) {
+        Status status = btree->insert(keys[i], makeTestTID(i + 9000), currentXid(), &ctx);
+        ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
+    }
+
+    const GPID root_gpid = resolveCurrentRootGpid(seed_root_gpid, &ctx);
+    ASSERT_NE(root_gpid, 0) << "Failed to resolve current root: " << ctx.message;
+
+    std::vector<uint64_t> leaf_pages;
+    const auto leaf_keys = collectLeafChainKeys(root_gpid, &leaf_pages, &ctx);
+    ASSERT_EQ(leaf_keys.size(), keys.size());
+    ASSERT_GT(leaf_pages.size(), 1u);
+
+    for (size_t i = 0; i < keys.size(); ++i) {
+        EXPECT_EQ(leaf_keys[i], keys[i]) << "leaf chain key mismatch at " << i;
+    }
+
+    void *root_buffer = nullptr;
+    ASSERT_EQ(db_->buffer_pool()->pinPage(static_cast<uint32_t>(getPageNumber(root_gpid)),
+                                          &root_buffer, &ctx),
+              Status::OK)
+        << ctx.message;
+    const auto *root_page = reinterpret_cast<const SBBTreePage *>(root_buffer);
+    EXPECT_FALSE((root_page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0);
+    db_->buffer_pool()->unpinPage(static_cast<uint32_t>(getPageNumber(root_gpid)), false, &ctx);
+}
+
+TEST_F(BTreeCompressionTest, HotInsertPathPublishesLockActivityWithoutDeadlocks) {
+    ErrorContext ctx;
+    auto btree = createBTree(&ctx);
+    ASSERT_NE(btree, nullptr) << "Failed to create B-tree: " << ctx.message;
+
+    LockStats before{};
+    db_->lock_manager()->getStatistics(&before);
+
+    auto keys = generateStringKeys("hot-lock-prefix-", 1536);
+    for (size_t i = 0; i < keys.size(); ++i) {
+        Status status = btree->insert(keys[i], makeTestTID(i + 12000), currentXid(), &ctx);
+        ASSERT_EQ(status, Status::OK) << "Insert " << i << " failed: " << ctx.message;
+    }
+
+    LockStats after{};
+    db_->lock_manager()->getStatistics(&after);
+
+    EXPECT_GT(after.locks_acquired, before.locks_acquired);
+    EXPECT_GE(after.locks_released, before.locks_released);
+    EXPECT_EQ(after.deadlocks_detected, before.deadlocks_detected);
+    EXPECT_EQ(after.lock_timeouts, before.lock_timeouts);
+
+    for (size_t index : {size_t(0), size_t(127), size_t(255), size_t(511), size_t(1023), size_t(1535)}) {
+        std::vector<TID> tuple_ids;
+        Status status = btree->search(keys[index], 0, &tuple_ids, &ctx);
+        ASSERT_EQ(status, Status::OK) << "Search failed for key " << index << ": " << ctx.message;
+        ASSERT_EQ(tuple_ids.size(), 1u);
+        EXPECT_EQ(tuple_ids[0], makeTestTID(index + 12000));
     }
 }
 

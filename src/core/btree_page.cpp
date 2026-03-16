@@ -16,6 +16,8 @@ namespace scratchbird::core
 {
     namespace
     {
+        constexpr uint16_t kLeafSearchRestartInterval = 8;
+
         uint16_t calculate_prefix_length_bytes(const std::vector<uint8_t> &key1,
                                                const std::vector<uint8_t> &key2)
         {
@@ -202,14 +204,17 @@ namespace scratchbird::core
         std::vector<uint8_t> prev_full_key;
         uint16_t min_prefix = 0;
 
-        for (const auto &entry : entries)
+        for (size_t entry_index = 0; entry_index < entries.size(); ++entry_index)
         {
+            const auto &entry = entries[entry_index];
             uint16_t prefix_len = 0;
             std::vector<uint8_t> stored_key = entry.key;
+            const bool force_restart_anchor =
+                (entry_index % kLeafSearchRestartInterval) == 0;
             const auto compression = static_cast<BTreeCompressionType>(new_header.btr_compression);
-            if (compression == BTreeCompressionType::PREFIX ||
-                compression == BTreeCompressionType::BOTH ||
-                compression == BTreeCompressionType::ADAPTIVE)
+            if (!force_restart_anchor && (compression == BTreeCompressionType::PREFIX ||
+                                          compression == BTreeCompressionType::BOTH ||
+                                          compression == BTreeCompressionType::ADAPTIVE))
             {
                 prefix_len = calculate_prefix_length_bytes(prev_full_key, entry.key);
                 if (!should_prefix_compress(prefix_len, entry.key.size()))

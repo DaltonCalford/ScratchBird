@@ -50,6 +50,13 @@ namespace scratchbird::optimizer
         uint64_t default_row_width_bytes = 64;     // Fallback row width when unknown
         uint64_t hash_tuple_overhead_bytes = 24;   // Hash table bucket/entry overhead
         uint64_t sort_tuple_overhead_bytes = 16;   // Sort tuple pointer/metadata overhead
+        double calibrated_heap_rows_per_page = 0.0;   // Relation rows per heap page
+        double calibrated_index_entries_per_page = 0.0; // Index entries per leaf page
+        double calibrated_avg_probe_pages = 0.0;     // Average pages touched per point probe
+        double calibrated_duplicate_density = 0.0;   // Duplicate-key or overlap density
+        double calibrated_dead_fraction = 0.0;       // Dead or stale entry fraction
+        double calibrated_false_positive_ratio = 0.0; // Family false positive or lossy ratio
+        double calibrated_visibility_tuple_cost = 0.0; // Per-row MGA visibility overhead
 
         // Parallelism (future use)
         double parallel_setup_cost = 1000.0;  // Cost of starting parallel workers
@@ -98,6 +105,13 @@ namespace scratchbird::optimizer
         bool ordered_output = false;
         bool covering_index = false;
         bool requires_recheck = false;
+        uint64_t row_width_bytes = 0;
+        double heap_rows_per_page = 0.0;
+        double index_entries_per_page = 0.0;
+        double dead_fraction = 0.0;
+        double duplicate_density = 0.0;
+        double avg_probe_pages = 0.0;
+        double false_positive_ratio = 0.0;
     };
 
     auto deriveIndexFamilyFormulaProfile(
@@ -115,6 +129,7 @@ namespace scratchbird::optimizer
         double run_cost = 0.0;      // Per-execution cost
         double total_cost = 0.0;    // startup_cost + run_cost
         uint64_t rows = 0;          // Estimated rows returned
+        uint64_t row_width_bytes = 0; // Estimated output row width
         uint64_t memory_bytes = 0;  // Estimated working-set memory
         uint64_t memory_budget_bytes = 0; // Memory budget used for this operator
         bool spill_expected = false; // Whether temp spill is expected

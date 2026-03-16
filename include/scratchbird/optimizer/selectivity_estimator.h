@@ -23,6 +23,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/optimizer/parameter_bindings.h"
 #include "scratchbird/optimizer/statistics_manager.h"
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -347,6 +348,7 @@ namespace scratchbird::optimizer
         core::Database *db_ = nullptr;
         StatisticsManager *stats_manager_;
         const ParameterBindings *parameter_bindings_ = nullptr;
+        std::vector<core::ID> sampled_refresh_tables_;
 
         /**
          * compareValues - Compare two byte vectors as column values
@@ -383,6 +385,28 @@ namespace scratchbird::optimizer
                                const std::vector<uint8_t> &bucket_min,
                                const std::vector<uint8_t> &bucket_max) const
             -> double;
+
+        auto hasSampledRefresh(const core::ID &table_id) const -> bool;
+        auto rememberSampledRefresh(const core::ID &table_id) -> void;
+        auto maybeRefreshTableSample(const core::ID &table_id,
+                                     const ColumnStatistics &stats,
+                                     core::ErrorContext *ctx) -> core::Status;
+        auto ensureColumnStatisticsForEstimation(const core::ID &table_id,
+                                                 const core::ID &column_id,
+                                                 ColumnStatistics &stats,
+                                                 core::ErrorContext *ctx) -> core::Status;
+        auto estimateDependencyAwareConjunction(const parser::v3::Expression *left_expr,
+                                                const parser::v3::Expression *right_expr,
+                                                const core::ID &table_id,
+                                                const parser::v3::StringPool *pool,
+                                                core::ErrorContext *ctx)
+            -> std::optional<double>;
+        auto estimateMultiColumnJoinSelectivity(const parser::v3::Expression *join_condition,
+                                                const core::ID &left_table_id,
+                                                const core::ID &right_table_id,
+                                                const parser::v3::StringPool *pool,
+                                                core::ErrorContext *ctx)
+            -> std::optional<double>;
 
         // Default selectivity values when statistics unavailable
         static constexpr double DEFAULT_EQUALITY_SEL = 0.01;       // 1% (assume 100 distinct)

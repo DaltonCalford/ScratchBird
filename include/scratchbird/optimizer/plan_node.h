@@ -1483,6 +1483,14 @@ namespace scratchbird::optimizer
         {
         }
 
+        SortNode(std::shared_ptr<PlanNode> child_plan,
+                 const std::vector<std::string>& synthetic_sort_keys)
+            : PlanNode(PlanNodeType::SORT),
+              child_plan_(std::move(child_plan)),
+              synthetic_sort_keys_(synthetic_sort_keys)
+        {
+        }
+
         /**
          * Get child plan
          */
@@ -1493,13 +1501,25 @@ namespace scratchbird::optimizer
          */
         const std::vector<parser::v3::OrderByItem*>& orderByItems() const { return order_by_items_; }
 
+        const std::vector<std::string>& syntheticSortKeys() const
+        {
+            return synthetic_sort_keys_;
+        }
+
+        size_t sortKeyCount() const
+        {
+            return synthetic_sort_keys_.empty()
+                       ? order_by_items_.size()
+                       : synthetic_sort_keys_.size();
+        }
+
         /**
          * Generate EXPLAIN output
          */
         std::string toString(int indent = 0) const override
         {
             std::string result(indent, ' ');
-            result += "Sort (keys=" + std::to_string(order_by_items_.size()) +
+            result += "Sort (keys=" + std::to_string(sortKeyCount()) +
                      " cost=" + std::to_string(total_cost_) +
                      " rows=" + std::to_string(rows_) + ")\n";
 
@@ -1514,6 +1534,7 @@ namespace scratchbird::optimizer
     private:
         std::shared_ptr<PlanNode> child_plan_;
         std::vector<parser::v3::OrderByItem*> order_by_items_;
+        std::vector<std::string> synthetic_sort_keys_;
     };
 
     class GatherNode : public PlanNode

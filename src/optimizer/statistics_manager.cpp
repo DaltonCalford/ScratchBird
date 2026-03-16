@@ -421,6 +421,74 @@ namespace scratchbird::optimizer
         return true;
     }
 
+    auto encodeCompositeStatisticValue(
+        const std::vector<std::vector<uint8_t>> &values) -> std::vector<uint8_t>
+    {
+        size_t total_size = sizeof(uint32_t);
+        for (const auto &value : values)
+        {
+            total_size += sizeof(uint32_t) + value.size();
+        }
+
+        std::vector<uint8_t> out(total_size);
+        size_t offset = 0;
+        const uint32_t count = static_cast<uint32_t>(values.size());
+        std::memcpy(out.data() + offset, &count, sizeof(count));
+        offset += sizeof(count);
+        for (const auto &value : values)
+        {
+            const uint32_t length = static_cast<uint32_t>(value.size());
+            std::memcpy(out.data() + offset, &length, sizeof(length));
+            offset += sizeof(length);
+            if (!value.empty())
+            {
+                std::memcpy(out.data() + offset, value.data(), value.size());
+                offset += value.size();
+            }
+        }
+        return out;
+    }
+
+    auto decodeCompositeStatisticValue(const std::vector<uint8_t> &bytes,
+                                       std::vector<std::vector<uint8_t>> &values) -> bool
+    {
+        values.clear();
+        if (bytes.size() < sizeof(uint32_t))
+        {
+            return false;
+        }
+
+        size_t offset = 0;
+        uint32_t count = 0;
+        std::memcpy(&count, bytes.data() + offset, sizeof(count));
+        offset += sizeof(count);
+        values.reserve(count);
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            if (offset + sizeof(uint32_t) > bytes.size())
+            {
+                values.clear();
+                return false;
+            }
+
+            uint32_t length = 0;
+            std::memcpy(&length, bytes.data() + offset, sizeof(length));
+            offset += sizeof(length);
+            if (offset + length > bytes.size())
+            {
+                values.clear();
+                return false;
+            }
+
+            values.emplace_back(bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+                                bytes.begin() +
+                                    static_cast<std::ptrdiff_t>(offset + length));
+            offset += length;
+        }
+
+        return offset == bytes.size();
+    }
+
     auto compareByteVectors(const std::vector<uint8_t> &lhs,
                             const std::vector<uint8_t> &rhs) -> int
     {
@@ -1094,6 +1162,12 @@ namespace scratchbird::optimizer
 
         computeCorrelationStatistics(table_id, columns, sample_rows, analyzed_time, ctx);
         computeExpressionStatistics(table_id, columns, sample_rows, analyzed_time, ctx);
+        computeMultivariateStatistics(table_id,
+                                      columns,
+                                      sample_rows,
+                                      analyzed_time,
+                                      table_row_estimate,
+                                      ctx);
 
         if (db_ && db_->table_stats_manager())
         {
@@ -2174,6 +2248,70 @@ namespace scratchbird::optimizer
         return Status::OK;
     }
 
+    auto StatisticsManager::getMultivariateStatistics(
+        const ID &table_id,
+        const std::vector<ID> &column_ids,
+        MultivariateStatistics &stats_out,
+        ErrorContext *ctx) -> Status
+    {
+        if (column_ids.size() < 2)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::INVALID_ARGUMENT,
+                              "multivariate statistics require at least two columns");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const auto key = getMultivariateCacheKey(table_id, column_ids);
+        AnalyzeLifecycleDecision analyze_decision;
+        Status auto_status = maybeAutoAnalyze(table_id, &analyze_decision, ctx);
+        if (auto_status != Status::OK)
+        {
+            return auto_status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            const auto it = multivariate_stats_cache_.find(key);
+            if (it != multivariate_stats_cache_.end())
+            {
+                stats_out = it->second;
+                return Status::OK;
+            }
+        }
+
+        Status status = loadMultivariateStatistics(table_id, column_ids, stats_out, ctx);
+        if (status == Status::OK)
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            multivariate_stats_cache_[key] = stats_out;
+            return Status::OK;
+        }
+        if (status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        ErrorContext analyze_ctx;
+        status = analyzeTableInternal(table_id, 0.10f, true, &analyze_ctx);
+        if (status != Status::OK)
+        {
+            if (ctx != nullptr && ctx->message.empty())
+            {
+                ctx->message = analyze_ctx.message;
+            }
+            return status;
+        }
+
+        status = loadMultivariateStatistics(table_id, column_ids, stats_out, ctx);
+        if (status == Status::OK)
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            multivariate_stats_cache_[key] = stats_out;
+        }
+        return status;
+    }
+
     auto StatisticsManager::dropStatistics(const ID &table_id, ErrorContext *ctx) -> Status
     {
         DEBUG_LOG_DB("Dropping statistics for table " << table_id.toString());
@@ -2234,6 +2372,18 @@ namespace scratchbird::optimizer
                     ++it;
                 }
             }
+            for (auto it = multivariate_stats_cache_.begin();
+                 it != multivariate_stats_cache_.end();)
+            {
+                if (it->second.table_id == table_id)
+                {
+                    it = multivariate_stats_cache_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
         }
 
         if (!catalog_)
@@ -2266,6 +2416,7 @@ namespace scratchbird::optimizer
             table_stats_cache_.clear();
             correlation_stats_cache_.clear();
             expression_stats_cache_.clear();
+            multivariate_stats_cache_.clear();
             index_family_metrics_cache_.clear();
             DEBUG_LOG_DB("Cleared entire statistics cache");
         }
@@ -2319,6 +2470,19 @@ namespace scratchbird::optimizer
                 if (it->second.table_id == table_id)
                 {
                     it = expression_stats_cache_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
+            for (auto it = multivariate_stats_cache_.begin();
+                 it != multivariate_stats_cache_.end();)
+            {
+                if (it->second.table_id == table_id)
+                {
+                    it = multivariate_stats_cache_.erase(it);
                 }
                 else
                 {
@@ -3397,6 +3561,21 @@ namespace scratchbird::optimizer
         return table_id.toString() + "|" + core::IdentifierUtils::toUpper(expression_key);
     }
 
+    auto StatisticsManager::getMultivariateCacheKey(const ID &table_id,
+                                                    const std::vector<ID> &column_ids) const
+        -> std::string
+    {
+        std::vector<ID> sorted_ids = column_ids;
+        std::sort(sorted_ids.begin(), sorted_ids.end());
+        std::string key = table_id.toString();
+        for (const auto &column_id : sorted_ids)
+        {
+            key.append("|");
+            key.append(column_id.toString());
+        }
+        return key;
+    }
+
     auto StatisticsManager::makeSyntheticStatisticId(const ID &table_id,
                                                      const std::string &kind,
                                                      const std::string &key) -> ID
@@ -3546,6 +3725,398 @@ namespace scratchbird::optimizer
                               "Failed to parse persisted correlation statistics");
             return Status::PAGE_CORRUPT;
         }
+    }
+
+    auto StatisticsManager::storeMultivariateStatistics(const MultivariateStatistics &stats,
+                                                        ErrorContext *ctx) -> Status
+    {
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
+        if (catalog_ == nullptr)
+        {
+            return Status::INTERNAL_ERROR;
+        }
+        if (stats.column_ids.size() < 2)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const std::string key = getMultivariateCacheKey(stats.table_id, stats.column_ids);
+        core::CatalogManager::StatisticInfo info;
+        info.statistic_id = makeSyntheticStatisticId(stats.table_id, "MVSTAT_ID", key);
+        info.table_id = stats.table_id;
+        info.column_id = makeSyntheticStatisticId(stats.table_id, "MVSTAT", key);
+        info.data_type = static_cast<uint16_t>(core::DataType::UNKNOWN);
+        info.num_rows = stats.sample_size;
+        info.num_distinct = stats.ndistinct.num_distinct;
+        info.avg_width = static_cast<float>(stats.column_ids.size());
+        info.last_analyzed_time = stats.last_analyzed_time;
+        info.sample_size = stats.sample_size;
+        info.sample_rate = 0.0f;
+        info.histogram_type = static_cast<uint8_t>(HistogramType::NONE);
+        info.histogram_bucket_count = 0;
+
+        nlohmann::json mcv_payload;
+        mcv_payload["entries"] = nlohmann::json::array();
+        for (const auto &entry : stats.mcv_list)
+        {
+            nlohmann::json values = nlohmann::json::array();
+            for (const auto &value : entry.values)
+            {
+                values.push_back(hexEncodeBytes(value));
+            }
+            mcv_payload["entries"].push_back(
+                {{"values", std::move(values)}, {"frequency", entry.frequency}});
+        }
+        if (!stats.mcv_list.empty())
+        {
+            Status status =
+                catalog_->storeStringInToast(mcv_payload.dump(), 0, info.mcv_oid, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        nlohmann::json metadata;
+        metadata["column_ids"] = nlohmann::json::array();
+        metadata["column_names"] = stats.column_names;
+        for (const auto &column_id : stats.column_ids)
+        {
+            metadata["column_ids"].push_back(column_id.toString());
+        }
+        metadata["sample_size"] = stats.sample_size;
+        metadata["last_analyzed_time"] = stats.last_analyzed_time;
+        metadata["ndistinct"] = {
+            {"num_distinct", stats.ndistinct.num_distinct},
+            {"distinct_fraction", stats.ndistinct.distinct_fraction},
+            {"sample_size", stats.ndistinct.sample_size},
+            {"last_analyzed_time", stats.ndistinct.last_analyzed_time}};
+        metadata["dependencies"] = nlohmann::json::array();
+        for (const auto &dependency : stats.dependencies)
+        {
+            nlohmann::json determinant_indexes = nlohmann::json::array();
+            nlohmann::json dependent_indexes = nlohmann::json::array();
+            for (const auto &determinant_id : dependency.determinant_column_ids)
+            {
+                auto it = std::find(stats.column_ids.begin(),
+                                    stats.column_ids.end(),
+                                    determinant_id);
+                if (it != stats.column_ids.end())
+                {
+                    determinant_indexes.push_back(
+                        static_cast<uint32_t>(std::distance(stats.column_ids.begin(), it)));
+                }
+            }
+            for (const auto &dependent_id : dependency.dependent_column_ids)
+            {
+                auto it = std::find(stats.column_ids.begin(),
+                                    stats.column_ids.end(),
+                                    dependent_id);
+                if (it != stats.column_ids.end())
+                {
+                    dependent_indexes.push_back(
+                        static_cast<uint32_t>(std::distance(stats.column_ids.begin(), it)));
+                }
+            }
+            metadata["dependencies"].push_back(
+                {{"determinant_indexes", std::move(determinant_indexes)},
+                 {"dependent_indexes", std::move(dependent_indexes)},
+                 {"strength", dependency.strength},
+                 {"sample_size", dependency.sample_size},
+                 {"last_analyzed_time", dependency.last_analyzed_time}});
+        }
+        metadata["pairwise_correlations"] = nlohmann::json::array();
+        for (const auto &correlation : stats.pairwise_correlations)
+        {
+            auto left_it = std::find(stats.column_ids.begin(),
+                                     stats.column_ids.end(),
+                                     correlation.left_column_id);
+            auto right_it = std::find(stats.column_ids.begin(),
+                                      stats.column_ids.end(),
+                                      correlation.right_column_id);
+            if (left_it == stats.column_ids.end() || right_it == stats.column_ids.end())
+            {
+                continue;
+            }
+            metadata["pairwise_correlations"].push_back(
+                {{"left_index",
+                  static_cast<uint32_t>(std::distance(stats.column_ids.begin(), left_it))},
+                 {"right_index",
+                  static_cast<uint32_t>(std::distance(stats.column_ids.begin(), right_it))},
+                 {"coefficient", correlation.coefficient},
+                 {"sample_size", correlation.sample_size},
+                 {"last_analyzed_time", correlation.last_analyzed_time}});
+        }
+
+        Status metadata_status =
+            catalog_->storeStringInToast(metadata.dump(), 0, info.histogram_oid, ctx);
+        if (metadata_status != Status::OK)
+        {
+            return metadata_status;
+        }
+
+        return catalog_->storeStatistic(info, ctx);
+    }
+
+    auto StatisticsManager::loadMultivariateStatistics(const ID &table_id,
+                                                       const std::vector<ID> &column_ids,
+                                                       MultivariateStatistics &stats_out,
+                                                       ErrorContext *ctx) -> Status
+    {
+        if (!catalog_)
+        {
+            catalog_ = db_->catalog_manager();
+        }
+        if (catalog_ == nullptr)
+        {
+            return Status::INTERNAL_ERROR;
+        }
+        if (column_ids.size() < 2)
+        {
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<ID> sorted_ids = column_ids;
+        std::sort(sorted_ids.begin(), sorted_ids.end());
+        const std::string key = getMultivariateCacheKey(table_id, sorted_ids);
+
+        core::CatalogManager::StatisticInfo info;
+        const ID synthetic_column_id =
+            makeSyntheticStatisticId(table_id, "MVSTAT", key);
+        Status status = catalog_->getStatistic(table_id, synthetic_column_id, info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        stats_out = MultivariateStatistics{};
+        stats_out.table_id = table_id;
+        stats_out.column_ids = sorted_ids;
+        stats_out.sample_size = info.sample_size;
+        stats_out.last_analyzed_time = info.last_analyzed_time;
+        stats_out.ndistinct.column_ids = sorted_ids;
+        stats_out.ndistinct.num_distinct = info.num_distinct;
+        stats_out.ndistinct.sample_size = info.sample_size;
+        stats_out.ndistinct.last_analyzed_time = info.last_analyzed_time;
+
+        std::vector<core::CatalogManager::ColumnInfo> columns;
+        if (catalog_->getColumns(table_id, columns, ctx) == Status::OK)
+        {
+            for (const auto &column_id : sorted_ids)
+            {
+                auto it = std::find_if(
+                    columns.begin(),
+                    columns.end(),
+                    [&](const core::CatalogManager::ColumnInfo &column) {
+                        return column.column_id == column_id;
+                    });
+                stats_out.column_names.push_back(
+                    it != columns.end() ? it->column_name : std::string());
+            }
+            stats_out.ndistinct.column_names = stats_out.column_names;
+        }
+
+        if (!isZeroId(info.histogram_oid))
+        {
+            std::string metadata_text;
+            status = catalog_->loadStringFromToast(info.histogram_oid, 0, metadata_text, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            try
+            {
+                const auto metadata = nlohmann::json::parse(metadata_text);
+                if (metadata.contains("column_names") &&
+                    metadata["column_names"].is_array())
+                {
+                    stats_out.column_names.clear();
+                    for (const auto &entry : metadata["column_names"])
+                    {
+                        stats_out.column_names.push_back(entry.get<std::string>());
+                    }
+                    stats_out.ndistinct.column_names = stats_out.column_names;
+                }
+                if (metadata.contains("sample_size"))
+                {
+                    stats_out.sample_size = metadata.value("sample_size", info.sample_size);
+                }
+                if (metadata.contains("last_analyzed_time"))
+                {
+                    stats_out.last_analyzed_time =
+                        metadata.value("last_analyzed_time", info.last_analyzed_time);
+                }
+                if (metadata.contains("ndistinct") && metadata["ndistinct"].is_object())
+                {
+                    const auto &nd = metadata["ndistinct"];
+                    stats_out.ndistinct.num_distinct =
+                        nd.value("num_distinct", info.num_distinct);
+                    stats_out.ndistinct.distinct_fraction =
+                        nd.value("distinct_fraction", 0.0);
+                    stats_out.ndistinct.sample_size =
+                        nd.value("sample_size", info.sample_size);
+                    stats_out.ndistinct.last_analyzed_time =
+                        nd.value("last_analyzed_time", info.last_analyzed_time);
+                }
+                if (metadata.contains("dependencies") &&
+                    metadata["dependencies"].is_array())
+                {
+                    for (const auto &entry : metadata["dependencies"])
+                    {
+                        if (!entry.is_object())
+                        {
+                            continue;
+                        }
+                        FunctionalDependencyStatistics dependency;
+                        if (entry.contains("determinant_indexes") &&
+                            entry["determinant_indexes"].is_array())
+                        {
+                            for (const auto &index_entry : entry["determinant_indexes"])
+                            {
+                                const size_t index = index_entry.get<size_t>();
+                                if (index < stats_out.column_ids.size())
+                                {
+                                    dependency.determinant_column_ids.push_back(
+                                        stats_out.column_ids[index]);
+                                    dependency.determinant_column_names.push_back(
+                                        index < stats_out.column_names.size()
+                                            ? stats_out.column_names[index]
+                                            : std::string());
+                                }
+                            }
+                        }
+                        if (entry.contains("dependent_indexes") &&
+                            entry["dependent_indexes"].is_array())
+                        {
+                            for (const auto &index_entry : entry["dependent_indexes"])
+                            {
+                                const size_t index = index_entry.get<size_t>();
+                                if (index < stats_out.column_ids.size())
+                                {
+                                    dependency.dependent_column_ids.push_back(
+                                        stats_out.column_ids[index]);
+                                    dependency.dependent_column_names.push_back(
+                                        index < stats_out.column_names.size()
+                                            ? stats_out.column_names[index]
+                                            : std::string());
+                                }
+                            }
+                        }
+                        dependency.strength = entry.value("strength", 0.0);
+                        dependency.sample_size =
+                            entry.value("sample_size", stats_out.sample_size);
+                        dependency.last_analyzed_time =
+                            entry.value("last_analyzed_time",
+                                        stats_out.last_analyzed_time);
+                        stats_out.dependencies.push_back(std::move(dependency));
+                    }
+                }
+                if (metadata.contains("pairwise_correlations") &&
+                    metadata["pairwise_correlations"].is_array())
+                {
+                    for (const auto &entry : metadata["pairwise_correlations"])
+                    {
+                        if (!entry.is_object())
+                        {
+                            continue;
+                        }
+                        const size_t left_index = entry.value("left_index", size_t{0});
+                        const size_t right_index = entry.value("right_index", size_t{0});
+                        if (left_index >= stats_out.column_ids.size() ||
+                            right_index >= stats_out.column_ids.size())
+                        {
+                            continue;
+                        }
+                        ColumnCorrelationStatistics correlation;
+                        correlation.table_id = table_id;
+                        correlation.left_column_id = stats_out.column_ids[left_index];
+                        correlation.right_column_id = stats_out.column_ids[right_index];
+                        correlation.left_column_name =
+                            left_index < stats_out.column_names.size()
+                                ? stats_out.column_names[left_index]
+                                : std::string();
+                        correlation.right_column_name =
+                            right_index < stats_out.column_names.size()
+                                ? stats_out.column_names[right_index]
+                                : std::string();
+                        correlation.coefficient = entry.value("coefficient", 0.0);
+                        correlation.sample_size =
+                            entry.value("sample_size", uint64_t{0});
+                        correlation.last_analyzed_time =
+                            entry.value("last_analyzed_time", uint64_t{0});
+                        stats_out.pairwise_correlations.push_back(std::move(correlation));
+                    }
+                }
+            }
+            catch (const nlohmann::json::exception &)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::PAGE_CORRUPT,
+                                  "Failed to parse persisted multivariate statistics");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+
+        if (!isZeroId(info.mcv_oid))
+        {
+            std::string mcv_text;
+            status = catalog_->loadStringFromToast(info.mcv_oid, 0, mcv_text, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            try
+            {
+                const auto payload = nlohmann::json::parse(mcv_text);
+                const auto *entries = payload.is_array()
+                                          ? &payload
+                                          : (payload.contains("entries")
+                                                 ? &payload["entries"]
+                                                 : nullptr);
+                if (entries != nullptr && entries->is_array())
+                {
+                    for (const auto &item : *entries)
+                    {
+                        if (!item.is_object())
+                        {
+                            continue;
+                        }
+                        MultivariateMCVEntry entry;
+                        if (item.contains("values") && item["values"].is_array())
+                        {
+                            for (const auto &value_entry : item["values"])
+                            {
+                                std::vector<uint8_t> decoded;
+                                if (!hexDecodeBytes(value_entry.get<std::string>(), decoded))
+                                {
+                                    entry.values.clear();
+                                    break;
+                                }
+                                entry.values.push_back(std::move(decoded));
+                            }
+                        }
+                        if (entry.values.empty())
+                        {
+                            continue;
+                        }
+                        entry.frequency = item.value("frequency", 0.0f);
+                        stats_out.mcv_list.push_back(std::move(entry));
+                    }
+                }
+            }
+            catch (const nlohmann::json::exception &)
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  Status::PAGE_CORRUPT,
+                                  "Failed to parse persisted multivariate MCV statistics");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+
+        return Status::OK;
     }
 
     auto StatisticsManager::maybeAutoAnalyze(const ID &table_id,
@@ -3982,6 +4553,186 @@ namespace scratchbird::optimizer
 
             store_expression(canonicalExpressionKey("LOWER", column.column_name), false);
             store_expression(canonicalExpressionKey("UPPER", column.column_name), true);
+        }
+    }
+
+    auto StatisticsManager::computeMultivariateStatistics(
+        const ID &table_id,
+        const std::vector<core::CatalogManager::ColumnInfo> &columns,
+        const std::vector<std::vector<uint8_t>> &sample_rows,
+        uint64_t analyzed_time,
+        uint64_t table_row_estimate,
+        ErrorContext *ctx) -> void
+    {
+        if (columns.size() < 2)
+        {
+            return;
+        }
+
+        std::vector<std::vector<std::vector<uint8_t>>> extracted_values(columns.size());
+        for (size_t index = 0; index < columns.size(); ++index)
+        {
+            extracted_values[index] =
+                extractColumnValues(table_id, columns[index].column_id, sample_rows, columns, ctx);
+        }
+
+        auto dependency_strength =
+            [](const std::unordered_map<std::vector<uint8_t>,
+                                        std::unordered_map<std::vector<uint8_t>,
+                                                           uint64_t,
+                                                           VectorHash>,
+                                        VectorHash> &groups,
+               uint64_t total_rows) -> double {
+                if (total_rows == 0)
+                {
+                    return 0.0;
+                }
+                uint64_t supported_rows = 0;
+                for (const auto &group : groups)
+                {
+                    uint64_t best = 0;
+                    for (const auto &child : group.second)
+                    {
+                        best = std::max(best, child.second);
+                    }
+                    supported_rows += best;
+                }
+                return static_cast<double>(supported_rows) /
+                       static_cast<double>(total_rows);
+            };
+
+        for (size_t left_idx = 0; left_idx < columns.size(); ++left_idx)
+        {
+            for (size_t right_idx = left_idx + 1; right_idx < columns.size(); ++right_idx)
+            {
+                const bool keep_order =
+                    columns[left_idx].column_id < columns[right_idx].column_id;
+                const size_t first_idx = keep_order ? left_idx : right_idx;
+                const size_t second_idx = keep_order ? right_idx : left_idx;
+
+                const auto &first_values = extracted_values[first_idx];
+                const auto &second_values = extracted_values[second_idx];
+                const size_t row_count = std::min(first_values.size(), second_values.size());
+
+                std::vector<std::vector<uint8_t>> composite_values;
+                composite_values.reserve(row_count);
+                std::unordered_map<std::vector<uint8_t>,
+                                   std::unordered_map<std::vector<uint8_t>,
+                                                      uint64_t,
+                                                      VectorHash>,
+                                   VectorHash>
+                    forward_dependencies;
+                std::unordered_map<std::vector<uint8_t>,
+                                   std::unordered_map<std::vector<uint8_t>,
+                                                      uint64_t,
+                                                      VectorHash>,
+                                   VectorHash>
+                    reverse_dependencies;
+
+                for (size_t row = 0; row < row_count; ++row)
+                {
+                    const auto &first = first_values[row];
+                    const auto &second = second_values[row];
+                    if (first.empty() || second.empty())
+                    {
+                        continue;
+                    }
+
+                    composite_values.push_back(
+                        encodeCompositeStatisticValue({first, second}));
+                    forward_dependencies[first][second] += 1;
+                    reverse_dependencies[second][first] += 1;
+                }
+
+                if (composite_values.size() < 8)
+                {
+                    continue;
+                }
+
+                MultivariateStatistics stats;
+                stats.table_id = table_id;
+                stats.column_ids = {
+                    columns[first_idx].column_id, columns[second_idx].column_id};
+                stats.column_names = {
+                    columns[first_idx].column_name, columns[second_idx].column_name};
+                stats.sample_size = static_cast<uint64_t>(composite_values.size());
+                stats.last_analyzed_time = analyzed_time;
+                stats.ndistinct.column_ids = stats.column_ids;
+                stats.ndistinct.column_names = stats.column_names;
+                stats.ndistinct.sample_size = stats.sample_size;
+                stats.ndistinct.last_analyzed_time = analyzed_time;
+                stats.ndistinct.num_distinct = estimateNDistinct(
+                    composite_values,
+                    std::max<uint64_t>(table_row_estimate, composite_values.size()),
+                    composite_values.size());
+                stats.ndistinct.distinct_fraction =
+                    stats.sample_size == 0
+                        ? 0.0
+                        : static_cast<double>(stats.ndistinct.num_distinct) /
+                              static_cast<double>(std::max<uint64_t>(1, table_row_estimate));
+
+                std::vector<MCVEntry> raw_mcv_list;
+                if (identifyMCVs(composite_values, 64, raw_mcv_list, nullptr) == Status::OK)
+                {
+                    for (const auto &raw_entry : raw_mcv_list)
+                    {
+                        MultivariateMCVEntry entry;
+                        if (!decodeCompositeStatisticValue(raw_entry.value_data, entry.values))
+                        {
+                            continue;
+                        }
+                        entry.frequency = raw_entry.frequency;
+                        stats.mcv_list.push_back(std::move(entry));
+                    }
+                }
+
+                FunctionalDependencyStatistics first_to_second;
+                first_to_second.determinant_column_ids = {stats.column_ids[0]};
+                first_to_second.dependent_column_ids = {stats.column_ids[1]};
+                first_to_second.determinant_column_names = {stats.column_names[0]};
+                first_to_second.dependent_column_names = {stats.column_names[1]};
+                first_to_second.strength =
+                    dependency_strength(forward_dependencies, stats.sample_size);
+                first_to_second.sample_size = stats.sample_size;
+                first_to_second.last_analyzed_time = analyzed_time;
+                stats.dependencies.push_back(std::move(first_to_second));
+
+                FunctionalDependencyStatistics second_to_first;
+                second_to_first.determinant_column_ids = {stats.column_ids[1]};
+                second_to_first.dependent_column_ids = {stats.column_ids[0]};
+                second_to_first.determinant_column_names = {stats.column_names[1]};
+                second_to_first.dependent_column_names = {stats.column_names[0]};
+                second_to_first.strength =
+                    dependency_strength(reverse_dependencies, stats.sample_size);
+                second_to_first.sample_size = stats.sample_size;
+                second_to_first.last_analyzed_time = analyzed_time;
+                stats.dependencies.push_back(std::move(second_to_first));
+
+                {
+                    std::lock_guard<std::mutex> lock(cache_mutex_);
+                    const auto correlation_it = correlation_stats_cache_.find(
+                        getCorrelationCacheKey(table_id,
+                                               stats.column_ids[0],
+                                               stats.column_ids[1]));
+                    if (correlation_it != correlation_stats_cache_.end())
+                    {
+                        stats.pairwise_correlations.push_back(correlation_it->second);
+                    }
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(cache_mutex_);
+                    multivariate_stats_cache_[getMultivariateCacheKey(table_id,
+                                                                     stats.column_ids)] = stats;
+                }
+
+                Status persist_status = storeMultivariateStatistics(stats, ctx);
+                if (persist_status != Status::OK)
+                {
+                    DEBUG_LOG_DB("Failed to persist multivariate statistics for " +
+                                 stats.column_names[0] + "/" + stats.column_names[1]);
+                }
+            }
         }
     }
 
