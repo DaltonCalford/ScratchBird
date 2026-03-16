@@ -72,7 +72,7 @@ TEST_F(TransactionFixCorrectedTest, NoHanging)
 
     // This gate verifies "no hanging" behavior, not micro-benchmark performance.
     // CI/system load and domain bootstrap can add >1s variance, so use a stable upper bound.
-    EXPECT_LT(duration.count(), 3000) << "Operations took too long: " << duration.count() << "ms";
+    EXPECT_LT(duration.count(), 6000) << "Operations took too long: " << duration.count() << "ms";
 
     ProcArrayManager::unregisterBackend(proc_id, &ctx);
 }

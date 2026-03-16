@@ -42,12 +42,14 @@ reload_example_env() {
 
 reload_example_env
 
-retry_after_connection_reset() {
+retry_after_fixture_transport_failure() {
   local log_file="$1"
   if [[ ! -f "${log_file}" ]]; then
     return 1
   fi
-  if ! rg -q "Connection failed: recv\\(\\) failed: Connection reset by peer" "${log_file}"; then
+  if ! rg -q \
+      "Connection failed: recv\\(\\) failed: Connection reset by peer|Connection refused|not reachable with current client/auth settings|not reachable with configured profile" \
+      "${log_file}"; then
     return 1
   fi
   if [[ ! -x "${EXAMPLE_MANAGER}" ]]; then
@@ -97,8 +99,9 @@ run_step() {
     }
 
     if [[ "${attempt}" -lt "${retries}" ]]; then
-      # Attempt fixture repair only when reset-by-peer appears; otherwise just retry once.
-      retry_after_connection_reset "${log_file}" || true
+      # Repair the shared example fixture for transport-level endpoint failures
+      # before the final retry.
+      retry_after_fixture_transport_failure "${log_file}" || true
       attempt=$((attempt + 1))
       continue
     fi

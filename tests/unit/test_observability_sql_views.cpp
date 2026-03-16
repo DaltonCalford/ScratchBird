@@ -55,6 +55,7 @@ namespace scratchbird::core
 
             ASSERT_EQ(db_->connect(conn_, &ctx), Status::OK) << ctx.message;
             ConnectionContext::setCurrent(conn_.get());
+            conn_->setCurrentUser(catalog_->getSystemUserId(&ctx), true);
 
             ASSERT_EQ(catalog_->createSchema("mga_obs", "system", schema_id_, &ctx), Status::OK)
                 << ctx.message;

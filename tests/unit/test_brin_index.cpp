@@ -413,7 +413,7 @@ TEST_F(BrinIndexTest, RemoveDeadEntriesEmpty)
     EXPECT_EQ(pages_modified, 0);
 }
 
-// Test 10: Remove dead entries (partial range - should not tombstone summary)
+// Test 10: Remove dead entries (partial overlap now retires the coarse BRIN summary)
 TEST_F(BrinIndexTest, RemoveDeadEntriesPartial)
 {
     ErrorContext ctx;
@@ -447,15 +447,15 @@ TEST_F(BrinIndexTest, RemoveDeadEntriesPartial)
     status = brin->removeDeadEntries(dead_tids, &entries_removed, &pages_modified, &ctx);
 
     EXPECT_EQ(status, Status::OK);
-    EXPECT_EQ(entries_removed, 0) << "Partial dead blocks must not tombstone the whole range";
-    EXPECT_EQ(pages_modified, 0);
+    EXPECT_EQ(entries_removed, 1) << "Any dead block in a BRIN range retires that coarse summary";
+    EXPECT_EQ(pages_modified, 1);
 
     std::vector<uint8_t> min_val = encodeUint64(900);
     std::vector<uint32_t> blocks;
     uint64_t current_xid = currentXid();
     status = brin->scan(&min_val, nullptr, current_xid, &blocks, &ctx);
     EXPECT_EQ(status, Status::OK);
-    EXPECT_GT(blocks.size(), 0) << "Partially-dead range should remain queryable";
+    EXPECT_TRUE(blocks.empty()) << "Retired BRIN ranges must not remain queryable";
 }
 
 // Test 11: Remove dead entries (complete range - should remove)

@@ -154,11 +154,16 @@ TEST_F(HeapPageToastAPITest, DeleteTupleWithoutToastManager)
     // Delete the tuple
     ASSERT_EQ(page.deleteTuple(item_id, 200, &error_ctx), Status::OK);
 
-    // Verify tuple is deleted
-    const uint8_t *retrieved_data;
-    uint32_t retrieved_size;
-    EXPECT_EQ(page.getTuple(item_id, &retrieved_data, &retrieved_size, &error_ctx),
-              Status::NOT_FOUND);
+    // MGA soft delete keeps the tuple line pointer live and records delete metadata.
+    const uint8_t *retrieved_data = nullptr;
+    uint32_t retrieved_size = 0;
+    ASSERT_EQ(page.getTuple(item_id, &retrieved_data, &retrieved_size, &error_ctx), Status::OK);
+    ASSERT_NE(retrieved_data, nullptr);
+    ASSERT_GE(retrieved_size, sizeof(TupleHeader));
+
+    const auto *header = reinterpret_cast<const TupleHeader *>(retrieved_data);
+    EXPECT_EQ(header->xmax, 200u);
+    EXPECT_NE(header->infomask & TupleHeader::FLAG_DELETED, 0u);
 }
 
 TEST_F(HeapPageToastAPITest, LargeTupleWithoutToastFails)

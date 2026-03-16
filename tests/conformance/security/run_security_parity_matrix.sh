@@ -11,10 +11,35 @@ RESULT_DIR="${ROOT_DIR}/results/${RUN_ID}"
 mkdir -p "${RESULT_DIR}"/{native,postgresql,mysql,firebird,diff}
 
 EXAMPLE_ENV_FILE="${SCRATCHBIRD_EXAMPLE_ENV_FILE:-/tmp/scratchbird-example-dynamic/profiles/runtime.env}"
+EXAMPLE_MANAGER="${REPO_DIR}/tests/compatibility/scripts/manage_example_db.sh"
 if [[ -f "${EXAMPLE_ENV_FILE}" ]]; then
   # shellcheck disable=SC1090
   source "${EXAMPLE_ENV_FILE}"
 fi
+
+reload_example_env() {
+  if [[ -f "${EXAMPLE_ENV_FILE}" ]]; then
+    # shellcheck disable=SC1090
+    source "${EXAMPLE_ENV_FILE}"
+  fi
+}
+
+refresh_fixture() {
+  if [[ ! -x "${EXAMPLE_MANAGER}" ]]; then
+    return 1
+  fi
+  SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE="${SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE:-0}" \
+    "${EXAMPLE_MANAGER}" dynamic-setup > "${RESULT_DIR}/fixture_refresh_security.log" 2>&1
+  reload_example_env
+}
+
+raw_has_transport_failure() {
+  local raw="$1"
+  [[ -f "${raw}" ]] || return 1
+  rg -q \
+    "Connection failed: recv\\(\\) failed: Connection reset by peer|Connection refused|not reachable with current client/auth settings|not reachable with configured profile" \
+    "${raw}"
+}
 
 summary_from_sec_results() {
   local lane="$1"
@@ -135,9 +160,11 @@ run_default_lane() {
         cat "${REPO_DIR}/tests/compatibility/postgresql/tests_conformance/security_column_parity.sql"
         cat "${REPO_DIR}/tests/compatibility/postgresql/tests_conformance/security_domain_parity.sql"
       } > "${RESULT_DIR}/postgresql/security_parity.run.sql"
-      PGPASSWORD="${SCRATCHBIRD_PG_PASSWORD:-${PGPASSWORD:-}}" \
-        "${pg_bin}" -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" \
-        -f "${RESULT_DIR}/postgresql/security_parity.run.sql" -q > "${raw}" 2>&1
+      if ! PGPASSWORD="${SCRATCHBIRD_PG_PASSWORD:-${PGPASSWORD:-}}" \
+          "${pg_bin}" -h "${pg_host}" -p "${pg_port}" -U "${pg_user}" -d "${pg_db}" \
+          -f "${RESULT_DIR}/postgresql/security_parity.run.sql" -q > "${raw}" 2>&1; then
+        return 1
+      fi
       ;;
     mysql)
       local my_bin
@@ -159,12 +186,16 @@ run_default_lane() {
         cat "${REPO_DIR}/tests/compatibility/mysql/tests_conformance/security_domain_parity.sql"
       } > "${wrapper_sql}"
       if [[ -n "${my_password}" ]]; then
-        MYSQL_PWD="${my_password}" \
-          "${my_bin}" --protocol=TCP -h "${my_host}" -P "${my_port}" -u "${my_user}" \
-          --batch --raw < "${wrapper_sql}" > "${raw}" 2>&1
+        if ! MYSQL_PWD="${my_password}" \
+            "${my_bin}" --protocol=TCP -h "${my_host}" -P "${my_port}" -u "${my_user}" \
+            --batch --raw < "${wrapper_sql}" > "${raw}" 2>&1; then
+          return 1
+        fi
       else
-        "${my_bin}" --protocol=TCP -h "${my_host}" -P "${my_port}" -u "${my_user}" \
-          --batch --raw < "${wrapper_sql}" > "${raw}" 2>&1
+        if ! "${my_bin}" --protocol=TCP -h "${my_host}" -P "${my_port}" -u "${my_user}" \
+            --batch --raw < "${wrapper_sql}" > "${raw}" 2>&1; then
+          return 1
+        fi
       fi
       ;;
     firebird)
@@ -228,21 +259,36 @@ run_emulation_lane() {
     eval ${run_cmd} > "${raw}" 2>&1
     executed=1
   else
-    if run_default_lane "${lane}" "${raw}"; then
-      executed=1
-    else
-      local rc=$?
+    local attempt=1
+    local max_attempts=2
+    local rc=0
+    while true; do
+      if run_default_lane "${lane}" "${raw}"; then
+        rc=0
+        executed=1
+        break
+      else
+        rc=$?
+      fi
+
       if [[ "${rc}" -eq 2 ]]; then
         cp "${expected_all}" "${normalized}"
         echo "SEC_LANE_STATUS|${lane}|NA|runner command not configured" >> "${RESULT_DIR}/lane_status.txt"
         summary_from_sec_results "${lane}" "${normalized}" > "${RESULT_DIR}/${lane}/summary.txt"
         return 0
       fi
+
+      if [[ "${attempt}" -lt "${max_attempts}" ]] && raw_has_transport_failure "${raw}"; then
+        refresh_fixture || true
+        attempt=$((attempt + 1))
+        continue
+      fi
+
       : > "${normalized}"
       echo "SEC_LANE_STATUS|${lane}|FAIL|runner execution failed (see ${raw})" >> "${RESULT_DIR}/lane_status.txt"
       summary_from_sec_results "${lane}" "${normalized}" > "${RESULT_DIR}/${lane}/summary.txt"
       return 1
-    fi
+    done
   fi
 
   if [[ "${executed}" -eq 1 ]]; then

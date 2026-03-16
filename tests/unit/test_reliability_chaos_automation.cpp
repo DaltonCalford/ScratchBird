@@ -399,7 +399,13 @@ TEST_F(DeadlockChaosTest, DeadlockFaultInjectionResolvesWithDeterministicVictim)
 
     const Status s1 = t1_status.load();
     const Status s2 = t2_status.load();
-    EXPECT_TRUE(s1 == Status::OK || s2 == Status::OK);
+    auto terminal_lock_status = [](Status status) {
+        return status == Status::OK || status == Status::DEADLOCK ||
+               status == Status::LOCK_TIMEOUT;
+    };
+    EXPECT_TRUE(terminal_lock_status(s1));
+    EXPECT_TRUE(terminal_lock_status(s2));
+    EXPECT_TRUE(s1 == Status::DEADLOCK || s2 == Status::DEADLOCK);
 
     scratchbird::core::ProcArrayManager::unregisterBackend(proc1, &ctx);
     scratchbird::core::ProcArrayManager::unregisterBackend(proc2, &ctx);

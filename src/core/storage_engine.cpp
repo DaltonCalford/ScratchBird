@@ -131,6 +131,25 @@ namespace scratchbird::core
             return candidate.page_id < best.page_id;
         }
 
+        [[nodiscard]] auto indexUsesArrayUniqueness(const CatalogManager::IndexInfo &index_info,
+                                                    CatalogManager *catalog_manager) -> bool
+        {
+            if (catalog_manager == nullptr || index_info.index_params_oid == ID{})
+            {
+                return false;
+            }
+
+            std::string params_blob;
+            ErrorContext params_ctx;
+            if (catalog_manager->loadStringFromToast(index_info.index_params_oid, 0, params_blob,
+                                                     &params_ctx) != Status::OK)
+            {
+                return false;
+            }
+
+            return params_blob.find("sb.array_uniqueness=") != std::string::npos;
+        }
+
         struct PreparedStableHeadTuple
         {
             const uint8_t *storage_tuple_data = nullptr;
@@ -1462,6 +1481,10 @@ namespace scratchbird::core
             {
                 continue;
             }
+            if (indexUsesArrayUniqueness(index_info, catalog_manager_))
+            {
+                continue;
+            }
 
             CatalogManager::IndexType actual_index_type;
             void *index_ptr = catalog_manager_->getIndexPtr(index_info.index_id, &actual_index_type);
@@ -1581,6 +1604,10 @@ namespace scratchbird::core
         for (const auto &index_info : indexes)
         {
             if (!index_info.is_unique || index_info.is_expression_index || index_info.is_partial_index)
+            {
+                continue;
+            }
+            if (indexUsesArrayUniqueness(index_info, catalog_manager_))
             {
                 continue;
             }

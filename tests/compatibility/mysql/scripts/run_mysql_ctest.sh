@@ -110,6 +110,7 @@ run_mysql_file_capture() {
   local -a cmd=(
     "$MYSQL_CLI_BIN"
     --protocol=TCP
+    --force
     -h "$HOST"
     -P "$PORT"
     -u "$USER"

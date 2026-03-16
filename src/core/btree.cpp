@@ -1540,7 +1540,15 @@ namespace scratchbird::core
             return true;
         }
 
-        // Index visibility is TIP-based and must not inherit connection snapshot state.
+        // User-facing searches must respect the active connection snapshot when present,
+        // but maintenance callers without a connection still need deterministic inventory truth.
+        if (ConnectionContext::getCurrent() != nullptr)
+        {
+            return txn_mgr->evaluateRuntimeRecordVisibility(
+                              xmin, xmax, current_xid, ConnectionContext::getCurrent())
+                .visible;
+        }
+
         return txn_mgr->isInventoryRecordVisible(xmin, xmax, current_xid);
     }
 
