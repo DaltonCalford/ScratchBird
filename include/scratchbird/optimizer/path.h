@@ -359,6 +359,7 @@ namespace scratchbird::optimizer
         if (family_text == "RTREE_SCAN" || scan_kind_text == "RTREE_SCAN" ||
             family_text == "GIST_SCAN" || family_text == "SPGIST_SCAN" ||
             family_text == "TEXT_RECHECK_SCAN" || family_text == "TEXT_BITMAP_SCAN" ||
+            family_text == "TEXT_SCORE_SCAN" ||
             family_text == "SUMMARY_FILTER_SCAN" || family_text == "BRIN_SCAN" ||
             family_text == "BITMAP_STORAGE_SCAN" || family_text == "COLUMNSTORE_SCAN")
         {
@@ -374,6 +375,10 @@ namespace scratchbird::optimizer
         {
             return AccessPathExactnessClass::APPROX_TOPK;
         }
+        if (family_text == "ANN_HYBRID_FALLBACK_SCAN")
+        {
+            return AccessPathExactnessClass::EXACT_ROW;
+        }
         if (family_text == "SEQ_SCAN" || scan_kind_text == "SEQ_SCAN")
         {
             return AccessPathExactnessClass::EXACT_ROW;
@@ -386,9 +391,13 @@ namespace scratchbird::optimizer
             family_text == "BTREE_RANGE_SCAN" || family_text == "BTREE_ORDERED_SCAN" ||
             family_text == "BTREE_SKIP_SCAN" || family_text == "HASH_EQ_SCAN" ||
             family_text == "LSM_EQ_SCAN" || family_text == "LSM_RANGE_SCAN" ||
-            family_text == "LSM_ORDERED_RANGE_SCAN" || family_text == "VECTOR_FLAT_SCAN")
+            family_text == "LSM_ORDERED_RANGE_SCAN")
         {
             return AccessPathExactnessClass::EXACT_KEY;
+        }
+        if (family_text == "VECTOR_FLAT_SCAN")
+        {
+            return AccessPathExactnessClass::EXACT_ROW;
         }
         return AccessPathExactnessClass::UNKNOWN;
     }
@@ -405,10 +414,13 @@ namespace scratchbird::optimizer
             family_text == "RTREE_SCAN" || scan_kind_text == "RTREE_SCAN" ||
             family_text == "GIST_SCAN" || family_text == "SPGIST_SCAN" ||
             family_text == "TEXT_BITMAP_SCAN" || family_text == "TEXT_RECHECK_SCAN" ||
+            family_text == "TEXT_SCORE_SCAN" ||
             family_text == "SUMMARY_FILTER_SCAN" || family_text == "BRIN_SCAN" ||
             family_text == "BITMAP_STORAGE_SCAN" || family_text == "COLUMNSTORE_SCAN" ||
             family_text == "HNSW_SCAN" || family_text == "IVF_SCAN" ||
-            family_text == "ANN_RERANK_SCAN")
+            family_text == "ANN_RERANK_SCAN" ||
+            family_text == "ANN_HYBRID_FALLBACK_SCAN" ||
+            family_text == "VECTOR_FLAT_SCAN")
         {
             return AccessPathVisibilityEnforcement::POST_FILTER;
         }

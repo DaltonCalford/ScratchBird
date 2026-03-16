@@ -10,6 +10,7 @@
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/core/debug.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <sstream>
 
@@ -183,6 +184,58 @@ namespace scratchbird::optimizer
             return profile;
         }
 
+        auto normalizeProfileComponent(const std::string &value) -> std::string
+        {
+            std::string normalized;
+            normalized.reserve(value.size());
+            bool previous_underscore = false;
+            for (unsigned char ch : value)
+            {
+                if (std::isalnum(ch))
+                {
+                    normalized.push_back(static_cast<char>(std::tolower(ch)));
+                    previous_underscore = false;
+                }
+                else if (!previous_underscore)
+                {
+                    normalized.push_back('_');
+                    previous_underscore = true;
+                }
+            }
+            while (!normalized.empty() && normalized.front() == '_')
+            {
+                normalized.erase(normalized.begin());
+            }
+            while (!normalized.empty() && normalized.back() == '_')
+            {
+                normalized.pop_back();
+            }
+            return normalized.empty() ? std::string("unknown") : normalized;
+        }
+
+        auto confidencePenaltyMultiplier(const std::string &confidence_class) -> double
+        {
+            const std::string normalized =
+                normalizeProfileComponent(confidence_class);
+            if (normalized == "high")
+            {
+                return 1.00;
+            }
+            if (normalized == "medium")
+            {
+                return 1.05;
+            }
+            if (normalized == "low")
+            {
+                return 1.15;
+            }
+            if (normalized == "invalid")
+            {
+                return 1.30;
+            }
+            return 1.10;
+        }
+
         auto initializeCostEvidence(CostEstimate &cost,
                                     const CostFormulaProfile &profile,
                                     const std::string &operator_name) -> void
@@ -239,6 +292,75 @@ namespace scratchbird::optimizer
         params_ = formula_profile_.parameters;
         DEBUG_LOG_DB("CostModel created with profile=" + formula_profile_.profile_id +
                      " version=" + std::to_string(formula_profile_.profile_version));
+    }
+
+    auto deriveIndexFamilyFormulaProfile(
+        const CostParameters &params,
+        const IndexFamilyCostCalibrationInput &input) -> CostFormulaProfile
+    {
+        CostFormulaProfile profile = deriveFormulaProfile(params);
+        const std::string family_token =
+            normalizeProfileComponent(input.planner_family);
+        const std::string metrics_token =
+            normalizeProfileComponent(input.metrics_type_name);
+        const std::string confidence_token =
+            normalizeProfileComponent(input.metrics_confidence_class);
+        const uint32_t version =
+            std::max<uint32_t>(1, input.family_metrics_version);
+
+        profile.profile_id = "sb_cost_formula/index_family/" + family_token +
+                             "/" + metrics_token + "/v" +
+                             std::to_string(version) + "/" + confidence_token;
+        profile.profile_version = version;
+        profile.calibration_profile_id =
+            "sb_cost_calibration/index_family/" + metrics_token + "/" +
+            family_token + "/v" + std::to_string(version);
+        profile.storage_profile =
+            metrics_token == "unknown" ? family_token : metrics_token;
+        if (input.ordered_output)
+        {
+            profile.workload_profile = "ordered_read";
+        }
+        else if (input.covering_index)
+        {
+            profile.workload_profile = "covering_lookup";
+        }
+        else if (input.requires_recheck)
+        {
+            profile.workload_profile = "recheck_filter";
+        }
+        else
+        {
+            profile.workload_profile = "mixed_oltp";
+        }
+
+        const double bloat_ratio = std::clamp(input.bloat_ratio, 0.0, 1.0);
+        const double recheck_ratio =
+            std::clamp(input.recheck_ratio_est, 0.0, 1.0);
+        const double coverage_fraction =
+            std::clamp(input.coverage_fraction, 0.0, 1.0);
+        const double confidence_penalty =
+            confidencePenaltyMultiplier(input.metrics_confidence_class);
+
+        profile.parameters.random_page_cost *=
+            (1.0 + (bloat_ratio * 0.75)) * confidence_penalty;
+        profile.parameters.cpu_index_tuple_cost *= 1.0 + (recheck_ratio * 0.50);
+        profile.parameters.cpu_tuple_cost *=
+            1.0 + ((1.0 - coverage_fraction) * 0.25) + (recheck_ratio * 0.35);
+        if (input.covering_index || coverage_fraction >= 0.999)
+        {
+            profile.parameters.cpu_tuple_cost *= 0.85;
+        }
+        if (input.ordered_output || std::abs(input.correlation) > 0.8)
+        {
+            profile.parameters.random_page_cost *= 0.90;
+        }
+        if (input.requires_recheck)
+        {
+            profile.parameters.cpu_operator_cost *=
+                1.0 + std::max(0.25, recheck_ratio);
+        }
+        return normalizeFormulaProfile(profile);
     }
 
     auto CostModel::costSeqScan(uint64_t num_pages, uint64_t num_tuples,
@@ -570,6 +692,372 @@ namespace scratchbird::optimizer
         }
         cost.total_cost = cost.startup_cost + cost.run_cost;
         cost.rows = heap_tuples;
+        return cost;
+    }
+
+    auto CostModel::costSummaryScan(uint64_t summary_pages_read,
+                                    uint64_t candidate_heap_pages,
+                                    uint64_t candidate_rows,
+                                    double qual_cost,
+                                    double unsummarized_range_fraction,
+                                    double summary_staleness_fraction,
+                                    core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating summary scan cost: summary_pages=" +
+                     std::to_string(summary_pages_read) +
+                     ", heap_pages=" + std::to_string(candidate_heap_pages) +
+                     ", rows=" + std::to_string(candidate_rows));
+
+        const double unsummarized_penalty =
+            std::clamp(unsummarized_range_fraction, 0.0, 1.0);
+        const double staleness_penalty =
+            std::clamp(summary_staleness_fraction, 0.0, 1.0);
+
+        CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "SUMMARY_SCAN");
+        appendInputEstimate(cost,
+                            "summary_pages_read",
+                            static_cast<double>(summary_pages_read),
+                            "pages");
+        appendInputEstimate(cost,
+                            "candidate_heap_pages",
+                            static_cast<double>(candidate_heap_pages),
+                            "pages");
+        appendInputEstimate(cost,
+                            "candidate_rows",
+                            static_cast<double>(candidate_rows),
+                            "rows");
+        appendInputEstimate(cost,
+                            "qual_cost",
+                            qual_cost,
+                            "cpu_per_row");
+        appendInputEstimate(cost,
+                            "unsummarized_range_fraction",
+                            unsummarized_penalty,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "summary_staleness_fraction",
+                            staleness_penalty,
+                            "ratio");
+
+        cost.startup_cost =
+            static_cast<double>(summary_pages_read) *
+            params_.cpu_operator_cost * 0.25;
+        appendFormulaTerm(cost,
+                          "startup.summary_probe",
+                          params_.cpu_operator_cost * 0.25,
+                          static_cast<double>(summary_pages_read),
+                          cost.startup_cost,
+                          "cost");
+
+        const double summary_io_cost =
+            static_cast<double>(summary_pages_read) *
+            params_.seq_page_cost * 0.60;
+        const double heap_io_cost =
+            static_cast<double>(candidate_heap_pages) * params_.seq_page_cost;
+        const double tuple_cpu_cost =
+            static_cast<double>(candidate_rows) * params_.cpu_tuple_cost;
+        const double qual_cpu_cost =
+            static_cast<double>(candidate_rows) * qual_cost;
+        const double unsummarized_cost =
+            static_cast<double>(candidate_heap_pages) *
+            params_.random_page_cost * unsummarized_penalty * 0.50;
+        const double stale_cost =
+            static_cast<double>(candidate_rows) *
+            params_.cpu_operator_cost * staleness_penalty;
+
+        appendFormulaTerm(cost,
+                          "run.summary_io",
+                          params_.seq_page_cost * 0.60,
+                          static_cast<double>(summary_pages_read),
+                          summary_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.heap_candidate_io",
+                          params_.seq_page_cost,
+                          static_cast<double>(candidate_heap_pages),
+                          heap_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.heap_tuple_cpu",
+                          params_.cpu_tuple_cost,
+                          static_cast<double>(candidate_rows),
+                          tuple_cpu_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.recheck_cpu",
+                          qual_cost,
+                          static_cast<double>(candidate_rows),
+                          qual_cpu_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.unsummarized_penalty",
+                          params_.random_page_cost * 0.50,
+                          static_cast<double>(candidate_heap_pages) *
+                              unsummarized_penalty,
+                          unsummarized_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.summary_staleness_penalty",
+                          params_.cpu_operator_cost,
+                          static_cast<double>(candidate_rows) *
+                              staleness_penalty,
+                          stale_cost,
+                          "cost");
+
+        cost.run_cost = summary_io_cost + heap_io_cost + tuple_cpu_cost +
+                        qual_cpu_cost + unsummarized_cost + stale_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = candidate_rows;
+        return cost;
+    }
+
+    auto CostModel::costBitmapStorageScan(uint64_t bitmap_pages_read,
+                                          uint64_t candidate_heap_pages,
+                                          uint64_t candidate_rows,
+                                          double qual_cost,
+                                          double lossy_container_fraction,
+                                          double false_positive_ratio,
+                                          core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating bitmap storage scan cost: bitmap_pages=" +
+                     std::to_string(bitmap_pages_read) +
+                     ", heap_pages=" + std::to_string(candidate_heap_pages) +
+                     ", rows=" + std::to_string(candidate_rows));
+
+        const double lossy_fraction =
+            std::clamp(lossy_container_fraction, 0.0, 1.0);
+        const double false_positive_fraction =
+            std::clamp(false_positive_ratio, 0.0, 1.0);
+
+        CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "BITMAP_STORAGE_SCAN");
+        appendInputEstimate(cost,
+                            "bitmap_pages_read",
+                            static_cast<double>(bitmap_pages_read),
+                            "pages");
+        appendInputEstimate(cost,
+                            "candidate_heap_pages",
+                            static_cast<double>(candidate_heap_pages),
+                            "pages");
+        appendInputEstimate(cost,
+                            "candidate_rows",
+                            static_cast<double>(candidate_rows),
+                            "rows");
+        appendInputEstimate(cost,
+                            "qual_cost",
+                            qual_cost,
+                            "cpu_per_row");
+        appendInputEstimate(cost,
+                            "lossy_container_fraction",
+                            lossy_fraction,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "false_positive_ratio",
+                            false_positive_fraction,
+                            "ratio");
+
+        cost.startup_cost =
+            static_cast<double>(bitmap_pages_read) *
+            params_.cpu_operator_cost * 0.35;
+        appendFormulaTerm(cost,
+                          "startup.bitmap_probe",
+                          params_.cpu_operator_cost * 0.35,
+                          static_cast<double>(bitmap_pages_read),
+                          cost.startup_cost,
+                          "cost");
+
+        const double bitmap_io_cost =
+            static_cast<double>(bitmap_pages_read) *
+            params_.random_page_cost * 0.75;
+        const double heap_io_cost =
+            static_cast<double>(candidate_heap_pages) *
+            params_.seq_page_cost * 0.90;
+        const double bitmap_cpu_cost =
+            static_cast<double>(candidate_rows) *
+            params_.cpu_index_tuple_cost;
+        const double visibility_cpu_cost =
+            static_cast<double>(candidate_rows) *
+            params_.cpu_tuple_cost * 0.25;
+        const double qual_cpu_cost =
+            static_cast<double>(candidate_rows) * qual_cost;
+        const double lossy_penalty_cost =
+            static_cast<double>(candidate_rows) *
+            params_.cpu_operator_cost *
+            (lossy_fraction + false_positive_fraction);
+
+        appendFormulaTerm(cost,
+                          "run.bitmap_io",
+                          params_.random_page_cost * 0.75,
+                          static_cast<double>(bitmap_pages_read),
+                          bitmap_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.heap_candidate_io",
+                          params_.seq_page_cost * 0.90,
+                          static_cast<double>(candidate_heap_pages),
+                          heap_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.bitmap_cpu",
+                          params_.cpu_index_tuple_cost,
+                          static_cast<double>(candidate_rows),
+                          bitmap_cpu_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.visibility_cpu",
+                          params_.cpu_tuple_cost * 0.25,
+                          static_cast<double>(candidate_rows),
+                          visibility_cpu_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.recheck_cpu",
+                          qual_cost,
+                          static_cast<double>(candidate_rows),
+                          qual_cpu_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.lossy_penalty",
+                          params_.cpu_operator_cost,
+                          static_cast<double>(candidate_rows) *
+                              (lossy_fraction + false_positive_fraction),
+                          lossy_penalty_cost,
+                          "cost");
+
+        cost.run_cost = bitmap_io_cost + heap_io_cost + bitmap_cpu_cost +
+                        visibility_cpu_cost + qual_cpu_cost +
+                        lossy_penalty_cost;
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = candidate_rows;
+        return cost;
+    }
+
+    auto CostModel::costColumnstoreScan(uint64_t bytes_read_est,
+                                        uint64_t rows_materialized,
+                                        double qual_cost,
+                                        double column_bytes_pruned_ratio,
+                                        double late_materialization_gain_est,
+                                        double delta_fraction,
+                                        core::ErrorContext *ctx)
+        -> CostEstimate
+    {
+        DEBUG_LOG_DB("Estimating columnstore scan cost: bytes_read=" +
+                     std::to_string(bytes_read_est) +
+                     ", rows=" + std::to_string(rows_materialized));
+
+        const double bytes_pruned_ratio =
+            std::clamp(column_bytes_pruned_ratio, 0.0, 1.0);
+        const double late_materialization_gain =
+            std::clamp(late_materialization_gain_est, 0.0, 1.0);
+        const double delta_penalty =
+            std::clamp(delta_fraction, 0.0, 1.0);
+        const uint64_t bytes_per_page =
+            std::max<uint64_t>(1024, params_.planner_page_size_bytes);
+        const uint64_t column_pages_read =
+            std::max<uint64_t>(1, ceilDivU64(bytes_read_est, bytes_per_page));
+
+        CostEstimate cost;
+        initializeCostEvidence(cost, formula_profile_, "COLUMNSTORE_SCAN");
+        appendInputEstimate(cost,
+                            "bytes_read_est",
+                            static_cast<double>(bytes_read_est),
+                            "bytes");
+        appendInputEstimate(cost,
+                            "rows_materialized",
+                            static_cast<double>(rows_materialized),
+                            "rows");
+        appendInputEstimate(cost,
+                            "qual_cost",
+                            qual_cost,
+                            "cpu_per_row");
+        appendInputEstimate(cost,
+                            "column_bytes_pruned_ratio",
+                            bytes_pruned_ratio,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "late_materialization_gain_est",
+                            late_materialization_gain,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "delta_fraction",
+                            delta_penalty,
+                            "ratio");
+
+        cost.startup_cost =
+            static_cast<double>(column_pages_read) *
+            params_.cpu_operator_cost * 0.20;
+        appendFormulaTerm(cost,
+                          "startup.column_projection",
+                          params_.cpu_operator_cost * 0.20,
+                          static_cast<double>(column_pages_read),
+                          cost.startup_cost,
+                          "cost");
+
+        const double column_io_cost =
+            static_cast<double>(column_pages_read) *
+            params_.seq_page_cost * 0.75;
+        const double reconstruct_cpu_cost =
+            static_cast<double>(rows_materialized) *
+            params_.cpu_tuple_cost *
+            std::max(0.25, 1.0 - (late_materialization_gain * 0.50));
+        const double qual_cpu_cost =
+            static_cast<double>(rows_materialized) * qual_cost;
+        const double delta_cost =
+            static_cast<double>(column_pages_read) *
+            params_.random_page_cost * delta_penalty * 0.35;
+        const double prune_credit =
+            column_io_cost *
+            std::clamp(bytes_pruned_ratio * late_materialization_gain,
+                       0.0,
+                       0.75);
+
+        appendFormulaTerm(cost,
+                          "run.column_io",
+                          params_.seq_page_cost * 0.75,
+                          static_cast<double>(column_pages_read),
+                          column_io_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.reconstruct_cpu",
+                          params_.cpu_tuple_cost *
+                              std::max(0.25,
+                                       1.0 -
+                                           (late_materialization_gain * 0.50)),
+                          static_cast<double>(rows_materialized),
+                          reconstruct_cpu_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.qual_cpu",
+                          qual_cost,
+                          static_cast<double>(rows_materialized),
+                          qual_cpu_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.delta_penalty",
+                          params_.random_page_cost * 0.35,
+                          static_cast<double>(column_pages_read) *
+                              delta_penalty,
+                          delta_cost,
+                          "cost");
+        appendFormulaTerm(cost,
+                          "run.prune_credit",
+                          -params_.seq_page_cost * 0.75,
+                          static_cast<double>(column_pages_read) *
+                              std::clamp(bytes_pruned_ratio *
+                                             late_materialization_gain,
+                                         0.0,
+                                         0.75),
+                          -prune_credit,
+                          "cost");
+
+        cost.run_cost = std::max(
+            0.0,
+            column_io_cost + reconstruct_cpu_cost + qual_cpu_cost +
+                delta_cost - prune_credit);
+        cost.total_cost = cost.startup_cost + cost.run_cost;
+        cost.rows = rows_materialized;
         return cost;
     }
 

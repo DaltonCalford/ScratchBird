@@ -85,6 +85,25 @@ namespace scratchbird::optimizer
         CostParameters parameters;
     };
 
+    struct IndexFamilyCostCalibrationInput
+    {
+        std::string planner_family;
+        std::string metrics_type_name;
+        uint32_t family_metrics_version = 0;
+        std::string metrics_confidence_class;
+        double correlation = 0.0;
+        double bloat_ratio = 0.0;
+        double recheck_ratio_est = 0.0;
+        double coverage_fraction = 0.0;
+        bool ordered_output = false;
+        bool covering_index = false;
+        bool requires_recheck = false;
+    };
+
+    auto deriveIndexFamilyFormulaProfile(
+        const CostParameters &params,
+        const IndexFamilyCostCalibrationInput &input) -> CostFormulaProfile;
+
     /**
      * Cost Estimate - Result of cost estimation for a query plan
      *
@@ -216,6 +235,51 @@ namespace scratchbird::optimizer
                             double qual_cost,
                             const std::string &bitmap_op = "AND",
                             core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costSummaryScan - Estimate cost of summary-family scans
+         *
+         * Used for BRIN and summary-filter families that narrow heap work down
+         * to candidate ranges and require residual recheck.
+         */
+        auto costSummaryScan(uint64_t summary_pages_read,
+                             uint64_t candidate_heap_pages,
+                             uint64_t candidate_rows,
+                             double qual_cost,
+                             double unsummarized_range_fraction = 0.0,
+                             double summary_staleness_fraction = 0.0,
+                             core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costBitmapStorageScan - Estimate cost of physical bitmap-family scans
+         *
+         * Distinct from synthetic bitmap combination. Models a stored bitmap
+         * candidate path that may be lossy and require residual recheck.
+         */
+        auto costBitmapStorageScan(uint64_t bitmap_pages_read,
+                                   uint64_t candidate_heap_pages,
+                                   uint64_t candidate_rows,
+                                   double qual_cost,
+                                   double lossy_container_fraction = 0.0,
+                                   double false_positive_ratio = 0.0,
+                                   core::ErrorContext *ctx = nullptr)
+            -> CostEstimate;
+
+        /**
+         * costColumnstoreScan - Estimate cost of columnstore-family scans
+         *
+         * Models projected column reads, late materialization, and delta
+         * penalties for candidate-region columnar access.
+         */
+        auto costColumnstoreScan(uint64_t bytes_read_est,
+                                 uint64_t rows_materialized,
+                                 double qual_cost,
+                                 double column_bytes_pruned_ratio = 0.0,
+                                 double late_materialization_gain_est = 0.0,
+                                 double delta_fraction = 0.0,
+                                 core::ErrorContext *ctx = nullptr)
             -> CostEstimate;
 
         /**

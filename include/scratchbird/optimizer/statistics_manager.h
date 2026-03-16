@@ -123,6 +123,19 @@ namespace scratchbird::optimizer
         auto getTableStatistics(const ID &table_id, TableStatistics &stats,
                                 ErrorContext *ctx = nullptr) -> Status;
 
+        auto analyzeIndex(const ID &index_id,
+                          float sample_rate = 0.0f,
+                          uint64_t refresh_xid = 0,
+                          ErrorContext *ctx = nullptr) -> Status;
+
+        auto getIndexFamilyMetrics(const ID &index_id,
+                                   IndexFamilyMetricsPacket &packet,
+                                   ErrorContext *ctx = nullptr) -> Status;
+
+        auto refreshIndexFamilyMetrics(const ID &index_id,
+                                       uint64_t refresh_xid = 0,
+                                       ErrorContext *ctx = nullptr) -> Status;
+
         auto getColumnCorrelation(const ID &table_id,
                                   const ID &left_column_id,
                                   const ID &right_column_id,
@@ -187,6 +200,7 @@ namespace scratchbird::optimizer
         std::unordered_map<uint64_t, TableStatistics> table_stats_cache_;
         std::unordered_map<std::string, ColumnCorrelationStatistics> correlation_stats_cache_;
         std::unordered_map<std::string, ExpressionStatistics> expression_stats_cache_;
+        std::unordered_map<uint64_t, IndexFamilyMetricsPacket> index_family_metrics_cache_;
         mutable std::mutex cache_mutex_;
 
         /**
@@ -364,6 +378,10 @@ namespace scratchbird::optimizer
                                     bool auto_analyze_applied,
                                     uint64_t auto_analyze_threshold,
                                     TableStatistics &stats) -> void;
+
+        auto loadIndexFamilyMetrics(const ID &index_id,
+                                    IndexFamilyMetricsPacket &packet,
+                                    ErrorContext *ctx = nullptr) -> Status;
 
         /**
          * extractColumnValues - Extract values for a specific column from sample rows

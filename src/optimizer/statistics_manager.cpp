@@ -18,6 +18,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/plain_value_reader.h"
 #include "scratchbird/core/debug.h"
+#include "scratchbird/optimizer/index_family_lowering.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <unordered_map>
@@ -49,6 +50,189 @@ namespace scratchbird::optimizer
             }
         }
         return true;
+    }
+
+    auto getIndexMetricsCacheKey(const ID &index_id) -> uint64_t
+    {
+        uint64_t key = 0;
+        std::memcpy(&key, index_id.bytes.data(), sizeof(uint64_t));
+        return key;
+    }
+
+    auto indexMetricsRefreshXid(core::Database *db, uint64_t requested_xid) -> uint64_t
+    {
+        if (requested_xid != 0)
+        {
+            return requested_xid;
+        }
+        if (db != nullptr && db->storage_engine() != nullptr)
+        {
+            const uint64_t current_xid = db->storage_engine()->getCurrentXid();
+            if (current_xid != 0)
+            {
+                return current_xid;
+            }
+        }
+        return 1;
+    }
+
+    auto indexTypeName(core::CatalogManager::IndexType index_type) -> std::string
+    {
+        using IndexType = core::CatalogManager::IndexType;
+        switch (index_type)
+        {
+            case IndexType::BTREE: return "BTREE";
+            case IndexType::HASH: return "HASH";
+            case IndexType::BRIN: return "BRIN";
+            case IndexType::LSM: return "LSM";
+            case IndexType::GIN: return "GIN";
+            case IndexType::GIST: return "GIST";
+            case IndexType::SPGIST: return "SPGIST";
+            case IndexType::RTREE: return "RTREE";
+            case IndexType::FULLTEXT: return "FULLTEXT";
+            case IndexType::INVERTED: return "INVERTED";
+            case IndexType::NGRAM: return "NGRAM";
+            case IndexType::VECTOR_FLAT: return "VECTOR_FLAT";
+            case IndexType::HNSW: return "HNSW";
+            case IndexType::IVF: return "IVF";
+            case IndexType::BLOOM: return "BLOOM";
+            case IndexType::ZONEMAP: return "ZONEMAP";
+            default: return std::to_string(static_cast<uint32_t>(index_type));
+        }
+    }
+
+    auto defaultMetricsLowering(const core::CatalogManager::IndexInfo &index_info)
+        -> PlannerFamilyLoweringResult
+    {
+        PlannerFamilyLoweringRequest request;
+        request.index_type = index_info.index_type;
+        request.predicate_shape = PredicateMatchShape::EQUALITY;
+        request.ordered_output = false;
+        request.skip_scan = false;
+        request.bitmap_combine = false;
+        request.nearest_order = false;
+        return lowerPlannerFamily(request);
+    }
+
+    auto metricsTypeForLowering(const PlannerFamilyLoweringResult &lowering)
+        -> IndexFamilyMetricsType
+    {
+        switch (lowering.family)
+        {
+            case PlannerAccessFamily::BTREE_EQ_SCAN:
+            case PlannerAccessFamily::BTREE_RANGE_SCAN:
+            case PlannerAccessFamily::BTREE_ORDERED_SCAN:
+            case PlannerAccessFamily::BTREE_SKIP_SCAN:
+            case PlannerAccessFamily::HASH_EQ_SCAN:
+            case PlannerAccessFamily::LSM_EQ_SCAN:
+            case PlannerAccessFamily::LSM_RANGE_SCAN:
+            case PlannerAccessFamily::LSM_ORDERED_RANGE_SCAN:
+                return IndexFamilyMetricsType::ORDERED_EXACT;
+            case PlannerAccessFamily::BRIN_SCAN:
+            case PlannerAccessFamily::SUMMARY_FILTER_SCAN:
+            case PlannerAccessFamily::BITMAP_STORAGE_SCAN:
+            case PlannerAccessFamily::BITMAP_COMBINE_SCAN:
+            case PlannerAccessFamily::COLUMNSTORE_SCAN:
+                return IndexFamilyMetricsType::SUMMARY_CANDIDATE;
+            case PlannerAccessFamily::GIST_SCAN:
+            case PlannerAccessFamily::SPGIST_SCAN:
+            case PlannerAccessFamily::RTREE_SCAN:
+            case PlannerAccessFamily::GIST_NEAREST_SCAN:
+            case PlannerAccessFamily::SPGIST_NEAREST_SCAN:
+            case PlannerAccessFamily::RTREE_NEAREST_SCAN:
+            case PlannerAccessFamily::GIN_FILTER_SCAN:
+                return IndexFamilyMetricsType::GENERALIZED_SPATIAL;
+            case PlannerAccessFamily::TEXT_BITMAP_SCAN:
+            case PlannerAccessFamily::TEXT_SCORE_SCAN:
+            case PlannerAccessFamily::TEXT_RECHECK_SCAN:
+                return IndexFamilyMetricsType::TEXT_SEARCH;
+            case PlannerAccessFamily::VECTOR_FLAT_SCAN:
+            case PlannerAccessFamily::HNSW_SCAN:
+            case PlannerAccessFamily::IVF_SCAN:
+            case PlannerAccessFamily::ANN_RERANK_SCAN:
+            case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+                return IndexFamilyMetricsType::ANN;
+            case PlannerAccessFamily::SEQ_SCAN:
+            case PlannerAccessFamily::UNKNOWN:
+            default:
+                return IndexFamilyMetricsType::UNKNOWN;
+        }
+    }
+
+    auto metricsQueryabilityFromAccessState(AccessPathQueryabilityState state)
+        -> IndexMetricsQueryabilityState
+    {
+        switch (state)
+        {
+            case AccessPathQueryabilityState::QUERYABLE:
+                return IndexMetricsQueryabilityState::QUERYABLE;
+            case AccessPathQueryabilityState::LIMITED:
+                return IndexMetricsQueryabilityState::LIMITED;
+            case AccessPathQueryabilityState::INVALID:
+                return IndexMetricsQueryabilityState::INVALID;
+            case AccessPathQueryabilityState::UNKNOWN:
+            default:
+                return IndexMetricsQueryabilityState::UNKNOWN;
+        }
+    }
+
+    auto classifyIndexMetricsConfidence(
+        const PlannerFamilyLoweringResult &lowering,
+        const core::CatalogManager::IndexHealthCatalogInfo *health,
+        bool sampled_refresh,
+        float sample_rate) -> IndexMetricsConfidenceClass
+    {
+        if (lowering.queryability_state == AccessPathQueryabilityState::INVALID)
+        {
+            return IndexMetricsConfidenceClass::INVALID;
+        }
+        if (health != nullptr &&
+            (health->diagnostic_status == core::CatalogManager::IndexHealthStatus::CORRUPT ||
+             health->diagnostic_status == core::CatalogManager::IndexHealthStatus::ERROR))
+        {
+            return IndexMetricsConfidenceClass::INVALID;
+        }
+        if (sampled_refresh)
+        {
+            if (sample_rate == 0.0f || sample_rate >= 0.20f)
+            {
+                return IndexMetricsConfidenceClass::HIGH;
+            }
+            if (sample_rate >= 0.05f)
+            {
+                return IndexMetricsConfidenceClass::MEDIUM;
+            }
+            return IndexMetricsConfidenceClass::LOW;
+        }
+        if (health != nullptr &&
+            health->light_status == core::CatalogManager::IndexHealthStatus::WARNING)
+        {
+            return IndexMetricsConfidenceClass::LOW;
+        }
+        return IndexMetricsConfidenceClass::MEDIUM;
+    }
+
+    auto effectiveMetricsQueryability(
+        const PlannerFamilyLoweringResult &lowering,
+        const core::CatalogManager::IndexHealthCatalogInfo *health,
+        IndexMetricsConfidenceClass confidence_class) -> IndexMetricsQueryabilityState
+    {
+        IndexMetricsQueryabilityState base =
+            metricsQueryabilityFromAccessState(lowering.queryability_state);
+        if (base == IndexMetricsQueryabilityState::INVALID ||
+            confidence_class == IndexMetricsConfidenceClass::INVALID)
+        {
+            return IndexMetricsQueryabilityState::INVALID;
+        }
+        if (health != nullptr &&
+            (health->light_status == core::CatalogManager::IndexHealthStatus::WARNING ||
+             health->diagnostic_status == core::CatalogManager::IndexHealthStatus::WARNING))
+        {
+            return IndexMetricsQueryabilityState::LIMITED;
+        }
+        return base == IndexMetricsQueryabilityState::UNKNOWN
+                   ? IndexMetricsQueryabilityState::LIMITED
+                   : base;
     }
 
     // Hash function for std::vector<uint8_t> (for use in unordered_set)
@@ -1289,6 +1473,586 @@ namespace scratchbird::optimizer
         return Status::OK;
     }
 
+    auto StatisticsManager::analyzeIndex(const ID &index_id,
+                                         float sample_rate,
+                                         uint64_t refresh_xid,
+                                         ErrorContext *ctx) -> Status
+    {
+        if (!catalog_)
+        {
+            catalog_ = db_ != nullptr ? db_->catalog_manager() : nullptr;
+        }
+        if (catalog_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog manager not available for ANALYZE INDEX");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        core::CatalogManager::IndexInfo index_info;
+        Status status = catalog_->getIndex(index_id, index_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        core::CatalogManager::IndexStatsCatalogInfo stats{};
+        if (catalog_->getIndexStatsCatalogEntry(index_id, stats, nullptr) != Status::OK)
+        {
+            stats = core::CatalogManager::IndexStatsCatalogInfo{};
+            stats.index_id = index_id;
+        }
+
+        core::CatalogManager::IndexStorageCatalogInfo storage{};
+        const bool have_storage =
+            catalog_->getIndexStorageCatalogEntry(index_id, storage, nullptr) == Status::OK;
+        core::CatalogManager::IndexHealthCatalogInfo health{};
+        const bool have_health =
+            catalog_->getIndexHealthCatalogEntry(index_id, health, nullptr) == Status::OK;
+        core::CatalogManager::IndexUsageCatalogInfo usage{};
+        const bool have_usage =
+            catalog_->getIndexUsageCatalogEntry(index_id, usage, nullptr) == Status::OK;
+
+        core::CatalogManager::TableInfo table_info{};
+        const bool have_table =
+            catalog_->getTable(index_info.table_id, table_info, nullptr) == Status::OK;
+        std::vector<core::CatalogManager::ColumnInfo> table_columns;
+        const bool have_columns =
+            have_table &&
+            catalog_->getColumns(index_info.table_id, table_columns, nullptr) == Status::OK;
+
+        const PlannerFamilyLoweringResult lowering = defaultMetricsLowering(index_info);
+        const uint64_t current_xid = indexMetricsRefreshXid(db_, refresh_xid);
+        const uint64_t row_count_basis =
+            stats.row_count_est > 0
+                ? stats.row_count_est
+                : (have_table && table_info.row_count > 0
+                       ? table_info.row_count
+                       : (have_storage ? storage.page_count : 0));
+        const double duplicate_density =
+            row_count_basis > 0 && stats.distinct_count_est <= row_count_basis
+                ? static_cast<double>(row_count_basis - stats.distinct_count_est) /
+                      static_cast<double>(row_count_basis)
+                : 0.0;
+        const double coverage_fraction =
+            have_columns && !table_columns.empty()
+                ? std::min(
+                      1.0,
+                      static_cast<double>(index_info.column_ids.size() +
+                                          index_info.include_column_ids.size()) /
+                          static_cast<double>(table_columns.size()))
+                : 0.0;
+
+        std::vector<core::CatalogManager::IndexMaintenanceCatalogInfo> maintenance_rows;
+        uint64_t maintenance_backlog_ops = 0;
+        if (catalog_->listIndexMaintenanceCatalogEntries(index_id, maintenance_rows, nullptr) == Status::OK)
+        {
+            for (const auto &row : maintenance_rows)
+            {
+                if (row.maintenance_state != core::CatalogManager::IndexMaintenanceState::COMPLETE &&
+                    row.maintenance_state != core::CatalogManager::IndexMaintenanceState::FAILED)
+                {
+                    ++maintenance_backlog_ops;
+                    std::vector<core::CatalogManager::IndexMaintenanceDeltaCatalogInfo> deltas;
+                    if (catalog_->listIndexMaintenanceDeltaCatalogEntries(row.maintenance_id,
+                                                                         deltas,
+                                                                         nullptr) == Status::OK)
+                    {
+                        maintenance_backlog_ops += static_cast<uint64_t>(deltas.size());
+                    }
+                }
+            }
+        }
+
+        const IndexMetricsConfidenceClass confidence_class =
+            classifyIndexMetricsConfidence(lowering,
+                                           have_health ? &health : nullptr,
+                                           true,
+                                           sample_rate);
+        const IndexMetricsQueryabilityState queryability_state =
+            effectiveMetricsQueryability(lowering,
+                                         have_health ? &health : nullptr,
+                                         confidence_class);
+
+        IndexFamilyMetricsPacket packet;
+        packet.index_id = index_id;
+        packet.physical_family = indexTypeName(index_info.index_type);
+        packet.planner_family = lowering.family_name;
+        packet.queryability_state = queryability_state;
+        packet.metrics_last_refresh_xid = current_xid;
+        packet.metrics_confidence_class = confidence_class;
+        packet.leaf_pages = have_storage ? storage.page_count : stats.leaf_pages;
+        packet.height = stats.height == 0
+                            ? static_cast<uint16_t>(packet.leaf_pages > 0 ? 1 : 0)
+                            : stats.height;
+        packet.row_count_est = row_count_basis;
+        const double bloat_ratio = std::clamp(
+            static_cast<double>(have_storage ? storage.fragmentation_ratio
+                                             : stats.bloat_ratio),
+            0.0,
+            1.0);
+        packet.dead_fraction = bloat_ratio;
+        packet.live_entry_count_est = static_cast<uint64_t>(
+            std::llround(static_cast<double>(packet.row_count_est) * (1.0 - packet.dead_fraction)));
+        packet.bloat_ratio = bloat_ratio;
+        packet.recheck_ratio_est = lowering.requires_recheck
+            ? (lowering.family == PlannerAccessFamily::GIN_FILTER_SCAN ? 0.20 : 0.10)
+            : 0.0;
+        packet.correlation = stats.correlation;
+        packet.coverage_fraction = coverage_fraction;
+        packet.maintenance_backlog_ops = maintenance_backlog_ops;
+        packet.publish_lag_xids =
+            index_info.valid_from_xid > current_xid ? (index_info.valid_from_xid - current_xid) : 0;
+        packet.reclaim_lag_xids =
+            index_info.retired_xid > current_xid ? (index_info.retired_xid - current_xid) : 0;
+        packet.family_metrics_version =
+            stats.family_metrics_version == std::numeric_limits<uint32_t>::max()
+                ? stats.family_metrics_version
+                : std::max<uint32_t>(1, stats.family_metrics_version + 1);
+        packet.family_metrics_type = metricsTypeForLowering(lowering);
+
+        nlohmann::json envelope = {
+            {"index_uuid", index_id.toString()},
+            {"physical_family", packet.physical_family},
+            {"planner_family", packet.planner_family},
+            {"queryability_state", indexMetricsQueryabilityStateName(packet.queryability_state)},
+            {"metrics_last_refresh_xid", packet.metrics_last_refresh_xid},
+            {"metrics_confidence_class", indexMetricsConfidenceClassName(packet.metrics_confidence_class)},
+            {"leaf_pages", packet.leaf_pages},
+            {"height", packet.height},
+            {"row_count_est", packet.row_count_est},
+            {"live_entry_count_est", packet.live_entry_count_est},
+            {"dead_fraction", packet.dead_fraction},
+            {"bloat_ratio", packet.bloat_ratio},
+            {"recheck_ratio_est", packet.recheck_ratio_est},
+            {"correlation", packet.correlation},
+            {"coverage_fraction", packet.coverage_fraction},
+            {"maintenance_backlog_ops", packet.maintenance_backlog_ops},
+            {"publish_lag_xids", packet.publish_lag_xids},
+            {"reclaim_lag_xids", packet.reclaim_lag_xids}
+        };
+
+        nlohmann::json family_metrics;
+        switch (packet.family_metrics_type)
+        {
+            case IndexFamilyMetricsType::ORDERED_EXACT:
+                family_metrics = {
+                    {"avg_probe_pages", static_cast<double>(std::max<uint64_t>(1, packet.height))},
+                    {"avg_range_pages_per_row",
+                     packet.row_count_est > 0
+                         ? static_cast<double>(packet.leaf_pages) /
+                               static_cast<double>(packet.row_count_est)
+                         : static_cast<double>(packet.leaf_pages)},
+                    {"duplicate_density", duplicate_density},
+                    {"prefix_selectivity",
+                     stats.distinct_count_est > 0
+                         ? 1.0 / static_cast<double>(stats.distinct_count_est)
+                         : 1.0},
+                    {"skip_group_count", stats.distinct_count_est},
+                    {"overflow_chain_depth",
+                     index_info.index_type == core::CatalogManager::IndexType::HASH
+                         ? std::max<int>(0, static_cast<int>(packet.height) - 1)
+                         : 0},
+                    {"run_count", 0},
+                    {"level_count", index_info.index_type == core::CatalogManager::IndexType::LSM
+                                        ? packet.height
+                                        : 0},
+                    {"tombstone_fraction", packet.dead_fraction},
+                    {"L0_run_count", 0}
+                };
+                break;
+            case IndexFamilyMetricsType::SUMMARY_CANDIDATE:
+                family_metrics = {
+                    {"pages_per_range", std::max<uint64_t>(1, packet.leaf_pages)},
+                    {"prune_ratio_est", std::clamp(1.0 - packet.dead_fraction, 0.0, 1.0)},
+                    {"unsummarized_range_fraction",
+                     confidence_class == IndexMetricsConfidenceClass::LOW ? 0.25 : 0.0},
+                    {"summary_staleness_fraction",
+                     confidence_class == IndexMetricsConfidenceClass::MEDIUM ? 0.10
+                                                                            : (confidence_class == IndexMetricsConfidenceClass::LOW ? 0.35 : 0.0)},
+                    {"bitmap_density", packet.coverage_fraction},
+                    {"bitmap_false_positive_ratio", packet.recheck_ratio_est},
+                    {"column_bytes_pruned_ratio", std::clamp(1.0 - packet.coverage_fraction, 0.0, 1.0)},
+                    {"row_groups_touched_ratio", std::clamp(packet.coverage_fraction, 0.0, 1.0)},
+                    {"late_materialization_gain_est",
+                     std::clamp(1.0 - packet.dead_fraction, 0.0, 1.0)}
+                };
+                break;
+            case IndexFamilyMetricsType::GENERALIZED_SPATIAL:
+                family_metrics = {
+                    {"overlap_ratio", std::clamp(packet.recheck_ratio_est, 0.0, 1.0)},
+                    {"penalty_growth_factor", 1.0 + packet.dead_fraction},
+                    {"all_the_same_fraction", duplicate_density},
+                    {"branch_skew", 1.0 - std::min(1.0, std::abs(packet.correlation))},
+                    {"candidate_amplification", 1.0 + (packet.recheck_ratio_est * 4.0)},
+                    {"nearest_lb_tightness", std::clamp(1.0 - packet.recheck_ratio_est, 0.0, 1.0)}
+                };
+                break;
+            case IndexFamilyMetricsType::TEXT_SEARCH:
+                family_metrics = {
+                    {"term_df", stats.distinct_count_est},
+                    {"term_df_skew", duplicate_density},
+                    {"avg_postings_per_term",
+                     stats.distinct_count_est > 0
+                         ? static_cast<double>(packet.row_count_est) /
+                               static_cast<double>(stats.distinct_count_est)
+                         : 0.0},
+                    {"pending_list_fraction", packet.dead_fraction},
+                    {"phrase_hit_rate", std::clamp(1.0 - packet.recheck_ratio_est, 0.0, 1.0)},
+                    {"score_rows_est", packet.row_count_est},
+                    {"merge_debt", packet.maintenance_backlog_ops}
+                };
+                break;
+            case IndexFamilyMetricsType::ANN:
+                family_metrics = {
+                    {"vector_dim", 0},
+                    {"candidate_budget_default",
+                     std::max<uint64_t>(10, std::min<uint64_t>(1000,
+                         static_cast<uint64_t>(std::sqrt(static_cast<double>(std::max<uint64_t>(1, packet.row_count_est))))))},
+                    {"avg_candidates_scanned",
+                     have_usage && usage.scan_count > 0
+                         ? static_cast<double>(usage.tuple_read) /
+                               static_cast<double>(usage.scan_count)
+                         : 0.0},
+                    {"deleted_node_fraction", packet.dead_fraction},
+                    {"orphan_link_fraction",
+                     have_health && health.pages_scanned > 0
+                         ? static_cast<double>(health.orphan_pages) /
+                               static_cast<double>(health.pages_scanned)
+                         : 0.0},
+                    {"recall_estimate_at_k",
+                     confidence_class == IndexMetricsConfidenceClass::HIGH ? 0.95
+                                                                          : (confidence_class == IndexMetricsConfidenceClass::MEDIUM ? 0.85 : 0.70)},
+                    {"rerank_fraction", packet.recheck_ratio_est},
+                    {"stale_training_fraction",
+                     confidence_class == IndexMetricsConfidenceClass::LOW ? 0.25 : 0.0},
+                    {"segment_coverage_fraction", packet.coverage_fraction}
+                };
+                break;
+            case IndexFamilyMetricsType::UNKNOWN:
+            default:
+                family_metrics = nlohmann::json::object();
+                break;
+        }
+
+        packet.family_metrics_payload =
+            nlohmann::json{
+                {"shared_metrics_envelope", envelope},
+                {"family_metrics_type", indexFamilyMetricsTypeName(packet.family_metrics_type)},
+                {"family_metrics", family_metrics}}
+                .dump();
+
+        stats.index_id = index_id;
+        stats.stats_version =
+            stats.stats_version == std::numeric_limits<uint32_t>::max()
+                ? stats.stats_version
+                : std::max<uint32_t>(1, stats.stats_version + 1);
+        stats.last_analyze_txid = current_xid;
+        stats.row_count_est = packet.row_count_est;
+        if (sample_rate > 0.0f && sample_rate <= 1.0f && packet.row_count_est > 0)
+        {
+            const double sampled_rows =
+                static_cast<double>(packet.row_count_est) * sample_rate;
+            stats.distinct_count_est =
+                static_cast<uint64_t>(std::max(1.0, sampled_rows));
+        }
+        else if (stats.distinct_count_est == 0)
+        {
+            stats.distinct_count_est = packet.live_entry_count_est > 0
+                                           ? packet.live_entry_count_est
+                                           : packet.row_count_est;
+        }
+        stats.leaf_pages = static_cast<uint32_t>(
+            std::min<uint64_t>(packet.leaf_pages,
+                               std::numeric_limits<uint32_t>::max()));
+        stats.height = packet.height;
+        stats.bloat_ratio = static_cast<float>(packet.bloat_ratio);
+        stats.metrics_last_refresh_xid = packet.metrics_last_refresh_xid;
+        stats.family_metrics_version = packet.family_metrics_version;
+        stats.family_metrics_type = packet.family_metrics_type;
+        stats.metrics_confidence_class = packet.metrics_confidence_class;
+        stats.queryability_state = packet.queryability_state;
+        stats.family_metrics_payload = packet.family_metrics_payload;
+        stats.is_valid = true;
+
+        status = catalog_->upsertIndexStatsCatalogEntry(stats, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            index_family_metrics_cache_[getIndexMetricsCacheKey(index_id)] = packet;
+        }
+        return Status::OK;
+    }
+
+    auto StatisticsManager::getIndexFamilyMetrics(const ID &index_id,
+                                                  IndexFamilyMetricsPacket &packet,
+                                                  ErrorContext *ctx) -> Status
+    {
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            auto it = index_family_metrics_cache_.find(getIndexMetricsCacheKey(index_id));
+            if (it != index_family_metrics_cache_.end())
+            {
+                packet = it->second;
+                return Status::OK;
+            }
+        }
+
+        Status status = loadIndexFamilyMetrics(index_id, packet, ctx);
+        if (status == Status::OK)
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            index_family_metrics_cache_[getIndexMetricsCacheKey(index_id)] = packet;
+        }
+        return status;
+    }
+
+    auto StatisticsManager::refreshIndexFamilyMetrics(const ID &index_id,
+                                                      uint64_t refresh_xid,
+                                                      ErrorContext *ctx) -> Status
+    {
+        if (!catalog_)
+        {
+            catalog_ = db_ != nullptr ? db_->catalog_manager() : nullptr;
+        }
+        if (catalog_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog manager not available for index metrics refresh");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        core::CatalogManager::IndexInfo index_info;
+        Status status = catalog_->getIndex(index_id, index_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        core::CatalogManager::IndexStatsCatalogInfo stats{};
+        status = catalog_->getIndexStatsCatalogEntry(index_id, stats, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        core::CatalogManager::IndexStorageCatalogInfo storage{};
+        const bool have_storage =
+            catalog_->getIndexStorageCatalogEntry(index_id, storage, nullptr) == Status::OK;
+        core::CatalogManager::IndexHealthCatalogInfo health{};
+        const bool have_health =
+            catalog_->getIndexHealthCatalogEntry(index_id, health, nullptr) == Status::OK;
+        IndexFamilyMetricsPacket existing_packet;
+        const bool have_existing_packet =
+            loadIndexFamilyMetrics(index_id, existing_packet, nullptr) == Status::OK;
+        const PlannerFamilyLoweringResult lowering = defaultMetricsLowering(index_info);
+        const uint64_t current_xid = indexMetricsRefreshXid(db_, refresh_xid);
+        const IndexMetricsConfidenceClass confidence_class =
+            classifyIndexMetricsConfidence(lowering,
+                                           have_health ? &health : nullptr,
+                                           false,
+                                           0.0f);
+        const IndexMetricsQueryabilityState queryability_state =
+            effectiveMetricsQueryability(lowering,
+                                         have_health ? &health : nullptr,
+                                         confidence_class);
+
+        IndexFamilyMetricsPacket packet = have_existing_packet
+            ? existing_packet
+            : IndexFamilyMetricsPacket{};
+        packet.index_id = index_id;
+        packet.physical_family = indexTypeName(index_info.index_type);
+        packet.planner_family = lowering.family_name;
+        packet.queryability_state = queryability_state;
+        packet.metrics_last_refresh_xid = current_xid;
+        packet.metrics_confidence_class = confidence_class;
+        packet.leaf_pages = have_storage ? storage.page_count : stats.leaf_pages;
+        packet.height = stats.height;
+        packet.row_count_est = stats.row_count_est;
+        const double bloat_ratio = std::clamp(
+            static_cast<double>(have_storage ? storage.fragmentation_ratio
+                                             : stats.bloat_ratio),
+            0.0,
+            1.0);
+        packet.live_entry_count_est = static_cast<uint64_t>(
+            std::llround(static_cast<double>(packet.row_count_est) *
+                         (1.0 - bloat_ratio)));
+        packet.dead_fraction = bloat_ratio;
+        packet.bloat_ratio = bloat_ratio;
+        packet.recheck_ratio_est = lowering.requires_recheck
+            ? (lowering.family == PlannerAccessFamily::GIN_FILTER_SCAN ? 0.20 : 0.10)
+            : 0.0;
+        packet.correlation = stats.correlation;
+        packet.coverage_fraction = have_existing_packet
+            ? existing_packet.coverage_fraction
+            : 0.0;
+        packet.maintenance_backlog_ops = have_existing_packet
+            ? existing_packet.maintenance_backlog_ops
+            : 0;
+        packet.publish_lag_xids =
+            index_info.valid_from_xid > current_xid ? (index_info.valid_from_xid - current_xid) : 0;
+        packet.reclaim_lag_xids =
+            index_info.retired_xid > current_xid ? (index_info.retired_xid - current_xid) : 0;
+        packet.family_metrics_version =
+            stats.family_metrics_version == std::numeric_limits<uint32_t>::max()
+                ? stats.family_metrics_version
+                : std::max<uint32_t>(1, stats.family_metrics_version + 1);
+        packet.family_metrics_type = metricsTypeForLowering(lowering);
+
+        nlohmann::json payload = nlohmann::json::object();
+        if (!packet.family_metrics_payload.empty())
+        {
+            payload = nlohmann::json::parse(packet.family_metrics_payload, nullptr, false);
+            if (payload.is_discarded() || !payload.is_object())
+            {
+                payload = nlohmann::json::object();
+            }
+        }
+        payload["shared_metrics_envelope"] = {
+            {"index_uuid", index_id.toString()},
+            {"physical_family", packet.physical_family},
+            {"planner_family", packet.planner_family},
+            {"queryability_state", indexMetricsQueryabilityStateName(packet.queryability_state)},
+            {"metrics_last_refresh_xid", packet.metrics_last_refresh_xid},
+            {"metrics_confidence_class", indexMetricsConfidenceClassName(packet.metrics_confidence_class)},
+            {"leaf_pages", packet.leaf_pages},
+            {"height", packet.height},
+            {"row_count_est", packet.row_count_est},
+            {"live_entry_count_est", packet.live_entry_count_est},
+            {"dead_fraction", packet.dead_fraction},
+            {"bloat_ratio", packet.bloat_ratio},
+            {"recheck_ratio_est", packet.recheck_ratio_est},
+            {"correlation", packet.correlation},
+            {"coverage_fraction", packet.coverage_fraction},
+            {"maintenance_backlog_ops", packet.maintenance_backlog_ops},
+            {"publish_lag_xids", packet.publish_lag_xids},
+            {"reclaim_lag_xids", packet.reclaim_lag_xids}
+        };
+        payload["family_metrics_type"] =
+            indexFamilyMetricsTypeName(packet.family_metrics_type);
+        if (!payload.contains("family_metrics"))
+        {
+            payload["family_metrics"] = nlohmann::json::object();
+        }
+        packet.family_metrics_payload = payload.dump();
+
+        stats.metrics_last_refresh_xid = packet.metrics_last_refresh_xid;
+        stats.family_metrics_version = packet.family_metrics_version;
+        stats.family_metrics_type = packet.family_metrics_type;
+        stats.metrics_confidence_class = packet.metrics_confidence_class;
+        stats.queryability_state = packet.queryability_state;
+        stats.family_metrics_payload = packet.family_metrics_payload;
+
+        status = catalog_->upsertIndexStatsCatalogEntry(stats, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(cache_mutex_);
+            index_family_metrics_cache_[getIndexMetricsCacheKey(index_id)] = packet;
+        }
+        return Status::OK;
+    }
+
+    auto StatisticsManager::loadIndexFamilyMetrics(const ID &index_id,
+                                                   IndexFamilyMetricsPacket &packet,
+                                                   ErrorContext *ctx) -> Status
+    {
+        if (!catalog_)
+        {
+            catalog_ = db_ != nullptr ? db_->catalog_manager() : nullptr;
+        }
+        if (catalog_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Catalog manager not available for index family metrics load");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        core::CatalogManager::IndexInfo index_info;
+        Status status = catalog_->getIndex(index_id, index_info, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        core::CatalogManager::IndexStatsCatalogInfo stats{};
+        status = catalog_->getIndexStatsCatalogEntry(index_id, stats, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        const PlannerFamilyLoweringResult lowering = defaultMetricsLowering(index_info);
+
+        packet = IndexFamilyMetricsPacket{};
+        packet.index_id = index_id;
+        packet.physical_family = indexTypeName(index_info.index_type);
+        packet.planner_family = lowering.family_name;
+        packet.queryability_state = stats.queryability_state;
+        packet.metrics_last_refresh_xid = stats.metrics_last_refresh_xid;
+        packet.metrics_confidence_class = stats.metrics_confidence_class;
+        packet.leaf_pages = stats.leaf_pages;
+        packet.height = stats.height;
+        packet.row_count_est = stats.row_count_est;
+        packet.bloat_ratio = stats.bloat_ratio;
+        packet.correlation = stats.correlation;
+        packet.family_metrics_version = stats.family_metrics_version;
+        packet.family_metrics_type = stats.family_metrics_type;
+        packet.family_metrics_payload = stats.family_metrics_payload;
+
+        if (packet.family_metrics_version == 0 ||
+            packet.family_metrics_payload.empty())
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::NOT_FOUND,
+                              "index family metrics packet not published");
+            return Status::NOT_FOUND;
+        }
+
+        if (!packet.family_metrics_payload.empty())
+        {
+            nlohmann::json payload = nlohmann::json::parse(packet.family_metrics_payload,
+                                                           nullptr,
+                                                           false);
+            if (!payload.is_discarded())
+            {
+                const auto envelope_it = payload.find("shared_metrics_envelope");
+                if (envelope_it != payload.end() && envelope_it->is_object())
+                {
+                    const auto &envelope = *envelope_it;
+                    packet.live_entry_count_est =
+                        envelope.value("live_entry_count_est", packet.live_entry_count_est);
+                    packet.dead_fraction =
+                        envelope.value("dead_fraction", packet.dead_fraction);
+                    packet.recheck_ratio_est =
+                        envelope.value("recheck_ratio_est", packet.recheck_ratio_est);
+                    packet.coverage_fraction =
+                        envelope.value("coverage_fraction", packet.coverage_fraction);
+                    packet.maintenance_backlog_ops =
+                        envelope.value("maintenance_backlog_ops",
+                                       packet.maintenance_backlog_ops);
+                    packet.publish_lag_xids =
+                        envelope.value("publish_lag_xids", packet.publish_lag_xids);
+                    packet.reclaim_lag_xids =
+                        envelope.value("reclaim_lag_xids", packet.reclaim_lag_xids);
+                    packet.physical_family =
+                        envelope.value("physical_family", packet.physical_family);
+                    packet.planner_family =
+                        envelope.value("planner_family", packet.planner_family);
+                }
+            }
+        }
+
+        return Status::OK;
+    }
+
     auto StatisticsManager::getColumnCorrelation(const ID &table_id,
                                                  const ID &left_column_id,
                                                  const ID &right_column_id,
@@ -1502,6 +2266,7 @@ namespace scratchbird::optimizer
             table_stats_cache_.clear();
             correlation_stats_cache_.clear();
             expression_stats_cache_.clear();
+            index_family_metrics_cache_.clear();
             DEBUG_LOG_DB("Cleared entire statistics cache");
         }
         else
@@ -1560,6 +2325,11 @@ namespace scratchbird::optimizer
                     ++it;
                 }
             }
+
+            // Index family metrics cache is conservative for now: table-level
+            // invalidation drops all index packets because index->table ownership
+            // is not recorded in the cache key.
+            index_family_metrics_cache_.clear();
 
             DEBUG_LOG_DB("Invalidated statistics cache for table: removed " +
                          std::to_string(keys_to_remove.size()) + " column entries");

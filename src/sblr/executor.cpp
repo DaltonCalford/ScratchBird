@@ -51730,6 +51730,14 @@ namespace scratchbird
                     return ExecutionResult("CREATE INDEX unsupported index_type: " + index_type_name);
                 }
                 core::CatalogManager::IndexType index_type = *mapped_index_type;
+                if (const auto *caps =
+                        core::IndexFactory::lookupCapabilities(index_type);
+                    caps != nullptr && !caps->supports_create)
+                {
+                    return ExecutionResult(
+                        "IndexFactory create not supported for type: " +
+                        std::string(caps->canonical_name));
+                }
 
                 std::unordered_map<std::string, Value> create_options;
                 auto decodeCreateIndexOptionValue =
@@ -67972,6 +67980,20 @@ namespace scratchbird
                                     runtime_plan.plan_profile_signature)});
                             }
                             if (has_runtime_plan &&
+                                !runtime_plan.index_family_signature.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Index Family Signature: " +
+                                    runtime_plan.index_family_signature)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.family_statistics_signature.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Family Statistics Signature: " +
+                                    runtime_plan.family_statistics_signature)});
+                            }
+                            if (has_runtime_plan &&
                                 !runtime_plan.selectivity_bucket_signature.empty())
                             {
                                 rs->addRow({Value::makeVarchar(
@@ -68116,6 +68138,23 @@ namespace scratchbird
                                 formatted << ",\"plan_profile_signature\":\""
                                           << escape_json(runtime_plan.plan_profile_signature)
                                           << "\"";
+                                if (!runtime_plan.index_family_signature.empty())
+                                {
+                                    formatted << ",\"index_family_signature\":\""
+                                              << escape_json(
+                                                     runtime_plan
+                                                         .index_family_signature)
+                                              << "\"";
+                                }
+                                if (!runtime_plan.family_statistics_signature.empty())
+                                {
+                                    formatted
+                                        << ",\"family_statistics_signature\":\""
+                                        << escape_json(
+                                               runtime_plan
+                                                   .family_statistics_signature)
+                                        << "\"";
+                                }
                                 if (!runtime_plan.selectivity_bucket_signature.empty())
                                 {
                                     formatted << ",\"selectivity_bucket_signature\":\""
@@ -68204,6 +68243,23 @@ namespace scratchbird
                                           << escape_xml(
                                                  runtime_plan.plan_profile_signature)
                                           << "\"";
+                                if (!runtime_plan.index_family_signature.empty())
+                                {
+                                    formatted << " index_family_signature=\""
+                                              << escape_xml(
+                                                     runtime_plan
+                                                         .index_family_signature)
+                                              << "\"";
+                                }
+                                if (!runtime_plan.family_statistics_signature.empty())
+                                {
+                                    formatted
+                                        << " family_statistics_signature=\""
+                                        << escape_xml(
+                                               runtime_plan
+                                                   .family_statistics_signature)
+                                        << "\"";
+                                }
                                 if (!runtime_plan.selectivity_bucket_signature.empty())
                                 {
                                     formatted << " selectivity_bucket_signature=\""
@@ -68269,6 +68325,23 @@ namespace scratchbird
                                           << escape_json(
                                                  runtime_plan.plan_profile_signature)
                                           << "\"\n";
+                                if (!runtime_plan.index_family_signature.empty())
+                                {
+                                    formatted << "index_family_signature: \""
+                                              << escape_json(
+                                                     runtime_plan
+                                                         .index_family_signature)
+                                              << "\"\n";
+                                }
+                                if (!runtime_plan.family_statistics_signature.empty())
+                                {
+                                    formatted
+                                        << "family_statistics_signature: \""
+                                        << escape_json(
+                                               runtime_plan
+                                                   .family_statistics_signature)
+                                        << "\"\n";
+                                }
                                 if (!runtime_plan.selectivity_bucket_signature.empty())
                                 {
                                     formatted << "selectivity_bucket_signature: \""
@@ -80992,66 +81065,26 @@ namespace scratchbird
 	                                            ? "Failed to load index metadata for ANALYZE INDEX"
 	                                            : analyze_ctx.message);
 	                                }
-
-	                                core::CatalogManager::IndexStatsCatalogInfo stats{};
-	                                if (db_->catalog_manager()->getIndexStatsCatalogEntry(index_id, stats, &analyze_ctx) !=
-	                                    core::Status::OK)
-	                                {
-	                                    stats = core::CatalogManager::IndexStatsCatalogInfo{};
-	                                    stats.index_id = index_id;
-	                                }
-
-	                                const uint32_t previous_version = stats.stats_version;
-	                                stats.index_id = index_id;
-	                                stats.stats_version = (previous_version == std::numeric_limits<uint32_t>::max())
-	                                    ? previous_version
-	                                    : previous_version + 1;
-	                                stats.last_analyze_txid = conn_ctx_
-	                                    ? conn_ctx_->getCurrentXid()
-	                                    : db_->storage_engine()->getCurrentXid();
-
-	                                core::CatalogManager::IndexStorageCatalogInfo storage{};
-	                                if (db_->catalog_manager()->getIndexStorageCatalogEntry(index_id, storage, nullptr) ==
-	                                    core::Status::OK)
-	                                {
-	                                    if (storage.page_count > std::numeric_limits<uint32_t>::max())
-	                                    {
-	                                        stats.leaf_pages = std::numeric_limits<uint32_t>::max();
-	                                    }
-	                                    else
-	                                    {
-	                                        stats.leaf_pages = static_cast<uint32_t>(storage.page_count);
-	                                    }
-	                                    stats.bloat_ratio =
-	                                        std::clamp(storage.fragmentation_ratio, 0.0f, 1.0f);
-	                                }
-
-	                                if (stats.row_count_est == 0)
-	                                {
-	                                    stats.row_count_est = stats.leaf_pages;
-	                                }
-	                                if (sample_rate > 0.0 && sample_rate <= 1.0 && stats.row_count_est > 0)
-	                                {
-	                                    const double sampled_rows =
-	                                        static_cast<double>(stats.row_count_est) * sample_rate;
-	                                    stats.distinct_count_est = static_cast<uint64_t>(
-	                                        std::max(1.0, sampled_rows));
-	                                }
-	                                else if (stats.distinct_count_est == 0)
-	                                {
-	                                    stats.distinct_count_est = stats.row_count_est;
-	                                }
-
-	                                stats.is_valid = true;
-	                                auto upsert_status = db_->catalog_manager()->upsertIndexStatsCatalogEntry(
-	                                    stats, &analyze_ctx);
-	                                if (upsert_status != core::Status::OK)
-	                                {
+                                    auto stats_manager = db_->statistics_manager();
+                                    if (stats_manager == nullptr)
+                                    {
+	                                    return ExecutionResult(
+                                            "Statistics manager not available for ANALYZE INDEX");
+                                    }
+                                    auto analyze_status =
+                                        stats_manager->analyzeIndex(index_id,
+                                                                    static_cast<float>(sample_rate),
+                                                                    conn_ctx_
+                                                                        ? conn_ctx_->getCurrentXid()
+                                                                        : db_->storage_engine()->getCurrentXid(),
+                                                                    &analyze_ctx);
+                                    if (analyze_status != core::Status::OK)
+                                    {
 	                                    return ExecutionResult(
 	                                        analyze_ctx.message.empty()
 	                                            ? "Failed to persist ANALYZE INDEX statistics"
 	                                            : analyze_ctx.message);
-	                                }
+                                    }
 
 	                                core::ErrorContext usage_ctx;
 	                                const auto elapsed_ns = static_cast<uint64_t>(
@@ -81549,6 +81582,24 @@ namespace scratchbird
                                         refreshed_index_info.index_id.toString().c_str(),
                                         storage_metrics_ctx.message.c_str());
                                 }
+                                else if (db_->statistics_manager() != nullptr)
+                                {
+                                    core::ErrorContext metrics_ctx;
+                                    core::Status metrics_status =
+                                        db_->statistics_manager()->refreshIndexFamilyMetrics(
+                                            refreshed_index_info.index_id,
+                                            conn_ctx_ ? conn_ctx_->getCurrentXid()
+                                                      : db_->storage_engine()->getCurrentXid(),
+                                            &metrics_ctx);
+                                    if (metrics_status != core::Status::OK)
+                                    {
+                                        LOG_WARNING(
+                                            CATALOG,
+                                            "Failed to refresh index family metrics after maintenance (index=%s): %s",
+                                            refreshed_index_info.index_id.toString().c_str(),
+                                            metrics_ctx.message.c_str());
+                                    }
+                                }
                                 return ExecutionResult();
                             }
 
@@ -81597,6 +81648,24 @@ namespace scratchbird
                                         resolve_ctx.message.empty()
                                             ? "ALTER INDEX health scan failed"
                                             : resolve_ctx.message);
+                                }
+                                if (db_->statistics_manager() != nullptr)
+                                {
+                                    core::ErrorContext metrics_ctx;
+                                    core::Status metrics_status =
+                                        db_->statistics_manager()->refreshIndexFamilyMetrics(
+                                            index_info.index_id,
+                                            conn_ctx_ ? conn_ctx_->getCurrentXid()
+                                                      : db_->storage_engine()->getCurrentXid(),
+                                            &metrics_ctx);
+                                    if (metrics_status != core::Status::OK)
+                                    {
+                                        LOG_WARNING(
+                                            CATALOG,
+                                            "Failed to refresh index family metrics after health scan (index=%s): %s",
+                                            index_info.index_id.toString().c_str(),
+                                            metrics_ctx.message.c_str());
+                                    }
                                 }
                                 return ExecutionResult();
                             }

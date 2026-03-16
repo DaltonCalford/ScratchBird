@@ -424,9 +424,28 @@ namespace scratchbird::optimizer
             }
         }
 
+        auto predicateMatchShape(ResolvedPredicateKind kind)
+            -> PredicateMatchShape
+        {
+            switch (kind)
+            {
+                case ResolvedPredicateKind::EQUALITY:
+                    return PredicateMatchShape::EQUALITY;
+                case ResolvedPredicateKind::RANGE:
+                    return PredicateMatchShape::RANGE;
+                case ResolvedPredicateKind::LIKE_PREFIX:
+                    return PredicateMatchShape::LIKE_PREFIX;
+                case ResolvedPredicateKind::NONE:
+                default:
+                    return PredicateMatchShape::NONE;
+            }
+        }
+
         auto chooseIndexForColumn(const ResolvedRelation &relation,
+                                  core::CatalogManager *catalog,
                                   const core::ID &column_id,
                                   ResolvedPredicateKind predicate_kind,
+                                  const std::string &operator_name,
                                   IndexInfo &index_out,
                                   PlannerFamilyLoweringResult &lowering_out) -> bool
         {
@@ -438,28 +457,11 @@ namespace scratchbird::optimizer
                 }
                 if (index.column_ids.front() == column_id)
                 {
-                    PlannerFamilyLoweringRequest lowering_request;
-                    lowering_request.index_type = index.index_type;
-                    switch (predicate_kind)
-                    {
-                        case ResolvedPredicateKind::EQUALITY:
-                            lowering_request.predicate_shape =
-                                PredicateMatchShape::EQUALITY;
-                            break;
-                        case ResolvedPredicateKind::RANGE:
-                            lowering_request.predicate_shape =
-                                PredicateMatchShape::RANGE;
-                            break;
-                        case ResolvedPredicateKind::LIKE_PREFIX:
-                            lowering_request.predicate_shape =
-                                PredicateMatchShape::LIKE_PREFIX;
-                            break;
-                        case ResolvedPredicateKind::NONE:
-                        default:
-                            lowering_request.predicate_shape =
-                                PredicateMatchShape::NONE;
-                            break;
-                    }
+                    const PlannerFamilyLoweringRequest lowering_request =
+                        buildPlannerFamilyLoweringRequest(catalog,
+                                                          index,
+                                                          predicateMatchShape(predicate_kind),
+                                                          operator_name);
                     lowering_out = lowerPlannerFamily(lowering_request);
                     if (lowering_out.queryability_state ==
                         AccessPathQueryabilityState::INVALID)
@@ -474,6 +476,7 @@ namespace scratchbird::optimizer
         }
 
         auto extractSimplePredicate(const parser::v3::Expression *expr,
+                                    core::CatalogManager *catalog,
                                     const parser::v3::StringPool &pool,
                                     std::vector<ResolvedRelation> &relations,
                                     ResolvedScanPredicate &predicate_out) -> bool
@@ -542,8 +545,10 @@ namespace scratchbird::optimizer
                 IndexInfo matched_index;
                 PlannerFamilyLoweringResult lowering;
                 if (chooseIndexForColumn(relations[*relation_index],
+                                         catalog,
                                          column_id,
                                          kind,
+                                         predicate_out.operator_name,
                                          matched_index,
                                          lowering))
                 {
@@ -604,8 +609,10 @@ namespace scratchbird::optimizer
                 IndexInfo matched_index;
                 PlannerFamilyLoweringResult lowering;
                 if (chooseIndexForColumn(relations[*relation_index],
+                                         catalog,
                                          column_id,
                                          ResolvedPredicateKind::LIKE_PREFIX,
+                                         predicate_out.operator_name,
                                          matched_index,
                                          lowering))
                 {
@@ -621,6 +628,7 @@ namespace scratchbird::optimizer
         }
 
         auto collectSimplePredicates(const parser::v3::Expression *expr,
+                                     core::CatalogManager *catalog,
                                      const parser::v3::StringPool &pool,
                                      std::vector<ResolvedRelation> &relations,
                                      std::vector<ResolvedScanPredicate> &predicates_out) -> bool
@@ -636,10 +644,12 @@ namespace scratchbird::optimizer
                 if (binary->op == parser::v3::BinaryOp::AND)
                 {
                     const bool left = collectSimplePredicates(binary->left,
+                                                              catalog,
                                                               pool,
                                                               relations,
                                                               predicates_out);
                     const bool right = collectSimplePredicates(binary->right,
+                                                               catalog,
                                                                pool,
                                                                relations,
                                                                predicates_out);
@@ -648,7 +658,7 @@ namespace scratchbird::optimizer
             }
 
             ResolvedScanPredicate predicate;
-            if (!extractSimplePredicate(expr, pool, relations, predicate))
+            if (!extractSimplePredicate(expr, catalog, pool, relations, predicate))
             {
                 return false;
             }
@@ -1054,6 +1064,7 @@ namespace scratchbird::optimizer
         out = ResolvedSelectQuery{};
         out.stmt = stmt;
         out.string_pool = &pool;
+        auto *catalog = db_ != nullptr ? db_->catalog_manager() : nullptr;
 
         if (stmt == nullptr)
         {
@@ -1063,7 +1074,7 @@ namespace scratchbird::optimizer
         if (stmt->from != nullptr)
         {
             ResolvedRelation base_relation;
-            resolveTableLikeRelation(db_ != nullptr ? db_->catalog_manager() : nullptr,
+            resolveTableLikeRelation(catalog,
                                      stats_manager_,
                                      stmt->from,
                                      pool,
@@ -1088,7 +1099,7 @@ namespace scratchbird::optimizer
             }
 
             ResolvedRelation relation;
-            resolveTableLikeRelation(db_ != nullptr ? db_->catalog_manager() : nullptr,
+            resolveTableLikeRelation(catalog,
                                      stats_manager_,
                                      join->right,
                                      pool,
@@ -1214,7 +1225,11 @@ namespace scratchbird::optimizer
         if (!out.contains_outer_join)
         {
             std::vector<ResolvedScanPredicate> predicates;
-            if (collectSimplePredicates(stmt->where, pool, out.relations, predicates))
+            if (collectSimplePredicates(stmt->where,
+                                        catalog,
+                                        pool,
+                                        out.relations,
+                                        predicates))
             {
                 for (const auto &predicate : predicates)
                 {

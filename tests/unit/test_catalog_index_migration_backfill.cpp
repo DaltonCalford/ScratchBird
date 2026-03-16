@@ -198,6 +198,11 @@ TEST_F(CatalogIndexMigrationBackfillTest, ReopenBackfillsMissingCanonicalRowsAnd
     CatalogManager::IndexStatsCatalogInfo stats{};
     ASSERT_EQ(catalog()->getIndexStatsCatalogEntry(index_id, stats, &ctx), Status::OK) << ctx.message;
     EXPECT_EQ(stats.stats_version, 1u);
+    EXPECT_EQ(stats.family_metrics_version, 0u);
+    EXPECT_EQ(stats.metrics_confidence_class,
+              scratchbird::optimizer::IndexMetricsConfidenceClass::UNKNOWN);
+    EXPECT_EQ(stats.queryability_state,
+              scratchbird::optimizer::IndexMetricsQueryabilityState::UNKNOWN);
 
     CatalogManager::IndexUsageCatalogInfo usage{};
     ASSERT_EQ(catalog()->getIndexUsageCatalogEntry(index_id, usage, &ctx), Status::OK) << ctx.message;

@@ -156,12 +156,30 @@ TEST_F(CatalogIndexMetricsExtensionContractTest, StatsUsageAndContentionContract
     stats.avg_entry_len = 24;
     stats.leaf_pages = 8;
     stats.height = 3;
+    stats.metrics_last_refresh_xid = 77;
+    stats.family_metrics_version = 4;
+    stats.family_metrics_type = scratchbird::optimizer::IndexFamilyMetricsType::ORDERED_EXACT;
+    stats.metrics_confidence_class =
+        scratchbird::optimizer::IndexMetricsConfidenceClass::HIGH;
+    stats.queryability_state =
+        scratchbird::optimizer::IndexMetricsQueryabilityState::QUERYABLE;
+    stats.family_metrics_payload =
+        R"({"family_metrics_type":"ORDERED_EXACT","family_metrics":{"avg_probe_pages":3.0}})";
     ASSERT_EQ(catalog_->upsertIndexStatsCatalogEntry(stats, &ctx), Status::OK) << ctx.message;
 
     CatalogManager::IndexStatsCatalogInfo loaded_stats{};
     ASSERT_EQ(catalog_->getIndexStatsCatalogEntry(index_id, loaded_stats, &ctx), Status::OK) << ctx.message;
     EXPECT_EQ(loaded_stats.stats_version, 3u);
     EXPECT_EQ(loaded_stats.row_count_est, 100u);
+    EXPECT_EQ(loaded_stats.metrics_last_refresh_xid, 77u);
+    EXPECT_EQ(loaded_stats.family_metrics_version, 4u);
+    EXPECT_EQ(loaded_stats.family_metrics_type,
+              scratchbird::optimizer::IndexFamilyMetricsType::ORDERED_EXACT);
+    EXPECT_EQ(loaded_stats.metrics_confidence_class,
+              scratchbird::optimizer::IndexMetricsConfidenceClass::HIGH);
+    EXPECT_EQ(loaded_stats.queryability_state,
+              scratchbird::optimizer::IndexMetricsQueryabilityState::QUERYABLE);
+    EXPECT_NE(loaded_stats.family_metrics_payload.find("avg_probe_pages"), std::string::npos);
 
     CatalogManager::IndexUsageCatalogInfo usage{};
     usage.index_id = index_id;

@@ -6,6 +6,8 @@ using scratchbird::optimizer::CostEstimate;
 using scratchbird::optimizer::CostFormulaProfile;
 using scratchbird::optimizer::CostModel;
 using scratchbird::optimizer::CostParameters;
+using scratchbird::optimizer::IndexFamilyCostCalibrationInput;
+using scratchbird::optimizer::deriveIndexFamilyFormulaProfile;
 
 namespace
 {
@@ -125,6 +127,47 @@ TEST(CostModelTest, ExplicitFormulaProfilesDriveCostIdentityAndCoefficientChoice
     EXPECT_EQ(analytics_index.calibration_profile_id,
               "sb_cost_calibration/test_analytics");
     EXPECT_NE(analytics_index.total_cost, oltp_index.total_cost);
+}
+
+TEST(CostModelTest, DerivedIndexFamilyProfilesEncodeFamilyIdentityAndAdjustCoefficients)
+{
+    CostParameters params;
+    params.seq_page_cost = 1.0;
+    params.random_page_cost = 4.0;
+    params.cpu_tuple_cost = 0.01;
+    params.cpu_index_tuple_cost = 0.005;
+    params.cpu_operator_cost = 0.0025;
+
+    IndexFamilyCostCalibrationInput input;
+    input.planner_family = "BTREE_ORDERED_SCAN";
+    input.metrics_type_name = "ORDERED_EXACT";
+    input.family_metrics_version = 7;
+    input.metrics_confidence_class = "HIGH";
+    input.correlation = 0.92;
+    input.bloat_ratio = 0.40;
+    input.recheck_ratio_est = 0.25;
+    input.coverage_fraction = 1.0;
+    input.ordered_output = true;
+    input.covering_index = true;
+
+    const CostFormulaProfile profile =
+        deriveIndexFamilyFormulaProfile(params, input);
+    CostModel model(profile);
+    const CostEstimate index_only =
+        model.costIndexOnlyScan(2, 8, 64, model.operatorCost("="), 0.92);
+
+    EXPECT_EQ(profile.profile_id,
+              "sb_cost_formula/index_family/btree_ordered_scan/ordered_exact/v7/high");
+    EXPECT_EQ(profile.profile_version, 7u);
+    EXPECT_EQ(profile.calibration_profile_id,
+              "sb_cost_calibration/index_family/ordered_exact/btree_ordered_scan/v7");
+    EXPECT_EQ(profile.storage_profile, "ordered_exact");
+    EXPECT_EQ(profile.workload_profile, "ordered_read");
+    EXPECT_LT(profile.parameters.random_page_cost, params.random_page_cost * 1.5);
+    EXPECT_LT(profile.parameters.cpu_tuple_cost, params.cpu_tuple_cost * 1.5);
+    EXPECT_GT(profile.parameters.cpu_index_tuple_cost, params.cpu_index_tuple_cost);
+    EXPECT_EQ(index_only.formula_profile_id, profile.profile_id);
+    EXPECT_EQ(index_only.calibration_profile_id, profile.calibration_profile_id);
 }
 
 TEST(CostModelTest, EffectiveRandomPageCostUsesCacheModel)

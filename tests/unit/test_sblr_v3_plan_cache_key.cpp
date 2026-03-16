@@ -8,6 +8,7 @@ TEST(SBLRV3PlanCacheKey, DeterministicForSameInput) {
     PlanCacheKeyInput in;
     in.profile_id = "native";
     in.profile_version = "3.0";
+    in.taxonomy_contract_id = "sb_runtime_plan/v10";
     in.payload_format = "SQL_TEXT";
     in.payload_hash = "p:def456";
     in.session_option_signature = "sess:aa";
@@ -24,6 +25,8 @@ TEST(SBLRV3PlanCacheKey, DeterministicForSameInput) {
     in.optimization_level = "O2";
     in.normalization_rule_set_id = 0x1301;
     in.object_ref_digest = "o:abc123";
+    in.index_family_signature = "0:1:BTREE_EQ_SCAN:2:EXACT_KEY:INDEX_NATIVE:0:QUERYABLE";
+    in.family_statistics_signature = "0:BTREE_EQ_SCAN:7:HIGH:QUERYABLE";
     in.statistics_snapshot_signature = "stats:1;4";
     in.cost_profile_id = "sb_cost_formula/default@1";
     in.policy_snapshot_id = "policy:g1:t1";
@@ -37,6 +40,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenEpochChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
+    base.taxonomy_contract_id = "sb_runtime_plan/v10";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -53,6 +57,8 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenEpochChanges) {
     base.optimization_level = "O2";
     base.normalization_rule_set_id = 0x1301;
     base.object_ref_digest = "o:abc123";
+    base.index_family_signature = "0:1:BTREE_EQ_SCAN:2:EXACT_KEY:INDEX_NATIVE:0:QUERYABLE";
+    base.family_statistics_signature = "0:BTREE_EQ_SCAN:7:HIGH:QUERYABLE";
     base.statistics_snapshot_signature = "stats:1;4";
     base.cost_profile_id = "sb_cost_formula/default@1";
     base.policy_snapshot_id = "policy:g1:t1";
@@ -70,6 +76,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenCapabilityOrRuleBindingChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
+    base.taxonomy_contract_id = "sb_runtime_plan/v10";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -86,6 +93,8 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenCapabilityOrRuleBindingChanges) {
     base.canonical_opcode_symbol = "OP_STMT_DML_SELECT";
     base.normalization_rule_set_id = 0x1301;
     base.object_ref_digest = "o:abc123";
+    base.index_family_signature = "0:1:BTREE_EQ_SCAN:2:EXACT_KEY:INDEX_NATIVE:0:QUERYABLE";
+    base.family_statistics_signature = "0:BTREE_EQ_SCAN:7:HIGH:QUERYABLE";
     base.statistics_snapshot_signature = "stats:1;4";
     base.cost_profile_id = "sb_cost_formula/default@1";
     base.policy_snapshot_id = "policy:g1:t1";
@@ -117,6 +126,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenPlanProfileChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
+    base.taxonomy_contract_id = "sb_runtime_plan/v10";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -134,6 +144,8 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenPlanProfileChanges) {
     base.normalization_rule_set_id = 0x1301;
     base.object_ref_digest = "o:abc123";
     base.plan_profile_signature = "GENERIC";
+    base.index_family_signature = "0:1:BTREE_EQ_SCAN:2:EXACT_KEY:INDEX_NATIVE:0:QUERYABLE";
+    base.family_statistics_signature = "0:BTREE_EQ_SCAN:7:HIGH:QUERYABLE";
     base.statistics_snapshot_signature = "stats:1;4";
     base.cost_profile_id = "sb_cost_formula/default@1";
     base.policy_snapshot_id = "policy:g1:t1";
@@ -148,6 +160,7 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenStatsCostOrPolicySnapshotChanges) {
     PlanCacheKeyInput base;
     base.profile_id = "native";
     base.profile_version = "3.0";
+    base.taxonomy_contract_id = "sb_runtime_plan/v10";
     base.payload_format = "SQL_TEXT";
     base.payload_hash = "p:def456";
     base.session_option_signature = "sess:aa";
@@ -165,6 +178,8 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenStatsCostOrPolicySnapshotChanges) {
     base.normalization_rule_set_id = 0x1301;
     base.object_ref_digest = "o:abc123";
     base.plan_profile_signature = "GENERIC";
+    base.index_family_signature = "0:1:BTREE_EQ_SCAN:2:EXACT_KEY:INDEX_NATIVE:0:QUERYABLE";
+    base.family_statistics_signature = "0:BTREE_EQ_SCAN:7:HIGH:QUERYABLE";
     base.statistics_snapshot_signature = "stats:1;4";
     base.cost_profile_id = "sb_cost_formula/default@1";
     base.policy_snapshot_id = "policy:g1:t1";
@@ -180,4 +195,48 @@ TEST(SBLRV3PlanCacheKey, ChangesWhenStatsCostOrPolicySnapshotChanges) {
     PlanCacheKeyInput changed_policy = base;
     changed_policy.policy_snapshot_id = "policy:g2:t1";
     EXPECT_NE(buildPlanCacheKey(base), buildPlanCacheKey(changed_policy));
+}
+
+TEST(SBLRV3PlanCacheKey, ChangesWhenTaxonomyOrFamilyIdentityChanges) {
+    PlanCacheKeyInput base;
+    base.profile_id = "native";
+    base.profile_version = "3.0";
+    base.taxonomy_contract_id = "sb_runtime_plan/v10";
+    base.payload_format = "SQL_TEXT";
+    base.payload_hash = "p:def456";
+    base.session_option_signature = "sess:aa";
+    base.role_context_signature = "role:bb";
+    base.canonical_opcode_symbol = "OP_STMT_DML_SELECT";
+    base.catalog_epoch = 1;
+    base.security_epoch = 2;
+    base.capability_set_hash = "cap:123";
+    base.module_version = 5;
+    base.translation_rule_version = 7;
+    base.host_api_abi_version = "abi-1";
+    base.target_triples_hash = "triples:xyz";
+    base.artifact_preference = "NATIVE_PREFERRED";
+    base.optimization_level = "O2";
+    base.normalization_rule_set_id = 0x1301;
+    base.object_ref_digest = "o:abc123";
+    base.plan_profile_signature = "GENERIC";
+    base.index_family_signature =
+        "0:1:BTREE_EQ_SCAN:2:EXACT_KEY:INDEX_NATIVE:0:QUERYABLE";
+    base.family_statistics_signature = "0:BTREE_EQ_SCAN:7:HIGH:QUERYABLE";
+    base.statistics_snapshot_signature = "stats:1;4";
+    base.cost_profile_id = "sb_cost_formula/default@1";
+    base.policy_snapshot_id = "policy:g1:t1";
+
+    PlanCacheKeyInput changed_taxonomy = base;
+    changed_taxonomy.taxonomy_contract_id = "sb_runtime_plan/v11";
+    EXPECT_NE(buildPlanCacheKey(base), buildPlanCacheKey(changed_taxonomy));
+
+    PlanCacheKeyInput changed_family = base;
+    changed_family.index_family_signature =
+        "0:1:BITMAP_COMBINE_SCAN:13:CANDIDATE_REGION:POST_FILTER:1:LIMITED";
+    EXPECT_NE(buildPlanCacheKey(base), buildPlanCacheKey(changed_family));
+
+    PlanCacheKeyInput changed_family_stats = base;
+    changed_family_stats.family_statistics_signature =
+        "0:BTREE_EQ_SCAN:8:HIGH:QUERYABLE";
+    EXPECT_NE(buildPlanCacheKey(base), buildPlanCacheKey(changed_family_stats));
 }

@@ -435,10 +435,15 @@ namespace scratchbird::sblr::detail
             signature << "rels=";
             for (const auto &relation : plan.relations)
             {
+                const std::string family_name =
+                    relation.scan_family.empty() ? relation.scan_kind
+                                                 : relation.scan_family;
                 signature << relation.source_relation_index << ':'
-                          << relation.scan_kind << ':'
+                          << family_name << ':'
                           << rowSelectivityBucket(relation.base_rows,
                                                   relation.estimated_rows)
+                          << ':'
+                          << rowMagnitudeBucket(relation.candidate_budget)
                           << ';';
             }
             signature << "|joins=";
@@ -478,6 +483,111 @@ namespace scratchbird::sblr::detail
                 }
                 first = false;
                 out << snapshot_id;
+            }
+            return out.str();
+        }
+
+        auto currentRelationFamilyIdentitySignature(
+            const optimizer::RuntimePlanRelation &relation) -> std::string
+        {
+            const std::string family_name =
+                relation.scan_family.empty() ? relation.scan_kind
+                                             : relation.scan_family;
+            std::ostringstream out;
+            out << relation.source_relation_index << ':'
+                << relation.taxonomy_version << ':'
+                << family_name << ':'
+                << static_cast<uint32_t>(relation.scan_family_kind) << ':'
+                << accessPathExactnessClassName(relation.exactness_class) << ':'
+                << accessPathVisibilityEnforcementName(
+                       relation.visibility_enforcement)
+                << ':'
+                << (relation.requires_recheck ? 1 : 0) << ':'
+                << accessPathQueryabilityStateName(
+                       relation.queryability_state) << ':'
+                << relation.path_name;
+            return out.str();
+        }
+
+        auto currentRelationFamilyStatisticsSignature(
+            const optimizer::RuntimePlanRelation &relation) -> std::string
+        {
+            const std::string family_name =
+                relation.scan_family.empty() ? relation.scan_kind
+                                             : relation.scan_family;
+            std::ostringstream out;
+            out << relation.source_relation_index << ':'
+                << family_name << ':'
+                << relation.family_metrics_version << ':'
+                << relation.metrics_confidence_class << ':'
+                << accessPathQueryabilityStateName(
+                       relation.queryability_state) << ':'
+                << relation.formula_profile_id << '@'
+                << relation.formula_profile_version << ':'
+                << relation.calibration_profile_id;
+            return out.str();
+        }
+
+        auto deriveIndexFamilySignature(const optimizer::RuntimePlan &plan) -> std::string
+        {
+            if (plan.relations.empty())
+            {
+                return "NONE";
+            }
+
+            std::ostringstream out;
+            bool first = true;
+            for (const auto &relation : plan.relations)
+            {
+                std::vector<std::string> entries =
+                    relation.candidate_family_identity_signatures;
+                entries.push_back(currentRelationFamilyIdentitySignature(relation));
+                std::sort(entries.begin(), entries.end());
+                entries.erase(std::unique(entries.begin(), entries.end()),
+                              entries.end());
+
+                for (const auto &entry : entries)
+                {
+                    if (!first)
+                    {
+                        out << ';';
+                    }
+                    first = false;
+                    out << entry;
+                }
+            }
+            return out.str();
+        }
+
+        auto deriveFamilyStatisticsSignature(const optimizer::RuntimePlan &plan)
+            -> std::string
+        {
+            if (plan.relations.empty())
+            {
+                return "NONE";
+            }
+
+            std::ostringstream out;
+            bool first = true;
+            for (const auto &relation : plan.relations)
+            {
+                std::vector<std::string> entries =
+                    relation.candidate_family_statistics_signatures;
+                entries.push_back(
+                    currentRelationFamilyStatisticsSignature(relation));
+                std::sort(entries.begin(), entries.end());
+                entries.erase(std::unique(entries.begin(), entries.end()),
+                              entries.end());
+
+                for (const auto &entry : entries)
+                {
+                    if (!first)
+                    {
+                        out << ';';
+                    }
+                    first = false;
+                    out << entry;
+                }
             }
             return out.str();
         }
@@ -565,6 +675,11 @@ namespace scratchbird::sblr::detail
             root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
                 "plan_profile_signature", plan.plan_profile_signature));
             root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "index_family_signature", plan.index_family_signature));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "family_statistics_signature",
+                plan.family_statistics_signature));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
                 "root_node_type", plan.root.node_type));
             root.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
                 "estimated_rows", plan.root.estimated_rows));
@@ -583,6 +698,15 @@ namespace scratchbird::sblr::detail
                     "alias", relation.alias));
                 relation_node.attributes.push_back(optimizer::PlanHashAttribute::makeString(
                     "scan_kind", relation.scan_kind));
+                relation_node.attributes.push_back(
+                    optimizer::PlanHashAttribute::makeString(
+                        "scan_family",
+                        relation.scan_family.empty() ? relation.scan_kind
+                                                     : relation.scan_family));
+                relation_node.attributes.push_back(
+                    optimizer::PlanHashAttribute::makeU64(
+                        "family_metrics_version",
+                        relation.family_metrics_version));
                 relation_node.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
                     "estimated_rows", relation.estimated_rows));
                 root.children.push_back(std::move(relation_node));
@@ -988,6 +1112,8 @@ namespace scratchbird::sblr::detail
                                uint16_t root_opcode,
                                const std::string &payload_hash,
                                const std::string &plan_profile_signature,
+                               const std::string &index_family_signature,
+                               const std::string &family_statistics_signature,
                                const std::string &stats_snapshot_signature,
                                const std::string &cost_profile_id,
                                const std::string &policy_snapshot_id)
@@ -998,6 +1124,7 @@ namespace scratchbird::sblr::detail
             sblr::v3::PlanCacheKeyInput key;
             key.profile_id = "native";
             key.profile_version = "v3";
+            key.taxonomy_contract_id = optimizer::kRuntimePlanContractId;
             key.payload_format = "SQL_TEXT";
             key.payload_hash = payload_hash;
             key.canonical_opcode_symbol =
@@ -1015,6 +1142,8 @@ namespace scratchbird::sblr::detail
             key.normalization_rule_set_id = 0x3901;
             key.object_ref_digest = schema_id.toString();
             key.plan_profile_signature = plan_profile_signature;
+            key.index_family_signature = index_family_signature;
+            key.family_statistics_signature = family_statistics_signature;
             key.statistics_snapshot_signature = stats_snapshot_signature;
             key.cost_profile_id = cost_profile_id;
             key.policy_snapshot_id = policy_snapshot_id;
@@ -1431,10 +1560,14 @@ namespace scratchbird::sblr::detail
             optimizer::RuntimePlan &plan,
             const optimizer::RuntimePlanControlEntry &plan_profile_control,
             std::string_view decision_source,
+            const std::string &index_family_signature,
+            const std::string &family_statistics_signature,
             const std::string &stats_snapshot_signature,
             const std::string &cost_profile_id,
             const std::string &policy_snapshot_id) -> void
         {
+            plan.index_family_signature = index_family_signature;
+            plan.family_statistics_signature = family_statistics_signature;
             upsertRuntimePlanControl(plan.optimizer_controls,
                                      plan_profile_control.name,
                                      plan_profile_control.value,
@@ -1443,6 +1576,14 @@ namespace scratchbird::sblr::detail
                                      "PLAN_REUSE_DECISION",
                                      plan.cache_mode,
                                      std::string(decision_source));
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_FAMILY_IDENTITY",
+                                     index_family_signature,
+                                     "CACHE_KEY");
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "PLAN_FAMILY_STATS",
+                                     family_statistics_signature,
+                                     "CACHE_KEY");
             upsertRuntimePlanControl(plan.optimizer_controls,
                                      "PLAN_STATS_SNAPSHOT",
                                      stats_snapshot_signature,
@@ -1544,10 +1685,17 @@ namespace scratchbird::sblr::detail
                 deriveCostProfileId(variant_out.runtime_plan);
             variant_out.policy_snapshot_id =
                 currentPolicySnapshotId(core::ConnectionContext::getCurrent());
+            variant_out.runtime_plan.index_family_signature =
+                deriveIndexFamilySignature(variant_out.runtime_plan);
+            variant_out.runtime_plan.family_statistics_signature =
+                deriveFamilyStatisticsSignature(variant_out.runtime_plan);
 
             annotateReusablePlanMetadata(variant_out.runtime_plan,
                                          plan_profile_control,
                                          decision_source,
+                                         variant_out.runtime_plan.index_family_signature,
+                                         variant_out.runtime_plan
+                                             .family_statistics_signature,
                                          variant_out.stats_snapshot_signature,
                                          variant_out.cost_profile_id,
                                          variant_out.policy_snapshot_id);
@@ -1566,6 +1714,8 @@ namespace scratchbird::sblr::detail
                 variant_out.instructions[root_index].opcode,
                 payload_hash,
                 variant_out.runtime_plan.plan_profile_signature,
+                variant_out.runtime_plan.index_family_signature,
+                variant_out.runtime_plan.family_statistics_signature,
                 variant_out.stats_snapshot_signature,
                 variant_out.cost_profile_id,
                 variant_out.policy_snapshot_id);
@@ -1679,6 +1829,10 @@ namespace scratchbird::sblr::detail
                     result.plan_profile.runtime_plan_hash =
                         variant.runtime_plan.plan_hash;
                     result.plan_profile.decision_source = std::string(decision_source);
+                    result.plan_profile.index_family_signature =
+                        variant.runtime_plan.index_family_signature;
+                    result.plan_profile.family_statistics_signature =
+                        variant.runtime_plan.family_statistics_signature;
                     result.plan_profile.statistics_snapshot_signature =
                         variant.stats_snapshot_signature;
                     result.plan_profile.cost_profile_id = variant.cost_profile_id;

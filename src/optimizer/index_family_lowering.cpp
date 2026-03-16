@@ -9,11 +9,74 @@
  */
 #include "scratchbird/optimizer/index_family_lowering.h"
 
+#include <algorithm>
+#include <cctype>
+#include <optional>
+
 namespace scratchbird::optimizer
 {
     namespace
     {
         using IndexType = core::CatalogManager::IndexType;
+        using IndexOpclassFunctionKind =
+            core::CatalogManager::IndexOpclassFunctionKind;
+
+        auto toUpperAscii(std::string text) -> std::string
+        {
+            std::transform(text.begin(),
+                           text.end(),
+                           text.begin(),
+                           [](unsigned char ch) {
+                               return static_cast<char>(std::toupper(ch));
+                           });
+            return text;
+        }
+
+        auto isZeroId(const core::ID &id) -> bool
+        {
+            return std::all_of(id.bytes.begin(),
+                               id.bytes.end(),
+                               [](uint8_t byte) { return byte == 0; });
+        }
+
+        auto canonicalIndexTypeName(IndexType index_type) -> std::string
+        {
+            switch (index_type)
+            {
+                case IndexType::GIST: return "GIST";
+                case IndexType::SPGIST: return "SPGIST";
+                case IndexType::RTREE: return "RTREE";
+                case IndexType::MONGODB_2D: return "MONGODB_2D";
+                case IndexType::MONGODB_2DSPHERE: return "MONGODB_2DSPHERE";
+                case IndexType::MONGODB_2DSPHERE_BUCKET:
+                    return "MONGODB_2DSPHERE_BUCKET";
+                case IndexType::REDIS_GEO: return "REDIS_GEO";
+                default: return {};
+            }
+        }
+
+        auto generalizedStrategyForOperator(const std::string &operator_name)
+            -> std::optional<uint16_t>
+        {
+            const std::string normalized = toUpperAscii(operator_name);
+            if (normalized == "=" || normalized == "EQUALS")
+            {
+                return 8;
+            }
+            if (normalized == "&&" || normalized == "OVERLAPS")
+            {
+                return 1;
+            }
+            if (normalized == "@>" || normalized == "CONTAINS")
+            {
+                return 2;
+            }
+            if (normalized == "<@" || normalized == "CONTAINED_BY")
+            {
+                return 3;
+            }
+            return std::nullopt;
+        }
 
         auto makeResult(PlannerAccessFamily family,
                         AccessPathExactnessClass exactness,
@@ -38,6 +101,89 @@ namespace scratchbird::optimizer
             result.supports_parameterization = supports_parameterization;
             result.queryability_state = queryability_state;
             return result;
+        }
+
+        auto invalidGeneralizedResult(PlannerAccessFamily family)
+            -> PlannerFamilyLoweringResult
+        {
+            return makeResult(family,
+                              AccessPathExactnessClass::UNKNOWN,
+                              AccessPathVisibilityEnforcement::UNKNOWN,
+                              true,
+                              false,
+                              false,
+                              false,
+                              AccessPathQueryabilityState::INVALID);
+        }
+
+        auto invalidFamilyResult(PlannerAccessFamily family,
+                                 bool requires_recheck = true)
+            -> PlannerFamilyLoweringResult
+        {
+            return makeResult(family,
+                              AccessPathExactnessClass::UNKNOWN,
+                              AccessPathVisibilityEnforcement::UNKNOWN,
+                              requires_recheck,
+                              false,
+                              false,
+                              false,
+                              AccessPathQueryabilityState::INVALID);
+        }
+
+        auto primaryIndexOpclassId(core::CatalogManager *catalog,
+                                   const core::CatalogManager::IndexInfo &index)
+            -> core::ID
+        {
+            if (catalog == nullptr || isZeroId(index.index_id))
+            {
+                return {};
+            }
+
+            std::vector<core::CatalogManager::IndexColumnCatalogInfo> columns;
+            if (catalog->listIndexColumnCatalogEntries(index.index_id, columns, nullptr) !=
+                core::Status::OK)
+            {
+                return {};
+            }
+
+            for (const auto &column : columns)
+            {
+                if (!column.is_include)
+                {
+                    return column.opclass_id;
+                }
+            }
+
+            return {};
+        }
+
+        auto hasOpclassFunction(core::CatalogManager *catalog,
+                                const core::ID &opclass_id,
+                                IndexOpclassFunctionKind fn_kind,
+                                std::optional<uint16_t> support_number =
+                                    std::nullopt)
+            -> bool
+        {
+            if (catalog == nullptr || isZeroId(opclass_id))
+            {
+                return false;
+            }
+
+            std::vector<core::CatalogManager::IndexOpclassFunctionCatalogInfo> rows;
+            if (catalog->listIndexOpclassFunctionCatalogEntries(opclass_id, rows, nullptr) !=
+                core::Status::OK)
+            {
+                return false;
+            }
+
+            return std::any_of(
+                rows.begin(),
+                rows.end(),
+                [&](const core::CatalogManager::IndexOpclassFunctionCatalogInfo &row) {
+                    return row.is_valid && row.fn_kind == fn_kind &&
+                           (!support_number.has_value() ||
+                            row.support_number == *support_number);
+                });
         }
 
         auto isBtreeLike(IndexType index_type) -> bool
@@ -361,6 +507,19 @@ namespace scratchbird::optimizer
 
         if (request.index_type == IndexType::GIST)
         {
+            if (!request.strategy_bound || !request.support_consistent)
+            {
+                return invalidGeneralizedResult(request.nearest_order
+                                                    ? PlannerAccessFamily::GIST_NEAREST_SCAN
+                                                    : PlannerAccessFamily::GIST_SCAN);
+            }
+            if (request.nearest_order &&
+                (!request.support_distance ||
+                 !request.nearest_lower_bound_validated))
+            {
+                return invalidGeneralizedResult(
+                    PlannerAccessFamily::GIST_NEAREST_SCAN);
+            }
             return makeResult(request.nearest_order
                                   ? PlannerAccessFamily::GIST_NEAREST_SCAN
                                   : PlannerAccessFamily::GIST_SCAN,
@@ -377,6 +536,19 @@ namespace scratchbird::optimizer
 
         if (request.index_type == IndexType::SPGIST)
         {
+            if (!request.strategy_bound || !request.support_consistent)
+            {
+                return invalidGeneralizedResult(request.nearest_order
+                                                    ? PlannerAccessFamily::SPGIST_NEAREST_SCAN
+                                                    : PlannerAccessFamily::SPGIST_SCAN);
+            }
+            if (request.nearest_order &&
+                (!request.support_distance ||
+                 !request.nearest_lower_bound_validated))
+            {
+                return invalidGeneralizedResult(
+                    PlannerAccessFamily::SPGIST_NEAREST_SCAN);
+            }
             return makeResult(request.nearest_order
                                   ? PlannerAccessFamily::SPGIST_NEAREST_SCAN
                                   : PlannerAccessFamily::SPGIST_SCAN,
@@ -397,6 +569,19 @@ namespace scratchbird::optimizer
             request.index_type == IndexType::MONGODB_2DSPHERE_BUCKET ||
             request.index_type == IndexType::REDIS_GEO)
         {
+            if (!request.strategy_bound || !request.support_consistent)
+            {
+                return invalidGeneralizedResult(request.nearest_order
+                                                    ? PlannerAccessFamily::RTREE_NEAREST_SCAN
+                                                    : PlannerAccessFamily::RTREE_SCAN);
+            }
+            if (request.nearest_order &&
+                (!request.support_distance ||
+                 !request.nearest_lower_bound_validated))
+            {
+                return invalidGeneralizedResult(
+                    PlannerAccessFamily::RTREE_NEAREST_SCAN);
+            }
             return makeResult(request.nearest_order
                                   ? PlannerAccessFamily::RTREE_NEAREST_SCAN
                                   : PlannerAccessFamily::RTREE_SCAN,
@@ -413,6 +598,50 @@ namespace scratchbird::optimizer
 
         if (isTextLike(request.index_type))
         {
+            if (request.ranking_requested)
+            {
+                if (!request.corpus_stats_available ||
+                    request.candidate_budget == 0)
+                {
+                    return invalidFamilyResult(
+                        PlannerAccessFamily::TEXT_SCORE_SCAN);
+                }
+
+                return makeResult(PlannerAccessFamily::TEXT_SCORE_SCAN,
+                                  AccessPathExactnessClass::CANDIDATE_REGION,
+                                  AccessPathVisibilityEnforcement::POST_FILTER,
+                                  true,
+                                  false,
+                                  false,
+                                  false,
+                                  AccessPathQueryabilityState::LIMITED);
+            }
+
+            if (request.predicate_shape == PredicateMatchShape::LIKE_PREFIX)
+            {
+                return makeResult(PlannerAccessFamily::TEXT_RECHECK_SCAN,
+                                  AccessPathExactnessClass::CANDIDATE_REGION,
+                                  AccessPathVisibilityEnforcement::POST_FILTER,
+                                  true,
+                                  false,
+                                  false,
+                                  false,
+                                  AccessPathQueryabilityState::LIMITED);
+            }
+
+            if (request.predicate_shape == PredicateMatchShape::EQUALITY ||
+                request.candidate_bitmap_available)
+            {
+                return makeResult(PlannerAccessFamily::TEXT_BITMAP_SCAN,
+                                  AccessPathExactnessClass::CANDIDATE_REGION,
+                                  AccessPathVisibilityEnforcement::POST_FILTER,
+                                  true,
+                                  false,
+                                  false,
+                                  false,
+                                  AccessPathQueryabilityState::LIMITED);
+            }
+
             return makeResult(PlannerAccessFamily::TEXT_RECHECK_SCAN,
                               AccessPathExactnessClass::CANDIDATE_REGION,
                               AccessPathVisibilityEnforcement::POST_FILTER,
@@ -437,18 +666,59 @@ namespace scratchbird::optimizer
 
         if (isVectorFlatLike(request.index_type))
         {
+            if (!request.nearest_order ||
+                !request.ann_metric_compatible ||
+                request.candidate_budget == 0)
+            {
+                return invalidFamilyResult(
+                    PlannerAccessFamily::VECTOR_FLAT_SCAN,
+                    false);
+            }
+
             return makeResult(PlannerAccessFamily::VECTOR_FLAT_SCAN,
-                              AccessPathExactnessClass::EXACT_KEY,
+                              AccessPathExactnessClass::EXACT_ROW,
                               AccessPathVisibilityEnforcement::POST_FILTER,
-                              true,
                               false,
                               false,
                               false,
-                              AccessPathQueryabilityState::LIMITED);
+                              false,
+                              AccessPathQueryabilityState::QUERYABLE);
         }
 
         if (isHnswLike(request.index_type))
         {
+            if (!request.nearest_order ||
+                !request.ann_metric_compatible ||
+                request.candidate_budget == 0)
+            {
+                return invalidFamilyResult(PlannerAccessFamily::HNSW_SCAN);
+            }
+
+            if (request.ann_exact_fallback)
+            {
+                return makeResult(
+                    PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN,
+                    AccessPathExactnessClass::EXACT_ROW,
+                    AccessPathVisibilityEnforcement::POST_FILTER,
+                    false,
+                    false,
+                    false,
+                    false,
+                    AccessPathQueryabilityState::QUERYABLE);
+            }
+
+            if (request.ann_rerank_enabled)
+            {
+                return makeResult(PlannerAccessFamily::ANN_RERANK_SCAN,
+                                  AccessPathExactnessClass::APPROX_TOPK,
+                                  AccessPathVisibilityEnforcement::POST_FILTER,
+                                  true,
+                                  false,
+                                  false,
+                                  false,
+                                  AccessPathQueryabilityState::LIMITED);
+            }
+
             return makeResult(PlannerAccessFamily::HNSW_SCAN,
                               AccessPathExactnessClass::APPROX_TOPK,
                               AccessPathVisibilityEnforcement::POST_FILTER,
@@ -461,6 +731,38 @@ namespace scratchbird::optimizer
 
         if (isIvfLike(request.index_type))
         {
+            if (!request.nearest_order ||
+                !request.ann_metric_compatible ||
+                request.candidate_budget == 0)
+            {
+                return invalidFamilyResult(PlannerAccessFamily::IVF_SCAN);
+            }
+
+            if (request.ann_exact_fallback)
+            {
+                return makeResult(
+                    PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN,
+                    AccessPathExactnessClass::EXACT_ROW,
+                    AccessPathVisibilityEnforcement::POST_FILTER,
+                    false,
+                    false,
+                    false,
+                    false,
+                    AccessPathQueryabilityState::QUERYABLE);
+            }
+
+            if (request.ann_rerank_enabled)
+            {
+                return makeResult(PlannerAccessFamily::ANN_RERANK_SCAN,
+                                  AccessPathExactnessClass::APPROX_TOPK,
+                                  AccessPathVisibilityEnforcement::POST_FILTER,
+                                  true,
+                                  false,
+                                  false,
+                                  false,
+                                  AccessPathQueryabilityState::LIMITED);
+            }
+
             return makeResult(PlannerAccessFamily::IVF_SCAN,
                               AccessPathExactnessClass::APPROX_TOPK,
                               AccessPathVisibilityEnforcement::POST_FILTER,
@@ -491,6 +793,90 @@ namespace scratchbird::optimizer
         result.visibility_enforcement = AccessPathVisibilityEnforcement::UNKNOWN;
         result.queryability_state = AccessPathQueryabilityState::INVALID;
         return result;
+    }
+
+    auto buildPlannerFamilyLoweringRequest(core::CatalogManager *catalog,
+                                           const core::CatalogManager::IndexInfo &index,
+                                           PredicateMatchShape predicate_shape,
+                                           const std::string &operator_name,
+                                           bool ordered_output,
+                                           bool skip_scan,
+                                           bool bitmap_combine,
+                                           bool nearest_order)
+        -> PlannerFamilyLoweringRequest
+    {
+        PlannerFamilyLoweringRequest request;
+        request.index_type = index.index_type;
+        request.ordered_output = ordered_output;
+        request.skip_scan = skip_scan;
+        request.bitmap_combine = bitmap_combine;
+        request.nearest_order = nearest_order;
+        request.predicate_shape = predicate_shape;
+
+        if (index.index_type == IndexType::GIST ||
+            index.index_type == IndexType::SPGIST)
+        {
+            const core::ID opclass_id = primaryIndexOpclassId(catalog, index);
+            if (isZeroId(opclass_id))
+            {
+                return request;
+            }
+
+            core::CatalogManager::IndexOpclassCatalogInfo opclass_info;
+            if (catalog == nullptr ||
+                catalog->getIndexOpclassCatalogEntry(opclass_id, opclass_info, nullptr) !=
+                    core::Status::OK)
+            {
+                return request;
+            }
+
+            if (toUpperAscii(opclass_info.index_type_name) !=
+                canonicalIndexTypeName(index.index_type))
+            {
+                return request;
+            }
+
+            const auto strategy = generalizedStrategyForOperator(operator_name);
+            if (!strategy.has_value())
+            {
+                return request;
+            }
+
+            request.strategy_number = *strategy;
+            request.strategy_bound =
+                hasOpclassFunction(catalog,
+                                   opclass_id,
+                                   IndexOpclassFunctionKind::CONSISTENT,
+                                   request.strategy_number);
+            request.support_consistent = request.strategy_bound;
+            request.support_distance =
+                hasOpclassFunction(catalog,
+                                   opclass_id,
+                                   IndexOpclassFunctionKind::DISTANCE);
+            request.nearest_lower_bound_validated = request.support_distance;
+            return request;
+        }
+
+        if (index.index_type == IndexType::RTREE ||
+            index.index_type == IndexType::MONGODB_2D ||
+            index.index_type == IndexType::MONGODB_2DSPHERE ||
+            index.index_type == IndexType::MONGODB_2DSPHERE_BUCKET ||
+            index.index_type == IndexType::REDIS_GEO)
+        {
+            const auto strategy = generalizedStrategyForOperator(operator_name);
+            if (!strategy.has_value())
+            {
+                return request;
+            }
+
+            request.strategy_number = *strategy;
+            request.strategy_bound = true;
+            request.support_consistent = true;
+            request.support_distance = false;
+            request.nearest_lower_bound_validated = false;
+        }
+
+        return request;
     }
 
 } // namespace scratchbird::optimizer

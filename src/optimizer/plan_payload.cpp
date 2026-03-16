@@ -24,6 +24,10 @@ namespace scratchbird::optimizer
             out["taxonomy_version"] = relation.taxonomy_version;
             out["scan_family_tags"] = relation.scan_family_tags;
             out["candidate_scan_families"] = relation.candidate_scan_families;
+            out["candidate_family_identity_signatures"] =
+                relation.candidate_family_identity_signatures;
+            out["candidate_family_statistics_signatures"] =
+                relation.candidate_family_statistics_signatures;
             out["exactness_class"] =
                 accessPathExactnessClassName(relation.exactness_class);
             out["exactness_class_id"] =
@@ -188,6 +192,37 @@ namespace scratchbird::optimizer
                     {
                         relation_out.candidate_scan_families.push_back(
                             entry.get<std::string>());
+                    }
+                }
+            }
+            relation_out.candidate_family_identity_signatures.clear();
+            const auto candidate_family_identity_signatures_it =
+                json_in.find("candidate_family_identity_signatures");
+            if (candidate_family_identity_signatures_it != json_in.end() &&
+                candidate_family_identity_signatures_it->is_array())
+            {
+                for (const auto &entry : *candidate_family_identity_signatures_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.candidate_family_identity_signatures.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
+            relation_out.candidate_family_statistics_signatures.clear();
+            const auto candidate_family_statistics_signatures_it =
+                json_in.find("candidate_family_statistics_signatures");
+            if (candidate_family_statistics_signatures_it != json_in.end() &&
+                candidate_family_statistics_signatures_it->is_array())
+            {
+                for (const auto &entry :
+                     *candidate_family_statistics_signatures_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.candidate_family_statistics_signatures
+                            .push_back(entry.get<std::string>());
                     }
                 }
             }
@@ -1340,6 +1375,9 @@ namespace scratchbird::optimizer
             root["explain_text"] = plan.explain_text;
             root["cache_mode"] = plan.cache_mode;
             root["plan_profile_signature"] = plan.plan_profile_signature;
+            root["index_family_signature"] = plan.index_family_signature;
+            root["family_statistics_signature"] =
+                plan.family_statistics_signature;
             root["selectivity_bucket_signature"] =
                 plan.selectivity_bucket_signature;
             root["query_feedback_key"] = plan.query_feedback_key;
@@ -1430,6 +1468,10 @@ namespace scratchbird::optimizer
             plan_out.cache_mode = root.value("cache_mode", std::string());
             plan_out.plan_profile_signature =
                 root.value("plan_profile_signature", std::string());
+            plan_out.index_family_signature =
+                root.value("index_family_signature", std::string());
+            plan_out.family_statistics_signature =
+                root.value("family_statistics_signature", std::string());
             plan_out.selectivity_bucket_signature =
                 root.value("selectivity_bucket_signature", std::string());
             plan_out.query_feedback_key =

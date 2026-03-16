@@ -30,6 +30,7 @@
 #include "scratchbird/core/buffer_pool.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/tablespace.h"
+#include "scratchbird/optimizer/statistics.h"
 
 #if defined(_WIN32)
 #ifdef ERROR
@@ -4533,6 +4534,15 @@ public:
             float bloat_ratio = 0.0f;
             uint64_t last_vacuum_txid = 0;
             uint64_t last_reindex_txid = 0;
+            uint64_t metrics_last_refresh_xid = 0;
+            uint32_t family_metrics_version = 0;
+            optimizer::IndexFamilyMetricsType family_metrics_type =
+                optimizer::IndexFamilyMetricsType::UNKNOWN;
+            optimizer::IndexMetricsConfidenceClass metrics_confidence_class =
+                optimizer::IndexMetricsConfidenceClass::UNKNOWN;
+            optimizer::IndexMetricsQueryabilityState queryability_state =
+                optimizer::IndexMetricsQueryabilityState::UNKNOWN;
+            std::string family_metrics_payload;
             bool is_valid = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;

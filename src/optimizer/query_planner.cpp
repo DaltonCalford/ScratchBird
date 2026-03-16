@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <nlohmann/json.hpp>
@@ -55,6 +56,8 @@ namespace scratchbird::optimizer
             size_t relation_index = 0;
             std::vector<BaseAccessChoice> candidates;
             std::vector<std::string> candidate_scan_families;
+            std::vector<std::string> candidate_family_identity_signatures;
+            std::vector<std::string> candidate_family_statistics_signatures;
             double selectivity = 1.0;
         };
 
@@ -847,6 +850,22 @@ namespace scratchbird::optimizer
             {
                 cleanup_weight = 0.35;
                 index_weight = 1.0;
+            }
+            else if (scan_kind == "BRIN_SCAN" ||
+                     scan_kind == "SUMMARY_FILTER_SCAN")
+            {
+                cleanup_weight = 0.85;
+                index_weight = 0.45;
+            }
+            else if (scan_kind == "BITMAP_STORAGE_SCAN")
+            {
+                cleanup_weight = 0.80;
+                index_weight = 0.80;
+            }
+            else if (scan_kind == "COLUMNSTORE_SCAN")
+            {
+                cleanup_weight = 0.50;
+                index_weight = 0.65;
             }
             else if (scan_kind == "BITMAP_INDEX_SCAN")
             {
@@ -4864,6 +4883,55 @@ namespace scratchbird::optimizer
                     entries.push_back(value);
                 };
 
+            auto sortAndUniqueText = [](std::vector<std::string> &entries) {
+                std::sort(entries.begin(), entries.end());
+                entries.erase(std::unique(entries.begin(), entries.end()),
+                              entries.end());
+            };
+
+            auto candidateFamilyIdentitySignature =
+                [](size_t relation_index,
+                   const AccessPathDescriptor &descriptor) -> std::string {
+                    const std::string family_name =
+                        descriptor.family.empty() ? descriptor.path_name
+                                                  : descriptor.family;
+                    std::ostringstream out;
+                    out << relation_index << ':'
+                        << descriptor.taxonomy_version << ':'
+                        << family_name << ':'
+                        << static_cast<uint32_t>(descriptor.family_kind) << ':'
+                        << accessPathExactnessClassName(
+                               descriptor.exactness_class)
+                        << ':'
+                        << accessPathVisibilityEnforcementName(
+                               descriptor.visibility_enforcement)
+                        << ':'
+                        << (descriptor.requires_recheck ? 1 : 0) << ':'
+                        << accessPathQueryabilityStateName(
+                               descriptor.queryability_state) << ':'
+                        << descriptor.path_name;
+                    return out.str();
+                };
+
+            auto candidateFamilyStatisticsSignature =
+                [](size_t relation_index,
+                   const AccessPathDescriptor &descriptor) -> std::string {
+                    const std::string family_name =
+                        descriptor.family.empty() ? descriptor.path_name
+                                                  : descriptor.family;
+                    std::ostringstream out;
+                    out << relation_index << ':'
+                        << family_name << ':'
+                        << descriptor.family_metrics_version << ':'
+                        << descriptor.metrics_confidence_class << ':'
+                        << accessPathQueryabilityStateName(
+                               descriptor.queryability_state) << ':'
+                        << descriptor.formula_profile_id << '@'
+                        << descriptor.formula_profile_version << ':'
+                        << descriptor.calibration_profile_id;
+                    return out.str();
+                };
+
             auto normalizePlannerText = [](std::string text) -> std::string {
                 std::string normalized;
                 normalized.reserve(text.size());
@@ -5301,6 +5369,8 @@ namespace scratchbird::optimizer
             std::string best_bitmap_op;
             bool best_covering_index = false;
             bool best_exact_key_lookup = false;
+            double best_coverage_fraction = 1.0;
+            uint64_t best_candidate_budget = 0;
             bool best_ordered_output = false;
             uint64_t best_ordered_prefix_length = 0;
             std::vector<AccessPathDescriptor::OrderingKey> best_ordering_keys;
@@ -5309,6 +5379,147 @@ namespace scratchbird::optimizer
             std::vector<size_t> best_required_outer_relation_indexes;
             std::vector<std::string> best_required_outer_relation_aliases;
             core::CatalogManager::IndexInfo matched_index{};
+            std::unordered_map<std::string, IndexFamilyMetricsPacket>
+                relation_index_metrics_cache;
+            std::unordered_map<std::string, nlohmann::json>
+                relation_index_metrics_payload_cache;
+            auto metricsQueryabilityStateToAccessPath =
+                [](IndexMetricsQueryabilityState state)
+                    -> AccessPathQueryabilityState {
+                    switch (state)
+                    {
+                        case IndexMetricsQueryabilityState::QUERYABLE:
+                            return AccessPathQueryabilityState::QUERYABLE;
+                        case IndexMetricsQueryabilityState::LIMITED:
+                            return AccessPathQueryabilityState::LIMITED;
+                        case IndexMetricsQueryabilityState::INVALID:
+                            return AccessPathQueryabilityState::INVALID;
+                        case IndexMetricsQueryabilityState::UNKNOWN:
+                        default:
+                            return AccessPathQueryabilityState::UNKNOWN;
+                    }
+                };
+            auto loadIndexFamilyMetricsPacket =
+                [&](const core::CatalogManager::IndexInfo &index_info,
+                    IndexFamilyMetricsPacket &packet) -> bool {
+                    if (isZeroId(index_info.index_id) || stats_manager_ == nullptr)
+                    {
+                        return false;
+                    }
+
+                    const std::string cache_key = index_info.index_id.toString();
+                    auto cache_it = relation_index_metrics_cache.find(cache_key);
+                    if (cache_it != relation_index_metrics_cache.end())
+                    {
+                        packet = cache_it->second;
+                        return true;
+                    }
+
+                    core::ErrorContext metrics_ctx;
+                    if (stats_manager_->getIndexFamilyMetrics(index_info.index_id,
+                                                              packet,
+                                                              &metrics_ctx) != core::Status::OK)
+                    {
+                        return false;
+                    }
+                    relation_index_metrics_cache.emplace(cache_key, packet);
+                    return true;
+                };
+            auto loadIndexFamilyMetricsPayload =
+                [&](const core::CatalogManager::IndexInfo &index_info,
+                    const IndexFamilyMetricsPacket *packet,
+                    nlohmann::json &payload) -> bool {
+                    if (packet == nullptr ||
+                        isZeroId(index_info.index_id) ||
+                        packet->family_metrics_payload.empty())
+                    {
+                        return false;
+                    }
+
+                    const std::string cache_key = index_info.index_id.toString();
+                    auto cache_it =
+                        relation_index_metrics_payload_cache.find(cache_key);
+                    if (cache_it != relation_index_metrics_payload_cache.end())
+                    {
+                        payload = cache_it->second;
+                        return !payload.is_null();
+                    }
+
+                    payload = nlohmann::json::parse(packet->family_metrics_payload,
+                                                   nullptr,
+                                                   false);
+                    if (payload.is_discarded() || !payload.is_object())
+                    {
+                        payload = nlohmann::json();
+                        relation_index_metrics_payload_cache.emplace(cache_key,
+                                                                     payload);
+                        return false;
+                    }
+                    relation_index_metrics_payload_cache.emplace(cache_key,
+                                                                 payload);
+                    return true;
+                };
+            auto familyMetricDouble =
+                [&](const core::CatalogManager::IndexInfo &index_info,
+                    const IndexFamilyMetricsPacket *packet,
+                    const std::string &metric_name,
+                    double fallback_value) -> double {
+                    nlohmann::json payload;
+                    if (!loadIndexFamilyMetricsPayload(index_info,
+                                                       packet,
+                                                       payload))
+                    {
+                        return fallback_value;
+                    }
+                    const auto family_metrics_it = payload.find("family_metrics");
+                    if (family_metrics_it == payload.end() ||
+                        !family_metrics_it->is_object())
+                    {
+                        return fallback_value;
+                    }
+                    const auto metric_it =
+                        family_metrics_it->find(metric_name);
+                    if (metric_it == family_metrics_it->end() ||
+                        !metric_it->is_number())
+                    {
+                        return fallback_value;
+                    }
+                    return metric_it->get<double>();
+                };
+            auto buildIndexFamilyCostInput =
+                [&](const PlannerFamilyLoweringResult &lowering,
+                    const IndexFamilyMetricsPacket *packet,
+                    bool covering_index,
+                    bool ordered_output) -> IndexFamilyCostCalibrationInput {
+                    IndexFamilyCostCalibrationInput input;
+                    input.planner_family = lowering.family_name;
+                    input.metrics_type_name =
+                        packet != nullptr
+                            ? indexFamilyMetricsTypeName(
+                                  packet->family_metrics_type)
+                            : "UNKNOWN";
+                    input.family_metrics_version =
+                        packet != nullptr ? packet->family_metrics_version : 0;
+                    input.metrics_confidence_class =
+                        packet != nullptr
+                            ? indexMetricsConfidenceClassName(
+                                  packet->metrics_confidence_class)
+                            : "UNKNOWN";
+                    input.correlation =
+                        packet != nullptr ? packet->correlation : 0.0;
+                    input.bloat_ratio =
+                        packet != nullptr ? packet->bloat_ratio : 0.0;
+                    input.recheck_ratio_est =
+                        packet != nullptr ? packet->recheck_ratio_est : 0.0;
+                    input.coverage_fraction =
+                        packet != nullptr
+                            ? packet->coverage_fraction
+                            : (covering_index ? 1.0 : 0.0);
+                    input.ordered_output = ordered_output;
+                    input.covering_index = covering_index;
+                    input.requires_recheck = lowering.requires_recheck;
+                    return input;
+                };
             auto makeBaseAccessChoice =
                 [&](std::shared_ptr<Path> candidate_path,
                     std::shared_ptr<PlanNode> candidate_plan,
@@ -5332,10 +5543,44 @@ namespace scratchbird::optimizer
                         &required_outer_relation_indexes,
                     const std::vector<std::string>
                         &required_outer_relation_aliases,
+                    double coverage_fraction,
+                    uint64_t candidate_budget,
                     const core::CatalogManager::IndexInfo &candidate_index,
                     const std::vector<std::string> &candidate_scan_families)
                     -> BaseAccessChoice {
                     BaseAccessChoice candidate;
+                    IndexFamilyMetricsPacket index_metrics_packet;
+                    const bool have_index_family_metrics =
+                        loadIndexFamilyMetricsPacket(candidate_index,
+                                                     index_metrics_packet);
+                    AccessPathQueryabilityState effective_queryability =
+                        lowering.queryability_state;
+                    if (have_index_family_metrics)
+                    {
+                        const AccessPathQueryabilityState persisted_state =
+                            metricsQueryabilityStateToAccessPath(
+                                index_metrics_packet.queryability_state);
+                        if (persisted_state == AccessPathQueryabilityState::INVALID ||
+                            lowering.queryability_state ==
+                                AccessPathQueryabilityState::INVALID)
+                        {
+                            effective_queryability =
+                                AccessPathQueryabilityState::INVALID;
+                        }
+                        else if (persisted_state ==
+                                     AccessPathQueryabilityState::LIMITED ||
+                                 lowering.queryability_state ==
+                                     AccessPathQueryabilityState::LIMITED)
+                        {
+                            effective_queryability =
+                                AccessPathQueryabilityState::LIMITED;
+                        }
+                        else if (persisted_state !=
+                                 AccessPathQueryabilityState::UNKNOWN)
+                        {
+                            effective_queryability = persisted_state;
+                        }
+                    }
                     candidate.relation_index = relation_index;
                     candidate.path = std::move(candidate_path);
                     candidate.plan = std::move(candidate_plan);
@@ -5371,21 +5616,28 @@ namespace scratchbird::optimizer
                     candidate.runtime_relation.coverage_fraction =
                         scan_kind == "SEQ_SCAN"
                             ? 1.0
-                            : (covering_index ? 1.0 : 0.0);
+                            : std::clamp(coverage_fraction, 0.0, 1.0);
                     candidate.runtime_relation.candidate_budget =
-                        scan_kind == "BITMAP_INDEX_SCAN"
-                            ? static_cast<uint64_t>(runtime_predicates.size())
-                            : 0;
+                        candidate_budget;
                     candidate.runtime_relation.visibility_enforcement =
                         lowering.visibility_enforcement;
-                    candidate.runtime_relation.family_metrics_version = 0;
+                    candidate.runtime_relation.family_metrics_version =
+                        have_index_family_metrics
+                            ? index_metrics_packet.family_metrics_version
+                            : 0;
                     candidate.runtime_relation.metrics_confidence_class =
-                        have_relation_table_stats
-                            ? statisticsConfidenceClassName(
-                                  relation_table_stats.confidence_class)
-                            : "UNKNOWN";
+                        have_index_family_metrics
+                            ? indexMetricsConfidenceClassName(
+                                  index_metrics_packet.metrics_confidence_class)
+                            : (scan_kind == "SEQ_SCAN"
+                                   ? (have_relation_table_stats
+                                          ? statisticsConfidenceClassName(
+                                                relation_table_stats
+                                                    .confidence_class)
+                                          : "UNKNOWN")
+                                   : "LOW");
                     candidate.runtime_relation.queryability_state =
-                        lowering.queryability_state;
+                        effective_queryability;
                     candidate.runtime_relation.bitmap_op = bitmap_op;
                     candidate.runtime_relation.covering_index =
                         covering_index;
@@ -5472,18 +5724,17 @@ namespace scratchbird::optimizer
                     candidate.access_descriptor.coverage_fraction =
                         scan_kind == "SEQ_SCAN"
                             ? 1.0
-                            : (covering_index ? 1.0 : 0.0);
+                            : std::clamp(coverage_fraction, 0.0, 1.0);
                     candidate.access_descriptor.candidate_budget =
-                        scan_kind == "BITMAP_INDEX_SCAN"
-                            ? static_cast<uint64_t>(runtime_predicates.size())
-                            : 0;
+                        candidate_budget;
                     candidate.access_descriptor.visibility_enforcement =
                         lowering.visibility_enforcement;
-                    candidate.access_descriptor.family_metrics_version = 0;
+                    candidate.access_descriptor.family_metrics_version =
+                        candidate.runtime_relation.family_metrics_version;
                     candidate.access_descriptor.metrics_confidence_class =
                         candidate.runtime_relation.metrics_confidence_class;
                     candidate.access_descriptor.queryability_state =
-                        lowering.queryability_state;
+                        effective_queryability;
                     candidate.access_descriptor.formula_profile_id =
                         candidate_cost.formula_profile_id;
                     candidate.access_descriptor.formula_profile_version =
@@ -5505,6 +5756,16 @@ namespace scratchbird::optimizer
                         required_outer_relation_indexes;
                     candidate.access_descriptor.interesting_order_score =
                         interesting_order_score;
+                    candidate.runtime_relation
+                        .candidate_family_identity_signatures = {
+                            candidateFamilyIdentitySignature(
+                                relation_index,
+                                candidate.access_descriptor)};
+                    candidate.runtime_relation
+                        .candidate_family_statistics_signatures = {
+                            candidateFamilyStatisticsSignature(
+                                relation_index,
+                                candidate.access_descriptor)};
                     if (candidate.path)
                     {
                         candidate.path->setAccessDescriptor(
@@ -5514,6 +5775,22 @@ namespace scratchbird::optimizer
                 };
             auto registerBundleCandidate =
                 [&](BaseAccessChoice candidate) {
+                    for (const auto &signature :
+                         candidate.runtime_relation
+                             .candidate_family_identity_signatures)
+                    {
+                        appendUniqueText(
+                            bundle.candidate_family_identity_signatures,
+                            signature);
+                    }
+                    for (const auto &signature :
+                         candidate.runtime_relation
+                             .candidate_family_statistics_signatures)
+                    {
+                        appendUniqueText(
+                            bundle.candidate_family_statistics_signatures,
+                            signature);
+                    }
                     bundle.candidates.push_back(std::move(candidate));
                 };
             appendUniqueText(bundle.candidate_scan_families,
@@ -5550,6 +5827,8 @@ namespace scratchbird::optimizer
                 0.0,
                 {},
                 {},
+                1.0,
+                0,
                 core::CatalogManager::IndexInfo{},
                 {best_scan_kind, best_scan_family}));
 
@@ -5575,17 +5854,134 @@ namespace scratchbird::optimizer
 
             auto loweringRequestForPredicate =
                 [&](const core::CatalogManager::IndexInfo &index,
-                    ResolvedPredicateKind predicate_kind,
+                    const ResolvedScanPredicate &predicate,
                     bool ordered_output,
                     bool skip_scan) -> PlannerFamilyLoweringRequest {
-                    PlannerFamilyLoweringRequest lowering_request;
-                    lowering_request.index_type = index.index_type;
-                    lowering_request.ordered_output = ordered_output;
-                    lowering_request.skip_scan = skip_scan;
-                    lowering_request.predicate_shape =
-                        predicateMatchShape(predicate_kind);
-                    return lowering_request;
+                    return buildPlannerFamilyLoweringRequest(
+                        db_ != nullptr ? db_->catalog_manager() : nullptr,
+                        index,
+                        predicateMatchShape(predicate.kind),
+                        predicate.operator_name,
+                        ordered_output,
+                        skip_scan);
                 };
+
+            auto expressionContainsAnyToken =
+                [&](const parser::v3::Expression *expr,
+                    std::initializer_list<std::string_view> needles) -> bool {
+                    if (expr == nullptr)
+                    {
+                        return false;
+                    }
+                    const std::string normalized =
+                        core::IdentifierUtils::toUpper(
+                            expressionToString(expr, pool));
+                    if (normalized.empty())
+                    {
+                        return false;
+                    }
+                    for (const auto needle : needles)
+                    {
+                        if (normalized.find(needle) != std::string::npos)
+                        {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+            auto queryRequestsTextRanking = [&]() -> bool {
+                for (const auto *item : select_stmt->items)
+                {
+                    if (item != nullptr && item->expr != nullptr &&
+                        expressionContainsAnyToken(
+                            item->expr,
+                            {"TS_RANK(", "SEARCH_BM25("}))
+                    {
+                        return true;
+                    }
+                }
+                for (const auto *order_item : select_stmt->order_by)
+                {
+                    if (order_item != nullptr && order_item->expr != nullptr &&
+                        expressionContainsAnyToken(
+                            order_item->expr,
+                            {"TS_RANK(", "SEARCH_BM25("}))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            auto queryRequestsVectorNearestOrder = [&]() -> bool {
+                for (const auto *order_item : select_stmt->order_by)
+                {
+                    if (order_item != nullptr && order_item->expr != nullptr &&
+                        expressionContainsAnyToken(
+                            order_item->expr,
+                            {"VECTOR_L2_DISTANCE(",
+                             "VECTOR_COSINE_DISTANCE(",
+                             "<->"}))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+            auto isTextFamilyIndex =
+                [](core::CatalogManager::IndexType index_type) -> bool {
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::FULLTEXT:
+                        case core::CatalogManager::IndexType::INVERTED:
+                        case core::CatalogManager::IndexType::MINHASH_LSH:
+                        case core::CatalogManager::IndexType::SPARSE_INVERTED:
+                        case core::CatalogManager::IndexType::SPARSE_WAND:
+                        case core::CatalogManager::IndexType::TRIE:
+                        case core::CatalogManager::IndexType::NGRAM:
+                        case core::CatalogManager::IndexType::MONGODB_WILDCARD:
+                        case core::CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
+                        case core::CatalogManager::IndexType::NEO4J_TEXT:
+                        case core::CatalogManager::IndexType::CASSANDRA_SASI:
+                        case core::CatalogManager::IndexType::CASSANDRA_SAI:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+
+            auto isAnnFamilyIndex =
+                [](core::CatalogManager::IndexType index_type) -> bool {
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::VECTOR_FLAT:
+                        case core::CatalogManager::IndexType::VECTOR_BIN_FLAT:
+                        case core::CatalogManager::IndexType::HNSW:
+                        case core::CatalogManager::IndexType::RHNSW_PQ:
+                        case core::CatalogManager::IndexType::RHNSW_SQ:
+                        case core::CatalogManager::IndexType::IVF:
+                        case core::CatalogManager::IndexType::IVF_FLAT:
+                        case core::CatalogManager::IndexType::BIN_IVF_FLAT:
+                        case core::CatalogManager::IndexType::IVF_PQ:
+                        case core::CatalogManager::IndexType::IVF_SQ8:
+                        case core::CatalogManager::IndexType::IVF_SQ8_HYBRID:
+                        case core::CatalogManager::IndexType::ANNOY:
+                        case core::CatalogManager::IndexType::NSG:
+                        case core::CatalogManager::IndexType::DISKANN:
+                        case core::CatalogManager::IndexType::SCANN:
+                        case core::CatalogManager::IndexType::GPU_CAGRA:
+                        case core::CatalogManager::IndexType::NEO4J_VECTOR:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+
+            const bool query_requests_text_ranking = queryRequestsTextRanking();
+            const bool query_requests_ann_order =
+                queryRequestsVectorNearestOrder();
 
             auto supportsExactLookup =
                 [&](const PlannerFamilyLoweringResult &lowering,
@@ -5645,11 +6041,122 @@ namespace scratchbird::optimizer
                     index.column_ids.front() == predicate.column_id;
                 const uint64_t ordered_prefix_length =
                     orderedPrefixLengthForIndex(index);
-                const PlannerFamilyLoweringRequest lowering_request =
+                IndexFamilyMetricsPacket costing_index_metrics_packet;
+                const bool have_costing_index_metrics =
+                    loadIndexFamilyMetricsPacket(index,
+                                                 costing_index_metrics_packet);
+                auto lowering_request =
                     loweringRequestForPredicate(index,
-                                               predicate.kind,
+                                               predicate,
                                                ordered_prefix_length > 0,
                                                false);
+                if (isTextFamilyIndex(index.index_type))
+                {
+                    const double postings_rows_est = std::max(
+                        1.0,
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "avg_postings_per_term",
+                                           static_cast<double>(
+                                               std::max<uint64_t>(1,
+                                                                  expected_rows))));
+                    const double score_rows_est = std::max(
+                        postings_rows_est,
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "score_rows_est",
+                                           postings_rows_est));
+                    lowering_request.ranking_requested =
+                        query_requests_text_ranking;
+                    lowering_request.corpus_stats_available =
+                        have_costing_index_metrics &&
+                        familyMetricDouble(index,
+                                           &costing_index_metrics_packet,
+                                           "avg_postings_per_term",
+                                           0.0) > 0.0 &&
+                        familyMetricDouble(index,
+                                           &costing_index_metrics_packet,
+                                           "score_rows_est",
+                                           0.0) > 0.0;
+                    lowering_request.candidate_bitmap_available =
+                        predicate.kind == ResolvedPredicateKind::EQUALITY ||
+                        postings_rows_est > 0.0;
+                    lowering_request.candidate_budget = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            query_requests_text_ranking
+                                ? score_rows_est
+                                : postings_rows_est)));
+                }
+                else if (isAnnFamilyIndex(index.index_type))
+                {
+                    const double candidate_budget_default = std::max(
+                        0.0,
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "candidate_budget_default",
+                                           0.0));
+                    const double recall_estimate = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "recall_estimate_at_k",
+                                           1.0),
+                        0.0,
+                        1.0);
+                    const double segment_coverage_fraction = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "segment_coverage_fraction",
+                                           have_costing_index_metrics
+                                               ? costing_index_metrics_packet
+                                                     .coverage_fraction
+                                               : 0.0),
+                        0.0,
+                        1.0);
+                    lowering_request.nearest_order =
+                        query_requests_ann_order;
+                    lowering_request.candidate_budget =
+                        query_requests_ann_order
+                            ? std::max<uint64_t>(
+                                  1,
+                                  static_cast<uint64_t>(std::ceil(
+                                      candidate_budget_default > 0.0
+                                          ? candidate_budget_default
+                                          : std::sqrt(static_cast<double>(
+                                                std::max<uint64_t>(
+                                                    1,
+                                                    expected_rows))))))
+                            : 0;
+                    lowering_request.ann_metric_compatible =
+                        query_requests_ann_order &&
+                        have_costing_index_metrics;
+                    lowering_request.ann_rerank_enabled =
+                        query_requests_ann_order &&
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "rerank_fraction",
+                                           0.0) > 0.0;
+                    lowering_request.ann_exact_fallback =
+                        query_requests_ann_order &&
+                        index.index_type !=
+                            core::CatalogManager::IndexType::VECTOR_FLAT &&
+                        index.index_type !=
+                            core::CatalogManager::IndexType::VECTOR_BIN_FLAT &&
+                        (recall_estimate < 0.90 ||
+                         segment_coverage_fraction < 0.95);
+                }
                 const PlannerFamilyLoweringResult lowered_candidate =
                     lowerPlannerFamily(lowering_request);
                 if (lowered_candidate.queryability_state ==
@@ -5709,44 +6216,567 @@ namespace scratchbird::optimizer
                               std::max<uint64_t>(ordered_prefix_length,
                                                  candidate_ordering_keys.size()))
                         : 0.0;
+                const IndexFamilyCostCalibrationInput family_cost_input =
+                    buildIndexFamilyCostInput(
+                        lowered_candidate,
+                        have_costing_index_metrics
+                            ? &costing_index_metrics_packet
+                            : nullptr,
+                        covering_index,
+                        candidate_order_complete);
+                CostModel candidate_cost_model(
+                    deriveIndexFamilyFormulaProfile(planner_params,
+                                                    family_cost_input));
+                uint64_t cost_index_height = 3;
+                uint64_t cost_index_pages = index_pages;
+                uint64_t cost_index_tuples = expected_rows;
+                uint64_t cost_heap_pages = heap_pages;
+                uint64_t cost_heap_tuples = expected_rows;
+                double cost_correlation = correlation;
+                double cost_qual_cost = qual_cost;
+                if (have_costing_index_metrics)
+                {
+                    const uint64_t row_count_basis =
+                        std::max<uint64_t>(
+                            {base_rows,
+                             costing_index_metrics_packet.row_count_est,
+                             costing_index_metrics_packet.live_entry_count_est});
+                    const double recheck_ratio =
+                        lowered_candidate.requires_recheck
+                            ? std::max(0.0,
+                                       costing_index_metrics_packet
+                                           .recheck_ratio_est)
+                            : 0.0;
+                    cost_index_height = std::max<uint64_t>(
+                        1, costing_index_metrics_packet.height);
+                    cost_index_pages = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            static_cast<double>(std::max<uint64_t>(
+                                1, costing_index_metrics_packet.leaf_pages)) *
+                            (1.0 + std::clamp(
+                                       costing_index_metrics_packet.bloat_ratio,
+                                       0.0,
+                                       1.0)))));
+                    cost_index_tuples =
+                        relationOutputRows(row_count_basis,
+                                           predicate_selectivity);
+                    cost_heap_tuples = relationOutputRows(
+                        row_count_basis,
+                        std::min(1.0,
+                                 predicate_selectivity * (1.0 + recheck_ratio)));
+                    if (base_rows > 0)
+                    {
+                        cost_heap_pages = std::max<uint64_t>(
+                            1,
+                            static_cast<uint64_t>(std::ceil(
+                                static_cast<double>(base_pages) *
+                                (static_cast<double>(cost_heap_tuples) /
+                                 static_cast<double>(base_rows)))));
+                    }
+                    cost_correlation = costing_index_metrics_packet.correlation;
+                    cost_qual_cost *= 1.0 + recheck_ratio;
+                }
 
                 CostEstimate candidate_cost{};
                 std::string scan_kind = "INDEX_SCAN";
+                double runtime_coverage_fraction =
+                    covering_index ? 1.0 : 0.0;
+                uint64_t runtime_candidate_budget = 0;
                 if (lowered_candidate.family == PlannerAccessFamily::LSM_EQ_SCAN ||
                     lowered_candidate.family == PlannerAccessFamily::LSM_RANGE_SCAN ||
                     lowered_candidate.family ==
                         PlannerAccessFamily::LSM_ORDERED_RANGE_SCAN)
                 {
-                    candidate_cost = active_cost_model.costLSMScan(3,
-                                                             2,
-                                                             expected_rows,
-                                                             heap_pages,
-                                                             expected_rows,
-                                                             qual_cost,
-                                                             correlation,
-                                                             ctx);
+                    candidate_cost = candidate_cost_model.costLSMScan(
+                        cost_index_height,
+                        std::max<uint64_t>(
+                            1, std::max<uint64_t>(1, cost_index_pages) /
+                                   std::max<uint64_t>(1, cost_index_height)),
+                        cost_index_tuples,
+                        cost_heap_pages,
+                        cost_heap_tuples,
+                        cost_qual_cost,
+                        cost_correlation,
+                        ctx);
                     scan_kind = "LSM_SCAN";
+                }
+                else if (lowered_candidate.family ==
+                             PlannerAccessFamily::BRIN_SCAN ||
+                         lowered_candidate.family ==
+                             PlannerAccessFamily::SUMMARY_FILTER_SCAN)
+                {
+                    const double prune_ratio_est = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "prune_ratio_est",
+                                           have_costing_index_metrics
+                                               ? (1.0 - costing_index_metrics_packet
+                                                            .dead_fraction)
+                                               : (1.0 - predicate_selectivity)),
+                        0.0,
+                        1.0);
+                    const double unsummarized_range_fraction = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "unsummarized_range_fraction",
+                                           0.0),
+                        0.0,
+                        1.0);
+                    const double summary_staleness_fraction = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "summary_staleness_fraction",
+                                           0.0),
+                        0.0,
+                        1.0);
+                    const uint64_t pages_per_range = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            familyMetricDouble(index,
+                                               have_costing_index_metrics
+                                                   ? &costing_index_metrics_packet
+                                                   : nullptr,
+                                               "pages_per_range",
+                                               static_cast<double>(
+                                                   std::max<uint64_t>(
+                                                       1,
+                                                       cost_index_pages))))));
+                    const double candidate_fraction = std::clamp(
+                        (1.0 - prune_ratio_est) + unsummarized_range_fraction +
+                            summary_staleness_fraction,
+                        0.001,
+                        1.0);
+                    cost_heap_tuples =
+                        relationOutputRows(base_rows, candidate_fraction);
+                    cost_heap_pages = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            static_cast<double>(base_pages) *
+                            candidate_fraction)));
+                    const uint64_t summary_pages_read = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            static_cast<double>(cost_heap_pages) /
+                            static_cast<double>(pages_per_range))));
+                    candidate_cost = candidate_cost_model.costSummaryScan(
+                        summary_pages_read,
+                        cost_heap_pages,
+                        cost_heap_tuples,
+                        cost_qual_cost,
+                        unsummarized_range_fraction,
+                        summary_staleness_fraction,
+                        ctx);
+                    scan_kind = lowered_candidate.family_name;
+                    runtime_coverage_fraction =
+                        have_costing_index_metrics &&
+                                costing_index_metrics_packet.coverage_fraction >
+                                    0.0
+                            ? costing_index_metrics_packet.coverage_fraction
+                            : std::clamp(1.0 - candidate_fraction, 0.0, 1.0);
+                    runtime_candidate_budget = summary_pages_read;
+                }
+                else if (lowered_candidate.family ==
+                         PlannerAccessFamily::BITMAP_STORAGE_SCAN)
+                {
+                    const double bitmap_density = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "bitmap_density",
+                                           have_costing_index_metrics
+                                               ? costing_index_metrics_packet
+                                                     .coverage_fraction
+                                               : predicate_selectivity),
+                        0.0,
+                        1.0);
+                    const double bitmap_false_positive_ratio = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "bitmap_false_positive_ratio",
+                                           have_costing_index_metrics
+                                               ? costing_index_metrics_packet
+                                                     .recheck_ratio_est
+                                               : 0.10),
+                        0.0,
+                        1.0);
+                    const double lossy_container_fraction = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "lossy_container_fraction",
+                                           bitmap_false_positive_ratio),
+                        0.0,
+                        1.0);
+                    const double candidate_fraction = std::clamp(
+                        std::max(predicate_selectivity, bitmap_density) +
+                            bitmap_false_positive_ratio +
+                            (lossy_container_fraction * 0.10),
+                        0.001,
+                        1.0);
+                    cost_heap_tuples =
+                        relationOutputRows(base_rows, candidate_fraction);
+                    cost_heap_pages = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            static_cast<double>(base_pages) *
+                            candidate_fraction)));
+                    candidate_cost =
+                        candidate_cost_model.costBitmapStorageScan(
+                            std::max<uint64_t>(1, cost_index_pages),
+                            cost_heap_pages,
+                            cost_heap_tuples,
+                            cost_qual_cost,
+                            lossy_container_fraction,
+                            bitmap_false_positive_ratio,
+                            ctx);
+                    scan_kind = lowered_candidate.family_name;
+                    runtime_coverage_fraction =
+                        have_costing_index_metrics &&
+                                costing_index_metrics_packet.coverage_fraction >
+                                    0.0
+                            ? costing_index_metrics_packet.coverage_fraction
+                            : bitmap_density;
+                    runtime_candidate_budget = cost_heap_pages;
+                }
+                else if (lowered_candidate.family ==
+                         PlannerAccessFamily::COLUMNSTORE_SCAN)
+                {
+                    const double column_bytes_pruned_ratio = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "column_bytes_pruned_ratio",
+                                           0.50),
+                        0.0,
+                        1.0);
+                    const double row_groups_touched_ratio = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "row_groups_touched_ratio",
+                                           have_costing_index_metrics
+                                               ? costing_index_metrics_packet
+                                                     .coverage_fraction
+                                               : predicate_selectivity),
+                        0.0,
+                        1.0);
+                    const double late_materialization_gain_est = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "late_materialization_gain_est",
+                                           0.50),
+                        0.0,
+                        1.0);
+                    const double projection_width_bytes = std::max(
+                        1.0,
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "projection_width_bytes",
+                                           16.0));
+                    const double delta_fraction = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "delta_fraction",
+                                           0.0),
+                        0.0,
+                        1.0);
+                    const double candidate_fraction = std::clamp(
+                        std::max(predicate_selectivity,
+                                 row_groups_touched_ratio) +
+                            (delta_fraction * 0.10),
+                        0.001,
+                        1.0);
+                    cost_heap_tuples =
+                        relationOutputRows(base_rows, candidate_fraction);
+                    const uint64_t bytes_read_est = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            static_cast<double>(std::max<uint64_t>(
+                                1, base_rows)) *
+                            projection_width_bytes *
+                            std::max(0.01, row_groups_touched_ratio) *
+                            std::max(0.05,
+                                     1.0 - column_bytes_pruned_ratio))));
+                    candidate_cost =
+                        candidate_cost_model.costColumnstoreScan(
+                            bytes_read_est,
+                            cost_heap_tuples,
+                            cost_qual_cost,
+                            column_bytes_pruned_ratio,
+                            late_materialization_gain_est,
+                            delta_fraction,
+                            ctx);
+                    scan_kind = lowered_candidate.family_name;
+                    runtime_coverage_fraction =
+                        have_costing_index_metrics &&
+                                costing_index_metrics_packet.coverage_fraction >
+                                    0.0
+                            ? costing_index_metrics_packet.coverage_fraction
+                            : std::clamp(1.0 - row_groups_touched_ratio,
+                                         0.0,
+                                         1.0);
+                    runtime_candidate_budget = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            std::max(1.0,
+                                     row_groups_touched_ratio *
+                                         static_cast<double>(
+                                             std::max<uint64_t>(
+                                                 1,
+                                                 cost_index_pages))))));
+                }
+                else if (lowered_candidate.family ==
+                             PlannerAccessFamily::GIN_FILTER_SCAN ||
+                         lowered_candidate.family ==
+                             PlannerAccessFamily::TEXT_BITMAP_SCAN ||
+                         lowered_candidate.family ==
+                             PlannerAccessFamily::TEXT_SCORE_SCAN ||
+                         lowered_candidate.family ==
+                             PlannerAccessFamily::TEXT_RECHECK_SCAN)
+                {
+                    const double avg_postings_per_term = std::max(
+                        1.0,
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "avg_postings_per_term",
+                                           static_cast<double>(
+                                               std::max<uint64_t>(1,
+                                                                  expected_rows))));
+                    const double score_rows_est = std::max(
+                        avg_postings_per_term,
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "score_rows_est",
+                                           avg_postings_per_term));
+                    const double phrase_hit_rate = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "phrase_hit_rate",
+                                           0.5),
+                        0.0,
+                        1.0);
+                    const double merge_debt = std::max(
+                        0.0,
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "merge_debt",
+                                           0.0));
+                    runtime_candidate_budget = std::max<uint64_t>(
+                        1,
+                        lowering_request.candidate_budget > 0
+                            ? lowering_request.candidate_budget
+                            : static_cast<uint64_t>(std::ceil(
+                                  lowered_candidate.family ==
+                                          PlannerAccessFamily::TEXT_SCORE_SCAN
+                                      ? score_rows_est
+                                      : avg_postings_per_term)));
+                    const double candidate_fraction = std::clamp(
+                        static_cast<double>(runtime_candidate_budget) /
+                            static_cast<double>(
+                                std::max<uint64_t>(1, base_rows)),
+                        0.001,
+                        1.0);
+                    cost_index_tuples =
+                        std::max<uint64_t>(1, runtime_candidate_budget);
+                    cost_heap_tuples =
+                        std::max<uint64_t>(1, runtime_candidate_budget);
+                    cost_heap_pages = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            static_cast<double>(base_pages) *
+                            candidate_fraction)));
+                    cost_qual_cost *=
+                        1.0 +
+                        (lowered_candidate.family ==
+                                 PlannerAccessFamily::TEXT_SCORE_SCAN
+                             ? 0.50
+                             : 0.15) +
+                        std::min(1.0,
+                                 merge_debt /
+                                     std::max(1.0, score_rows_est)) +
+                        ((1.0 - phrase_hit_rate) * 0.25);
+                    candidate_cost = candidate_cost_model.costIndexScan(
+                        cost_index_height,
+                        cost_index_pages,
+                        cost_index_tuples,
+                        cost_heap_pages,
+                        cost_heap_tuples,
+                        cost_qual_cost,
+                        cost_correlation,
+                        ctx);
+                    scan_kind = lowered_candidate.family_name;
+                    runtime_coverage_fraction =
+                        have_costing_index_metrics &&
+                                costing_index_metrics_packet.coverage_fraction >
+                                    0.0
+                            ? costing_index_metrics_packet.coverage_fraction
+                            : std::clamp(1.0 - candidate_fraction, 0.0, 1.0);
+                }
+                else if (lowered_candidate.family ==
+                             PlannerAccessFamily::VECTOR_FLAT_SCAN ||
+                         lowered_candidate.family ==
+                             PlannerAccessFamily::HNSW_SCAN ||
+                         lowered_candidate.family ==
+                             PlannerAccessFamily::IVF_SCAN ||
+                         lowered_candidate.family ==
+                             PlannerAccessFamily::ANN_RERANK_SCAN ||
+                         lowered_candidate.family ==
+                             PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN)
+                {
+                    const double avg_candidates_scanned = std::max(
+                        1.0,
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "avg_candidates_scanned",
+                                           static_cast<double>(
+                                               std::max<uint64_t>(
+                                                   1,
+                                                   lowering_request
+                                                       .candidate_budget))));
+                    const double rerank_fraction = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "rerank_fraction",
+                                           0.0),
+                        0.0,
+                        1.0);
+                    const double recall_estimate = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "recall_estimate_at_k",
+                                           lowered_candidate.family ==
+                                                   PlannerAccessFamily::
+                                                       VECTOR_FLAT_SCAN ||
+                                               lowered_candidate.family ==
+                                                   PlannerAccessFamily::
+                                                       ANN_HYBRID_FALLBACK_SCAN
+                                               ? 1.0
+                                               : 0.85),
+                        0.0,
+                        1.0);
+                    const double deleted_node_fraction = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "deleted_node_fraction",
+                                           0.0),
+                        0.0,
+                        1.0);
+                    const double segment_coverage_fraction = std::clamp(
+                        familyMetricDouble(index,
+                                           have_costing_index_metrics
+                                               ? &costing_index_metrics_packet
+                                               : nullptr,
+                                           "segment_coverage_fraction",
+                                           have_costing_index_metrics
+                                               ? costing_index_metrics_packet
+                                                     .coverage_fraction
+                                               : recall_estimate),
+                        0.0,
+                        1.0);
+                    runtime_candidate_budget = std::max<uint64_t>(
+                        1,
+                        lowering_request.candidate_budget > 0
+                            ? lowering_request.candidate_budget
+                            : static_cast<uint64_t>(
+                                  std::ceil(avg_candidates_scanned)));
+                    const double candidate_fraction = std::clamp(
+                        static_cast<double>(runtime_candidate_budget) /
+                            static_cast<double>(
+                                std::max<uint64_t>(1, base_rows)),
+                        0.001,
+                        1.0);
+                    cost_index_tuples =
+                        std::max<uint64_t>(1, runtime_candidate_budget);
+                    cost_heap_tuples =
+                        std::max<uint64_t>(1, runtime_candidate_budget);
+                    cost_heap_pages = std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            static_cast<double>(base_pages) *
+                            candidate_fraction)));
+                    cost_qual_cost *=
+                        1.0 + rerank_fraction + (deleted_node_fraction * 0.25);
+                    candidate_cost = candidate_cost_model.costIndexScan(
+                        cost_index_height,
+                        cost_index_pages,
+                        cost_index_tuples,
+                        cost_heap_pages,
+                        cost_heap_tuples,
+                        cost_qual_cost,
+                        cost_correlation,
+                        ctx);
+                    scan_kind = lowered_candidate.family_name;
+                    runtime_coverage_fraction =
+                        lowered_candidate.family ==
+                                PlannerAccessFamily::VECTOR_FLAT_SCAN ||
+                                lowered_candidate.family ==
+                                    PlannerAccessFamily::
+                                        ANN_HYBRID_FALLBACK_SCAN
+                            ? 1.0
+                            : std::clamp(
+                                  std::max(recall_estimate,
+                                           segment_coverage_fraction),
+                                  0.0,
+                                  1.0);
                 }
                 else if (covering_index && lowered_candidate.supports_covering)
                 {
-                    candidate_cost = active_cost_model.costIndexOnlyScan(3,
-                                                                   index_pages,
-                                                                   expected_rows,
-                                                                   qual_cost,
-                                                                   correlation,
-                                                                   ctx);
+                    candidate_cost = candidate_cost_model.costIndexOnlyScan(
+                        cost_index_height,
+                        cost_index_pages,
+                        cost_index_tuples,
+                        cost_qual_cost,
+                        cost_correlation,
+                        ctx);
                     scan_kind = "INDEX_ONLY_SCAN";
+                    runtime_coverage_fraction = 1.0;
                 }
                 else
                 {
-                    candidate_cost = active_cost_model.costIndexScan(3,
-                                                               index_pages,
-                                                               expected_rows,
-                                                               heap_pages,
-                                                               expected_rows,
-                                                               qual_cost,
-                                                               correlation,
-                                                               ctx);
+                    candidate_cost = candidate_cost_model.costIndexScan(
+                        cost_index_height,
+                        cost_index_pages,
+                        cost_index_tuples,
+                        cost_heap_pages,
+                        cost_heap_tuples,
+                        cost_qual_cost,
+                        cost_correlation,
+                        ctx);
                 }
                 if (relation_stats_penalty > 1.0)
                 {
@@ -5838,11 +6868,11 @@ namespace scratchbird::optimizer
                         relation_name,
                         index.index_id,
                         index.index_name,
-                        3,
-                        index_pages,
-                        expected_rows,
-                        qual_cost,
-                        correlation,
+                        cost_index_height,
+                        cost_index_pages,
+                        cost_index_tuples,
+                        cost_qual_cost,
+                        cost_correlation,
                         candidate_cost);
                     auto index_plan =
                         std::make_shared<IndexOnlyScanNode>(
@@ -5862,22 +6892,22 @@ namespace scratchbird::optimizer
                         relation_name,
                         index.index_id,
                         index.index_name,
-                        3,
-                        index_pages,
-                        expected_rows,
-                        heap_pages,
-                        expected_rows,
-                        qual_cost,
-                        correlation,
+                        cost_index_height,
+                        cost_index_pages,
+                        cost_index_tuples,
+                        cost_heap_pages,
+                        cost_heap_tuples,
+                        cost_qual_cost,
+                        cost_correlation,
                         candidate_cost);
                     auto index_plan = std::make_shared<IndexScanNode>(
                         relation.table_info.table_id,
                         relation_name,
                         index.index_id,
                         index.index_name);
-                    index_plan->setIndexQualCost(qual_cost);
-                    index_plan->setHeapQualCost(qual_cost);
-                    index_plan->setCorrelation(correlation);
+                    index_plan->setIndexQualCost(cost_qual_cost);
+                    index_plan->setHeapQualCost(cost_qual_cost);
+                    index_plan->setCorrelation(cost_correlation);
                     index_plan->setIndexCond(predicate.predicate_text);
                     index_plan->setFilter(buildPredicateText(predicate_index));
                     index_plan->setCost(candidate_cost);
@@ -5902,6 +6932,8 @@ namespace scratchbird::optimizer
                     candidate_interesting_order_score,
                     {},
                     {},
+                    runtime_coverage_fraction,
+                    runtime_candidate_budget,
                     index,
                     candidate_scan_families));
 
@@ -5936,6 +6968,8 @@ namespace scratchbird::optimizer
                 best_bitmap_op.clear();
                 best_covering_index = covering_index;
                 best_exact_key_lookup = exact_key_lookup;
+                best_coverage_fraction = runtime_coverage_fraction;
+                best_candidate_budget = runtime_candidate_budget;
                 best_ordered_output =
                     candidate_order_complete || ordered_prefix_length > 0;
                 best_ordered_prefix_length = ordered_prefix_length;
@@ -6012,7 +7046,7 @@ namespace scratchbird::optimizer
                 PlannerFamilyLoweringRequest skip_lowering_request;
                 skip_lowering_request =
                     loweringRequestForPredicate(index,
-                                               skip_predicate_it->kind,
+                                               *skip_predicate_it,
                                                false,
                                                true);
                 const PlannerFamilyLoweringResult skip_lowered =
@@ -6079,6 +7113,8 @@ namespace scratchbird::optimizer
                     0.0,
                     {},
                     {},
+                    0.0,
+                    0,
                     index,
                     {"INDEX_SCAN", skip_lowered.family_name}));
                 if (skip_cost.total_cost > best_cost.total_cost)
@@ -6108,6 +7144,8 @@ namespace scratchbird::optimizer
                 best_bitmap_op.clear();
                 best_covering_index = false;
                 best_exact_key_lookup = false;
+                best_coverage_fraction = 0.0;
+                best_candidate_budget = 0;
                 best_ordered_output = false;
                 best_ordered_prefix_length = 0;
                 best_ordering_keys.clear();
@@ -6137,7 +7175,7 @@ namespace scratchbird::optimizer
                 const PlannerFamilyLoweringResult predicate_lowering =
                     lowerPlannerFamily(loweringRequestForPredicate(
                         predicate.matched_index,
-                        predicate.kind,
+                        predicate,
                         false,
                         false));
                 if (!supportsExactLookup(predicate_lowering, predicate))
@@ -6255,6 +7293,9 @@ namespace scratchbird::optimizer
                     best_bitmap_op = predicate_or ? "OR" : "AND";
                     best_covering_index = false;
                     best_exact_key_lookup = bitmap_exact_lookup;
+                    best_coverage_fraction = 0.0;
+                    best_candidate_budget =
+                        static_cast<uint64_t>(bitmap_predicates.size());
                     best_ordered_output = false;
                     best_ordered_prefix_length = 0;
                     best_ordering_keys.clear();
@@ -6305,6 +7346,8 @@ namespace scratchbird::optimizer
                         0.0,
                         {},
                         {},
+                        0.0,
+                        static_cast<uint64_t>(bitmap_predicates.size()),
                         core::CatalogManager::IndexInfo{},
                         {"BITMAP_INDEX_SCAN", bitmap_lowered.family_name}));
                     best_path = bitmap_path;
@@ -6360,6 +7403,8 @@ namespace scratchbird::optimizer
                                          best_interesting_order_score,
                                          best_required_outer_relation_indexes,
                                          best_required_outer_relation_aliases,
+                                         best_coverage_fraction,
+                                         best_candidate_budget,
                                          matched_index,
                                          chosen_candidate_scan_families));
             }
@@ -6369,6 +7414,20 @@ namespace scratchbird::optimizer
                 bundle.candidate_scan_families =
                     chosen_choice.candidate_scan_families;
             }
+            if (bundle.candidate_family_identity_signatures.empty())
+            {
+                bundle.candidate_family_identity_signatures =
+                    chosen_choice.runtime_relation
+                        .candidate_family_identity_signatures;
+            }
+            if (bundle.candidate_family_statistics_signatures.empty())
+            {
+                bundle.candidate_family_statistics_signatures =
+                    chosen_choice.runtime_relation
+                        .candidate_family_statistics_signatures;
+            }
+            sortAndUniqueText(bundle.candidate_family_identity_signatures);
+            sortAndUniqueText(bundle.candidate_family_statistics_signatures);
             if (relation.lateral)
             {
                 appendStatsProvenance(statistics_provenance,
@@ -6398,6 +7457,11 @@ namespace scratchbird::optimizer
             chosen_choice.candidate_scan_families = bundle.candidate_scan_families;
             chosen_choice.runtime_relation.candidate_scan_families =
                 bundle.candidate_scan_families;
+            chosen_choice.runtime_relation.candidate_family_identity_signatures =
+                bundle.candidate_family_identity_signatures;
+            chosen_choice.runtime_relation
+                .candidate_family_statistics_signatures =
+                bundle.candidate_family_statistics_signatures;
             chosen_choice.runtime_relation.candidate_budget =
                 std::max<uint64_t>(chosen_choice.runtime_relation.candidate_budget,
                                    bundle.candidates.size());

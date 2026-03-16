@@ -12,6 +12,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/optimizer/index_family_lowering.h"
 #include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/query_profiler.h"
@@ -325,9 +326,9 @@ TEST(IndexFamilyLoweringTest, UnsupportedOrIllegalLoweringFailsClosed)
     EXPECT_EQ(lowered_hnsw.family,
               scratchbird::optimizer::PlannerAccessFamily::HNSW_SCAN);
     EXPECT_EQ(lowered_hnsw.exactness_class,
-              scratchbird::optimizer::AccessPathExactnessClass::APPROX_TOPK);
+              scratchbird::optimizer::AccessPathExactnessClass::UNKNOWN);
     EXPECT_EQ(lowered_hnsw.queryability_state,
-              scratchbird::optimizer::AccessPathQueryabilityState::LIMITED);
+              scratchbird::optimizer::AccessPathQueryabilityState::INVALID);
 }
 
 TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
@@ -346,6 +347,18 @@ TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
         IndexType index_type;
         PredicateMatchShape predicate_shape;
         bool nearest_order = false;
+        bool strategy_bound = false;
+        uint16_t strategy_number = 0;
+        bool support_consistent = false;
+        bool support_distance = false;
+        bool nearest_lower_bound_validated = false;
+        bool ranking_requested = false;
+        bool corpus_stats_available = false;
+        bool candidate_bitmap_available = false;
+        uint64_t candidate_budget = 0;
+        bool ann_metric_compatible = false;
+        bool ann_rerank_enabled = false;
+        bool ann_exact_fallback = false;
         PlannerAccessFamily expected_family = PlannerAccessFamily::UNKNOWN;
         ExactnessClass expected_exactness = ExactnessClass::UNKNOWN;
         VisibilityEnforcement expected_visibility =
@@ -358,6 +371,18 @@ TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
         {IndexType::BRIN,
          PredicateMatchShape::RANGE,
          false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
          PlannerAccessFamily::BRIN_SCAN,
          ExactnessClass::CANDIDATE_REGION,
          VisibilityEnforcement::POST_FILTER,
@@ -365,19 +390,150 @@ TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
         {IndexType::COLUMNSTORE,
          PredicateMatchShape::RANGE,
          false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
          PlannerAccessFamily::COLUMNSTORE_SCAN,
          ExactnessClass::CANDIDATE_REGION,
          VisibilityEnforcement::POST_FILTER,
          QueryabilityState::LIMITED},
         {IndexType::GIST,
-         PredicateMatchShape::RANGE,
+         PredicateMatchShape::EQUALITY,
+         false,
          true,
+         8,
+         true,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         PlannerAccessFamily::GIST_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::GIST,
+         PredicateMatchShape::RANGE,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         PlannerAccessFamily::GIST_SCAN,
+         ExactnessClass::UNKNOWN,
+         VisibilityEnforcement::UNKNOWN,
+         QueryabilityState::INVALID},
+        {IndexType::GIST,
+         PredicateMatchShape::EQUALITY,
+         true,
+         true,
+         8,
+         true,
+         true,
+         true,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
          PlannerAccessFamily::GIST_NEAREST_SCAN,
          ExactnessClass::LOWER_BOUND_ORDERED,
          VisibilityEnforcement::POST_FILTER,
          QueryabilityState::LIMITED},
+        {IndexType::SPGIST,
+         PredicateMatchShape::EQUALITY,
+         false,
+         true,
+         8,
+         true,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         PlannerAccessFamily::SPGIST_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::RTREE,
+         PredicateMatchShape::EQUALITY,
+         false,
+         true,
+         8,
+         true,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         PlannerAccessFamily::RTREE_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::RTREE,
+         PredicateMatchShape::EQUALITY,
+         true,
+         true,
+         8,
+         true,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         PlannerAccessFamily::RTREE_NEAREST_SCAN,
+         ExactnessClass::UNKNOWN,
+         VisibilityEnforcement::UNKNOWN,
+         QueryabilityState::INVALID},
         {IndexType::GIN,
          PredicateMatchShape::EQUALITY,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
          false,
          PlannerAccessFamily::GIN_FILTER_SCAN,
          ExactnessClass::CANDIDATE_REGION,
@@ -386,24 +542,174 @@ TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
         {IndexType::FULLTEXT,
          PredicateMatchShape::LIKE_PREFIX,
          false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
          PlannerAccessFamily::TEXT_RECHECK_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::FULLTEXT,
+         PredicateMatchShape::EQUALITY,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         true,
+         32,
+         false,
+         false,
+         false,
+         PlannerAccessFamily::TEXT_BITMAP_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::FULLTEXT,
+         PredicateMatchShape::EQUALITY,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         true,
+         false,
+         true,
+         64,
+         false,
+         false,
+         false,
+         PlannerAccessFamily::TEXT_SCORE_SCAN,
+         ExactnessClass::UNKNOWN,
+         VisibilityEnforcement::UNKNOWN,
+         QueryabilityState::INVALID},
+        {IndexType::FULLTEXT,
+         PredicateMatchShape::EQUALITY,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         true,
+         true,
+         true,
+         64,
+         false,
+         false,
+         false,
+         PlannerAccessFamily::TEXT_SCORE_SCAN,
          ExactnessClass::CANDIDATE_REGION,
          VisibilityEnforcement::POST_FILTER,
          QueryabilityState::LIMITED},
         {IndexType::HNSW,
          PredicateMatchShape::NONE,
          false,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         0,
+         false,
+         false,
+         false,
          PlannerAccessFamily::HNSW_SCAN,
+         ExactnessClass::UNKNOWN,
+         VisibilityEnforcement::UNKNOWN,
+         QueryabilityState::INVALID},
+        {IndexType::HNSW,
+         PredicateMatchShape::NONE,
+         true,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         96,
+         true,
+         false,
+         false,
+         PlannerAccessFamily::HNSW_SCAN,
+         ExactnessClass::APPROX_TOPK,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::HNSW,
+         PredicateMatchShape::NONE,
+         true,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         128,
+         true,
+         true,
+         false,
+         PlannerAccessFamily::ANN_RERANK_SCAN,
          ExactnessClass::APPROX_TOPK,
          VisibilityEnforcement::POST_FILTER,
          QueryabilityState::LIMITED},
         {IndexType::IVF,
          PredicateMatchShape::NONE,
+         true,
          false,
-         PlannerAccessFamily::IVF_SCAN,
-         ExactnessClass::APPROX_TOPK,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         160,
+         true,
+         false,
+         true,
+         PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN,
+         ExactnessClass::EXACT_ROW,
          VisibilityEnforcement::POST_FILTER,
-         QueryabilityState::LIMITED},
+         QueryabilityState::QUERYABLE},
+        {IndexType::VECTOR_FLAT,
+         PredicateMatchShape::NONE,
+         true,
+         false,
+         0,
+         false,
+         false,
+         false,
+         false,
+         false,
+         false,
+         32,
+         true,
+         false,
+         false,
+         PlannerAccessFamily::VECTOR_FLAT_SCAN,
+         ExactnessClass::EXACT_ROW,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::QUERYABLE},
     };
 
     for (const auto& test_case : cases)
@@ -413,6 +719,20 @@ TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
         request.index_type = test_case.index_type;
         request.predicate_shape = test_case.predicate_shape;
         request.nearest_order = test_case.nearest_order;
+        request.ranking_requested = test_case.ranking_requested;
+        request.corpus_stats_available = test_case.corpus_stats_available;
+        request.candidate_bitmap_available =
+            test_case.candidate_bitmap_available;
+        request.candidate_budget = test_case.candidate_budget;
+        request.ann_metric_compatible = test_case.ann_metric_compatible;
+        request.ann_rerank_enabled = test_case.ann_rerank_enabled;
+        request.ann_exact_fallback = test_case.ann_exact_fallback;
+        request.strategy_bound = test_case.strategy_bound;
+        request.strategy_number = test_case.strategy_number;
+        request.support_consistent = test_case.support_consistent;
+        request.support_distance = test_case.support_distance;
+        request.nearest_lower_bound_validated =
+            test_case.nearest_lower_bound_validated;
 
         const auto lowered = scratchbird::optimizer::lowerPlannerFamily(request);
         EXPECT_EQ(lowered.family, test_case.expected_family);
@@ -1367,6 +1687,8 @@ TEST_F(QueryPlannerIntegrationTest, AutoPlanProfileUsesChooserAndPublishesReuseM
     EXPECT_FALSE(first.planProfile().statistics_snapshot_signature.empty());
     EXPECT_FALSE(first.planProfile().cost_profile_id.empty());
     EXPECT_FALSE(first.planProfile().policy_snapshot_id.empty());
+    EXPECT_FALSE(first.planProfile().index_family_signature.empty());
+    EXPECT_FALSE(first.planProfile().family_statistics_signature.empty());
 
     scratchbird::optimizer::RuntimePlan plan;
     ASSERT_TRUE(decodeRuntimePlan(first.bytecode(), plan));
@@ -1375,6 +1697,10 @@ TEST_F(QueryPlannerIntegrationTest, AutoPlanProfileUsesChooserAndPublishesReuseM
                       scratchbird::sblr::detail::QueryCompilerV3PlanProfileMode::CUSTOM
                   ? "CUSTOM"
                   : "GENERIC");
+    EXPECT_EQ(plan.index_family_signature,
+              first.planProfile().index_family_signature);
+    EXPECT_EQ(plan.family_statistics_signature,
+              first.planProfile().family_statistics_signature);
     const auto *plan_profile = findOptimizerControl(plan, "PLAN_PROFILE");
     ASSERT_NE(plan_profile, nullptr);
     EXPECT_EQ(plan_profile->value, "AUTO");
@@ -1393,6 +1719,13 @@ TEST_F(QueryPlannerIntegrationTest, AutoPlanProfileUsesChooserAndPublishesReuseM
     const auto *policy_snapshot = findOptimizerControl(plan, "PLAN_POLICY_SNAPSHOT");
     ASSERT_NE(policy_snapshot, nullptr);
     EXPECT_EQ(policy_snapshot->value, first.planProfile().policy_snapshot_id);
+    const auto *family_identity = findOptimizerControl(plan, "PLAN_FAMILY_IDENTITY");
+    ASSERT_NE(family_identity, nullptr);
+    EXPECT_EQ(family_identity->value, first.planProfile().index_family_signature);
+    const auto *family_stats = findOptimizerControl(plan, "PLAN_FAMILY_STATS");
+    ASSERT_NE(family_stats, nullptr);
+    EXPECT_EQ(family_stats->value,
+              first.planProfile().family_statistics_signature);
 
     auto after_first = QueryCompilerV3::planCacheStats();
     EXPECT_EQ(after_first.hits, 0u);
@@ -1408,11 +1741,199 @@ TEST_F(QueryPlannerIntegrationTest, AutoPlanProfileUsesChooserAndPublishesReuseM
               first.planProfile().statistics_snapshot_signature);
     EXPECT_EQ(second.planProfile().cost_profile_id,
               first.planProfile().cost_profile_id);
+    EXPECT_EQ(second.planProfile().index_family_signature,
+              first.planProfile().index_family_signature);
+    EXPECT_EQ(second.planProfile().family_statistics_signature,
+              first.planProfile().family_statistics_signature);
 
     auto after_second = QueryCompilerV3::planCacheStats();
     EXPECT_EQ(after_second.hits, 1u);
     EXPECT_EQ(after_second.misses, 1u);
     EXPECT_EQ(after_second.inserts, 1u);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       FamilyStatisticsSignatureBypassesReusablePlanCacheOnMetricsVersionChange)
+{
+    ASSERT_TRUE(createDatabase());
+
+    constexpr int kRowCount = 4096;
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_id ON users (id)").success());
+    for (int i = 1; i <= kRowCount; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'u" +
+                               std::to_string(i) + "', 'u" +
+                               std::to_string(i) + "@x', 30)")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(
+        executeSQL("ANALYZE INDEX users.idx_users_id WITH (sample_rate = 0.25)")
+            .success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo users_table{};
+    ASSERT_EQ(db_->catalog_manager()->getTable(connection_ctx_->getCurrentSchemaId(),
+                                               "users",
+                                               users_table,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::IndexInfo users_index{};
+    ASSERT_EQ(db_->catalog_manager()->getIndex(users_table.table_id,
+                                               "idx_users_id",
+                                               users_index,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto publishFamilyMetrics =
+        [&](uint32_t stats_version, uint32_t family_metrics_version) {
+            const uint64_t refresh_xid =
+                std::max<uint64_t>(1, db_->storage_engine()->getCurrentXid());
+            CatalogManager::IndexStatsCatalogInfo stats{};
+            stats.index_id = users_index.index_id;
+            stats.stats_version = stats_version;
+            stats.last_analyze_txid = refresh_xid;
+            stats.row_count_est = kRowCount;
+            stats.distinct_count_est = kRowCount;
+            stats.null_frac = 0.0f;
+            stats.avg_key_len = 8;
+            stats.avg_entry_len = 16;
+            stats.leaf_pages = 1;
+            stats.height = 1;
+            stats.correlation = 1.0f;
+            stats.bloat_ratio = 0.0f;
+            stats.metrics_last_refresh_xid = refresh_xid;
+            stats.family_metrics_version = family_metrics_version;
+            stats.family_metrics_type =
+                scratchbird::optimizer::IndexFamilyMetricsType::ORDERED_EXACT;
+            stats.metrics_confidence_class =
+                scratchbird::optimizer::IndexMetricsConfidenceClass::HIGH;
+            stats.queryability_state =
+                scratchbird::optimizer::IndexMetricsQueryabilityState::QUERYABLE;
+            stats.is_valid = true;
+            stats.family_metrics_payload =
+                nlohmann::json{
+                    {"shared_metrics_envelope",
+                     {{"index_uuid", users_index.index_id.toString()},
+                      {"physical_family", "BTREE"},
+                      {"planner_family", "BTREE_EQ_SCAN"},
+                      {"queryability_state", "QUERYABLE"},
+                      {"metrics_last_refresh_xid", refresh_xid},
+                      {"metrics_confidence_class", "HIGH"},
+                      {"leaf_pages", 1},
+                      {"height", 1},
+                      {"row_count_est", kRowCount},
+                      {"live_entry_count_est", kRowCount},
+                      {"dead_fraction", 0.0},
+                      {"bloat_ratio", 0.0},
+                      {"recheck_ratio_est", 0.0},
+                      {"correlation", 1.0},
+                      {"coverage_fraction", 1.0},
+                      {"maintenance_backlog_ops", 0},
+                      {"publish_lag_xids", 0},
+                      {"reclaim_lag_xids", 0}}},
+                    {"family_metrics_type", "ORDERED_EXACT"},
+                    {"family_metrics",
+                     {{"avg_probe_pages", 1.0},
+                      {"avg_range_pages_per_row",
+                       1.0 / static_cast<double>(kRowCount)},
+                      {"duplicate_density", 0.0},
+                      {"prefix_selectivity",
+                       1.0 / static_cast<double>(kRowCount)},
+                      {"skip_group_count", kRowCount},
+                      {"overflow_chain_depth", 0},
+                      {"run_count", 0},
+                      {"level_count", 0},
+                      {"tombstone_fraction", 0.0},
+                      {"L0_run_count", 0}}}}
+                    .dump();
+            ASSERT_EQ(db_->catalog_manager()->upsertIndexStatsCatalogEntry(stats, &ctx),
+                      Status::OK)
+                << ctx.message;
+            db_->statistics_manager()->invalidateCache(users_table.table_id);
+        };
+
+    publishFamilyMetrics(31, 7);
+
+    QueryCompilerV3::resetPlanCacheStats();
+
+    auto first = compiler_->compile("SELECT id FROM users WHERE id = 2048");
+    ASSERT_TRUE(first.success());
+    scratchbird::optimizer::RuntimePlan first_plan;
+    ASSERT_TRUE(decodeRuntimePlan(first.bytecode(), first_plan));
+    ASSERT_EQ(first_plan.relations.size(), 1u);
+    const auto &first_relation = first_plan.relations.front();
+    EXPECT_NE(std::find(first_relation.candidate_scan_families.begin(),
+                        first_relation.candidate_scan_families.end(),
+                        "BTREE_EQ_SCAN"),
+              first_relation.candidate_scan_families.end());
+    auto containsSignatureFragment =
+        [](const std::vector<std::string> &entries,
+           const std::string &fragment) -> bool {
+            return std::any_of(entries.begin(),
+                               entries.end(),
+                               [&](const std::string &entry) {
+                                   return entry.find(fragment) !=
+                                          std::string::npos;
+                               });
+        };
+    EXPECT_TRUE(containsSignatureFragment(
+        first_relation.candidate_family_statistics_signatures,
+        ":BTREE_EQ_SCAN:7:"));
+    EXPECT_FALSE(first.planProfile().index_family_signature.empty());
+    EXPECT_FALSE(first.planProfile().family_statistics_signature.empty());
+    EXPECT_NE(first.planProfile().index_family_signature.find("BTREE_EQ_SCAN"),
+              std::string::npos);
+    EXPECT_NE(first.planProfile().family_statistics_signature.find(
+                  ":BTREE_EQ_SCAN:7:"),
+              std::string::npos);
+
+    auto after_first = QueryCompilerV3::planCacheStats();
+    EXPECT_EQ(after_first.hits, 0u);
+    EXPECT_EQ(after_first.misses, 1u);
+    EXPECT_EQ(after_first.inserts, 1u);
+
+    publishFamilyMetrics(31, 8);
+
+    auto second = compiler_->compile("SELECT id FROM users WHERE id = 2048");
+    ASSERT_TRUE(second.success());
+    scratchbird::optimizer::RuntimePlan second_plan;
+    ASSERT_TRUE(decodeRuntimePlan(second.bytecode(), second_plan));
+    ASSERT_EQ(second_plan.relations.size(), 1u);
+    const auto &second_relation = second_plan.relations.front();
+    EXPECT_NE(std::find(second_relation.candidate_scan_families.begin(),
+                        second_relation.candidate_scan_families.end(),
+                        "BTREE_EQ_SCAN"),
+              second_relation.candidate_scan_families.end());
+    EXPECT_TRUE(containsSignatureFragment(
+        second_relation.candidate_family_statistics_signatures,
+        ":BTREE_EQ_SCAN:8:"));
+
+    EXPECT_EQ(second.planProfile().statistics_snapshot_signature,
+              first.planProfile().statistics_snapshot_signature);
+    EXPECT_NE(second.planProfile().cost_profile_id,
+              first.planProfile().cost_profile_id);
+    EXPECT_EQ(second.planProfile().index_family_signature,
+              first.planProfile().index_family_signature);
+    EXPECT_NE(second.planProfile().family_statistics_signature,
+              first.planProfile().family_statistics_signature);
+    EXPECT_EQ(second_plan.index_family_signature,
+              first.planProfile().index_family_signature);
+    EXPECT_EQ(second_plan.family_statistics_signature,
+              second.planProfile().family_statistics_signature);
+    EXPECT_NE(second.planProfile().family_statistics_signature.find(
+                  ":BTREE_EQ_SCAN:8:"),
+              std::string::npos);
+
+    auto after_second = QueryCompilerV3::planCacheStats();
+    EXPECT_EQ(after_second.hits, 0u);
+    EXPECT_EQ(after_second.misses, 2u);
+    EXPECT_EQ(after_second.inserts, 2u);
 }
 
 TEST_F(QueryPlannerIntegrationTest, CardinalityFeedbackBypassesStaleCacheAndRebuildsPlan)
@@ -2821,6 +3342,207 @@ TEST_F(QueryPlannerIntegrationTest,
     EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "1000");
 }
 
+TEST_F(QueryPlannerIntegrationTest,
+       AnalyzeIndexPublishesTypedFamilyMetricsIntoRuntimePlan)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_id ON users (id)").success());
+    for (int i = 1; i <= 600; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'user" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 30)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(
+        executeSQL("ANALYZE INDEX users.idx_users_id WITH (sample_rate = 0.25)")
+            .success());
+
+    auto bytecode = compileSQL("SELECT id FROM users WHERE id = 512");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto &relation = plan.relations.front();
+    EXPECT_EQ(relation.scan_family, "BTREE_EQ_SCAN");
+    EXPECT_GE(relation.family_metrics_version, 1u);
+    EXPECT_EQ(relation.metrics_confidence_class, "HIGH");
+    EXPECT_EQ(relation.queryability_state,
+              scratchbird::optimizer::AccessPathQueryabilityState::QUERYABLE);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       TypedFamilyMetricsAffectWinnerSelectionAndCalibrationIdentity)
+{
+    ASSERT_TRUE(createDatabase());
+
+    constexpr int kRowCount = 10000;
+
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_users_id ON users (id)").success());
+    for (int i = 1; i <= kRowCount; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'user" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 30)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(
+        executeSQL("ANALYZE INDEX users.idx_users_id WITH (sample_rate = 0.25)")
+            .success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo users_table{};
+    ASSERT_EQ(db_->catalog_manager()->getTable(connection_ctx_->getCurrentSchemaId(),
+                                               "users",
+                                               users_table,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::IndexInfo users_index{};
+    ASSERT_EQ(db_->catalog_manager()->getIndex(users_table.table_id,
+                                               "idx_users_id",
+                                               users_index,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+
+    auto publishFamilyMetrics =
+        [&](uint32_t family_metrics_version,
+            uint32_t leaf_pages,
+            uint16_t height,
+            double correlation,
+            double bloat_ratio) {
+            const uint64_t refresh_xid =
+                std::max<uint64_t>(1, db_->storage_engine()->getCurrentXid());
+            CatalogManager::IndexStatsCatalogInfo stats{};
+            stats.index_id = users_index.index_id;
+            stats.stats_version = family_metrics_version;
+            stats.last_analyze_txid = refresh_xid;
+            stats.row_count_est = kRowCount;
+            stats.distinct_count_est = kRowCount;
+            stats.null_frac = 0.0f;
+            stats.avg_key_len = 8;
+            stats.avg_entry_len = 16;
+            stats.leaf_pages = leaf_pages;
+            stats.height = height;
+            stats.correlation = static_cast<float>(correlation);
+            stats.bloat_ratio = static_cast<float>(bloat_ratio);
+            stats.metrics_last_refresh_xid = refresh_xid;
+            stats.family_metrics_version = family_metrics_version;
+            stats.family_metrics_type =
+                scratchbird::optimizer::IndexFamilyMetricsType::ORDERED_EXACT;
+            stats.metrics_confidence_class =
+                scratchbird::optimizer::IndexMetricsConfidenceClass::HIGH;
+            stats.queryability_state =
+                scratchbird::optimizer::IndexMetricsQueryabilityState::QUERYABLE;
+            stats.is_valid = true;
+            stats.family_metrics_payload =
+                    nlohmann::json{
+                    {"shared_metrics_envelope",
+                     {{"index_uuid", users_index.index_id.toString()},
+                      {"physical_family", "BTREE"},
+                      {"planner_family", "BTREE_EQ_SCAN"},
+                      {"queryability_state", "QUERYABLE"},
+                      {"metrics_last_refresh_xid", refresh_xid},
+                      {"metrics_confidence_class", "HIGH"},
+                      {"leaf_pages", leaf_pages},
+                      {"height", height},
+                      {"row_count_est", kRowCount},
+                      {"live_entry_count_est", kRowCount},
+                      {"dead_fraction", bloat_ratio},
+                      {"bloat_ratio", bloat_ratio},
+                      {"recheck_ratio_est", 0.0},
+                      {"correlation", correlation},
+                      {"coverage_fraction", 1.0},
+                      {"maintenance_backlog_ops", 0},
+                      {"publish_lag_xids", 0},
+                      {"reclaim_lag_xids", 0}}},
+                    {"family_metrics_type", "ORDERED_EXACT"},
+                    {"family_metrics",
+                     {{"avg_probe_pages", static_cast<double>(height)},
+                      {"avg_range_pages_per_row",
+                       static_cast<double>(leaf_pages) /
+                           static_cast<double>(kRowCount)},
+                      {"duplicate_density", 0.0},
+                      {"prefix_selectivity",
+                       1.0 / static_cast<double>(kRowCount)},
+                      {"skip_group_count", kRowCount},
+                      {"overflow_chain_depth", 0},
+                      {"run_count", 0},
+                      {"level_count", 0},
+                      {"tombstone_fraction", bloat_ratio},
+                      {"L0_run_count", 0}}}}
+                    .dump();
+            ASSERT_EQ(db_->catalog_manager()->upsertIndexStatsCatalogEntry(stats, &ctx),
+                      Status::OK)
+                << ctx.message;
+            db_->statistics_manager()->invalidateCache(users_table.table_id);
+        };
+
+    publishFamilyMetrics(7, 1, 1, 1.0, 0.0);
+
+    scratchbird::optimizer::IndexFamilyMetricsPacket cheap_packet;
+    ASSERT_EQ(db_->statistics_manager()->getIndexFamilyMetrics(users_index.index_id,
+                                                               cheap_packet,
+                                                               &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(cheap_packet.family_metrics_version, 7u);
+    EXPECT_EQ(cheap_packet.leaf_pages, 1u);
+    EXPECT_EQ(cheap_packet.height, 1u);
+
+    auto cheap_bytecode = compileSQL("SELECT id FROM users WHERE id = 8192");
+    ASSERT_FALSE(cheap_bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan cheap_plan;
+    ASSERT_TRUE(decodeRuntimePlan(cheap_bytecode, cheap_plan));
+    ASSERT_EQ(cheap_plan.relations.size(), 1u);
+    const auto &cheap_relation = cheap_plan.relations.front();
+    EXPECT_EQ(cheap_relation.scan_kind, "INDEX_ONLY_SCAN");
+    EXPECT_EQ(cheap_relation.index_name, "idx_users_id");
+    EXPECT_EQ(cheap_relation.scan_family, "BTREE_EQ_SCAN");
+    EXPECT_EQ(cheap_relation.family_metrics_version, 7u);
+    EXPECT_NE(cheap_relation.formula_profile_id.find("btree_eq_scan"),
+              std::string::npos);
+    EXPECT_NE(cheap_relation.calibration_profile_id.find("ordered_exact"),
+              std::string::npos);
+    EXPECT_FALSE(cheap_plan.considered_paths.empty());
+
+    publishFamilyMetrics(8, 1000000, 64, 0.0, 1.0);
+
+    scratchbird::optimizer::IndexFamilyMetricsPacket expensive_packet;
+    ASSERT_EQ(db_->statistics_manager()->getIndexFamilyMetrics(users_index.index_id,
+                                                               expensive_packet,
+                                                               &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(expensive_packet.family_metrics_version, 8u);
+    EXPECT_EQ(expensive_packet.leaf_pages, 1000000u);
+    EXPECT_EQ(expensive_packet.height, 64u);
+
+    auto expensive_bytecode = compileSQL("SELECT id FROM users WHERE id = 8193");
+    ASSERT_FALSE(expensive_bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan expensive_plan;
+    ASSERT_TRUE(decodeRuntimePlan(expensive_bytecode, expensive_plan));
+    ASSERT_EQ(expensive_plan.relations.size(), 1u);
+    const auto &expensive_relation = expensive_plan.relations.front();
+    EXPECT_EQ(expensive_relation.scan_kind, "SEQ_SCAN");
+    EXPECT_TRUE(expensive_relation.index_name.empty());
+    EXPECT_EQ(expensive_relation.family_metrics_version, 0u);
+    EXPECT_FALSE(expensive_plan.considered_paths.empty());
+    EXPECT_FALSE(expensive_plan.rejected_paths.empty());
+}
+
 TEST_F(QueryPlannerIntegrationTest, ExistingOrderedIndexPathAvoidsExplicitSortNode)
 {
     ASSERT_TRUE(createDatabase());
@@ -2914,6 +3636,450 @@ TEST_F(QueryPlannerIntegrationTest, BitmapIndexPlanExecutesExactProbes)
     auto rows = resultStrings(result);
     ASSERT_FALSE(rows.empty());
     EXPECT_NE(std::find(rows.begin(), rows.end(), "9001"), rows.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       SummaryBitmapColumnstoreFamiliesPublishDistinctRuntimePaths)
+{
+    ASSERT_TRUE(createDatabase());
+
+    constexpr int kRowCount = 2048;
+
+    ASSERT_TRUE(
+        executeSQL("CREATE TABLE brin_events (id INTEGER, age INTEGER, payload VARCHAR(64))")
+            .success());
+    ASSERT_TRUE(
+        executeSQL("CREATE TABLE filter_events (id INTEGER, age INTEGER, payload VARCHAR(64))")
+            .success());
+    ASSERT_TRUE(
+        executeSQL("CREATE TABLE bitmap_events (id INTEGER, status VARCHAR(16), payload VARCHAR(64))")
+            .success());
+    ASSERT_TRUE(
+        executeSQL("CREATE TABLE column_events (id INTEGER, age INTEGER, payload VARCHAR(64))")
+            .success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON brin_events TO PUBLIC").success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON filter_events TO PUBLIC").success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON bitmap_events TO PUBLIC").success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON column_events TO PUBLIC").success());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_brin_events_age ON brin_events USING BRIN (age)")
+            .success());
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_filter_events_age ON filter_events USING ZONEMAP (age)")
+            .success());
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_bitmap_events_status ON bitmap_events USING BITMAP (status)")
+            .success());
+    ASSERT_TRUE(
+        executeSQL(
+            "CREATE INDEX idx_column_events_age_payload ON column_events USING COLUMNSTORE (age, payload)")
+            .success());
+
+    for (int i = 1; i <= kRowCount; ++i)
+    {
+        const int age = 20 + (i % 64);
+        const std::string payload = "payload_" + std::to_string(i);
+        const std::string status = (i % 64 == 0) ? "target" : "other";
+
+        ASSERT_TRUE(executeSQL("INSERT INTO brin_events (id, age, payload) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(age) +
+                               ", '" + payload + "')")
+                        .success());
+        ASSERT_TRUE(executeSQL("INSERT INTO filter_events (id, age, payload) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(age) +
+                               ", '" + payload + "')")
+                        .success());
+        ASSERT_TRUE(executeSQL("INSERT INTO bitmap_events (id, status, payload) VALUES (" +
+                               std::to_string(i) + ", '" + status + "', '" +
+                               payload + "')")
+                        .success());
+        ASSERT_TRUE(executeSQL("INSERT INTO column_events (id, age, payload) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(age) +
+                               ", '" + payload + "')")
+                        .success());
+    }
+
+    ASSERT_TRUE(executeSQL("ANALYZE brin_events").success());
+    ASSERT_TRUE(executeSQL("ANALYZE filter_events").success());
+    ASSERT_TRUE(executeSQL("ANALYZE bitmap_events").success());
+    ASSERT_TRUE(executeSQL("ANALYZE column_events").success());
+
+    ErrorContext ctx;
+    auto publishSummaryCandidateMetrics =
+        [&](const std::string &table_name,
+            const std::string &index_name,
+            const std::string &physical_family,
+            const std::string &planner_family,
+            uint32_t family_metrics_version,
+            uint32_t leaf_pages,
+            uint16_t height,
+            double coverage_fraction,
+            double recheck_ratio_est,
+            double correlation,
+            uint64_t distinct_count_est,
+            const nlohmann::json &family_metrics) {
+            CatalogManager::TableInfo table_info{};
+            ASSERT_EQ(db_->catalog_manager()->getTable(
+                          connection_ctx_->getCurrentSchemaId(),
+                          table_name,
+                          table_info,
+                          &ctx),
+                      Status::OK)
+                << ctx.message;
+
+            CatalogManager::IndexInfo index_info{};
+            ASSERT_EQ(db_->catalog_manager()->getIndex(table_info.table_id,
+                                                       index_name,
+                                                       index_info,
+                                                       &ctx),
+                      Status::OK)
+                << ctx.message;
+
+            const uint64_t refresh_xid =
+                std::max<uint64_t>(1, db_->storage_engine()->getCurrentXid());
+
+            CatalogManager::IndexStatsCatalogInfo stats{};
+            stats.index_id = index_info.index_id;
+            stats.stats_version = family_metrics_version;
+            stats.last_analyze_txid = refresh_xid;
+            stats.row_count_est = kRowCount;
+            stats.distinct_count_est = distinct_count_est;
+            stats.null_frac = 0.0f;
+            stats.avg_key_len = 8;
+            stats.avg_entry_len = 16;
+            stats.leaf_pages = leaf_pages;
+            stats.height = height;
+            stats.correlation = static_cast<float>(correlation);
+            stats.bloat_ratio = 0.0f;
+            stats.metrics_last_refresh_xid = refresh_xid;
+            stats.family_metrics_version = family_metrics_version;
+            stats.family_metrics_type =
+                scratchbird::optimizer::IndexFamilyMetricsType::SUMMARY_CANDIDATE;
+            stats.metrics_confidence_class =
+                scratchbird::optimizer::IndexMetricsConfidenceClass::HIGH;
+            stats.queryability_state =
+                scratchbird::optimizer::IndexMetricsQueryabilityState::QUERYABLE;
+            stats.is_valid = true;
+            stats.family_metrics_payload =
+                nlohmann::json{
+                    {"shared_metrics_envelope",
+                     {{"index_uuid", index_info.index_id.toString()},
+                      {"physical_family", physical_family},
+                      {"planner_family", planner_family},
+                      {"queryability_state", "QUERYABLE"},
+                      {"metrics_last_refresh_xid", refresh_xid},
+                      {"metrics_confidence_class", "HIGH"},
+                      {"leaf_pages", leaf_pages},
+                      {"height", height},
+                      {"row_count_est", kRowCount},
+                      {"live_entry_count_est", kRowCount},
+                      {"dead_fraction", 0.0},
+                      {"bloat_ratio", 0.0},
+                      {"recheck_ratio_est", recheck_ratio_est},
+                      {"correlation", correlation},
+                      {"coverage_fraction", coverage_fraction},
+                      {"maintenance_backlog_ops", 0},
+                      {"publish_lag_xids", 0},
+                      {"reclaim_lag_xids", 0}}},
+                    {"family_metrics_type", "SUMMARY_CANDIDATE"},
+                    {"family_metrics", family_metrics}}
+                    .dump();
+
+            ASSERT_EQ(db_->catalog_manager()->upsertIndexStatsCatalogEntry(stats,
+                                                                           &ctx),
+                      Status::OK)
+                << ctx.message;
+            db_->statistics_manager()->invalidateCache(table_info.table_id);
+        };
+
+    publishSummaryCandidateMetrics(
+        "brin_events",
+        "idx_brin_events_age",
+        "BRIN",
+        "BRIN_SCAN",
+        11,
+        4,
+        1,
+        0.90,
+        0.05,
+        0.0,
+        kRowCount,
+        nlohmann::json{
+            {"pages_per_range", 8},
+            {"prune_ratio_est", 0.98},
+            {"unsummarized_range_fraction", 0.01},
+            {"summary_staleness_fraction", 0.00}});
+
+    publishSummaryCandidateMetrics(
+        "filter_events",
+        "idx_filter_events_age",
+        "BRIN",
+        "SUMMARY_FILTER_SCAN",
+        12,
+        4,
+        1,
+        0.82,
+        0.08,
+        0.0,
+        kRowCount,
+        nlohmann::json{
+            {"pages_per_range", 8},
+            {"prune_ratio_est", 0.97},
+            {"unsummarized_range_fraction", 0.02},
+            {"summary_staleness_fraction", 0.01}});
+
+    publishSummaryCandidateMetrics(
+        "bitmap_events",
+        "idx_bitmap_events_status",
+        "BITMAP",
+        "BITMAP_STORAGE_SCAN",
+        13,
+        1,
+        1,
+        0.35,
+        0.00,
+        0.0,
+        2,
+        nlohmann::json{
+            {"bitmap_density", 0.02},
+            {"bitmap_false_positive_ratio", 0.00},
+            {"lossy_container_fraction", 0.00}});
+
+    publishSummaryCandidateMetrics(
+        "column_events",
+        "idx_column_events_age_payload",
+        "COLUMNSTORE",
+        "COLUMNSTORE_SCAN",
+        14,
+        8,
+        1,
+        0.60,
+        0.00,
+        0.0,
+        kRowCount,
+        nlohmann::json{
+            {"column_bytes_pruned_ratio", 0.95},
+            {"row_groups_touched_ratio", 0.05},
+            {"late_materialization_gain_est", 0.90},
+            {"projection_width_bytes", 8.0},
+            {"delta_fraction", 0.01}});
+
+    auto assertSingleFamilyPlan =
+        [&](const std::string &sql,
+            const std::string &expected_scan_kind,
+            scratchbird::optimizer::PlannerAccessFamily expected_family_kind,
+            scratchbird::optimizer::AccessPathQueryabilityState
+                expected_queryability_state,
+            uint32_t expected_family_metrics_version,
+            const std::string &expected_index_name,
+            double expected_coverage_fraction) {
+            auto bytecode = compileSQL(sql);
+            ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+            scratchbird::optimizer::RuntimePlan plan;
+            ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+            ASSERT_EQ(plan.relations.size(), 1u);
+            const auto &relation = plan.relations.front();
+            EXPECT_EQ(relation.scan_kind, expected_scan_kind);
+            EXPECT_EQ(relation.scan_family, expected_scan_kind);
+            EXPECT_EQ(relation.path_name, expected_scan_kind);
+            EXPECT_EQ(relation.scan_family_kind, expected_family_kind);
+            EXPECT_EQ(relation.exactness_class,
+                      scratchbird::optimizer::AccessPathExactnessClass::
+                          CANDIDATE_REGION);
+            EXPECT_EQ(relation.visibility_enforcement,
+                      scratchbird::optimizer::AccessPathVisibilityEnforcement::
+                          POST_FILTER);
+            EXPECT_TRUE(relation.requires_recheck);
+            EXPECT_FALSE(relation.exact_key_lookup);
+            EXPECT_EQ(relation.queryability_state, expected_queryability_state);
+            EXPECT_EQ(relation.family_metrics_version,
+                      expected_family_metrics_version);
+            EXPECT_EQ(relation.index_name, expected_index_name);
+            EXPECT_GT(relation.candidate_budget, 0u);
+            EXPECT_NEAR(relation.coverage_fraction,
+                        expected_coverage_fraction,
+                        1e-6);
+            EXPECT_NE(std::find(relation.candidate_scan_families.begin(),
+                                relation.candidate_scan_families.end(),
+                                expected_scan_kind),
+                      relation.candidate_scan_families.end());
+
+            auto result = executeSQL(sql);
+            ASSERT_TRUE(result.success()) << result.error();
+            ASSERT_TRUE(result.hasResultSet());
+            EXPECT_GT(result.resultSet()->rowCount(), 0u);
+        };
+
+    assertSingleFamilyPlan(
+        "SELECT id FROM brin_events WHERE age >= 40 AND age <= 41",
+        "BRIN_SCAN",
+        scratchbird::optimizer::PlannerAccessFamily::BRIN_SCAN,
+        scratchbird::optimizer::AccessPathQueryabilityState::QUERYABLE,
+        11,
+        "idx_brin_events_age",
+        0.90);
+
+    assertSingleFamilyPlan(
+        "SELECT id FROM filter_events WHERE age >= 55 AND age <= 55",
+        "SUMMARY_FILTER_SCAN",
+        scratchbird::optimizer::PlannerAccessFamily::SUMMARY_FILTER_SCAN,
+        scratchbird::optimizer::AccessPathQueryabilityState::QUERYABLE,
+        12,
+        "idx_filter_events_age",
+        0.82);
+
+    assertSingleFamilyPlan(
+        "SELECT id FROM bitmap_events WHERE status = 'target'",
+        "BITMAP_STORAGE_SCAN",
+        scratchbird::optimizer::PlannerAccessFamily::BITMAP_STORAGE_SCAN,
+        scratchbird::optimizer::AccessPathQueryabilityState::LIMITED,
+        13,
+        "idx_bitmap_events_status",
+        0.35);
+
+    assertSingleFamilyPlan(
+        "SELECT age FROM column_events WHERE age >= 60 AND age <= 60",
+        "COLUMNSTORE_SCAN",
+        scratchbird::optimizer::PlannerAccessFamily::COLUMNSTORE_SCAN,
+        scratchbird::optimizer::AccessPathQueryabilityState::LIMITED,
+        14,
+        "idx_column_events_age_payload",
+        0.60);
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       TextFamilyPlanPublishesCandidateBudgetAndMetricsIdentity)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE TABLE docs (id INTEGER, title TEXT)").success());
+    ASSERT_TRUE(executeSQL("GRANT SELECT ON docs TO PUBLIC").success());
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_docs_title_text ON docs USING FULLTEXT (title)")
+            .success());
+
+    ASSERT_TRUE(
+        executeSQL("INSERT INTO docs (id, title) VALUES (1, 'alpha')").success());
+    ASSERT_TRUE(
+        executeSQL("INSERT INTO docs (id, title) VALUES (2, 'beta')").success());
+    ASSERT_TRUE(
+        executeSQL("INSERT INTO docs (id, title) VALUES (3, 'alpha')").success());
+
+    auto analyze_result = executeSQL("ANALYZE docs");
+    ASSERT_TRUE(analyze_result.success()) << analyze_result.error();
+
+    core::ErrorContext ctx;
+    CatalogManager::TableInfo table_info{};
+    ASSERT_EQ(db_->catalog_manager()->getTable(connection_ctx_->getCurrentSchemaId(),
+                                              "docs",
+                                              table_info,
+                                              &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::IndexInfo index_info{};
+    ASSERT_EQ(db_->catalog_manager()->getIndex(table_info.table_id,
+                                               "idx_docs_title_text",
+                                               index_info,
+                                               &ctx),
+              Status::OK)
+        << ctx.message;
+
+    const uint64_t refresh_xid =
+        std::max<uint64_t>(1, db_->storage_engine()->getCurrentXid());
+
+    CatalogManager::IndexStatsCatalogInfo stats{};
+    stats.index_id = index_info.index_id;
+    stats.stats_version = 21;
+    stats.last_analyze_txid = refresh_xid;
+    stats.row_count_est = 3;
+    stats.distinct_count_est = 2;
+    stats.null_frac = 0.0f;
+    stats.avg_key_len = 12;
+    stats.avg_entry_len = 20;
+    stats.leaf_pages = 2;
+    stats.height = 1;
+    stats.correlation = 0.0f;
+    stats.bloat_ratio = 0.0f;
+    stats.metrics_last_refresh_xid = refresh_xid;
+    stats.family_metrics_version = 21;
+    stats.family_metrics_type =
+        scratchbird::optimizer::IndexFamilyMetricsType::TEXT_SEARCH;
+    stats.metrics_confidence_class =
+        scratchbird::optimizer::IndexMetricsConfidenceClass::HIGH;
+    stats.queryability_state =
+        scratchbird::optimizer::IndexMetricsQueryabilityState::LIMITED;
+    stats.is_valid = true;
+    stats.family_metrics_payload =
+        nlohmann::json{
+            {"shared_metrics_envelope",
+             {{"index_uuid", index_info.index_id.toString()},
+              {"physical_family", "FULLTEXT"},
+              {"planner_family", "TEXT_BITMAP_SCAN"},
+              {"queryability_state", "LIMITED"},
+              {"metrics_last_refresh_xid", refresh_xid},
+              {"metrics_confidence_class", "HIGH"},
+              {"leaf_pages", 2},
+              {"height", 1},
+              {"row_count_est", 3},
+              {"live_entry_count_est", 3},
+              {"dead_fraction", 0.0},
+              {"bloat_ratio", 0.0},
+              {"recheck_ratio_est", 0.05},
+              {"correlation", 0.0},
+              {"coverage_fraction", 0.25},
+              {"maintenance_backlog_ops", 0},
+              {"publish_lag_xids", 0},
+              {"reclaim_lag_xids", 0}}},
+            {"family_metrics_type", "TEXT_SEARCH"},
+            {"family_metrics",
+             {{"term_df", 2},
+              {"term_df_skew", 0.0},
+              {"avg_postings_per_term", 2.0},
+              {"pending_list_fraction", 0.0},
+              {"phrase_hit_rate", 1.0},
+              {"score_rows_est", 2.0},
+              {"merge_debt", 0.0}}}}
+            .dump();
+
+    ASSERT_EQ(db_->catalog_manager()->upsertIndexStatsCatalogEntry(stats, &ctx),
+              Status::OK)
+        << ctx.message;
+    db_->statistics_manager()->invalidateCache(table_info.table_id);
+
+    auto bytecode = compileSQL("SELECT id FROM docs WHERE title = 'alpha'");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    const auto &relation = plan.relations.front();
+    EXPECT_EQ(relation.scan_kind, "TEXT_BITMAP_SCAN");
+    EXPECT_EQ(relation.scan_family, "TEXT_BITMAP_SCAN");
+    EXPECT_EQ(relation.path_name, "TEXT_BITMAP_SCAN");
+    EXPECT_EQ(relation.scan_family_kind,
+              scratchbird::optimizer::PlannerAccessFamily::TEXT_BITMAP_SCAN);
+    EXPECT_EQ(relation.exactness_class,
+              scratchbird::optimizer::AccessPathExactnessClass::
+                  CANDIDATE_REGION);
+    EXPECT_EQ(relation.visibility_enforcement,
+              scratchbird::optimizer::AccessPathVisibilityEnforcement::
+                  POST_FILTER);
+    EXPECT_TRUE(relation.requires_recheck);
+    EXPECT_EQ(relation.queryability_state,
+              scratchbird::optimizer::AccessPathQueryabilityState::LIMITED);
+    EXPECT_EQ(relation.family_metrics_version, 21u);
+    EXPECT_EQ(relation.index_name, "idx_docs_title_text");
+    EXPECT_GE(relation.candidate_budget, 2u);
+    EXPECT_NEAR(relation.coverage_fraction, 0.25, 1e-6);
+
+    auto result = executeSQL("SELECT id FROM docs WHERE title = 'alpha'");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    EXPECT_EQ(result.resultSet()->rowCount(), 2u);
 }
 
 TEST_F(QueryPlannerIntegrationTest, SkipScanFamilyCanWinSingleRelationPlan)
@@ -3135,6 +4301,168 @@ TEST_F(QueryPlannerIntegrationTest,
     EXPECT_EQ(std::find(plan.relations.front().candidate_scan_families.begin(),
                         plan.relations.front().candidate_scan_families.end(),
                         "HASH_EQ_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       GistCandidateRequiresBoundOpclassStrategySupport)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "CREATE TABLE gist_docs (id INT PRIMARY KEY, geom INT)")
+                    .success());
+    ASSERT_TRUE(
+        executeSQL("GRANT SELECT ON gist_docs TO PUBLIC").success());
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_gist_docs_geom ON gist_docs USING GIST (geom)")
+            .success());
+    for (int i = 1; i <= 256; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO gist_docs (id, geom) VALUES (" +
+                               std::to_string(i) + ", " + std::to_string(i % 32) +
+                               ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE gist_docs").success());
+
+    const std::string sql = "SELECT id FROM gist_docs WHERE geom = 5";
+    auto bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_EQ(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "GIST_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+
+    auto* catalog = db_ != nullptr ? db_->catalog_manager() : nullptr;
+    ASSERT_NE(catalog, nullptr);
+
+    ErrorContext ctx;
+    CatalogManager::SchemaInfo public_schema;
+    ASSERT_EQ(catalog->getSchema("public", public_schema, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(
+        catalog->getTable(public_schema.schema_id, "gist_docs", table_info, &ctx),
+        Status::OK)
+        << ctx.message;
+
+    std::vector<CatalogManager::ColumnInfo> columns;
+    ASSERT_EQ(catalog->getColumns(table_info.table_id, columns, &ctx), Status::OK)
+        << ctx.message;
+    const auto column_it = std::find_if(
+        columns.begin(),
+        columns.end(),
+        [](const CatalogManager::ColumnInfo& info) {
+            return info.column_name == "geom";
+        });
+    ASSERT_NE(column_it, columns.end());
+
+    std::vector<CatalogManager::IndexInfo> indexes;
+    ASSERT_EQ(catalog->listIndexesForTable(table_info.table_id, indexes, &ctx),
+              Status::OK)
+        << ctx.message;
+    const auto index_it = std::find_if(
+        indexes.begin(),
+        indexes.end(),
+        [](const CatalogManager::IndexInfo& info) {
+            return info.index_name == "idx_gist_docs_geom";
+        });
+    ASSERT_NE(index_it, indexes.end());
+
+    std::vector<CatalogManager::SchemaInfo> schemas;
+    ASSERT_EQ(catalog->listSchemas(schemas, &ctx), Status::OK) << ctx.message;
+    ID any_type_id{};
+    for (const auto& schema : schemas)
+    {
+        std::vector<CatalogManager::TypeCatalogInfo> types;
+        if (catalog->listTypeCatalogEntries(schema.schema_id, types, &ctx) !=
+                Status::OK ||
+            types.empty())
+        {
+            continue;
+        }
+        any_type_id = types.front().type_id;
+        break;
+    }
+    if (isZeroId(any_type_id))
+    {
+        CatalogManager::TypeCatalogInfo synthetic_type{};
+        synthetic_type.schema_id = public_schema.schema_id;
+        synthetic_type.type_name = "gist_docs_test_type";
+        synthetic_type.type_kind = CatalogManager::TypeKind::SCALAR;
+        ASSERT_EQ(catalog->upsertTypeCatalogEntry(synthetic_type,
+                                                  any_type_id,
+                                                  &ctx),
+                  Status::OK)
+            << ctx.message;
+    }
+    ASSERT_FALSE(isZeroId(any_type_id));
+
+    CatalogManager::IndexOpclassCatalogInfo opclass{};
+    opclass.opclass_name = "gist_docs_eq_support";
+    opclass.index_type_name = "GIST";
+    opclass.input_type_id = any_type_id;
+    opclass.owner_schema_id = public_schema.schema_id;
+
+    ID opclass_id{};
+    ASSERT_EQ(catalog->upsertIndexOpclassCatalogEntry(opclass, opclass_id, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::IndexOpclassFunctionCatalogInfo consistent{};
+    consistent.opclass_id = opclass_id;
+    consistent.fn_kind =
+        CatalogManager::IndexOpclassFunctionKind::CONSISTENT;
+    consistent.function_id = generateUuidV7();
+    consistent.support_number = 8;
+
+    ID consistent_fn_id{};
+    ASSERT_EQ(catalog->upsertIndexOpclassFunctionCatalogEntry(
+                  consistent, consistent_fn_id, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    std::vector<CatalogManager::IndexColumnCatalogInfo> index_columns;
+    ASSERT_EQ(catalog->listIndexColumnCatalogEntries(index_it->index_id,
+                                                     index_columns,
+                                                     &ctx),
+              Status::OK)
+        << ctx.message;
+    CatalogManager::IndexColumnCatalogInfo key_column{};
+    if (!index_columns.empty())
+    {
+        key_column = index_columns.front();
+    }
+    else
+    {
+        key_column.index_id = index_it->index_id;
+        key_column.position = 1;
+        key_column.column_id = column_it->column_id;
+        key_column.sort_order = CatalogManager::IndexSortOrder::ASC;
+        key_column.null_order = CatalogManager::IndexNullOrder::LAST;
+        key_column.is_valid = true;
+    }
+    ID index_column_id = key_column.index_column_id;
+    key_column.opclass_id = opclass_id;
+    ASSERT_EQ(catalog->upsertIndexColumnCatalogEntry(key_column,
+                                                     index_column_id,
+                                                     &ctx),
+              Status::OK)
+        << ctx.message;
+
+    bytecode = compileSQL(sql);
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "GIST_SCAN"),
               plan.relations.front().candidate_scan_families.end());
 }
 

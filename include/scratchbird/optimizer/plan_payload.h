@@ -10,8 +10,8 @@
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 8;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v8";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 10;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v10";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -41,6 +41,8 @@ namespace scratchbird::optimizer
         uint32_t taxonomy_version = kPlannerFamilyTaxonomyVersion;
         std::vector<std::string> scan_family_tags;
         std::vector<std::string> candidate_scan_families;
+        std::vector<std::string> candidate_family_identity_signatures;
+        std::vector<std::string> candidate_family_statistics_signatures;
         AccessPathExactnessClass exactness_class = AccessPathExactnessClass::UNKNOWN;
         bool requires_recheck = false;
         double coverage_fraction = 0.0;
@@ -350,6 +352,8 @@ namespace scratchbird::optimizer
         std::string explain_text;
         std::string cache_mode;
         std::string plan_profile_signature;
+        std::string index_family_signature;
+        std::string family_statistics_signature;
         std::string selectivity_bucket_signature;
         std::string query_feedback_key;
         bool parameter_sensitive = false;

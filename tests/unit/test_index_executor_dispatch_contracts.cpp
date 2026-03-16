@@ -258,6 +258,16 @@ TEST_F(IndexExecutorDispatchContractsTest, AnalyzeIndexExecutesThroughV3Dispatch
         << ctx.message;
     EXPECT_GE(stats_info.stats_version, 1u);
     EXPECT_TRUE(stats_info.is_valid);
+    EXPECT_GE(stats_info.family_metrics_version, 1u);
+    EXPECT_EQ(stats_info.family_metrics_type,
+              scratchbird::optimizer::IndexFamilyMetricsType::ORDERED_EXACT);
+    EXPECT_EQ(stats_info.queryability_state,
+              scratchbird::optimizer::IndexMetricsQueryabilityState::QUERYABLE);
+    EXPECT_TRUE(stats_info.metrics_confidence_class ==
+                    scratchbird::optimizer::IndexMetricsConfidenceClass::HIGH ||
+                stats_info.metrics_confidence_class ==
+                    scratchbird::optimizer::IndexMetricsConfidenceClass::MEDIUM);
+    EXPECT_FALSE(stats_info.family_metrics_payload.empty());
 }
 
 TEST_F(IndexExecutorDispatchContractsTest, AlterIndexRebuildTransitionsMaintenanceStateToComplete)
@@ -653,48 +663,58 @@ TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsUnsupportedVector
         << result.error();
 }
 
-TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRoutesAnnoyThroughAdvancedAnnPath)
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsAnnoyCreateTimeActivation)
 {
     ExecutionResult result = executeSql(
         "CREATE INDEX idx_vectors_annoy ON vectors USING ANNOY (embedding) "
         "WITH (n_trees = 32, leaf_size = 64, search_k = 2048, metric = 'cosine')");
     ASSERT_FALSE(result.success());
-    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"), std::string::npos)
+    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"),
+              std::string::npos)
         << result.error();
-    EXPECT_EQ(result.error().find("unsupported option for ANNOY"), std::string::npos)
-        << result.error();
-    EXPECT_NE(result.error().find("Vector column has no dimensions specified"), std::string::npos)
-        << result.error();
-}
-
-TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsScannInvalidQuantizerDeterministically)
-{
-    ExecutionResult result = executeSql(
-        "CREATE INDEX idx_vectors_scann_bad ON vectors USING SCANN (embedding) "
-        "WITH (quantizer = 'invalid')");
-    ASSERT_FALSE(result.success());
-    EXPECT_NE(result.error().find("CREATE INDEX option QUANTIZER invalid for SCANN"), std::string::npos)
-        << result.error();
-}
-
-TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsDiskannInvalidEntrypointStrategy)
-{
-    ExecutionResult result = executeSql(
-        "CREATE INDEX idx_vectors_diskann_bad ON vectors USING DISKANN (embedding) "
-        "WITH (entrypoint_strategy = 'random')");
-    ASSERT_FALSE(result.success());
-    EXPECT_NE(result.error().find("CREATE INDEX option ENTRYPOINT_STRATEGY invalid for DISKANN"),
+    EXPECT_NE(result.error().find("IndexFactory create not supported for type: ANNOY"),
               std::string::npos)
         << result.error();
 }
 
-TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsGpuCagraNonBooleanFallbackCpu)
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsScannCreateTimeActivation)
+{
+    ExecutionResult result = executeSql(
+        "CREATE INDEX idx_vectors_scann_bad ON vectors USING SCANN (embedding) "
+        "WITH (quantizer = 'sq8')");
+    ASSERT_FALSE(result.success());
+    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"),
+              std::string::npos)
+        << result.error();
+    EXPECT_NE(result.error().find("IndexFactory create not supported for type: SCANN"),
+              std::string::npos)
+        << result.error();
+}
+
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsDiskannCreateTimeActivation)
+{
+    ExecutionResult result = executeSql(
+        "CREATE INDEX idx_vectors_diskann_bad ON vectors USING DISKANN (embedding) "
+        "WITH (entrypoint_strategy = 'medoid')");
+    ASSERT_FALSE(result.success());
+    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"),
+              std::string::npos)
+        << result.error();
+    EXPECT_NE(result.error().find("IndexFactory create not supported for type: DISKANN"),
+              std::string::npos)
+        << result.error();
+}
+
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsGpuCagraCreateTimeActivation)
 {
     ExecutionResult result = executeSql(
         "CREATE INDEX idx_vectors_cagra_bad ON vectors USING GPU_CAGRA (embedding) "
-        "WITH (fallback_cpu = 1)");
+        "WITH (fallback_cpu = true)");
     ASSERT_FALSE(result.success());
-    EXPECT_NE(result.error().find("CREATE INDEX option FALLBACK_CPU expects boolean value"),
+    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"),
+              std::string::npos)
+        << result.error();
+    EXPECT_NE(result.error().find("IndexFactory create not supported for type: GPU_CAGRA"),
               std::string::npos)
         << result.error();
 }

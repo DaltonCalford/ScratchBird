@@ -26,6 +26,8 @@ namespace scratchbird::sblr::detail
         std::string selectivity_bucket_signature;
         std::string runtime_plan_hash;
         std::string decision_source;
+        std::string index_family_signature;
+        std::string family_statistics_signature;
         std::string statistics_snapshot_signature;
         std::string cost_profile_id;
         std::string policy_snapshot_id;

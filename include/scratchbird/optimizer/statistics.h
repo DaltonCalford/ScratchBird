@@ -78,6 +78,33 @@ namespace scratchbird::optimizer
         HIGH = 3
     };
 
+    enum class IndexFamilyMetricsType : uint32_t
+    {
+        UNKNOWN = 0,
+        ORDERED_EXACT = 1,
+        SUMMARY_CANDIDATE = 2,
+        GENERALIZED_SPATIAL = 3,
+        TEXT_SEARCH = 4,
+        ANN = 5
+    };
+
+    enum class IndexMetricsConfidenceClass : uint32_t
+    {
+        UNKNOWN = 0,
+        LOW = 1,
+        MEDIUM = 2,
+        HIGH = 3,
+        INVALID = 4
+    };
+
+    enum class IndexMetricsQueryabilityState : uint32_t
+    {
+        UNKNOWN = 0,
+        QUERYABLE = 1,
+        LIMITED = 2,
+        INVALID = 3
+    };
+
     /**
      * Most Common Values (MCV) Entry
      *
@@ -236,6 +263,34 @@ namespace scratchbird::optimizer
         ColumnStatistics stats;
     };
 
+    struct IndexFamilyMetricsPacket
+    {
+        ID index_id;
+        std::string physical_family;
+        std::string planner_family;
+        IndexMetricsQueryabilityState queryability_state =
+            IndexMetricsQueryabilityState::UNKNOWN;
+        uint64_t metrics_last_refresh_xid = 0;
+        IndexMetricsConfidenceClass metrics_confidence_class =
+            IndexMetricsConfidenceClass::UNKNOWN;
+        uint64_t leaf_pages = 0;
+        uint16_t height = 0;
+        uint64_t row_count_est = 0;
+        uint64_t live_entry_count_est = 0;
+        double dead_fraction = 0.0;
+        double bloat_ratio = 0.0;
+        double recheck_ratio_est = 0.0;
+        double correlation = 0.0;
+        double coverage_fraction = 0.0;
+        uint64_t maintenance_backlog_ops = 0;
+        uint64_t publish_lag_xids = 0;
+        uint64_t reclaim_lag_xids = 0;
+        uint32_t family_metrics_version = 0;
+        IndexFamilyMetricsType family_metrics_type =
+            IndexFamilyMetricsType::UNKNOWN;
+        std::string family_metrics_payload;
+    };
+
     inline auto statisticsStalenessClassName(StatisticsStalenessClass value)
         -> const char *
     {
@@ -267,6 +322,63 @@ namespace scratchbird::optimizer
             case StatisticsConfidenceClass::HIGH:
                 return "HIGH";
             case StatisticsConfidenceClass::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    inline auto indexFamilyMetricsTypeName(IndexFamilyMetricsType value)
+        -> const char *
+    {
+        switch (value)
+        {
+            case IndexFamilyMetricsType::ORDERED_EXACT:
+                return "ORDERED_EXACT";
+            case IndexFamilyMetricsType::SUMMARY_CANDIDATE:
+                return "SUMMARY_CANDIDATE";
+            case IndexFamilyMetricsType::GENERALIZED_SPATIAL:
+                return "GENERALIZED_SPATIAL";
+            case IndexFamilyMetricsType::TEXT_SEARCH:
+                return "TEXT_SEARCH";
+            case IndexFamilyMetricsType::ANN:
+                return "ANN";
+            case IndexFamilyMetricsType::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    inline auto indexMetricsConfidenceClassName(IndexMetricsConfidenceClass value)
+        -> const char *
+    {
+        switch (value)
+        {
+            case IndexMetricsConfidenceClass::LOW:
+                return "LOW";
+            case IndexMetricsConfidenceClass::MEDIUM:
+                return "MEDIUM";
+            case IndexMetricsConfidenceClass::HIGH:
+                return "HIGH";
+            case IndexMetricsConfidenceClass::INVALID:
+                return "INVALID";
+            case IndexMetricsConfidenceClass::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    inline auto indexMetricsQueryabilityStateName(
+        IndexMetricsQueryabilityState value) -> const char *
+    {
+        switch (value)
+        {
+            case IndexMetricsQueryabilityState::QUERYABLE:
+                return "QUERYABLE";
+            case IndexMetricsQueryabilityState::LIMITED:
+                return "LIMITED";
+            case IndexMetricsQueryabilityState::INVALID:
+                return "INVALID";
+            case IndexMetricsQueryabilityState::UNKNOWN:
             default:
                 return "UNKNOWN";
         }

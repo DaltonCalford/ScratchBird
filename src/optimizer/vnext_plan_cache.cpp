@@ -34,6 +34,11 @@ namespace scratchbird::optimizer
             message = "profile_version is required";
             return false;
         }
+        if (key.taxonomy_contract_id.empty())
+        {
+            message = "taxonomy_contract_id is required";
+            return false;
+        }
         if (key.payload_format.empty())
         {
             message = "payload_format is required";
@@ -62,6 +67,16 @@ namespace scratchbird::optimizer
         if (key.plan_profile_signature.empty())
         {
             message = "plan_profile_signature is required";
+            return false;
+        }
+        if (key.index_family_signature.empty())
+        {
+            message = "index_family_signature is required";
+            return false;
+        }
+        if (key.family_statistics_signature.empty())
+        {
+            message = "family_statistics_signature is required";
             return false;
         }
         if (key.statistics_snapshot_signature.empty())

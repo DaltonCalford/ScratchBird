@@ -29,9 +29,10 @@ uint64_t stableHash64(std::string_view data) {
 
 std::string buildPlanCacheKey(const PlanCacheKeyInput& input) {
     std::ostringstream oss;
-    oss << "pc.v2";
+    oss << "pc.v3";
     oss << "|profile_id=" << input.profile_id;
     oss << "|profile_ver=" << input.profile_version;
+    oss << "|taxonomy=" << input.taxonomy_contract_id;
     oss << "|fmt=" << input.payload_format;
     oss << "|payload=" << input.payload_hash;
     oss << "|sess_sig=" << input.session_option_signature;
@@ -49,6 +50,8 @@ std::string buildPlanCacheKey(const PlanCacheKeyInput& input) {
     oss << "|norm=" << input.normalization_rule_set_id;
     oss << "|obj=" << input.object_ref_digest;
     oss << "|plan_profile=" << input.plan_profile_signature;
+    oss << "|family_sig=" << input.index_family_signature;
+    oss << "|family_stats=" << input.family_statistics_signature;
     oss << "|stats_sig=" << input.statistics_snapshot_signature;
     oss << "|cost_profile=" << input.cost_profile_id;
     oss << "|policy_snapshot=" << input.policy_snapshot_id;

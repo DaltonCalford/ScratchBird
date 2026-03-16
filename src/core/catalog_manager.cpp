@@ -9630,12 +9630,19 @@ bool hasTriggerNameConflictInTable(
         uint16_t avg_entry_len;
         uint32_t leaf_pages;
         uint16_t height;
-        uint8_t reserved1[6];
+        uint8_t metrics_confidence_class;
+        uint8_t queryability_state;
+        uint8_t reserved1[4];
         uint64_t clustering_factor;
         float correlation;
         float bloat_ratio;
         uint64_t last_vacuum_txid;
         uint64_t last_reindex_txid;
+        uint64_t metrics_last_refresh_xid;
+        uint32_t family_metrics_version;
+        uint16_t family_metrics_type;
+        uint8_t reserved2[2];
+        ID family_metrics_payload_oid;
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t padding;
@@ -61052,6 +61059,57 @@ auto CatalogManager::deleteIndexBuildDeltaCatalogEntry(const ID& build_delta_id,
 // Canonical index telemetry extension catalog CRUD operations (CAT-017)
 // ============================================================================
 
+namespace
+{
+    auto isValidIndexMetricsConfidenceClass(
+        scratchbird::optimizer::IndexMetricsConfidenceClass value) -> bool
+    {
+        using Confidence = scratchbird::optimizer::IndexMetricsConfidenceClass;
+        switch (value)
+        {
+            case Confidence::UNKNOWN:
+            case Confidence::LOW:
+            case Confidence::MEDIUM:
+            case Confidence::HIGH:
+            case Confidence::INVALID:
+                return true;
+        }
+        return false;
+    }
+
+    auto isValidIndexMetricsQueryabilityState(
+        scratchbird::optimizer::IndexMetricsQueryabilityState value) -> bool
+    {
+        using Queryability = scratchbird::optimizer::IndexMetricsQueryabilityState;
+        switch (value)
+        {
+            case Queryability::UNKNOWN:
+            case Queryability::QUERYABLE:
+            case Queryability::LIMITED:
+            case Queryability::INVALID:
+                return true;
+        }
+        return false;
+    }
+
+    auto isValidIndexFamilyMetricsType(
+        scratchbird::optimizer::IndexFamilyMetricsType value) -> bool
+    {
+        using Type = scratchbird::optimizer::IndexFamilyMetricsType;
+        switch (value)
+        {
+            case Type::UNKNOWN:
+            case Type::ORDERED_EXACT:
+            case Type::SUMMARY_CANDIDATE:
+            case Type::GENERALIZED_SPATIAL:
+            case Type::TEXT_SEARCH:
+            case Type::ANN:
+                return true;
+        }
+        return false;
+    }
+} // namespace
+
 auto CatalogManager::upsertIndexStatsCatalogEntry(const IndexStatsCatalogInfo& info,
                                                   ErrorContext* ctx) -> Status
 {
@@ -61087,8 +61145,55 @@ auto CatalogManager::upsertIndexStatsCatalogEntry(const IndexStatsCatalogInfo& i
                           "index_stats.distinct_count_est cannot exceed row_count_est");
         return Status::INVALID_ARGUMENT;
     }
+    if (!isValidIndexMetricsConfidenceClass(info.metrics_confidence_class))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "index_stats.metrics_confidence_class is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidIndexMetricsQueryabilityState(info.queryability_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "index_stats.queryability_state is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidIndexFamilyMetricsType(info.family_metrics_type))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "index_stats.family_metrics_type is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
 
     const uint64_t now = catalogNowTicks();
+    auto existing_predicate = [&info](const IndexStatsRecord& row) {
+        return row.index_id == info.index_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<IndexStatsRecord>(index_stats_table_page_, existing_predicate, ctx);
+    if (existing.status != Status::OK && existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    ID family_metrics_payload_oid{};
+    if (!info.family_metrics_payload.empty())
+    {
+        const uint64_t xmin = info.metrics_last_refresh_xid != 0
+                                  ? info.metrics_last_refresh_xid
+                                  : (info.last_analyze_txid != 0 ? info.last_analyze_txid : 1);
+        Status payload_status = storeStringInToast(info.family_metrics_payload,
+                                                   xmin,
+                                                   family_metrics_payload_oid,
+                                                   ctx);
+        if (payload_status != Status::OK)
+        {
+            return payload_status;
+        }
+    }
+    else if (existing.status == Status::OK)
+    {
+        family_metrics_payload_oid = existing.record.family_metrics_payload_oid;
+    }
+
     IndexStatsRecord rec{};
     rec.index_id = info.index_id;
     rec.stats_version = info.stats_version;
@@ -61102,18 +61207,22 @@ auto CatalogManager::upsertIndexStatsCatalogEntry(const IndexStatsCatalogInfo& i
     rec.avg_entry_len = info.avg_entry_len;
     rec.leaf_pages = info.leaf_pages;
     rec.height = info.height;
+    rec.metrics_confidence_class =
+        static_cast<uint8_t>(info.metrics_confidence_class);
+    rec.queryability_state =
+        static_cast<uint8_t>(info.queryability_state);
     rec.clustering_factor = info.clustering_factor;
     rec.correlation = info.correlation;
     rec.bloat_ratio = info.bloat_ratio;
     rec.last_vacuum_txid = info.last_vacuum_txid;
     rec.last_reindex_txid = info.last_reindex_txid;
+    rec.metrics_last_refresh_xid = info.metrics_last_refresh_xid;
+    rec.family_metrics_version = info.family_metrics_version;
+    rec.family_metrics_type = static_cast<uint16_t>(info.family_metrics_type);
+    rec.family_metrics_payload_oid = family_metrics_payload_oid;
     rec.is_valid = info.is_valid ? 1 : 0;
     rec.last_modified_time = (info.last_modified_time == 0) ? now : info.last_modified_time;
 
-    auto existing_predicate = [&info](const IndexStatsRecord& row) {
-        return row.index_id == info.index_id && row.is_valid == 1;
-    };
-    auto existing = findRecordInHeapPage<IndexStatsRecord>(index_stats_table_page_, existing_predicate, ctx);
     if (existing.status == Status::OK)
     {
         rec.created_time = existing.record.created_time;
@@ -61166,9 +61275,39 @@ auto CatalogManager::getIndexStatsCatalogEntry(const ID& index_id,
     info_out.bloat_ratio = result.record.bloat_ratio;
     info_out.last_vacuum_txid = result.record.last_vacuum_txid;
     info_out.last_reindex_txid = result.record.last_reindex_txid;
+    info_out.metrics_last_refresh_xid = result.record.metrics_last_refresh_xid;
+    info_out.family_metrics_version = result.record.family_metrics_version;
+    info_out.family_metrics_type =
+        static_cast<scratchbird::optimizer::IndexFamilyMetricsType>(
+            result.record.family_metrics_type);
+    info_out.metrics_confidence_class =
+        static_cast<scratchbird::optimizer::IndexMetricsConfidenceClass>(
+            result.record.metrics_confidence_class);
+    info_out.queryability_state =
+        static_cast<scratchbird::optimizer::IndexMetricsQueryabilityState>(
+            result.record.queryability_state);
     info_out.is_valid = result.record.is_valid == 1;
     info_out.created_time = result.record.created_time;
     info_out.last_modified_time = result.record.last_modified_time;
+    if (!isValidIndexFamilyMetricsType(info_out.family_metrics_type) ||
+        !isValidIndexMetricsConfidenceClass(info_out.metrics_confidence_class) ||
+        !isValidIndexMetricsQueryabilityState(info_out.queryability_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                          "index_stats typed family metrics metadata is invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    if (!isZeroUuidLocal(result.record.family_metrics_payload_oid))
+    {
+        Status load_status = loadStringFromToast(result.record.family_metrics_payload_oid,
+                                                0,
+                                                info_out.family_metrics_payload,
+                                                ctx);
+        if (load_status != Status::OK)
+        {
+            return load_status;
+        }
+    }
     return Status::OK;
 }
 
@@ -61199,12 +61338,58 @@ auto CatalogManager::listIndexStatsCatalogEntries(std::vector<IndexStatsCatalogI
         info.bloat_ratio = rec.bloat_ratio;
         info.last_vacuum_txid = rec.last_vacuum_txid;
         info.last_reindex_txid = rec.last_reindex_txid;
+        info.metrics_last_refresh_xid = rec.metrics_last_refresh_xid;
+        info.family_metrics_version = rec.family_metrics_version;
+        info.family_metrics_type =
+            static_cast<scratchbird::optimizer::IndexFamilyMetricsType>(
+                rec.family_metrics_type);
+        info.metrics_confidence_class =
+            static_cast<scratchbird::optimizer::IndexMetricsConfidenceClass>(
+                rec.metrics_confidence_class);
+        info.queryability_state =
+            static_cast<scratchbird::optimizer::IndexMetricsQueryabilityState>(
+                rec.queryability_state);
         info.is_valid = rec.is_valid == 1;
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
     };
-    return readRecordsToVector<IndexStatsRecord, IndexStatsCatalogInfo>(
+    Status status = readRecordsToVector<IndexStatsRecord, IndexStatsCatalogInfo>(
         index_stats_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (auto& row : rows_out)
+    {
+        if (!isValidIndexFamilyMetricsType(row.family_metrics_type) ||
+            !isValidIndexMetricsConfidenceClass(row.metrics_confidence_class) ||
+            !isValidIndexMetricsQueryabilityState(row.queryability_state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "index_stats typed family metrics metadata is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        auto predicate = [&row](const IndexStatsRecord& rec) {
+            return rec.index_id == row.index_id && rec.is_valid == 1;
+        };
+        auto result = findRecordInHeapPage<IndexStatsRecord>(index_stats_table_page_, predicate, ctx);
+        if (result.status != Status::OK)
+        {
+            return result.status;
+        }
+        if (!isZeroUuidLocal(result.record.family_metrics_payload_oid))
+        {
+            status = loadStringFromToast(result.record.family_metrics_payload_oid,
+                                         0,
+                                         row.family_metrics_payload,
+                                         ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+    }
+    return Status::OK;
 }
 
 auto CatalogManager::deleteIndexStatsCatalogEntry(const ID& index_id,

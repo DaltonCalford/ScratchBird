@@ -23,6 +23,7 @@ auto makeKey() -> PlanCacheKeyInput
     PlanCacheKeyInput key;
     key.profile_id = "native";
     key.profile_version = "3.0";
+    key.taxonomy_contract_id = "sb_runtime_plan/v10";
     key.payload_format = "SQL_TEXT";
     key.payload_hash = "hash_payload";
     key.session_option_signature = "sess_sig";
@@ -40,6 +41,9 @@ auto makeKey() -> PlanCacheKeyInput
     key.normalization_rule_set_id = 0x1301;
     key.object_ref_digest = "obj_digest";
     key.plan_profile_signature = "GENERIC";
+    key.index_family_signature =
+        "0:1:BTREE_EQ_SCAN:2:EXACT_KEY:INDEX_NATIVE:0:QUERYABLE";
+    key.family_statistics_signature = "0:BTREE_EQ_SCAN:7:HIGH:QUERYABLE";
     key.statistics_snapshot_signature = "stats:1;4";
     key.cost_profile_id = "sb_cost_formula/default@1";
     key.policy_snapshot_id = "policy:g1:t1";

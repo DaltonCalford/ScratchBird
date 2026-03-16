@@ -33,7 +33,19 @@ namespace scratchbird::optimizer
         bool skip_scan = false;
         bool bitmap_combine = false;
         bool nearest_order = false;
+        bool ranking_requested = false;
+        bool corpus_stats_available = false;
+        bool candidate_bitmap_available = false;
         PredicateMatchShape predicate_shape = PredicateMatchShape::NONE;
+        bool strategy_bound = false;
+        uint16_t strategy_number = 0;
+        bool support_consistent = false;
+        bool support_distance = false;
+        bool nearest_lower_bound_validated = false;
+        uint64_t candidate_budget = 0;
+        bool ann_metric_compatible = false;
+        bool ann_rerank_enabled = false;
+        bool ann_exact_fallback = false;
     };
 
     struct PlannerFamilyLoweringResult
@@ -55,6 +67,16 @@ namespace scratchbird::optimizer
 
     auto lowerPlannerFamily(const PlannerFamilyLoweringRequest &request)
         -> PlannerFamilyLoweringResult;
+
+    auto buildPlannerFamilyLoweringRequest(core::CatalogManager *catalog,
+                                           const core::CatalogManager::IndexInfo &index,
+                                           PredicateMatchShape predicate_shape,
+                                           const std::string &operator_name,
+                                           bool ordered_output = false,
+                                           bool skip_scan = false,
+                                           bool bitmap_combine = false,
+                                           bool nearest_order = false)
+        -> PlannerFamilyLoweringRequest;
 
     auto lowerSequentialPlannerFamily() -> PlannerFamilyLoweringResult;
 

@@ -10,6 +10,7 @@ struct PlanCacheKeyInput {
     // Canonical cache binding fields required by vNext contracts.
     std::string profile_id;
     std::string profile_version;
+    std::string taxonomy_contract_id;
     std::string payload_format;
     std::string payload_hash;
     std::string session_option_signature;
@@ -27,6 +28,8 @@ struct PlanCacheKeyInput {
     uint16_t normalization_rule_set_id = 0;
     std::string object_ref_digest;
     std::string plan_profile_signature;
+    std::string index_family_signature;
+    std::string family_statistics_signature;
     std::string statistics_snapshot_signature;
     std::string cost_profile_id;
     std::string policy_snapshot_id;
