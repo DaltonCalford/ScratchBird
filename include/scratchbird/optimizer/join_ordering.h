@@ -55,10 +55,22 @@ struct RelationInfo
     core::ID table_id;
     std::string table_name;
     std::string alias;
+    std::vector<std::shared_ptr<Path>> candidate_paths;
+    std::vector<std::string> candidate_labels;
     std::shared_ptr<Path> best_path;
+    uint64_t best_path_rows = 0;
     uint64_t rows;
     uint64_t width;
 };
+
+struct JoinSearchEntry
+{
+    std::shared_ptr<Path> best_path;
+    double cost = std::numeric_limits<double>::max();
+    uint64_t rows = 0;
+};
+
+using JoinSearchFrontier = std::vector<JoinSearchEntry>;
 
 /**
  * JoinEdge - Represents a join condition between two relations (V3 types)
@@ -133,6 +145,11 @@ public:
                       const std::string& alias,
                       std::shared_ptr<Path> best_path);
 
+    size_t addRelation(const core::ID& table_id,
+                      const std::string& table_name,
+                      const std::string& alias,
+                      const std::vector<std::shared_ptr<Path>>& candidate_paths);
+
     size_t addJoinEdge(size_t left_idx, size_t right_idx,
                        parser::JoinType join_type,
                        parser::v3::Expression* join_condition,
@@ -164,18 +181,11 @@ public:
 
 private:
     using RelationSet = uint64_t;
-
-    struct DPEntry
-    {
-        std::shared_ptr<Path> best_path;
-        double cost;
-        uint64_t rows;
-
-        DPEntry() : cost(std::numeric_limits<double>::max()), rows(0) {}
-    };
+    using DPEntry = JoinSearchEntry;
+    using DPFrontier = JoinSearchFrontier;
 
     // DP helper methods
-    DPEntry generateSubsetPlan(RelationSet subset, core::ErrorContext* ctx);
+    DPFrontier generateSubsetPlans(RelationSet subset, core::ErrorContext* ctx);
     DPEntry costJoin(const DPEntry& left_entry, const DPEntry& right_entry,
                      const JoinEdge& edge, core::ErrorContext* ctx,
                      bool preserve_orientation = false);
@@ -188,6 +198,11 @@ private:
     void recordFallback(const std::string& reason,
                         const std::string& threshold_name,
                         size_t threshold_value);
+    void pushFrontierEntry(DPFrontier& frontier, DPEntry entry);
+    auto frontierBestPath(const DPFrontier& frontier) const -> std::shared_ptr<Path>;
+    auto frontierBestEntry(const DPFrontier& frontier) const -> const DPEntry*;
+    auto baseFrontierForRelation(const RelationInfo& relation) -> DPFrontier;
+    auto frontierSignature(const DPEntry& entry) const -> std::string;
     std::vector<size_t> findConnectingEdges(RelationSet left_set, RelationSet right_set) const;
     bool hasJoinReorderBarrier() const;
     bool isConnected(RelationSet set) const;
@@ -207,7 +222,7 @@ private:
     JoinPlanningTelemetry telemetry_;
     std::vector<RelationInfo> relations_;
     std::vector<JoinEdge> join_edges_;
-    std::unordered_map<RelationSet, DPEntry> dp_table_;
+    std::unordered_map<RelationSet, DPFrontier> dp_table_;
 };
 
 } // namespace scratchbird::optimizer

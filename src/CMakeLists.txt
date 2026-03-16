@@ -352,6 +352,7 @@ if(SCRATCHBIRD_WITH_COMPILER)
     set(SCRATCHBIRD_OPTIMIZER_COMPILER_SOURCES
         optimizer/mv_rewriter.cpp
         optimizer/index_advisor.cpp
+        optimizer/index_family_lowering.cpp
         optimizer/query_planner.cpp
         optimizer/selectivity_estimator.cpp
         optimizer/join_ordering.cpp

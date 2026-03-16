@@ -19,6 +19,7 @@
  */
 
 #include "scratchbird/optimizer/query_planner.h"
+#include "scratchbird/optimizer/index_family_lowering.h"
 #include "scratchbird/optimizer/join_ordering.h"
 #include "scratchbird/executor/parallel_executor.h"
 
@@ -45,6 +46,14 @@ namespace scratchbird::optimizer
             std::shared_ptr<PlanNode> plan;
             RuntimePlanRelation runtime_relation;
             AccessPathDescriptor access_descriptor;
+            std::vector<std::string> candidate_scan_families;
+            double selectivity = 1.0;
+        };
+
+        struct BaseRelationCandidateBundle
+        {
+            size_t relation_index = 0;
+            std::vector<BaseAccessChoice> candidates;
             std::vector<std::string> candidate_scan_families;
             double selectivity = 1.0;
         };
@@ -309,6 +318,23 @@ namespace scratchbird::optimizer
             key.nulls_first = nulls_first;
             key.comparator_family = std::move(comparator_family);
             return key;
+        }
+
+        auto predicateMatchShape(ResolvedPredicateKind kind)
+            -> PredicateMatchShape
+        {
+            switch (kind)
+            {
+                case ResolvedPredicateKind::EQUALITY:
+                    return PredicateMatchShape::EQUALITY;
+                case ResolvedPredicateKind::RANGE:
+                    return PredicateMatchShape::RANGE;
+                case ResolvedPredicateKind::LIKE_PREFIX:
+                    return PredicateMatchShape::LIKE_PREFIX;
+                case ResolvedPredicateKind::NONE:
+                default:
+                    return PredicateMatchShape::NONE;
+            }
         }
 
         auto orderItemNullsFirst(const parser::v3::OrderByItem *item) -> bool
@@ -4731,14 +4757,15 @@ namespace scratchbird::optimizer
         std::vector<RuntimePlanTraceEntry> considered_paths;
         std::vector<RuntimePlanTraceEntry> rejected_paths;
         std::vector<RuntimePlanStatisticsProvenance> statistics_provenance;
-        std::vector<BaseAccessChoice> access_choices(planned_out.resolved_query.relations.size());
+        std::vector<BaseRelationCandidateBundle> access_bundles(
+            planned_out.resolved_query.relations.size());
         for (size_t relation_index = 0;
              relation_index < planned_out.resolved_query.relations.size();
              ++relation_index)
         {
             const auto &relation = planned_out.resolved_query.relations[relation_index];
-            BaseAccessChoice choice;
-            choice.relation_index = relation_index;
+            BaseRelationCandidateBundle bundle;
+            bundle.relation_index = relation_index;
 
             std::vector<core::ID> required_column_ids;
             std::vector<parser::v3::FunctionCallExpr *> relation_aggregates;
@@ -5266,9 +5293,10 @@ namespace scratchbird::optimizer
             best_plan = seq_plan;
 
             std::string best_scan_kind = "SEQ_SCAN";
-            std::string best_scan_family = "SEQ_SCAN";
+            PlannerFamilyLoweringResult best_lowering =
+                lowerSequentialPlannerFamily();
+            std::string best_scan_family = best_lowering.family_name;
             std::vector<std::string> best_scan_family_tags;
-            RuntimePlanIndexPredicate best_runtime_predicate;
             std::vector<RuntimePlanIndexPredicate> best_runtime_predicates;
             std::string best_bitmap_op;
             bool best_covering_index = false;
@@ -5281,20 +5309,249 @@ namespace scratchbird::optimizer
             std::vector<size_t> best_required_outer_relation_indexes;
             std::vector<std::string> best_required_outer_relation_aliases;
             core::CatalogManager::IndexInfo matched_index{};
-            appendUniqueText(choice.candidate_scan_families, "SEQ_SCAN");
+            auto makeBaseAccessChoice =
+                [&](std::shared_ptr<Path> candidate_path,
+                    std::shared_ptr<PlanNode> candidate_plan,
+                    const CostEstimate &candidate_cost,
+                    const std::string &scan_kind,
+                    const std::string &scan_family,
+                    const PlannerFamilyLoweringResult &lowering,
+                    const std::vector<std::string> &scan_family_tags,
+                    const std::vector<RuntimePlanIndexPredicate>
+                        &runtime_predicates,
+                    const std::string &bitmap_op,
+                    bool covering_index,
+                    bool exact_key_lookup,
+                    bool ordered_output,
+                    uint64_t ordered_prefix_length,
+                    const std::vector<AccessPathDescriptor::OrderingKey>
+                        &ordering_keys,
+                    bool order_complete,
+                    double interesting_order_score,
+                    const std::vector<size_t>
+                        &required_outer_relation_indexes,
+                    const std::vector<std::string>
+                        &required_outer_relation_aliases,
+                    const core::CatalogManager::IndexInfo &candidate_index,
+                    const std::vector<std::string> &candidate_scan_families)
+                    -> BaseAccessChoice {
+                    BaseAccessChoice candidate;
+                    candidate.relation_index = relation_index;
+                    candidate.path = std::move(candidate_path);
+                    candidate.plan = std::move(candidate_plan);
+                    candidate.selectivity = selectivity;
+                    candidate.candidate_scan_families = candidate_scan_families;
+                    candidate.runtime_relation.source_relation_index =
+                        relation_index;
+                    candidate.runtime_relation.table_path = relation.table_path;
+                    candidate.runtime_relation.physical_table_path =
+                        relation.physical_table_path;
+                    candidate.runtime_relation.alias = relation.alias;
+                    candidate.runtime_relation.table_id_text =
+                        relation.resolved
+                            ? relation.table_info.table_id.toString()
+                            : std::string();
+                    candidate.runtime_relation.base_rows = base_rows;
+                    candidate.runtime_relation.selectivity = selectivity;
+                    candidate.runtime_relation.scan_kind = scan_kind;
+                    candidate.runtime_relation.scan_family = scan_family;
+                    candidate.runtime_relation.path_name = lowering.path_name;
+                    candidate.runtime_relation.scan_family_kind =
+                        lowering.family;
+                    candidate.runtime_relation.taxonomy_version =
+                        kPlannerFamilyTaxonomyVersion;
+                    candidate.runtime_relation.scan_family_tags =
+                        scan_family_tags;
+                    candidate.runtime_relation.candidate_scan_families =
+                        candidate_scan_families;
+                    candidate.runtime_relation.exactness_class =
+                        lowering.exactness_class;
+                    candidate.runtime_relation.requires_recheck =
+                        lowering.requires_recheck;
+                    candidate.runtime_relation.coverage_fraction =
+                        scan_kind == "SEQ_SCAN"
+                            ? 1.0
+                            : (covering_index ? 1.0 : 0.0);
+                    candidate.runtime_relation.candidate_budget =
+                        scan_kind == "BITMAP_INDEX_SCAN"
+                            ? static_cast<uint64_t>(runtime_predicates.size())
+                            : 0;
+                    candidate.runtime_relation.visibility_enforcement =
+                        lowering.visibility_enforcement;
+                    candidate.runtime_relation.family_metrics_version = 0;
+                    candidate.runtime_relation.metrics_confidence_class =
+                        have_relation_table_stats
+                            ? statisticsConfidenceClassName(
+                                  relation_table_stats.confidence_class)
+                            : "UNKNOWN";
+                    candidate.runtime_relation.queryability_state =
+                        lowering.queryability_state;
+                    candidate.runtime_relation.bitmap_op = bitmap_op;
+                    candidate.runtime_relation.covering_index =
+                        covering_index;
+                    candidate.runtime_relation.exact_key_lookup =
+                        exact_key_lookup;
+                    candidate.runtime_relation.flattened_derived =
+                        relation.flattened_derived;
+                    candidate.runtime_relation.lateral = relation.lateral;
+                    candidate.runtime_relation.parameterized =
+                        relation.lateral;
+                    candidate.runtime_relation.ordered_output = ordered_output;
+                    candidate.runtime_relation.ordered_prefix_length =
+                        ordered_prefix_length;
+                    candidate.runtime_relation.required_outer_relation_indexes =
+                        required_outer_relation_indexes;
+                    candidate.runtime_relation.required_outer_relation_aliases =
+                        required_outer_relation_aliases;
+                    candidate.runtime_relation.partition_pruned = pruning.pruned;
+                    candidate.runtime_relation.partition_strategy =
+                        pruning.strategy;
+                    candidate.runtime_relation.partition_key_column =
+                        pruning.key_column;
+                    candidate.runtime_relation.partition_key_columns =
+                        pruning.key_columns;
+                    candidate.runtime_relation.partition_targets =
+                        pruning.targets;
+                    candidate.runtime_relation
+                        .partition_targets_pruned_at_plan =
+                        pruning.pruned_targets_at_plan;
+                    candidate.runtime_relation
+                        .runtime_partition_pruning_eligible =
+                        pruning.runtime_pruning_eligible;
+                    candidate.runtime_relation
+                        .runtime_partition_pruning_sources =
+                        pruning.runtime_pruning_sources;
+                    candidate.runtime_relation.partition_predicates =
+                        pruning.predicates;
+                    candidate.runtime_relation.startup_cost =
+                        candidate_cost.startup_cost;
+                    candidate.runtime_relation.total_cost =
+                        candidate_cost.total_cost;
+                    candidate.runtime_relation.estimated_rows =
+                        candidate_cost.rows;
+                    candidate.runtime_relation.formula_profile_id =
+                        candidate_cost.formula_profile_id;
+                    candidate.runtime_relation.formula_profile_version =
+                        candidate_cost.formula_profile_version;
+                    candidate.runtime_relation.calibration_profile_id =
+                        candidate_cost.calibration_profile_id;
+                    if (!runtime_predicates.empty())
+                    {
+                        candidate.runtime_relation.index_predicates =
+                            runtime_predicates;
+                        candidate.runtime_relation.index_predicate =
+                            runtime_predicates.front();
+                    }
+                    if (!runtime_predicates.empty() &&
+                        !runtime_predicates.front().index_name.empty())
+                    {
+                        candidate.runtime_relation.index_name =
+                            runtime_predicates.front().index_name;
+                        candidate.runtime_relation.index_id_text =
+                            runtime_predicates.front().index_id_text;
+                    }
+                    else if (!isZeroId(candidate_index.index_id))
+                    {
+                        candidate.runtime_relation.index_name =
+                            candidate_index.index_name;
+                        candidate.runtime_relation.index_id_text =
+                            candidate_index.index_id.toString();
+                    }
+
+                    candidate.access_descriptor.family = scan_family;
+                    candidate.access_descriptor.path_name = lowering.path_name;
+                    candidate.access_descriptor.family_kind = lowering.family;
+                    candidate.access_descriptor.family_tags =
+                        scan_family_tags;
+                    candidate.access_descriptor.taxonomy_version =
+                        kPlannerFamilyTaxonomyVersion;
+                    candidate.access_descriptor.exactness_class =
+                        lowering.exactness_class;
+                    candidate.access_descriptor.requires_recheck =
+                        lowering.requires_recheck;
+                    candidate.access_descriptor.coverage_fraction =
+                        scan_kind == "SEQ_SCAN"
+                            ? 1.0
+                            : (covering_index ? 1.0 : 0.0);
+                    candidate.access_descriptor.candidate_budget =
+                        scan_kind == "BITMAP_INDEX_SCAN"
+                            ? static_cast<uint64_t>(runtime_predicates.size())
+                            : 0;
+                    candidate.access_descriptor.visibility_enforcement =
+                        lowering.visibility_enforcement;
+                    candidate.access_descriptor.family_metrics_version = 0;
+                    candidate.access_descriptor.metrics_confidence_class =
+                        candidate.runtime_relation.metrics_confidence_class;
+                    candidate.access_descriptor.queryability_state =
+                        lowering.queryability_state;
+                    candidate.access_descriptor.formula_profile_id =
+                        candidate_cost.formula_profile_id;
+                    candidate.access_descriptor.formula_profile_version =
+                        candidate_cost.formula_profile_version;
+                    candidate.access_descriptor.calibration_profile_id =
+                        candidate_cost.calibration_profile_id;
+                    candidate.access_descriptor.ordered_output =
+                        ordered_output;
+                    candidate.access_descriptor.ordered_prefix_length =
+                        ordered_prefix_length;
+                    candidate.access_descriptor.ordering_keys =
+                        ordering_keys;
+                    candidate.access_descriptor.order_complete =
+                        order_complete;
+                    candidate.access_descriptor.parameterized =
+                        relation.lateral;
+                    candidate.access_descriptor
+                        .required_outer_relation_indexes =
+                        required_outer_relation_indexes;
+                    candidate.access_descriptor.interesting_order_score =
+                        interesting_order_score;
+                    if (candidate.path)
+                    {
+                        candidate.path->setAccessDescriptor(
+                            candidate.access_descriptor);
+                    }
+                    return candidate;
+                };
+            auto registerBundleCandidate =
+                [&](BaseAccessChoice candidate) {
+                    bundle.candidates.push_back(std::move(candidate));
+                };
+            appendUniqueText(bundle.candidate_scan_families,
+                             best_lowering.family_name);
             for (const auto &index : relation.indexes)
             {
-                if (index.is_partial_index)
+                if (index.is_partial_index && partialIndexMatches(index))
                 {
-                    appendUniqueText(choice.candidate_scan_families,
+                    appendUniqueText(bundle.candidate_scan_families,
                                      "PARTIAL_INDEX_SCAN");
                 }
-                if (index.is_expression_index)
+                if (index.is_expression_index && expressionIndexMatches(index))
                 {
-                    appendUniqueText(choice.candidate_scan_families,
+                    appendUniqueText(bundle.candidate_scan_families,
                                      "EXPRESSION_INDEX_SCAN");
                 }
             }
+            registerBundleCandidate(makeBaseAccessChoice(
+                seq_path,
+                seq_plan,
+                best_cost,
+                best_scan_kind,
+                best_scan_family,
+                best_lowering,
+                best_scan_family_tags,
+                {},
+                std::string(),
+                false,
+                false,
+                false,
+                0,
+                {},
+                false,
+                0.0,
+                {},
+                {},
+                core::CatalogManager::IndexInfo{},
+                {best_scan_kind, best_scan_family}));
 
             auto indexCoversColumns =
                 [&](const core::CatalogManager::IndexInfo &index) -> bool {
@@ -5316,11 +5573,36 @@ namespace scratchbird::optimizer
                     return true;
                 };
 
+            auto loweringRequestForPredicate =
+                [&](const core::CatalogManager::IndexInfo &index,
+                    ResolvedPredicateKind predicate_kind,
+                    bool ordered_output,
+                    bool skip_scan) -> PlannerFamilyLoweringRequest {
+                    PlannerFamilyLoweringRequest lowering_request;
+                    lowering_request.index_type = index.index_type;
+                    lowering_request.ordered_output = ordered_output;
+                    lowering_request.skip_scan = skip_scan;
+                    lowering_request.predicate_shape =
+                        predicateMatchShape(predicate_kind);
+                    return lowering_request;
+                };
+
+            auto supportsExactLookup =
+                [&](const PlannerFamilyLoweringResult &lowering,
+                    const ResolvedScanPredicate &predicate) -> bool {
+                    return lowering.queryability_state !=
+                               AccessPathQueryabilityState::INVALID &&
+                           lowering.exactness_class ==
+                               AccessPathExactnessClass::EXACT_KEY &&
+                           predicateSupportsExactLookup(predicate);
+                };
+
             auto indexOrderingKeys =
-                [&](const core::CatalogManager::IndexInfo &index)
+                [&](const core::CatalogManager::IndexInfo &index,
+                    const PlannerFamilyLoweringResult &lowering)
                     -> std::vector<AccessPathDescriptor::OrderingKey> {
                     std::vector<AccessPathDescriptor::OrderingKey> keys;
-                    if (index.index_type != core::CatalogManager::IndexType::BTREE)
+                    if (!lowering.supports_ordering)
                     {
                         return keys;
                     }
@@ -5357,22 +5639,83 @@ namespace scratchbird::optimizer
                                                              predicate_selectivity));
                 const double correlation = predicateCorrelationHint(predicate);
                 const bool covering_index = indexCoversColumns(index);
-                const bool exact_key_lookup =
-                    index.index_type == core::CatalogManager::IndexType::BTREE &&
-                    predicateSupportsExactLookup(predicate);
                 const bool multicolumn_prefix_match =
                     index.column_ids.size() > 1 &&
                     !index.column_ids.empty() &&
                     index.column_ids.front() == predicate.column_id;
                 const uint64_t ordered_prefix_length =
                     orderedPrefixLengthForIndex(index);
+                const PlannerFamilyLoweringRequest lowering_request =
+                    loweringRequestForPredicate(index,
+                                               predicate.kind,
+                                               ordered_prefix_length > 0,
+                                               false);
+                const PlannerFamilyLoweringResult lowered_candidate =
+                    lowerPlannerFamily(lowering_request);
+                if (lowered_candidate.queryability_state ==
+                    AccessPathQueryabilityState::INVALID)
+                {
+                    continue;
+                }
+                const bool exact_key_lookup =
+                    supportsExactLookup(lowered_candidate, predicate);
                 const bool partial_index_match = partialIndexMatches(index);
                 const bool expression_index_match =
                     expressionIndexMatches(index);
+                const std::string lowered_trace_family =
+                    lowered_candidate.family_name.empty()
+                        ? std::string("INDEX_SCAN")
+                        : lowered_candidate.family_name;
+                if (index.is_partial_index && !partial_index_match)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "ACCESS_PATH",
+                                       relation_subject,
+                                       accessTraceCandidateLabel(
+                                           lowered_trace_family,
+                                           index.index_name,
+                                           std::string()),
+                                       "REJECTED",
+                                       "partial index predicate not implied by relation filter",
+                                       0.0,
+                                       0.0,
+                                       0.0);
+                    continue;
+                }
+                if (index.is_expression_index && !expression_index_match)
+                {
+                    appendRuntimeTrace(rejected_paths,
+                                       "ACCESS_PATH",
+                                       relation_subject,
+                                       accessTraceCandidateLabel(
+                                           lowered_trace_family,
+                                           index.index_name,
+                                           std::string()),
+                                       "REJECTED",
+                                       "expression index expression not present in relation filter",
+                                       0.0,
+                                       0.0,
+                                       0.0);
+                    continue;
+                }
+                const auto candidate_ordering_keys =
+                    indexOrderingKeys(index, lowered_candidate);
+                const bool candidate_order_complete =
+                    lowered_candidate.supports_ordering &&
+                    !candidate_ordering_keys.empty();
+                const double candidate_interesting_order_score =
+                    candidate_order_complete
+                        ? static_cast<double>(
+                              std::max<uint64_t>(ordered_prefix_length,
+                                                 candidate_ordering_keys.size()))
+                        : 0.0;
 
                 CostEstimate candidate_cost{};
                 std::string scan_kind = "INDEX_SCAN";
-                if (index.index_type == core::CatalogManager::IndexType::LSM)
+                if (lowered_candidate.family == PlannerAccessFamily::LSM_EQ_SCAN ||
+                    lowered_candidate.family == PlannerAccessFamily::LSM_RANGE_SCAN ||
+                    lowered_candidate.family ==
+                        PlannerAccessFamily::LSM_ORDERED_RANGE_SCAN)
                 {
                     candidate_cost = active_cost_model.costLSMScan(3,
                                                              2,
@@ -5384,7 +5727,7 @@ namespace scratchbird::optimizer
                                                              ctx);
                     scan_kind = "LSM_SCAN";
                 }
-                else if (covering_index)
+                else if (covering_index && lowered_candidate.supports_covering)
                 {
                     candidate_cost = active_cost_model.costIndexOnlyScan(3,
                                                                    index_pages,
@@ -5418,30 +5761,18 @@ namespace scratchbird::optimizer
                                        "ADJUSTED",
                                        relation_stats_penalty_reason,
                                        candidate_cost.startup_cost,
-                                       candidate_cost.total_cost,
-                                       candidate_cost.rows);
+                                                               candidate_cost.total_cost,
+                                                               candidate_cost.rows);
                 }
                 std::vector<std::string> candidate_scan_families;
                 appendUniqueText(candidate_scan_families, scan_kind);
-                const auto candidate_ordering_keys = indexOrderingKeys(index);
-                const bool candidate_order_complete =
-                    !candidate_ordering_keys.empty();
-                const double candidate_interesting_order_score =
-                    candidate_order_complete
-                        ? static_cast<double>(
-                              std::max<uint64_t>(ordered_prefix_length,
-                                                 candidate_ordering_keys.size()))
-                        : 0.0;
                 if (multicolumn_prefix_match)
                 {
                     appendUniqueText(candidate_scan_families,
                                      "MULTICOLUMN_PREFIX_INDEX_SCAN");
                 }
-                if (ordered_prefix_length > 0)
-                {
-                    appendUniqueText(candidate_scan_families,
-                                     "ORDERED_INDEX_SCAN");
-                }
+                appendUniqueText(candidate_scan_families,
+                                 lowered_candidate.family_name);
                 if (partial_index_match)
                 {
                     appendUniqueText(candidate_scan_families,
@@ -5452,26 +5783,13 @@ namespace scratchbird::optimizer
                     appendUniqueText(candidate_scan_families,
                                      "EXPRESSION_INDEX_SCAN");
                 }
-                std::string candidate_scan_family = scan_kind;
-                if (expression_index_match)
-                {
-                    candidate_scan_family = "EXPRESSION_INDEX_SCAN";
-                }
-                else if (partial_index_match)
-                {
-                    candidate_scan_family = "PARTIAL_INDEX_SCAN";
-                }
-                else if (ordered_prefix_length > 0)
-                {
-                    candidate_scan_family = "ORDERED_INDEX_SCAN";
-                }
-                else if (multicolumn_prefix_match)
-                {
-                    candidate_scan_family = "MULTICOLUMN_PREFIX_INDEX_SCAN";
-                }
+                std::string candidate_scan_family =
+                    lowered_candidate.family_name.empty()
+                        ? scan_kind
+                        : lowered_candidate.family_name;
                 for (const auto &family : candidate_scan_families)
                 {
-                    appendUniqueText(choice.candidate_scan_families, family);
+                    appendUniqueText(bundle.candidate_scan_families, family);
                 }
                 const double candidate_mga_penalty = applyMgaCostPenalty(
                     candidate_cost,
@@ -5507,6 +5825,85 @@ namespace scratchbird::optimizer
                                    candidate_cost.startup_cost,
                                    candidate_cost.total_cost,
                                    candidate_cost.rows);
+                const RuntimePlanIndexPredicate candidate_runtime_predicate =
+                    makeRuntimePredicate(predicate);
+                const std::vector<RuntimePlanIndexPredicate>
+                    candidate_runtime_predicates = {candidate_runtime_predicate};
+                std::shared_ptr<Path> candidate_path;
+                std::shared_ptr<PlanNode> candidate_plan;
+                if (scan_kind == "INDEX_ONLY_SCAN")
+                {
+                    candidate_path = std::make_shared<IndexOnlyScanPath>(
+                        relation.table_info.table_id,
+                        relation_name,
+                        index.index_id,
+                        index.index_name,
+                        3,
+                        index_pages,
+                        expected_rows,
+                        qual_cost,
+                        correlation,
+                        candidate_cost);
+                    auto index_plan =
+                        std::make_shared<IndexOnlyScanNode>(
+                            relation.table_info.table_id,
+                            relation_name,
+                            index.index_id,
+                            index.index_name);
+                    index_plan->setIndexCond(predicate.predicate_text);
+                    index_plan->setFilter(buildPredicateText(predicate_index));
+                    index_plan->setCost(candidate_cost);
+                    candidate_plan = index_plan;
+                }
+                else
+                {
+                    candidate_path = std::make_shared<IndexScanPath>(
+                        relation.table_info.table_id,
+                        relation_name,
+                        index.index_id,
+                        index.index_name,
+                        3,
+                        index_pages,
+                        expected_rows,
+                        heap_pages,
+                        expected_rows,
+                        qual_cost,
+                        correlation,
+                        candidate_cost);
+                    auto index_plan = std::make_shared<IndexScanNode>(
+                        relation.table_info.table_id,
+                        relation_name,
+                        index.index_id,
+                        index.index_name);
+                    index_plan->setIndexQualCost(qual_cost);
+                    index_plan->setHeapQualCost(qual_cost);
+                    index_plan->setCorrelation(correlation);
+                    index_plan->setIndexCond(predicate.predicate_text);
+                    index_plan->setFilter(buildPredicateText(predicate_index));
+                    index_plan->setCost(candidate_cost);
+                    candidate_plan = index_plan;
+                }
+                registerBundleCandidate(makeBaseAccessChoice(
+                    candidate_path,
+                    candidate_plan,
+                    candidate_cost,
+                    scan_kind,
+                    candidate_scan_family,
+                    lowered_candidate,
+                    candidate_scan_families,
+                    candidate_runtime_predicates,
+                    std::string(),
+                    covering_index,
+                    exact_key_lookup,
+                    candidate_order_complete || ordered_prefix_length > 0,
+                    ordered_prefix_length,
+                    candidate_ordering_keys,
+                    candidate_order_complete,
+                    candidate_interesting_order_score,
+                    {},
+                    {},
+                    index,
+                    candidate_scan_families));
 
                 if (candidate_cost.total_cost > best_cost.total_cost)
                 {
@@ -5528,14 +5925,14 @@ namespace scratchbird::optimizer
                 best_cost = candidate_cost;
                 best_scan_kind = scan_kind;
                 best_scan_family = candidate_scan_family;
+                best_lowering = lowered_candidate;
                 best_scan_family_tags = candidate_scan_families;
                 best_scan_family_tags.erase(
                     std::remove(best_scan_family_tags.begin(),
                                 best_scan_family_tags.end(),
                                 best_scan_family),
                     best_scan_family_tags.end());
-                best_runtime_predicate = makeRuntimePredicate(predicate);
-                best_runtime_predicates = {best_runtime_predicate};
+                best_runtime_predicates = candidate_runtime_predicates;
                 best_bitmap_op.clear();
                 best_covering_index = covering_index;
                 best_exact_key_lookup = exact_key_lookup;
@@ -5548,60 +5945,13 @@ namespace scratchbird::optimizer
                 best_required_outer_relation_indexes.clear();
                 best_required_outer_relation_aliases.clear();
 
-                if (scan_kind == "INDEX_ONLY_SCAN")
-                {
-                    best_path = std::make_shared<IndexOnlyScanPath>(relation.table_info.table_id,
-                                                                    relation_name,
-                                                                    index.index_id,
-                                                                    index.index_name,
-                                                                    3,
-                                                                    index_pages,
-                                                                    expected_rows,
-                                                                    qual_cost,
-                                                                    correlation,
-                                                                    candidate_cost);
-                    auto index_plan =
-                        std::make_shared<IndexOnlyScanNode>(relation.table_info.table_id,
-                                                            relation_name,
-                                                            index.index_id,
-                                                            index.index_name);
-                    index_plan->setIndexCond(predicate.predicate_text);
-                    index_plan->setFilter(buildPredicateText(predicate_index));
-                    index_plan->setCost(candidate_cost);
-                    best_plan = index_plan;
-                }
-                else
-                {
-                    best_path = std::make_shared<IndexScanPath>(relation.table_info.table_id,
-                                                                relation_name,
-                                                                index.index_id,
-                                                                index.index_name,
-                                                                3,
-                                                                index_pages,
-                                                                expected_rows,
-                                                                heap_pages,
-                                                                expected_rows,
-                                                                qual_cost,
-                                                                correlation,
-                                                                candidate_cost);
-                    auto index_plan = std::make_shared<IndexScanNode>(relation.table_info.table_id,
-                                                                      relation_name,
-                                                                      index.index_id,
-                                                                      index.index_name);
-                    index_plan->setIndexQualCost(qual_cost);
-                    index_plan->setHeapQualCost(qual_cost);
-                    index_plan->setCorrelation(correlation);
-                    index_plan->setIndexCond(predicate.predicate_text);
-                    index_plan->setFilter(buildPredicateText(predicate_index));
-                    index_plan->setCost(candidate_cost);
-                    best_plan = index_plan;
-                }
+                best_path = candidate_path;
+                best_plan = candidate_plan;
             }
 
             for (const auto &index : relation.indexes)
             {
-                if (index.column_ids.size() < 2 ||
-                    index.index_type != core::CatalogManager::IndexType::BTREE)
+                if (index.column_ids.size() < 2)
                 {
                     continue;
                 }
@@ -5659,7 +6009,22 @@ namespace scratchbird::optimizer
                                        skip_cost.total_cost,
                                        skip_cost.rows);
                 }
-                appendUniqueText(choice.candidate_scan_families, "SKIP_SCAN");
+                PlannerFamilyLoweringRequest skip_lowering_request;
+                skip_lowering_request =
+                    loweringRequestForPredicate(index,
+                                               skip_predicate_it->kind,
+                                               false,
+                                               true);
+                const PlannerFamilyLoweringResult skip_lowered =
+                    lowerPlannerFamily(skip_lowering_request);
+                if (skip_lowered.queryability_state ==
+                        AccessPathQueryabilityState::INVALID ||
+                    skip_lowered.family != PlannerAccessFamily::BTREE_SKIP_SCAN)
+                {
+                    continue;
+                }
+                appendUniqueText(bundle.candidate_scan_families,
+                                 skip_lowered.family_name);
                 appendRuntimeTrace(considered_paths,
                                    "ACCESS_PATH",
                                    relation_subject,
@@ -5671,6 +6036,51 @@ namespace scratchbird::optimizer
                                    skip_cost.startup_cost,
                                    skip_cost.total_cost,
                                    skip_cost.rows);
+                auto skip_path = std::make_shared<IndexScanPath>(
+                    relation.table_info.table_id,
+                    relation_name,
+                    index.index_id,
+                    index.index_name,
+                    3,
+                    index_pages,
+                    expected_rows,
+                    heap_pages,
+                    expected_rows,
+                    qual_cost,
+                    0.15,
+                    skip_cost);
+                auto skip_plan = std::make_shared<IndexScanNode>(
+                    relation.table_info.table_id,
+                    relation_name,
+                    index.index_id,
+                    index.index_name);
+                skip_plan->setIndexQualCost(qual_cost);
+                skip_plan->setHeapQualCost(qual_cost);
+                skip_plan->setCorrelation(0.15);
+                skip_plan->setIndexCond(skip_predicate_it->predicate_text);
+                skip_plan->setFilter(buildPredicateText());
+                skip_plan->setCost(skip_cost);
+                registerBundleCandidate(makeBaseAccessChoice(
+                    skip_path,
+                    skip_plan,
+                    skip_cost,
+                    "INDEX_SCAN",
+                    skip_lowered.family_name,
+                    skip_lowered,
+                    {"SKIP_SCAN"},
+                    {makeRuntimePredicate(*skip_predicate_it)},
+                    std::string(),
+                    false,
+                    false,
+                    false,
+                    0,
+                    {},
+                    false,
+                    0.0,
+                    {},
+                    {},
+                    index,
+                    {"INDEX_SCAN", skip_lowered.family_name}));
                 if (skip_cost.total_cost > best_cost.total_cost)
                 {
                     appendRuntimeTrace(rejected_paths,
@@ -5690,10 +6100,11 @@ namespace scratchbird::optimizer
                 matched_index = index;
                 best_cost = skip_cost;
                 best_scan_kind = "INDEX_SCAN";
-                best_scan_family = "SKIP_SCAN";
-                best_scan_family_tags = {"INDEX_SCAN"};
-                best_runtime_predicate = makeRuntimePredicate(*skip_predicate_it);
-                best_runtime_predicates = {best_runtime_predicate};
+                best_scan_family = skip_lowered.family_name;
+                best_lowering = skip_lowered;
+                best_scan_family_tags = {"SKIP_SCAN"};
+                best_runtime_predicates = {
+                    makeRuntimePredicate(*skip_predicate_it)};
                 best_bitmap_op.clear();
                 best_covering_index = false;
                 best_exact_key_lookup = false;
@@ -5705,30 +6116,8 @@ namespace scratchbird::optimizer
                 best_required_outer_relation_indexes.clear();
                 best_required_outer_relation_aliases.clear();
 
-                best_path = std::make_shared<IndexScanPath>(relation.table_info.table_id,
-                                                            relation_name,
-                                                            index.index_id,
-                                                            index.index_name,
-                                                            3,
-                                                            index_pages,
-                                                            expected_rows,
-                                                            heap_pages,
-                                                            expected_rows,
-                                                            qual_cost,
-                                                            0.15,
-                                                            skip_cost);
-                auto index_plan = std::make_shared<IndexScanNode>(
-                    relation.table_info.table_id,
-                    relation_name,
-                    index.index_id,
-                    index.index_name);
-                index_plan->setIndexQualCost(qual_cost);
-                index_plan->setHeapQualCost(qual_cost);
-                index_plan->setCorrelation(0.15);
-                index_plan->setIndexCond(skip_predicate_it->predicate_text);
-                index_plan->setFilter(buildPredicateText());
-                index_plan->setCost(skip_cost);
-                best_plan = index_plan;
+                best_path = skip_path;
+                best_plan = skip_plan;
             }
 
             std::vector<RuntimePlanIndexPredicate> bitmap_predicates;
@@ -5740,8 +6129,18 @@ namespace scratchbird::optimizer
             uint64_t bitmap_total_index_pages = 0;
             for (const auto &predicate : predicates)
             {
-                if (!predicate.has_index_match ||
-                    predicate.matched_index.index_type != core::CatalogManager::IndexType::BTREE)
+                if (!predicate.has_index_match)
+                {
+                    bitmap_exact_lookup = false;
+                    continue;
+                }
+                const PlannerFamilyLoweringResult predicate_lowering =
+                    lowerPlannerFamily(loweringRequestForPredicate(
+                        predicate.matched_index,
+                        predicate.kind,
+                        false,
+                        false));
+                if (!supportsExactLookup(predicate_lowering, predicate))
                 {
                     bitmap_exact_lookup = false;
                     continue;
@@ -5843,14 +6242,16 @@ namespace scratchbird::optimizer
                     bitmap_exact_predicate_count == bitmap_predicates.size();
                 if (bitmap_cost.total_cost <= best_cost.total_cost || prefer_exact_bitmap)
                 {
+                    PlannerFamilyLoweringRequest bitmap_lowering_request;
+                    bitmap_lowering_request.bitmap_combine = true;
+                    const PlannerFamilyLoweringResult bitmap_lowered =
+                        lowerPlannerFamily(bitmap_lowering_request);
                     best_cost = bitmap_cost;
                     best_scan_kind = "BITMAP_INDEX_SCAN";
-                    best_scan_family = "BITMAP_INDEX_SCAN";
+                    best_scan_family = bitmap_lowered.family_name;
+                    best_lowering = bitmap_lowered;
                     best_scan_family_tags.clear();
                     best_runtime_predicates = bitmap_predicates;
-                    best_runtime_predicate =
-                        bitmap_predicates.empty() ? RuntimePlanIndexPredicate{}
-                                                  : bitmap_predicates.front();
                     best_bitmap_op = predicate_or ? "OR" : "AND";
                     best_covering_index = false;
                     best_exact_key_lookup = bitmap_exact_lookup;
@@ -5862,10 +6263,9 @@ namespace scratchbird::optimizer
                     best_required_outer_relation_indexes.clear();
                     best_required_outer_relation_aliases.clear();
                     matched_index = {};
-                    appendUniqueText(choice.candidate_scan_families,
-                                     "BITMAP_INDEX_SCAN");
-
-                    best_path = std::make_shared<BitmapIndexScanPath>(
+                    appendUniqueText(bundle.candidate_scan_families,
+                                     bitmap_lowered.family_name);
+                    auto bitmap_path = std::make_shared<BitmapIndexScanPath>(
                         relation.table_info.table_id,
                         relation_name,
                         bitmap_index_ids,
@@ -5886,6 +6286,28 @@ namespace scratchbird::optimizer
                     bitmap_plan->setIndexConds(bitmap_predicate_texts);
                     bitmap_plan->setFilter(buildPredicateText());
                     bitmap_plan->setCost(bitmap_cost);
+                    registerBundleCandidate(makeBaseAccessChoice(
+                        bitmap_path,
+                        bitmap_plan,
+                        bitmap_cost,
+                        "BITMAP_INDEX_SCAN",
+                        bitmap_lowered.family_name,
+                        bitmap_lowered,
+                        {},
+                        bitmap_predicates,
+                        best_bitmap_op,
+                        false,
+                        bitmap_exact_lookup,
+                        false,
+                        0,
+                        {},
+                        false,
+                        0.0,
+                        {},
+                        {},
+                        core::CatalogManager::IndexInfo{},
+                        {"BITMAP_INDEX_SCAN", bitmap_lowered.family_name}));
+                    best_path = bitmap_path;
                     best_plan = bitmap_plan;
                 }
                 else
@@ -5906,91 +6328,46 @@ namespace scratchbird::optimizer
                 }
             }
 
-            choice.path = best_path;
-            choice.plan = best_plan;
-            choice.selectivity = selectivity;
-            choice.runtime_relation.source_relation_index = relation_index;
-            choice.runtime_relation.table_path = relation.table_path;
-            choice.runtime_relation.physical_table_path = relation.physical_table_path;
-            choice.runtime_relation.alias = relation.alias;
-            choice.runtime_relation.table_id_text =
-                relation.resolved ? relation.table_info.table_id.toString() : std::string();
-            choice.runtime_relation.base_rows = base_rows;
-            choice.runtime_relation.selectivity = selectivity;
-            choice.runtime_relation.scan_kind = best_scan_kind;
-            choice.runtime_relation.scan_family = best_scan_family;
-            choice.runtime_relation.scan_family_tags = best_scan_family_tags;
-            choice.runtime_relation.candidate_scan_families =
-                choice.candidate_scan_families;
-            choice.runtime_relation.bitmap_op = best_bitmap_op;
-            choice.runtime_relation.covering_index = best_covering_index;
-            choice.runtime_relation.exact_key_lookup = best_exact_key_lookup;
-            choice.runtime_relation.flattened_derived = relation.flattened_derived;
-            choice.runtime_relation.lateral = relation.lateral;
-            choice.runtime_relation.parameterized = relation.lateral;
-            choice.runtime_relation.ordered_output = best_ordered_output;
-            choice.runtime_relation.ordered_prefix_length =
-                best_ordered_prefix_length;
-            choice.runtime_relation.required_outer_relation_indexes =
-                best_required_outer_relation_indexes;
-            choice.runtime_relation.required_outer_relation_aliases =
-                best_required_outer_relation_aliases;
-            choice.runtime_relation.partition_pruned = pruning.pruned;
-            choice.runtime_relation.partition_strategy = pruning.strategy;
-            choice.runtime_relation.partition_key_column = pruning.key_column;
-            choice.runtime_relation.partition_key_columns = pruning.key_columns;
-            choice.runtime_relation.partition_targets = pruning.targets;
-            choice.runtime_relation.partition_targets_pruned_at_plan =
-                pruning.pruned_targets_at_plan;
-            choice.runtime_relation.runtime_partition_pruning_eligible =
-                pruning.runtime_pruning_eligible;
-            choice.runtime_relation.runtime_partition_pruning_sources =
-                pruning.runtime_pruning_sources;
-            choice.runtime_relation.partition_predicates = pruning.predicates;
-            choice.runtime_relation.startup_cost = best_cost.startup_cost;
-            choice.runtime_relation.total_cost = best_cost.total_cost;
-            choice.runtime_relation.estimated_rows = best_cost.rows;
-            if (!best_runtime_predicates.empty())
+            bundle.selectivity = selectivity;
+            auto chosen_it = std::find_if(
+                bundle.candidates.begin(),
+                bundle.candidates.end(),
+                [&](const BaseAccessChoice &candidate) {
+                    return candidate.path == best_path;
+                });
+            if (chosen_it == bundle.candidates.end())
             {
-                choice.runtime_relation.index_predicates = best_runtime_predicates;
-                choice.runtime_relation.index_predicate = best_runtime_predicates.front();
+                std::vector<std::string> chosen_candidate_scan_families = {
+                    best_scan_kind,
+                    best_scan_family};
+                chosen_it = bundle.candidates.insert(
+                    bundle.candidates.end(),
+                    makeBaseAccessChoice(best_path,
+                                         best_plan,
+                                         best_cost,
+                                         best_scan_kind,
+                                         best_scan_family,
+                                         best_lowering,
+                                         best_scan_family_tags,
+                                         best_runtime_predicates,
+                                         best_bitmap_op,
+                                         best_covering_index,
+                                         best_exact_key_lookup,
+                                         best_ordered_output,
+                                         best_ordered_prefix_length,
+                                         best_ordering_keys,
+                                         best_order_complete,
+                                         best_interesting_order_score,
+                                         best_required_outer_relation_indexes,
+                                         best_required_outer_relation_aliases,
+                                         matched_index,
+                                         chosen_candidate_scan_families));
             }
-            if (!best_runtime_predicate.index_name.empty())
+            BaseAccessChoice chosen_choice = *chosen_it;
+            if (bundle.candidate_scan_families.empty())
             {
-                choice.runtime_relation.index_name = best_runtime_predicate.index_name;
-                choice.runtime_relation.index_id_text = best_runtime_predicate.index_id_text;
-            }
-            else if (!isZeroId(matched_index.index_id))
-            {
-                choice.runtime_relation.index_name = matched_index.index_name;
-                choice.runtime_relation.index_id_text = matched_index.index_id.toString();
-            }
-            appendRuntimeTrace(considered_paths,
-                               "ACCESS_PATH",
-                               relation_subject,
-                               accessTraceCandidateLabel(best_scan_kind,
-                                                        choice.runtime_relation.index_name,
-                                                        best_bitmap_op),
-                               "CHOSEN",
-                               "selected access path",
-                               best_cost.startup_cost,
-                               best_cost.total_cost,
-                               best_cost.rows);
-            choice.access_descriptor.family = best_scan_family;
-            choice.access_descriptor.family_tags = best_scan_family_tags;
-            choice.access_descriptor.ordered_output = best_ordered_output;
-            choice.access_descriptor.ordered_prefix_length =
-                best_ordered_prefix_length;
-            choice.access_descriptor.ordering_keys = best_ordering_keys;
-            choice.access_descriptor.order_complete = best_order_complete;
-            choice.access_descriptor.parameterized = relation.lateral;
-            choice.access_descriptor.required_outer_relation_indexes =
-                best_required_outer_relation_indexes;
-            choice.access_descriptor.interesting_order_score =
-                best_interesting_order_score;
-            if (choice.path)
-            {
-                choice.path->setAccessDescriptor(choice.access_descriptor);
+                bundle.candidate_scan_families =
+                    chosen_choice.candidate_scan_families;
             }
             if (relation.lateral)
             {
@@ -6002,20 +6379,56 @@ namespace scratchbird::optimizer
                     std::any_of(relation.indexes.begin(),
                                 relation.indexes.end(),
                                 [](const core::CatalogManager::IndexInfo &index) {
-                                    return index.index_type ==
-                                               core::CatalogManager::IndexType::BTREE ||
-                                           index.index_type ==
-                                               core::CatalogManager::IndexType::LSM;
+                                    PlannerFamilyLoweringRequest request;
+                                    request.index_type = index.index_type;
+                                    request.predicate_shape =
+                                        PredicateMatchShape::EQUALITY;
+                                    const auto lowered =
+                                        lowerPlannerFamily(request);
+                                    return lowered.queryability_state !=
+                                               AccessPathQueryabilityState::INVALID &&
+                                           lowered.supports_parameterization;
                                 });
                 if (has_parameterizable_index)
                 {
-                    appendUniqueText(choice.candidate_scan_families,
+                    appendUniqueText(bundle.candidate_scan_families,
                                      "PARAMETERIZED_INDEX_SCAN");
-                    choice.runtime_relation.candidate_scan_families =
-                        choice.candidate_scan_families;
                 }
             }
-            access_choices[relation_index] = std::move(choice);
+            chosen_choice.candidate_scan_families = bundle.candidate_scan_families;
+            chosen_choice.runtime_relation.candidate_scan_families =
+                bundle.candidate_scan_families;
+            chosen_choice.runtime_relation.candidate_budget =
+                std::max<uint64_t>(chosen_choice.runtime_relation.candidate_budget,
+                                   bundle.candidates.size());
+            chosen_choice.access_descriptor.candidate_budget =
+                std::max<uint64_t>(chosen_choice.access_descriptor.candidate_budget,
+                                   bundle.candidates.size());
+            appendRuntimeTrace(considered_paths,
+                               "ACCESS_PATH",
+                               relation_subject,
+                               accessTraceCandidateLabel(
+                                   chosen_choice.runtime_relation.scan_kind,
+                                   chosen_choice.runtime_relation.index_name,
+                                   chosen_choice.runtime_relation.bitmap_op),
+                               "CHOSEN",
+                               "selected access path from bundle of " +
+                                   std::to_string(bundle.candidates.size()) +
+                                   " candidate(s)",
+                               chosen_choice.runtime_relation.startup_cost,
+                               chosen_choice.runtime_relation.total_cost,
+                               chosen_choice.runtime_relation.estimated_rows);
+            if (chosen_it != bundle.candidates.end())
+            {
+                *chosen_it = chosen_choice;
+                std::iter_swap(bundle.candidates.begin(), chosen_it);
+            }
+            else
+            {
+                bundle.candidates.insert(bundle.candidates.begin(),
+                                         chosen_choice);
+            }
+            access_bundles[relation_index] = std::move(bundle);
         }
 
         auto estimateJoinSelectivityFor =
@@ -6100,8 +6513,11 @@ namespace scratchbird::optimizer
                     std::any_of(right_tree.relation_order.begin(),
                                 right_tree.relation_order.end(),
                                 [&](size_t relation_index) {
-                                    return relation_index < access_choices.size() &&
-                                           (access_choices[relation_index]
+                                    return relation_index < access_bundles.size() &&
+                                           (!access_bundles[relation_index]
+                                                 .candidates.empty() &&
+                                            access_bundles[relation_index]
+                                                .candidates.front()
                                                 .runtime_relation.parameterized ||
                                             planned_out.resolved_query
                                                 .relations[relation_index]
@@ -6849,11 +7265,22 @@ namespace scratchbird::optimizer
                         std::find_if(candidate_relation.indexes.begin(),
                                      candidate_relation.indexes.end(),
                                      [&](const core::CatalogManager::IndexInfo &index) {
-                                         return index.index_type ==
-                                                    core::CatalogManager::IndexType::BTREE &&
-                                                !index.column_ids.empty() &&
-                                                index.column_ids.front() ==
-                                                    join.right_hash_column_id;
+                                         if (index.column_ids.empty() ||
+                                             index.column_ids.front() !=
+                                                 join.right_hash_column_id)
+                                         {
+                                             return false;
+                                         }
+                                         PlannerFamilyLoweringRequest request;
+                                         request.index_type = index.index_type;
+                                         request.predicate_shape =
+                                             PredicateMatchShape::EQUALITY;
+                                         const auto lowered =
+                                             lowerPlannerFamily(request);
+                                         return lowered.queryability_state !=
+                                                    AccessPathQueryabilityState::INVALID &&
+                                                lowered.exactness_class ==
+                                                    AccessPathExactnessClass::EXACT_KEY;
                                      });
                     if (runtime_filter_index != candidate_relation.indexes.end())
                     {
@@ -6919,15 +7346,25 @@ namespace scratchbird::optimizer
                 }
             };
 
-        auto relationIndexForLeafPath =
-            [&](const std::shared_ptr<Path> &path) -> std::optional<size_t> {
+        auto leafCandidateForPath =
+            [&](const std::shared_ptr<Path> &path)
+                -> std::optional<std::pair<size_t, size_t>> {
                 for (size_t relation_index = 0;
-                     relation_index < access_choices.size();
+                     relation_index < access_bundles.size();
                      ++relation_index)
                 {
-                    if (access_choices[relation_index].path == path)
+                    for (size_t candidate_index = 0;
+                         candidate_index <
+                             access_bundles[relation_index].candidates.size();
+                         ++candidate_index)
                     {
-                        return relation_index;
+                        if (access_bundles[relation_index]
+                                .candidates[candidate_index]
+                                .path == path)
+                        {
+                            return std::make_pair(relation_index,
+                                                  candidate_index);
+                        }
                     }
                 }
                 return std::nullopt;
@@ -6955,17 +7392,19 @@ namespace scratchbird::optimizer
                     return core::Status::INTERNAL_ERROR;
                 }
 
-                if (const auto relation_index = relationIndexForLeafPath(backend_path);
-                    relation_index.has_value())
+                if (const auto leaf_candidate = leafCandidateForPath(backend_path);
+                    leaf_candidate.has_value())
                 {
+                    const auto [relation_index, candidate_index] = *leaf_candidate;
+                    const auto &candidate =
+                        access_bundles[relation_index].candidates[candidate_index];
                     materialized_out.path = backend_path;
-                    materialized_out.plan =
-                        access_choices[*relation_index].plan;
+                    materialized_out.plan = candidate.plan;
                     materialized_out.rows =
                         backend_path ? backend_path->rows() : 0;
-                    materialized_out.relation_order = {*relation_index};
+                    materialized_out.relation_order = {relation_index};
                     materialized_out.runtime_relations = {
-                        access_choices[*relation_index].runtime_relation};
+                        candidate.runtime_relation};
                     return core::Status::OK;
                 }
 
@@ -7260,12 +7699,14 @@ namespace scratchbird::optimizer
         if (planned_out.resolved_query.relations.size() <= 1)
         {
             search_summary.selected_strategy = "SINGLE_RELATION";
-            if (!access_choices.empty())
+            if (!access_bundles.empty() &&
+                !access_bundles[0].candidates.empty())
             {
                 relation_order.push_back(0);
-                runtime_relations.push_back(access_choices[0].runtime_relation);
-                current_path = access_choices[0].path;
-                current_plan = access_choices[0].plan;
+                runtime_relations.push_back(
+                    access_bundles[0].candidates.front().runtime_relation);
+                current_path = access_bundles[0].candidates.front().path;
+                current_plan = access_bundles[0].candidates.front().plan;
                 current_rows = current_path ? current_path->rows() : 0;
             }
         }
@@ -7311,15 +7752,24 @@ namespace scratchbird::optimizer
             }
             join_optimizer.setPlanningControls(join_controls);
 
-            for (const auto &choice : access_choices)
+            for (const auto &bundle : access_bundles)
             {
                 const auto &relation =
-                    planned_out.resolved_query.relations[choice.relation_index];
+                    planned_out.resolved_query.relations[bundle.relation_index];
+                std::vector<std::shared_ptr<Path>> candidate_paths;
+                candidate_paths.reserve(bundle.candidates.size());
+                for (const auto &candidate : bundle.candidates)
+                {
+                    if (candidate.path)
+                    {
+                        candidate_paths.push_back(candidate.path);
+                    }
+                }
                 join_optimizer.addRelation(
                     relation.resolved ? relation.table_info.table_id : core::ID{},
                     displayRelationName(relation),
                     relationLookupName(relation),
-                    choice.path);
+                    candidate_paths);
             }
 
             for (const auto &join : planned_out.resolved_query.joins)

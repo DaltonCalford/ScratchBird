@@ -123,6 +123,35 @@ namespace
         const auto names = leafTableNames(path);
         return names.empty() ? std::string() : names.front();
     }
+
+    auto containsLeafPathIdentity(const std::shared_ptr<Path> &root,
+                                  const std::shared_ptr<Path> &needle) -> bool
+    {
+        if (!root || !needle)
+        {
+            return false;
+        }
+        if (root == needle)
+        {
+            return true;
+        }
+        if (auto nested = std::dynamic_pointer_cast<NestedLoopJoinPath>(root))
+        {
+            return containsLeafPathIdentity(nested->outerPath(), needle) ||
+                   containsLeafPathIdentity(nested->innerPath(), needle);
+        }
+        if (auto hash = std::dynamic_pointer_cast<HashJoinPath>(root))
+        {
+            return containsLeafPathIdentity(hash->outerPath(), needle) ||
+                   containsLeafPathIdentity(hash->innerPath(), needle);
+        }
+        if (auto merge = std::dynamic_pointer_cast<MergeJoinPath>(root))
+        {
+            return containsLeafPathIdentity(merge->outerPath(), needle) ||
+                   containsLeafPathIdentity(merge->innerPath(), needle);
+        }
+        return false;
+    }
 } // namespace
 
 TEST(JoinOrderingOptimizerTest, DynamicProgrammingPlansDisconnectedGraphWithCrossJoin)
@@ -179,6 +208,42 @@ TEST(JoinOrderingOptimizerTest, LeftOuterJoinKeepsPreservedLeftRelationAsOuterOp
     auto plan = optimizer.optimize();
     ASSERT_NE(plan, nullptr);
     EXPECT_EQ(leftmostLeafTable(plan), "users");
+}
+
+TEST(JoinOrderingOptimizerTest,
+     CandidateBundlesCanPickNonPrimaryBasePathForJoinSearch)
+{
+    CostModel cost_model;
+    SelectivityEstimator selectivity_estimator(nullptr, nullptr);
+    JoinOrderingOptimizer optimizer(cost_model, selectivity_estimator);
+
+    auto broad_scan = makeSeqScanPath("users", 5000, 5.0);
+    auto selective_ordered = makeSeqScanPath("users", 5, 15.0);
+    AccessPathDescriptor ordered_descriptor = selective_ordered->accessDescriptor();
+    ordered_descriptor.family = "BTREE_ORDERED_SCAN";
+    ordered_descriptor.path_name = "BTREE_ORDERED_SCAN";
+    ordered_descriptor.ordered_output = true;
+    ordered_descriptor.ordered_prefix_length = 1;
+    ordered_descriptor.interesting_order_score = 1.0;
+    selective_ordered->setAccessDescriptor(std::move(ordered_descriptor));
+
+    optimizer.addRelation(core::ID{},
+                          "users",
+                          "users",
+                          std::vector<std::shared_ptr<Path>>{
+                              broad_scan,
+                              selective_ordered});
+    optimizer.addRelation(core::ID{},
+                          "orders",
+                          "orders",
+                          makeSeqScanPath("orders", 10000, 100.0));
+    optimizer.addJoinEdge(0, 1, parser::JoinType::INNER, nullptr);
+    optimizer.setJoinSelectivity(0, 0.0001);
+
+    auto plan = optimizer.optimize();
+    ASSERT_NE(plan, nullptr);
+    EXPECT_TRUE(containsLeafPathIdentity(plan, selective_ordered));
+    EXPECT_FALSE(containsLeafPathIdentity(plan, broad_scan));
 }
 
 TEST(JoinOrderingOptimizerTest, HypergraphGreedyCanBuildBushyJoinTree)

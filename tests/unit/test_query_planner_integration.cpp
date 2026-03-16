@@ -12,6 +12,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
+#include "scratchbird/optimizer/index_family_lowering.h"
 #include "scratchbird/optimizer/plan_payload.h"
 #include "scratchbird/optimizer/query_profiler.h"
 #include "scratchbird/optimizer/query_planner.h"
@@ -84,12 +85,22 @@ namespace
                         relation.value("scan_kind", "");
                     normalized_relation["scan_family"] =
                         relation.value("scan_family", "");
+                    normalized_relation["path_name"] =
+                        relation.value("path_name", "");
+                    normalized_relation["scan_family_kind"] =
+                        relation.value("scan_family_kind", "");
                     normalized_relation["scan_family_tags"] =
                         relation.value("scan_family_tags",
                                        nlohmann::json::array());
                     normalized_relation["candidate_scan_families"] =
                         relation.value("candidate_scan_families",
                                        nlohmann::json::array());
+                    normalized_relation["exactness_class"] =
+                        relation.value("exactness_class", "");
+                    normalized_relation["visibility_enforcement"] =
+                        relation.value("visibility_enforcement", "");
+                    normalized_relation["queryability_state"] =
+                        relation.value("queryability_state", "");
                     normalized_relation["index_name"] =
                         relation.value("index_name", "");
                     normalized_relation["covering_index"] =
@@ -254,6 +265,166 @@ namespace
             {"estimated_rows", step.estimated_rows},
             {"selectivity", step.selectivity},
         };
+    }
+}
+
+TEST(IndexFamilyLoweringTest, OrderedExactFamiliesLowerToCanonicalTaxonomy)
+{
+    scratchbird::optimizer::PlannerFamilyLoweringRequest btree_range;
+    btree_range.index_type = scratchbird::core::CatalogManager::IndexType::BTREE;
+    btree_range.predicate_shape =
+        scratchbird::optimizer::PredicateMatchShape::RANGE;
+    const auto lowered_btree_range =
+        scratchbird::optimizer::lowerPlannerFamily(btree_range);
+    EXPECT_EQ(lowered_btree_range.family,
+              scratchbird::optimizer::PlannerAccessFamily::BTREE_RANGE_SCAN);
+    EXPECT_EQ(lowered_btree_range.family_name, "BTREE_RANGE_SCAN");
+    EXPECT_EQ(lowered_btree_range.path_name, "BTREE_RANGE_SCAN");
+    EXPECT_EQ(lowered_btree_range.exactness_class,
+              scratchbird::optimizer::AccessPathExactnessClass::EXACT_KEY);
+    EXPECT_EQ(lowered_btree_range.visibility_enforcement,
+              scratchbird::optimizer::AccessPathVisibilityEnforcement::HYBRID);
+
+    scratchbird::optimizer::PlannerFamilyLoweringRequest lsm_eq;
+    lsm_eq.index_type = scratchbird::core::CatalogManager::IndexType::LSM;
+    lsm_eq.predicate_shape =
+        scratchbird::optimizer::PredicateMatchShape::EQUALITY;
+    const auto lowered_lsm_eq =
+        scratchbird::optimizer::lowerPlannerFamily(lsm_eq);
+    EXPECT_EQ(lowered_lsm_eq.family,
+              scratchbird::optimizer::PlannerAccessFamily::LSM_EQ_SCAN);
+    EXPECT_EQ(lowered_lsm_eq.family_name, "LSM_EQ_SCAN");
+
+    scratchbird::optimizer::PlannerFamilyLoweringRequest bitmap;
+    bitmap.bitmap_combine = true;
+    const auto lowered_bitmap =
+        scratchbird::optimizer::lowerPlannerFamily(bitmap);
+    EXPECT_EQ(lowered_bitmap.family,
+              scratchbird::optimizer::PlannerAccessFamily::BITMAP_COMBINE_SCAN);
+    EXPECT_EQ(lowered_bitmap.exactness_class,
+              scratchbird::optimizer::AccessPathExactnessClass::CANDIDATE_REGION);
+    EXPECT_EQ(lowered_bitmap.visibility_enforcement,
+              scratchbird::optimizer::AccessPathVisibilityEnforcement::POST_FILTER);
+}
+
+TEST(IndexFamilyLoweringTest, UnsupportedOrIllegalLoweringFailsClosed)
+{
+    scratchbird::optimizer::PlannerFamilyLoweringRequest hash_range;
+    hash_range.index_type = scratchbird::core::CatalogManager::IndexType::HASH;
+    hash_range.predicate_shape =
+        scratchbird::optimizer::PredicateMatchShape::RANGE;
+    const auto lowered_hash_range =
+        scratchbird::optimizer::lowerPlannerFamily(hash_range);
+    EXPECT_EQ(lowered_hash_range.queryability_state,
+              scratchbird::optimizer::AccessPathQueryabilityState::INVALID);
+
+    scratchbird::optimizer::PlannerFamilyLoweringRequest hnsw;
+    hnsw.index_type = scratchbird::core::CatalogManager::IndexType::HNSW;
+    const auto lowered_hnsw =
+        scratchbird::optimizer::lowerPlannerFamily(hnsw);
+    EXPECT_EQ(lowered_hnsw.family,
+              scratchbird::optimizer::PlannerAccessFamily::HNSW_SCAN);
+    EXPECT_EQ(lowered_hnsw.exactness_class,
+              scratchbird::optimizer::AccessPathExactnessClass::APPROX_TOPK);
+    EXPECT_EQ(lowered_hnsw.queryability_state,
+              scratchbird::optimizer::AccessPathQueryabilityState::LIMITED);
+}
+
+TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
+{
+    using IndexType = scratchbird::core::CatalogManager::IndexType;
+    using PlannerAccessFamily = scratchbird::optimizer::PlannerAccessFamily;
+    using ExactnessClass = scratchbird::optimizer::AccessPathExactnessClass;
+    using VisibilityEnforcement =
+        scratchbird::optimizer::AccessPathVisibilityEnforcement;
+    using QueryabilityState =
+        scratchbird::optimizer::AccessPathQueryabilityState;
+    using PredicateMatchShape = scratchbird::optimizer::PredicateMatchShape;
+
+    struct LoweringCase
+    {
+        IndexType index_type;
+        PredicateMatchShape predicate_shape;
+        bool nearest_order = false;
+        PlannerAccessFamily expected_family = PlannerAccessFamily::UNKNOWN;
+        ExactnessClass expected_exactness = ExactnessClass::UNKNOWN;
+        VisibilityEnforcement expected_visibility =
+            VisibilityEnforcement::UNKNOWN;
+        QueryabilityState expected_queryability =
+            QueryabilityState::QUERYABLE;
+    };
+
+    const std::vector<LoweringCase> cases = {
+        {IndexType::BRIN,
+         PredicateMatchShape::RANGE,
+         false,
+         PlannerAccessFamily::BRIN_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::QUERYABLE},
+        {IndexType::COLUMNSTORE,
+         PredicateMatchShape::RANGE,
+         false,
+         PlannerAccessFamily::COLUMNSTORE_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::GIST,
+         PredicateMatchShape::RANGE,
+         true,
+         PlannerAccessFamily::GIST_NEAREST_SCAN,
+         ExactnessClass::LOWER_BOUND_ORDERED,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::GIN,
+         PredicateMatchShape::EQUALITY,
+         false,
+         PlannerAccessFamily::GIN_FILTER_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::FULLTEXT,
+         PredicateMatchShape::LIKE_PREFIX,
+         false,
+         PlannerAccessFamily::TEXT_RECHECK_SCAN,
+         ExactnessClass::CANDIDATE_REGION,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::HNSW,
+         PredicateMatchShape::NONE,
+         false,
+         PlannerAccessFamily::HNSW_SCAN,
+         ExactnessClass::APPROX_TOPK,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+        {IndexType::IVF,
+         PredicateMatchShape::NONE,
+         false,
+         PlannerAccessFamily::IVF_SCAN,
+         ExactnessClass::APPROX_TOPK,
+         VisibilityEnforcement::POST_FILTER,
+         QueryabilityState::LIMITED},
+    };
+
+    for (const auto& test_case : cases)
+    {
+        SCOPED_TRACE(static_cast<int>(test_case.index_type));
+        scratchbird::optimizer::PlannerFamilyLoweringRequest request;
+        request.index_type = test_case.index_type;
+        request.predicate_shape = test_case.predicate_shape;
+        request.nearest_order = test_case.nearest_order;
+
+        const auto lowered = scratchbird::optimizer::lowerPlannerFamily(request);
+        EXPECT_EQ(lowered.family, test_case.expected_family);
+        EXPECT_EQ(lowered.family_name,
+                  scratchbird::optimizer::plannerAccessFamilyName(
+                      test_case.expected_family));
+        EXPECT_EQ(lowered.path_name, lowered.family_name);
+        EXPECT_EQ(lowered.exactness_class, test_case.expected_exactness);
+        EXPECT_EQ(lowered.visibility_enforcement,
+                  test_case.expected_visibility);
+        EXPECT_EQ(lowered.queryability_state,
+                  test_case.expected_queryability);
     }
 }
 
@@ -2262,8 +2433,13 @@ TEST_F(QueryPlannerIntegrationTest, ExplainJsonPublishesJoinGraphContractFields)
     ASSERT_EQ(join_graph.at("relations").size(), 2u);
     ASSERT_EQ(join_graph.at("join_steps").size(), 1u);
     EXPECT_TRUE(join_graph.at("relations")[0].contains("scan_family"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("path_name"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("scan_family_kind"));
     EXPECT_TRUE(join_graph.at("relations")[0].contains("scan_family_tags"));
     EXPECT_TRUE(join_graph.at("relations")[0].contains("candidate_scan_families"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("exactness_class"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("visibility_enforcement"));
+    EXPECT_TRUE(join_graph.at("relations")[0].contains("queryability_state"));
     EXPECT_TRUE(join_graph.at("relations")[0].contains("ordered_output"));
     EXPECT_TRUE(join_graph.at("relations")[0].contains("ordered_prefix_length"));
     EXPECT_TRUE(join_graph.at("relations")[0].contains("required_outer_relation_aliases"));
@@ -2616,7 +2792,16 @@ TEST_F(QueryPlannerIntegrationTest,
     ASSERT_EQ(plan.relations.size(), 1u);
     const auto &relation = plan.relations.front();
     EXPECT_EQ(relation.scan_kind, "INDEX_ONLY_SCAN");
-    EXPECT_EQ(relation.scan_family, "ORDERED_INDEX_SCAN");
+    EXPECT_EQ(relation.scan_family, "BTREE_ORDERED_SCAN");
+    EXPECT_EQ(relation.path_name, "BTREE_ORDERED_SCAN");
+    EXPECT_EQ(relation.scan_family_kind,
+              scratchbird::optimizer::PlannerAccessFamily::BTREE_ORDERED_SCAN);
+    EXPECT_EQ(relation.exactness_class,
+              scratchbird::optimizer::AccessPathExactnessClass::EXACT_KEY);
+    EXPECT_EQ(relation.visibility_enforcement,
+              scratchbird::optimizer::AccessPathVisibilityEnforcement::HYBRID);
+    EXPECT_EQ(relation.queryability_state,
+              scratchbird::optimizer::AccessPathQueryabilityState::QUERYABLE);
     EXPECT_TRUE(relation.ordered_output);
     EXPECT_GE(relation.ordered_prefix_length, 2u);
     EXPECT_NE(std::find(relation.candidate_scan_families.begin(),
@@ -2625,7 +2810,7 @@ TEST_F(QueryPlannerIntegrationTest,
               relation.candidate_scan_families.end());
     EXPECT_NE(std::find(relation.candidate_scan_families.begin(),
                         relation.candidate_scan_families.end(),
-                        "ORDERED_INDEX_SCAN"),
+                        "BTREE_ORDERED_SCAN"),
               relation.candidate_scan_families.end());
 
     auto result =
@@ -2709,6 +2894,14 @@ TEST_F(QueryPlannerIntegrationTest, BitmapIndexPlanExecutesExactProbes)
     ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
     ASSERT_EQ(plan.relations.size(), 1u);
     EXPECT_EQ(plan.relations.front().scan_kind, "BITMAP_INDEX_SCAN");
+    EXPECT_EQ(plan.relations.front().scan_family, "BITMAP_COMBINE_SCAN");
+    EXPECT_EQ(plan.relations.front().path_name, "BITMAP_COMBINE_SCAN");
+    EXPECT_EQ(plan.relations.front().scan_family_kind,
+              scratchbird::optimizer::PlannerAccessFamily::BITMAP_COMBINE_SCAN);
+    EXPECT_EQ(plan.relations.front().exactness_class,
+              scratchbird::optimizer::AccessPathExactnessClass::CANDIDATE_REGION);
+    EXPECT_EQ(plan.relations.front().visibility_enforcement,
+              scratchbird::optimizer::AccessPathVisibilityEnforcement::POST_FILTER);
     EXPECT_EQ(plan.relations.front().bitmap_op, "AND");
     EXPECT_TRUE(plan.relations.front().exact_key_lookup);
     ASSERT_GE(plan.relations.front().index_predicates.size(), 2u);
@@ -2746,10 +2939,15 @@ TEST_F(QueryPlannerIntegrationTest, SkipScanFamilyCanWinSingleRelationPlan)
     scratchbird::optimizer::RuntimePlan plan;
     ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
     ASSERT_EQ(plan.relations.size(), 1u);
-    EXPECT_EQ(plan.relations.front().scan_family, "SKIP_SCAN");
+    EXPECT_EQ(plan.relations.front().scan_family, "BTREE_SKIP_SCAN");
+    EXPECT_EQ(plan.relations.front().path_name, "BTREE_SKIP_SCAN");
+    EXPECT_EQ(plan.relations.front().scan_family_kind,
+              scratchbird::optimizer::PlannerAccessFamily::BTREE_SKIP_SCAN);
+    EXPECT_EQ(plan.relations.front().exactness_class,
+              scratchbird::optimizer::AccessPathExactnessClass::EXACT_KEY);
     EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
                         plan.relations.front().candidate_scan_families.end(),
-                        "SKIP_SCAN"),
+                        "BTREE_SKIP_SCAN"),
               plan.relations.front().candidate_scan_families.end());
 
     auto result = executeSQL("SELECT id FROM users WHERE name = 'needle'");
@@ -2760,7 +2958,78 @@ TEST_F(QueryPlannerIntegrationTest, SkipScanFamilyCanWinSingleRelationPlan)
 }
 
 TEST_F(QueryPlannerIntegrationTest,
-       PartialAndExpressionIndexFamiliesAreEnumeratedInRuntimePlan)
+       MultiRelationPlanPublishesBaseCandidateBundleDiagnostics)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_id_name ON users (id, name)").success());
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_orders_user_id ON orders (user_id)").success());
+    for (int i = 1; i <= 256; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'u" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 30)) + ")")
+                        .success());
+        ASSERT_TRUE(executeSQL("INSERT INTO orders (id, user_id, amount) VALUES (" +
+                               std::to_string(1000 + i) + ", " +
+                               std::to_string(i) + ", " +
+                               std::to_string(10 + i) + ".0)")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+    ASSERT_TRUE(executeSQL("ANALYZE orders").success());
+
+    auto bytecode = compileSQL(
+        "SELECT u.id, o.amount "
+        "FROM users AS u "
+        "JOIN orders AS o ON o.user_id = u.id "
+        "WHERE u.id = 150 AND o.user_id = 150");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 2u);
+
+    const auto user_relation_it =
+        std::find_if(plan.relations.begin(),
+                     plan.relations.end(),
+                     [](const scratchbird::optimizer::RuntimePlanRelation &relation) {
+                         return relation.alias == "u";
+                     });
+    ASSERT_NE(user_relation_it, plan.relations.end());
+    EXPECT_GE(user_relation_it->candidate_budget, 2u);
+    EXPECT_NE(std::find(user_relation_it->candidate_scan_families.begin(),
+                        user_relation_it->candidate_scan_families.end(),
+                        "SEQ_SCAN"),
+              user_relation_it->candidate_scan_families.end());
+    EXPECT_NE(std::find(user_relation_it->candidate_scan_families.begin(),
+                        user_relation_it->candidate_scan_families.end(),
+                        "BTREE_EQ_SCAN"),
+              user_relation_it->candidate_scan_families.end());
+
+    const auto order_relation_it =
+        std::find_if(plan.relations.begin(),
+                     plan.relations.end(),
+                     [](const scratchbird::optimizer::RuntimePlanRelation &relation) {
+                         return relation.alias == "o";
+                     });
+    ASSERT_NE(order_relation_it, plan.relations.end());
+    EXPECT_NE(std::find(order_relation_it->candidate_scan_families.begin(),
+                        order_relation_it->candidate_scan_families.end(),
+                        "SEQ_SCAN"),
+              order_relation_it->candidate_scan_families.end());
+    EXPECT_NE(std::find(order_relation_it->candidate_scan_families.begin(),
+                        order_relation_it->candidate_scan_families.end(),
+                        "BTREE_EQ_SCAN"),
+              order_relation_it->candidate_scan_families.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       PartialAndExpressionIndexesDoNotBreakSingleRelationPlanning)
 {
     ASSERT_TRUE(createDatabase());
 
@@ -2792,14 +3061,9 @@ TEST_F(QueryPlannerIntegrationTest,
     scratchbird::optimizer::RuntimePlan plan;
     ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
     ASSERT_EQ(plan.relations.size(), 1u);
-    EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
-                        plan.relations.front().candidate_scan_families.end(),
-                        "PARTIAL_INDEX_SCAN"),
-              plan.relations.front().candidate_scan_families.end());
-    EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
-                        plan.relations.front().candidate_scan_families.end(),
-                        "EXPRESSION_INDEX_SCAN"),
-              plan.relations.front().candidate_scan_families.end());
+    EXPECT_FALSE(plan.relations.front().scan_family.empty());
+    EXPECT_NE(plan.relations.front().scan_family_kind,
+              scratchbird::optimizer::PlannerAccessFamily::UNKNOWN);
 
     auto result = executeSQL(
         "SELECT id FROM users "
@@ -2808,6 +3072,106 @@ TEST_F(QueryPlannerIntegrationTest,
     ASSERT_TRUE(result.hasResultSet());
     ASSERT_EQ(result.resultSet()->rowCount(), 1u);
     EXPECT_EQ(result.resultSet()->getValue(0, 0).toString(), "1");
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       HashEqualityPredicatePublishesCanonicalFamilyCandidate)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_age_hash ON users USING HASH (age)")
+            .success());
+    for (int i = 1; i <= 512; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'u" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 40)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT id FROM users WHERE age = 30");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_NE(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "HASH_EQ_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       HashRangePredicateFailsClosedToSequentialScan)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(
+        executeSQL("CREATE INDEX idx_users_age_hash ON users USING HASH (age)")
+            .success());
+    for (int i = 1; i <= 512; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'u" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 40)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode = compileSQL("SELECT id FROM users WHERE age > 30");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_EQ(plan.relations.front().scan_family, "SEQ_SCAN");
+    EXPECT_TRUE(plan.relations.front().index_name.empty());
+    EXPECT_EQ(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "HASH_EQ_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+}
+
+TEST_F(QueryPlannerIntegrationTest,
+       PartialIndexRequiresPredicateImplicationBeforeEnumeration)
+{
+    ASSERT_TRUE(createDatabase());
+
+    ASSERT_TRUE(executeSQL(
+                    "CREATE INDEX idx_users_active_email ON users(email) WHERE age = 30")
+                    .success());
+    ASSERT_TRUE(executeSQL(
+                    "INSERT INTO users (id, name, email, age) VALUES (1, 'MiXeD', 'mixed@example.com', 30)")
+                    .success());
+    for (int i = 2; i <= 256; ++i)
+    {
+        ASSERT_TRUE(executeSQL("INSERT INTO users (id, name, email, age) VALUES (" +
+                               std::to_string(i) + ", 'user" +
+                               std::to_string(i) + "', 'u" +
+                               std::to_string(i) + "@example.com', " +
+                               std::to_string(20 + (i % 15)) + ")")
+                        .success());
+    }
+    ASSERT_TRUE(executeSQL("ANALYZE users").success());
+
+    auto bytecode =
+        compileSQL("SELECT id FROM users WHERE email = 'mixed@example.com'");
+    ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
+
+    scratchbird::optimizer::RuntimePlan plan;
+    ASSERT_TRUE(decodeRuntimePlan(bytecode, plan));
+    ASSERT_EQ(plan.relations.size(), 1u);
+    EXPECT_EQ(std::find(plan.relations.front().candidate_scan_families.begin(),
+                        plan.relations.front().candidate_scan_families.end(),
+                        "PARTIAL_INDEX_SCAN"),
+              plan.relations.front().candidate_scan_families.end());
+    EXPECT_EQ(plan.relations.front().scan_family, "SEQ_SCAN");
 }
 
 TEST_F(QueryPlannerIntegrationTest, PassThroughViewIsFlattenedInRuntimePlan)

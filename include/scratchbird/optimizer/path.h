@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace scratchbird::parser::v3 {
@@ -50,6 +51,374 @@ namespace scratchbird::optimizer
         WINDOW             // Window functions (Phase 1, Task 6.2)
     };
 
+    inline constexpr uint32_t kPlannerFamilyTaxonomyVersion = 1;
+
+    enum class PlannerAccessFamily : uint32_t
+    {
+        UNKNOWN = 0,
+        SEQ_SCAN = 1,
+        BTREE_EQ_SCAN = 2,
+        BTREE_RANGE_SCAN = 3,
+        BTREE_ORDERED_SCAN = 4,
+        BTREE_SKIP_SCAN = 5,
+        HASH_EQ_SCAN = 6,
+        LSM_EQ_SCAN = 7,
+        LSM_RANGE_SCAN = 8,
+        LSM_ORDERED_RANGE_SCAN = 9,
+        BRIN_SCAN = 10,
+        SUMMARY_FILTER_SCAN = 11,
+        BITMAP_STORAGE_SCAN = 12,
+        BITMAP_COMBINE_SCAN = 13,
+        COLUMNSTORE_SCAN = 14,
+        GIST_SCAN = 15,
+        SPGIST_SCAN = 16,
+        RTREE_SCAN = 17,
+        GIST_NEAREST_SCAN = 18,
+        SPGIST_NEAREST_SCAN = 19,
+        RTREE_NEAREST_SCAN = 20,
+        GIN_FILTER_SCAN = 21,
+        TEXT_BITMAP_SCAN = 22,
+        TEXT_SCORE_SCAN = 23,
+        TEXT_RECHECK_SCAN = 24,
+        VECTOR_FLAT_SCAN = 25,
+        HNSW_SCAN = 26,
+        IVF_SCAN = 27,
+        ANN_RERANK_SCAN = 28,
+        ANN_HYBRID_FALLBACK_SCAN = 29,
+    };
+
+    enum class AccessPathExactnessClass : uint32_t
+    {
+        UNKNOWN = 0,
+        EXACT_ROW = 1,
+        EXACT_KEY = 2,
+        CANDIDATE_REGION = 3,
+        LOWER_BOUND_ORDERED = 4,
+        APPROX_TOPK = 5,
+    };
+
+    enum class AccessPathVisibilityEnforcement : uint32_t
+    {
+        UNKNOWN = 0,
+        INDEX_NATIVE = 1,
+        POST_FILTER = 2,
+        HYBRID = 3,
+    };
+
+    enum class AccessPathQueryabilityState : uint32_t
+    {
+        UNKNOWN = 0,
+        QUERYABLE = 1,
+        LIMITED = 2,
+        INVALID = 3,
+    };
+
+    inline auto plannerAccessFamilyName(PlannerAccessFamily family) -> const char *
+    {
+        switch (family)
+        {
+            case PlannerAccessFamily::UNKNOWN:
+                return "UNKNOWN";
+            case PlannerAccessFamily::SEQ_SCAN:
+                return "SEQ_SCAN";
+            case PlannerAccessFamily::BTREE_EQ_SCAN:
+                return "BTREE_EQ_SCAN";
+            case PlannerAccessFamily::BTREE_RANGE_SCAN:
+                return "BTREE_RANGE_SCAN";
+            case PlannerAccessFamily::BTREE_ORDERED_SCAN:
+                return "BTREE_ORDERED_SCAN";
+            case PlannerAccessFamily::BTREE_SKIP_SCAN:
+                return "BTREE_SKIP_SCAN";
+            case PlannerAccessFamily::HASH_EQ_SCAN:
+                return "HASH_EQ_SCAN";
+            case PlannerAccessFamily::LSM_EQ_SCAN:
+                return "LSM_EQ_SCAN";
+            case PlannerAccessFamily::LSM_RANGE_SCAN:
+                return "LSM_RANGE_SCAN";
+            case PlannerAccessFamily::LSM_ORDERED_RANGE_SCAN:
+                return "LSM_ORDERED_RANGE_SCAN";
+            case PlannerAccessFamily::BRIN_SCAN:
+                return "BRIN_SCAN";
+            case PlannerAccessFamily::BITMAP_STORAGE_SCAN:
+                return "BITMAP_STORAGE_SCAN";
+            case PlannerAccessFamily::BITMAP_COMBINE_SCAN:
+                return "BITMAP_COMBINE_SCAN";
+            case PlannerAccessFamily::COLUMNSTORE_SCAN:
+                return "COLUMNSTORE_SCAN";
+            case PlannerAccessFamily::GIST_SCAN:
+                return "GIST_SCAN";
+            case PlannerAccessFamily::SPGIST_SCAN:
+                return "SPGIST_SCAN";
+            case PlannerAccessFamily::RTREE_SCAN:
+                return "RTREE_SCAN";
+            case PlannerAccessFamily::GIST_NEAREST_SCAN:
+                return "GIST_NEAREST_SCAN";
+            case PlannerAccessFamily::SPGIST_NEAREST_SCAN:
+                return "SPGIST_NEAREST_SCAN";
+            case PlannerAccessFamily::RTREE_NEAREST_SCAN:
+                return "RTREE_NEAREST_SCAN";
+            case PlannerAccessFamily::GIN_FILTER_SCAN:
+                return "GIN_FILTER_SCAN";
+            case PlannerAccessFamily::TEXT_BITMAP_SCAN:
+                return "TEXT_BITMAP_SCAN";
+            case PlannerAccessFamily::TEXT_SCORE_SCAN:
+                return "TEXT_SCORE_SCAN";
+            case PlannerAccessFamily::TEXT_RECHECK_SCAN:
+                return "TEXT_RECHECK_SCAN";
+            case PlannerAccessFamily::VECTOR_FLAT_SCAN:
+                return "VECTOR_FLAT_SCAN";
+            case PlannerAccessFamily::HNSW_SCAN:
+                return "HNSW_SCAN";
+            case PlannerAccessFamily::IVF_SCAN:
+                return "IVF_SCAN";
+            case PlannerAccessFamily::ANN_RERANK_SCAN:
+                return "ANN_RERANK_SCAN";
+            case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+                return "ANN_HYBRID_FALLBACK_SCAN";
+            case PlannerAccessFamily::SUMMARY_FILTER_SCAN:
+                return "SUMMARY_FILTER_SCAN";
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto accessPathExactnessClassName(AccessPathExactnessClass exactness)
+        -> const char *
+    {
+        switch (exactness)
+        {
+            case AccessPathExactnessClass::UNKNOWN:
+                return "UNKNOWN";
+            case AccessPathExactnessClass::EXACT_ROW:
+                return "EXACT_ROW";
+            case AccessPathExactnessClass::EXACT_KEY:
+                return "EXACT_KEY";
+            case AccessPathExactnessClass::CANDIDATE_REGION:
+                return "CANDIDATE_REGION";
+            case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+                return "LOWER_BOUND_ORDERED";
+            case AccessPathExactnessClass::APPROX_TOPK:
+                return "APPROX_TOPK";
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto accessPathVisibilityEnforcementName(
+        AccessPathVisibilityEnforcement enforcement) -> const char *
+    {
+        switch (enforcement)
+        {
+            case AccessPathVisibilityEnforcement::UNKNOWN:
+                return "UNKNOWN";
+            case AccessPathVisibilityEnforcement::INDEX_NATIVE:
+                return "INDEX_NATIVE";
+            case AccessPathVisibilityEnforcement::POST_FILTER:
+                return "POST_FILTER";
+            case AccessPathVisibilityEnforcement::HYBRID:
+                return "HYBRID";
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto accessPathQueryabilityStateName(AccessPathQueryabilityState state)
+        -> const char *
+    {
+        switch (state)
+        {
+            case AccessPathQueryabilityState::UNKNOWN:
+                return "UNKNOWN";
+            case AccessPathQueryabilityState::QUERYABLE:
+                return "QUERYABLE";
+            case AccessPathQueryabilityState::LIMITED:
+                return "LIMITED";
+            case AccessPathQueryabilityState::INVALID:
+                return "INVALID";
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto plannerAccessFamilyFromLegacy(std::string_view family_text,
+                                              std::string_view scan_kind_text = {})
+        -> PlannerAccessFamily
+    {
+        if (family_text == "SEQ_SCAN" || scan_kind_text == "SEQ_SCAN")
+        {
+            return PlannerAccessFamily::SEQ_SCAN;
+        }
+        if (family_text == "ORDERED_INDEX_SCAN")
+        {
+            return PlannerAccessFamily::BTREE_ORDERED_SCAN;
+        }
+        if (family_text == "BTREE_RANGE_SCAN")
+        {
+            return PlannerAccessFamily::BTREE_RANGE_SCAN;
+        }
+        if (family_text == "PARTIAL_INDEX_SCAN")
+        {
+            return PlannerAccessFamily::BTREE_RANGE_SCAN;
+        }
+        if (family_text == "EXPRESSION_INDEX_SCAN")
+        {
+            return PlannerAccessFamily::BTREE_EQ_SCAN;
+        }
+        if (family_text == "SKIP_SCAN")
+        {
+            return PlannerAccessFamily::BTREE_SKIP_SCAN;
+        }
+        if (family_text == "PARAMETERIZED_INDEX_SCAN")
+        {
+            return PlannerAccessFamily::BTREE_EQ_SCAN;
+        }
+        if (family_text == "INDEX_ONLY_SCAN" || scan_kind_text == "INDEX_ONLY_SCAN")
+        {
+            return PlannerAccessFamily::BTREE_EQ_SCAN;
+        }
+        if (family_text == "BITMAP_INDEX_SCAN" || scan_kind_text == "BITMAP_INDEX_SCAN")
+        {
+            return PlannerAccessFamily::BITMAP_COMBINE_SCAN;
+        }
+        if (family_text == "LSM_SCAN" || scan_kind_text == "LSM_SCAN")
+        {
+            return PlannerAccessFamily::LSM_EQ_SCAN;
+        }
+        if (family_text == "BRIN_SCAN")
+        {
+            return PlannerAccessFamily::BRIN_SCAN;
+        }
+        if (family_text == "BITMAP_STORAGE_SCAN")
+        {
+            return PlannerAccessFamily::BITMAP_STORAGE_SCAN;
+        }
+        if (family_text == "COLUMNSTORE_SCAN")
+        {
+            return PlannerAccessFamily::COLUMNSTORE_SCAN;
+        }
+        if (family_text == "GIST_SCAN")
+        {
+            return PlannerAccessFamily::GIST_SCAN;
+        }
+        if (family_text == "SPGIST_SCAN")
+        {
+            return PlannerAccessFamily::SPGIST_SCAN;
+        }
+        if (family_text == "RTREE_SCAN" || scan_kind_text == "RTREE_SCAN")
+        {
+            return PlannerAccessFamily::RTREE_SCAN;
+        }
+        if (family_text == "GIN_FILTER_SCAN")
+        {
+            return PlannerAccessFamily::GIN_FILTER_SCAN;
+        }
+        if (family_text == "TEXT_BITMAP_SCAN")
+        {
+            return PlannerAccessFamily::TEXT_BITMAP_SCAN;
+        }
+        if (family_text == "TEXT_SCORE_SCAN")
+        {
+            return PlannerAccessFamily::TEXT_SCORE_SCAN;
+        }
+        if (family_text == "TEXT_RECHECK_SCAN")
+        {
+            return PlannerAccessFamily::TEXT_RECHECK_SCAN;
+        }
+        if (family_text == "VECTOR_FLAT_SCAN")
+        {
+            return PlannerAccessFamily::VECTOR_FLAT_SCAN;
+        }
+        if (family_text == "HNSW_SCAN")
+        {
+            return PlannerAccessFamily::HNSW_SCAN;
+        }
+        if (family_text == "IVF_SCAN")
+        {
+            return PlannerAccessFamily::IVF_SCAN;
+        }
+        if (family_text == "ANN_RERANK_SCAN")
+        {
+            return PlannerAccessFamily::ANN_RERANK_SCAN;
+        }
+        if (family_text == "ANN_HYBRID_FALLBACK_SCAN")
+        {
+            return PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN;
+        }
+        if (family_text == "INDEX_SCAN" || scan_kind_text == "INDEX_SCAN" ||
+            family_text.empty())
+        {
+            return PlannerAccessFamily::BTREE_EQ_SCAN;
+        }
+        return PlannerAccessFamily::UNKNOWN;
+    }
+
+    inline auto accessPathExactnessFromLegacy(std::string_view family_text,
+                                              std::string_view scan_kind_text = {})
+        -> AccessPathExactnessClass
+    {
+        if (family_text == "BITMAP_INDEX_SCAN" || scan_kind_text == "BITMAP_INDEX_SCAN")
+        {
+            return AccessPathExactnessClass::CANDIDATE_REGION;
+        }
+        if (family_text == "RTREE_SCAN" || scan_kind_text == "RTREE_SCAN" ||
+            family_text == "GIST_SCAN" || family_text == "SPGIST_SCAN" ||
+            family_text == "TEXT_RECHECK_SCAN" || family_text == "TEXT_BITMAP_SCAN" ||
+            family_text == "SUMMARY_FILTER_SCAN" || family_text == "BRIN_SCAN" ||
+            family_text == "BITMAP_STORAGE_SCAN" || family_text == "COLUMNSTORE_SCAN")
+        {
+            return AccessPathExactnessClass::CANDIDATE_REGION;
+        }
+        if (family_text == "GIST_NEAREST_SCAN" || family_text == "SPGIST_NEAREST_SCAN" ||
+            family_text == "RTREE_NEAREST_SCAN")
+        {
+            return AccessPathExactnessClass::LOWER_BOUND_ORDERED;
+        }
+        if (family_text == "HNSW_SCAN" || family_text == "IVF_SCAN" ||
+            family_text == "ANN_RERANK_SCAN")
+        {
+            return AccessPathExactnessClass::APPROX_TOPK;
+        }
+        if (family_text == "SEQ_SCAN" || scan_kind_text == "SEQ_SCAN")
+        {
+            return AccessPathExactnessClass::EXACT_ROW;
+        }
+        if (family_text == "INDEX_SCAN" || scan_kind_text == "INDEX_SCAN" ||
+            family_text == "ORDERED_INDEX_SCAN" || family_text == "PARTIAL_INDEX_SCAN" ||
+            family_text == "EXPRESSION_INDEX_SCAN" || family_text == "SKIP_SCAN" ||
+            family_text == "PARAMETERIZED_INDEX_SCAN" || family_text == "LSM_SCAN" ||
+            family_text == "INDEX_ONLY_SCAN" || family_text == "BTREE_EQ_SCAN" ||
+            family_text == "BTREE_RANGE_SCAN" || family_text == "BTREE_ORDERED_SCAN" ||
+            family_text == "BTREE_SKIP_SCAN" || family_text == "HASH_EQ_SCAN" ||
+            family_text == "LSM_EQ_SCAN" || family_text == "LSM_RANGE_SCAN" ||
+            family_text == "LSM_ORDERED_RANGE_SCAN" || family_text == "VECTOR_FLAT_SCAN")
+        {
+            return AccessPathExactnessClass::EXACT_KEY;
+        }
+        return AccessPathExactnessClass::UNKNOWN;
+    }
+
+    inline auto accessPathVisibilityEnforcementFromLegacy(std::string_view family_text,
+                                                          std::string_view scan_kind_text = {})
+        -> AccessPathVisibilityEnforcement
+    {
+        if (family_text == "SEQ_SCAN" || scan_kind_text == "SEQ_SCAN")
+        {
+            return AccessPathVisibilityEnforcement::INDEX_NATIVE;
+        }
+        if (family_text == "BITMAP_INDEX_SCAN" || scan_kind_text == "BITMAP_INDEX_SCAN" ||
+            family_text == "RTREE_SCAN" || scan_kind_text == "RTREE_SCAN" ||
+            family_text == "GIST_SCAN" || family_text == "SPGIST_SCAN" ||
+            family_text == "TEXT_BITMAP_SCAN" || family_text == "TEXT_RECHECK_SCAN" ||
+            family_text == "SUMMARY_FILTER_SCAN" || family_text == "BRIN_SCAN" ||
+            family_text == "BITMAP_STORAGE_SCAN" || family_text == "COLUMNSTORE_SCAN" ||
+            family_text == "HNSW_SCAN" || family_text == "IVF_SCAN" ||
+            family_text == "ANN_RERANK_SCAN")
+        {
+            return AccessPathVisibilityEnforcement::POST_FILTER;
+        }
+        if (!family_text.empty() || !scan_kind_text.empty())
+        {
+            return AccessPathVisibilityEnforcement::HYBRID;
+        }
+        return AccessPathVisibilityEnforcement::UNKNOWN;
+    }
+
     struct AccessPathDescriptor
     {
         struct OrderingKey
@@ -61,7 +430,23 @@ namespace scratchbird::optimizer
         };
 
         std::string family;
+        std::string path_name;
+        PlannerAccessFamily family_kind = PlannerAccessFamily::UNKNOWN;
         std::vector<std::string> family_tags;
+        uint32_t taxonomy_version = kPlannerFamilyTaxonomyVersion;
+        AccessPathExactnessClass exactness_class = AccessPathExactnessClass::UNKNOWN;
+        bool requires_recheck = false;
+        double coverage_fraction = 0.0;
+        uint64_t candidate_budget = 0;
+        AccessPathVisibilityEnforcement visibility_enforcement =
+            AccessPathVisibilityEnforcement::UNKNOWN;
+        uint32_t family_metrics_version = 0;
+        std::string metrics_confidence_class;
+        AccessPathQueryabilityState queryability_state =
+            AccessPathQueryabilityState::UNKNOWN;
+        std::string formula_profile_id;
+        uint32_t formula_profile_version = 0;
+        std::string calibration_profile_id;
         bool ordered_output = false;
         uint64_t ordered_prefix_length = 0;
         std::vector<OrderingKey> ordering_keys;
@@ -78,11 +463,11 @@ namespace scratchbird::optimizer
             case PathType::SEQ_SCAN:
                 return "SEQ_SCAN";
             case PathType::INDEX_SCAN:
-                return "INDEX_SCAN";
+                return "BTREE_EQ_SCAN";
             case PathType::INDEX_ONLY_SCAN:
-                return "INDEX_ONLY_SCAN";
+                return "BTREE_EQ_SCAN";
             case PathType::BITMAP_INDEX_SCAN:
-                return "BITMAP_INDEX_SCAN";
+                return "BITMAP_COMBINE_SCAN";
             case PathType::RTREE_SCAN:
                 return "RTREE_SCAN";
             case PathType::NESTED_LOOP_JOIN:
@@ -105,6 +490,61 @@ namespace scratchbird::optimizer
                 return "WINDOW";
         }
         return "UNKNOWN";
+    }
+
+    inline auto defaultAccessPathFamilyKind(PathType type) -> PlannerAccessFamily
+    {
+        switch (type)
+        {
+            case PathType::SEQ_SCAN:
+                return PlannerAccessFamily::SEQ_SCAN;
+            case PathType::INDEX_SCAN:
+                return PlannerAccessFamily::BTREE_EQ_SCAN;
+            case PathType::INDEX_ONLY_SCAN:
+                return PlannerAccessFamily::BTREE_EQ_SCAN;
+            case PathType::BITMAP_INDEX_SCAN:
+                return PlannerAccessFamily::BITMAP_COMBINE_SCAN;
+            case PathType::RTREE_SCAN:
+                return PlannerAccessFamily::RTREE_SCAN;
+            default:
+                return PlannerAccessFamily::UNKNOWN;
+        }
+    }
+
+    inline auto defaultAccessPathExactness(PathType type) -> AccessPathExactnessClass
+    {
+        switch (type)
+        {
+            case PathType::SEQ_SCAN:
+                return AccessPathExactnessClass::EXACT_ROW;
+            case PathType::INDEX_SCAN:
+            case PathType::INDEX_ONLY_SCAN:
+                return AccessPathExactnessClass::EXACT_KEY;
+            case PathType::BITMAP_INDEX_SCAN:
+                return AccessPathExactnessClass::CANDIDATE_REGION;
+            case PathType::RTREE_SCAN:
+                return AccessPathExactnessClass::CANDIDATE_REGION;
+            default:
+                return AccessPathExactnessClass::UNKNOWN;
+        }
+    }
+
+    inline auto defaultAccessPathVisibilityEnforcement(PathType type)
+        -> AccessPathVisibilityEnforcement
+    {
+        switch (type)
+        {
+            case PathType::SEQ_SCAN:
+                return AccessPathVisibilityEnforcement::INDEX_NATIVE;
+            case PathType::BITMAP_INDEX_SCAN:
+            case PathType::RTREE_SCAN:
+                return AccessPathVisibilityEnforcement::POST_FILTER;
+            case PathType::INDEX_SCAN:
+            case PathType::INDEX_ONLY_SCAN:
+                return AccessPathVisibilityEnforcement::HYBRID;
+            default:
+                return AccessPathVisibilityEnforcement::UNKNOWN;
+        }
     }
 
     /**
@@ -138,6 +578,18 @@ namespace scratchbird::optimizer
             : type_(type), cost_(cost)
         {
             access_descriptor_.family = defaultAccessPathFamily(type_);
+            access_descriptor_.path_name = access_descriptor_.family;
+            access_descriptor_.family_kind = defaultAccessPathFamilyKind(type_);
+            access_descriptor_.exactness_class = defaultAccessPathExactness(type_);
+            access_descriptor_.visibility_enforcement =
+                defaultAccessPathVisibilityEnforcement(type_);
+            access_descriptor_.queryability_state =
+                AccessPathQueryabilityState::QUERYABLE;
+            access_descriptor_.coverage_fraction =
+                type_ == PathType::SEQ_SCAN ? 1.0 : 0.0;
+            access_descriptor_.formula_profile_id = cost_.formula_profile_id;
+            access_descriptor_.formula_profile_version = cost_.formula_profile_version;
+            access_descriptor_.calibration_profile_id = cost_.calibration_profile_id;
         }
 
         virtual ~Path() = default;
@@ -178,6 +630,30 @@ namespace scratchbird::optimizer
             if (access_descriptor_.family.empty())
             {
                 access_descriptor_.family = defaultAccessPathFamily(type_);
+            }
+            if (access_descriptor_.path_name.empty())
+            {
+                access_descriptor_.path_name = access_descriptor_.family;
+            }
+            if (access_descriptor_.family_kind == PlannerAccessFamily::UNKNOWN)
+            {
+                access_descriptor_.family_kind = defaultAccessPathFamilyKind(type_);
+            }
+            if (access_descriptor_.exactness_class == AccessPathExactnessClass::UNKNOWN)
+            {
+                access_descriptor_.exactness_class = defaultAccessPathExactness(type_);
+            }
+            if (access_descriptor_.visibility_enforcement ==
+                AccessPathVisibilityEnforcement::UNKNOWN)
+            {
+                access_descriptor_.visibility_enforcement =
+                    defaultAccessPathVisibilityEnforcement(type_);
+            }
+            if (access_descriptor_.queryability_state ==
+                AccessPathQueryabilityState::UNKNOWN)
+            {
+                access_descriptor_.queryability_state =
+                    AccessPathQueryabilityState::QUERYABLE;
             }
         }
 

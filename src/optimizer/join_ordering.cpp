@@ -19,8 +19,9 @@
 #include "scratchbird/optimizer/join_legality.h"
 #include "scratchbird/core/debug.h"
 #include <algorithm>
-#include <queue>
 #include <cmath>
+#include <queue>
+#include <sstream>
 
 namespace scratchbird::optimizer
 {
@@ -80,17 +81,158 @@ JoinSearchStrategy JoinOrderingOptimizer::chooseHeuristicStrategy() const
     return JoinSearchStrategy::HYPERGRAPH_GREEDY;
 }
 
+auto JoinOrderingOptimizer::frontierSignature(const DPEntry& entry) const
+    -> std::string
+{
+    if (!entry.best_path)
+    {
+        return "NULL";
+    }
+
+    const auto& descriptor = entry.best_path->accessDescriptor();
+    std::ostringstream key;
+    key << static_cast<uint32_t>(descriptor.exactness_class) << ':'
+        << static_cast<uint32_t>(descriptor.requires_recheck ? 1U : 0U) << ':'
+        << static_cast<uint32_t>(descriptor.parameterized ? 1U : 0U) << ':'
+        << static_cast<uint32_t>(descriptor.ordered_output ? 1U : 0U) << ':'
+        << descriptor.ordered_prefix_length << ':'
+        << static_cast<uint32_t>(descriptor.order_complete ? 1U : 0U) << ':';
+    for (size_t relation_index : descriptor.required_outer_relation_indexes)
+    {
+        key << relation_index << ',';
+    }
+    return key.str();
+}
+
+void JoinOrderingOptimizer::pushFrontierEntry(DPFrontier& frontier, DPEntry entry)
+{
+    if (!entry.best_path)
+    {
+        return;
+    }
+
+    if (entry.cost == std::numeric_limits<double>::max())
+    {
+        entry.cost = entry.best_path->totalCost();
+    }
+    if (entry.rows == 0)
+    {
+        entry.rows = entry.best_path->rows();
+    }
+
+    const std::string entry_signature = frontierSignature(entry);
+    for (auto it = frontier.begin(); it != frontier.end();)
+    {
+        if (frontierSignature(*it) != entry_signature)
+        {
+            ++it;
+            continue;
+        }
+        if (it->cost <= entry.cost && it->rows <= entry.rows)
+        {
+            ++telemetry_.pruned_state_count;
+            return;
+        }
+        if (entry.cost <= it->cost && entry.rows <= it->rows)
+        {
+            ++telemetry_.pruned_state_count;
+            it = frontier.erase(it);
+            continue;
+        }
+        ++it;
+    }
+
+    frontier.push_back(std::move(entry));
+    std::sort(frontier.begin(),
+              frontier.end(),
+              [](const DPEntry& left, const DPEntry& right) {
+                  if (left.cost == right.cost)
+                  {
+                      return left.rows < right.rows;
+                  }
+                  return left.cost < right.cost;
+              });
+}
+
+auto JoinOrderingOptimizer::frontierBestEntry(const DPFrontier& frontier) const
+    -> const DPEntry*
+{
+    if (frontier.empty())
+    {
+        return nullptr;
+    }
+    return &frontier.front();
+}
+
+auto JoinOrderingOptimizer::frontierBestPath(const DPFrontier& frontier) const
+    -> std::shared_ptr<Path>
+{
+    const auto* best_entry = frontierBestEntry(frontier);
+    return best_entry != nullptr ? best_entry->best_path : nullptr;
+}
+
+auto JoinOrderingOptimizer::baseFrontierForRelation(const RelationInfo& relation)
+    -> DPFrontier
+{
+    DPFrontier frontier;
+    for (const auto& candidate_path : relation.candidate_paths)
+    {
+        if (!candidate_path)
+        {
+            continue;
+        }
+        DPEntry entry;
+        entry.best_path = candidate_path;
+        entry.cost = candidate_path->totalCost();
+        entry.rows = candidate_path->rows();
+        pushFrontierEntry(frontier, std::move(entry));
+    }
+
+    if (frontier.empty() && relation.best_path)
+    {
+        DPEntry entry;
+        entry.best_path = relation.best_path;
+        entry.cost = relation.best_path->totalCost();
+        entry.rows = relation.best_path->rows();
+        pushFrontierEntry(frontier, std::move(entry));
+    }
+    return frontier;
+}
+
 size_t JoinOrderingOptimizer::addRelation(const core::ID& table_id,
                                           const std::string& table_name,
                                           const std::string& alias,
                                           std::shared_ptr<Path> best_path)
 {
+    std::vector<std::shared_ptr<Path>> bundle;
+    if (best_path)
+    {
+        bundle.push_back(std::move(best_path));
+    }
+    return addRelation(table_id, table_name, alias, bundle);
+}
+
+size_t JoinOrderingOptimizer::addRelation(const core::ID& table_id,
+                                          const std::string& table_name,
+                                          const std::string& alias,
+                                          const std::vector<std::shared_ptr<Path>>& candidate_paths)
+{
     RelationInfo info;
     info.table_id = table_id;
     info.table_name = table_name;
     info.alias = alias;
-    info.best_path = best_path;
-    info.rows = best_path ? best_path->rows() : 1000;  // Default estimate
+    info.candidate_paths = candidate_paths;
+    auto frontier = baseFrontierForRelation(info);
+    if (const auto* best_entry = frontierBestEntry(frontier))
+    {
+        info.best_path = best_entry->best_path;
+        info.best_path_rows = best_entry->rows;
+        info.rows = best_entry->rows;
+    }
+    else
+    {
+        info.rows = 1000;
+    }
     info.width = 100;  // Default row width estimate
 
     size_t idx = relations_.size();
@@ -172,7 +314,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         DEBUG_LOG_DB("JoinOrdering: Single relation, returning best path");
         last_strategy_used_ = JoinSearchStrategy::AUTO;
         telemetry_.selected_strategy = last_strategy_used_;
-        return relations_[0].best_path;
+        return frontierBestPath(baseFrontierForRelation(relations_[0]));
     }
 
     if (hasJoinReorderBarrier())
@@ -247,11 +389,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         for (size_t i = 0; i < relations_.size(); ++i)
         {
             RelationSet singleton = 1ULL << i;
-            DPEntry entry;
-            entry.best_path = relations_[i].best_path;
-            entry.cost = entry.best_path ? entry.best_path->totalCost() : 0.0;
-            entry.rows = relations_[i].rows;
-            dp_table_[singleton] = entry;
+            dp_table_[singleton] = baseFrontierForRelation(relations_[i]);
         }
 
         RelationSet full_set = (1ULL << relations_.size()) - 1;
@@ -263,10 +401,10 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
                 if (countBits(subset) == size)
                 {
                     ++telemetry_.considered_state_count;
-                    DPEntry entry = generateSubsetPlan(subset, ctx);
-                    if (entry.best_path)
+                    DPFrontier frontier = generateSubsetPlans(subset, ctx);
+                    if (!frontier.empty())
                     {
-                        dp_table_[subset] = entry;
+                        dp_table_[subset] = std::move(frontier);
                     }
                 }
 
@@ -281,7 +419,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         auto it = dp_table_.find(full_set);
         if (it != dp_table_.end())
         {
-            return it->second.best_path;
+            return frontierBestPath(it->second);
         }
 
         recordFallback("EXHAUSTIVE_PLAN_INCOMPLETE", "FULL_SET", relations_.size());
@@ -332,11 +470,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeBoundedDP(
     for (size_t i = 0; i < relations_.size(); ++i)
     {
         RelationSet singleton = 1ULL << i;
-        DPEntry entry;
-        entry.best_path = relations_[i].best_path;
-        entry.cost = entry.best_path ? entry.best_path->totalCost() : 0.0;
-        entry.rows = relations_[i].rows;
-        dp_table_[singleton] = entry;
+        dp_table_[singleton] = baseFrontierForRelation(relations_[i]);
     }
 
     RelationSet full_set = (1ULL << relations_.size()) - 1;
@@ -365,7 +499,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeBoundedDP(
 
                 ++telemetry_.considered_state_count;
                 const size_t pair_count_before = telemetry_.pair_evaluation_count;
-                DPEntry entry = generateSubsetPlan(subset, ctx);
+                DPFrontier frontier = generateSubsetPlans(subset, ctx);
                 const size_t pair_delta =
                     telemetry_.pair_evaluation_count - pair_count_before;
                 if (pair_delta > pair_budget_remaining)
@@ -376,9 +510,9 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeBoundedDP(
                 {
                     pair_budget_remaining -= pair_delta;
                 }
-                if (entry.best_path)
+                if (!frontier.empty())
                 {
-                    dp_table_[subset] = entry;
+                    dp_table_[subset] = std::move(frontier);
                 }
                 if (pair_budget_remaining == 0 && subset != full_set)
                 {
@@ -407,7 +541,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeBoundedDP(
     {
         last_strategy_used_ = JoinSearchStrategy::BOUNDED_DP;
         telemetry_.selected_strategy = last_strategy_used_;
-        return it->second.best_path;
+        return frontierBestPath(it->second);
     }
 
     if (telemetry_.fallback_reason.empty())
@@ -431,7 +565,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
 
     if (relations_.size() == 1)
     {
-        return relations_[0].best_path;
+        return frontierBestPath(baseFrontierForRelation(relations_[0]));
     }
 
     if (hasJoinReorderBarrier())
@@ -451,19 +585,32 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
 
     // Start with the relation that has the smallest estimated rows
     size_t best_start = 0;
-    uint64_t min_rows = relations_[0].rows;
-    for (size_t i = 1; i < relations_.size(); ++i)
+    uint64_t min_rows = std::numeric_limits<uint64_t>::max();
+    for (size_t i = 0; i < relations_.size(); ++i)
     {
-        if (relations_[i].rows < min_rows)
+        const auto frontier = baseFrontierForRelation(relations_[i]);
+        const auto* best_entry = frontierBestEntry(frontier);
+        if (best_entry != nullptr && best_entry->rows < min_rows)
         {
-            min_rows = relations_[i].rows;
+            min_rows = best_entry->rows;
             best_start = i;
         }
     }
+    if (min_rows == std::numeric_limits<uint64_t>::max())
+    {
+        const auto frontier = baseFrontierForRelation(relations_[0]);
+        const auto* best_entry = frontierBestEntry(frontier);
+        min_rows = best_entry != nullptr ? best_entry->rows : 0;
+    }
 
     joined[best_start] = true;
-    std::shared_ptr<Path> current_path = relations_[best_start].best_path;
-    uint64_t current_rows = relations_[best_start].rows;
+    auto current_frontier = baseFrontierForRelation(relations_[best_start]);
+    const auto* current_best = frontierBestEntry(current_frontier);
+    if (current_best == nullptr)
+    {
+        return nullptr;
+    }
+    DPEntry current_entry = *current_best;
 
     DEBUG_LOG_DB("JoinOrdering: Greedy start with " + relations_[best_start].table_name);
 
@@ -473,13 +620,17 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
         // Find the next best relation to join
         double best_cost = std::numeric_limits<double>::max();
         size_t best_rel = 0;
-        std::shared_ptr<Path> best_join_path = nullptr;
-        uint64_t best_join_rows = 0;
+        DPEntry best_join_entry;
         size_t round_candidates = 0;
 
         for (size_t i = 0; i < relations_.size(); ++i)
         {
             if (joined[i]) continue;
+            const auto relation_frontier = baseFrontierForRelation(relations_[i]);
+            if (relation_frontier.empty())
+            {
+                continue;
+            }
 
             // Find join edge connecting current set to this relation
             for (size_t e = 0; e < join_edges_.size(); ++e)
@@ -500,95 +651,59 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
                 }
 
                 if (!connects) continue;
-                ++telemetry_.pair_evaluation_count;
-                ++round_candidates;
-
-                // Cost this join
-                double selectivity = edge.selectivity;
-                uint64_t right_rows = relations_[i].rows;
-                uint64_t join_rows = static_cast<uint64_t>(
-                    static_cast<double>(current_rows) *
-                    static_cast<double>(right_rows) * selectivity);
-                if (join_rows == 0) join_rows = 1;
-
-                // Use nested loop join cost as estimate
-                CostEstimate join_cost = cost_model_.costNestedLoopJoin(
-                    current_path ? current_path->cost() : CostEstimate{},
-                    relations_[i].best_path ? relations_[i].best_path->cost() : CostEstimate{},
-                    current_rows,
-                    right_rows,
-                    selectivity,
-                    edge.join_type,
-                    ctx);
-
-                if (join_cost.total_cost < best_cost)
+                for (const auto& relation_entry : relation_frontier)
                 {
-                    best_cost = join_cost.total_cost;
+                    ++telemetry_.pair_evaluation_count;
+                    ++round_candidates;
+                    const auto join_entry = costJoin(current_entry,
+                                                     relation_entry,
+                                                     edge,
+                                                     ctx,
+                                                     true);
+                    if (!join_entry.best_path || join_entry.cost >= best_cost)
+                    {
+                        continue;
+                    }
+                    best_cost = join_entry.cost;
                     best_rel = i;
-                    best_join_rows = join_rows;
-
-                    // Create join path (V3: uses Expression* for join condition)
-                    auto join_path = std::make_shared<NestedLoopJoinPath>(
-                        edge.join_type,
-                        current_path,
-                        relations_[i].best_path,
-                        edge.join_condition,
-                        selectivity,
-                        join_cost);
-                    best_join_path = join_path;
+                    best_join_entry = join_entry;
                 }
             }
         }
 
-        if (!best_join_path)
+        if (!best_join_entry.best_path)
         {
             // No connecting edge found - bridge the next disconnected component
             // with the cheapest explicit cross join.
             for (size_t i = 0; i < relations_.size(); ++i)
             {
                 if (joined[i]) continue;
-                ++telemetry_.pair_evaluation_count;
-                ++round_candidates;
-
-                double selectivity = 1.0;  // Cross join
-                uint64_t right_rows = relations_[i].rows;
-                uint64_t join_rows = current_rows * right_rows;
-
-                CostEstimate join_cost = cost_model_.costNestedLoopJoin(
-                    current_path ? current_path->cost() : CostEstimate{},
-                    relations_[i].best_path ? relations_[i].best_path->cost() : CostEstimate{},
-                    current_rows,
-                    right_rows,
-                    selectivity,
-                    parser::JoinType::CROSS,
-                    ctx);
-
-                if (join_cost.total_cost >= best_cost)
+                const auto relation_frontier = baseFrontierForRelation(relations_[i]);
+                for (const auto& relation_entry : relation_frontier)
                 {
-                    continue;
-                }
+                    ++telemetry_.pair_evaluation_count;
+                    ++round_candidates;
+                    const auto join_entry =
+                        costCrossJoin(current_entry, relation_entry, ctx);
+                    if (!join_entry.best_path || join_entry.cost >= best_cost)
+                    {
+                        continue;
+                    }
 
-                best_cost = join_cost.total_cost;
-                best_rel = i;
-                best_join_rows = join_rows;
-                best_join_path = std::make_shared<NestedLoopJoinPath>(
-                    parser::JoinType::CROSS,
-                    current_path,
-                    relations_[i].best_path,
-                    nullptr,
-                    selectivity,
-                    join_cost);
+                    best_cost = join_entry.cost;
+                    best_rel = i;
+                    best_join_entry = join_entry;
+                }
             }
         }
 
-        if (best_join_path)
+        if (best_join_entry.best_path)
         {
             joined[best_rel] = true;
-            current_path = best_join_path;
-            current_rows = best_join_rows;
+            current_entry = best_join_entry;
 
             DEBUG_LOG_DB("JoinOrdering: Greedy added " + relations_[best_rel].table_name +
-                         ", total cost=" + std::to_string(best_join_path->totalCost()));
+                         ", total cost=" + std::to_string(best_join_entry.cost));
         }
 
         telemetry_.considered_state_count += round_candidates;
@@ -598,7 +713,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
         }
     }
 
-    return current_path;
+    return current_entry.best_path;
 }
 
 std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
@@ -611,7 +726,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
 
     if (relations_.size() == 1)
     {
-        return relations_[0].best_path;
+        return frontierBestPath(baseFrontierForRelation(relations_[0]));
     }
 
     if (hasJoinReorderBarrier())
@@ -624,7 +739,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
     struct Component
     {
         RelationSet relation_set = 0;
-        DPEntry entry;
+        DPFrontier frontier;
     };
 
     std::vector<Component> components;
@@ -633,11 +748,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
     {
         Component component;
         component.relation_set = 1ULL << i;
-        component.entry.best_path = relations_[i].best_path;
-        component.entry.cost = component.entry.best_path
-            ? component.entry.best_path->totalCost()
-            : 0.0;
-        component.entry.rows = relations_[i].rows;
+        component.frontier = baseFrontierForRelation(relations_[i]);
         components.push_back(std::move(component));
     }
 
@@ -649,7 +760,8 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
         bool found_connected_merge = false;
         size_t best_left = 0;
         size_t best_right = 0;
-        DPEntry best_entry;
+        DPFrontier best_frontier;
+        double best_cost = std::numeric_limits<double>::max();
         size_t pair_evaluations = 0;
         size_t round_candidates = 0;
 
@@ -674,17 +786,27 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
 
                 for (size_t edge_idx : connecting_edges)
                 {
-                    ++round_candidates;
-                    const auto candidate =
-                        costJoin(components[left].entry,
-                                 components[right].entry,
-                                 join_edges_[edge_idx],
-                                 ctx);
-                    if (!candidate.best_path || candidate.cost >= best_entry.cost)
+                    DPFrontier candidate_frontier;
+                    for (const auto& left_entry : components[left].frontier)
+                    {
+                        for (const auto& right_entry : components[right].frontier)
+                        {
+                            ++round_candidates;
+                            ++telemetry_.pair_evaluation_count;
+                            pushFrontierEntry(candidate_frontier,
+                                              costJoin(left_entry,
+                                                       right_entry,
+                                                       join_edges_[edge_idx],
+                                                       ctx));
+                        }
+                    }
+                    const auto* best_entry = frontierBestEntry(candidate_frontier);
+                    if (best_entry == nullptr || best_entry->cost >= best_cost)
                     {
                         continue;
                     }
-                    best_entry = candidate;
+                    best_cost = best_entry->cost;
+                    best_frontier = std::move(candidate_frontier);
                     best_left = left;
                     best_right = right;
                     found_connected_merge = true;
@@ -698,29 +820,39 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
 
         if (!found_connected_merge)
         {
-            best_entry = DPEntry{};
+            best_frontier.clear();
+            best_cost = std::numeric_limits<double>::max();
             for (size_t left = 0; left < components.size(); ++left)
             {
                 for (size_t right = left + 1; right < components.size(); ++right)
                 {
-                    ++telemetry_.pair_evaluation_count;
-                    ++round_candidates;
-                    const auto candidate =
-                        costCrossJoin(components[left].entry,
-                                      components[right].entry,
-                                      ctx);
-                    if (!candidate.best_path || candidate.cost >= best_entry.cost)
+                    DPFrontier candidate_frontier;
+                    for (const auto& left_entry : components[left].frontier)
+                    {
+                        for (const auto& right_entry : components[right].frontier)
+                        {
+                            ++telemetry_.pair_evaluation_count;
+                            ++round_candidates;
+                            pushFrontierEntry(candidate_frontier,
+                                              costCrossJoin(left_entry,
+                                                            right_entry,
+                                                            ctx));
+                        }
+                    }
+                    const auto* best_entry = frontierBestEntry(candidate_frontier);
+                    if (best_entry == nullptr || best_entry->cost >= best_cost)
                     {
                         continue;
                     }
-                    best_entry = candidate;
+                    best_cost = best_entry->cost;
+                    best_frontier = std::move(candidate_frontier);
                     best_left = left;
                     best_right = right;
                 }
             }
         }
 
-        if (!best_entry.best_path || best_left == best_right)
+        if (best_frontier.empty() || best_left == best_right)
         {
             recordFallback("HEURISTIC_NO_CONNECTED_CANDIDATE",
                            "MAX_PAIR_EVALUATIONS",
@@ -737,7 +869,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
         Component merged;
         merged.relation_set =
             components[best_left].relation_set | components[best_right].relation_set;
-        merged.entry = std::move(best_entry);
+        merged.frontier = std::move(best_frontier);
 
         if (best_left > best_right)
         {
@@ -750,7 +882,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
 
     last_strategy_used_ = JoinSearchStrategy::HYPERGRAPH_GREEDY;
     telemetry_.selected_strategy = last_strategy_used_;
-    return components.front().entry.best_path;
+    return frontierBestPath(components.front().frontier);
 }
 
 std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
@@ -763,21 +895,12 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
 
     if (relations_.size() == 1)
     {
-        return relations_[0].best_path;
+        return frontierBestPath(baseFrontierForRelation(relations_[0]));
     }
 
     std::vector<bool> joined(relations_.size(), false);
     joined[0] = true;
-    std::shared_ptr<Path> current_path = relations_[0].best_path;
-    uint64_t current_rows = relations_[0].rows;
-
-    auto currentEntry = [&]() -> DPEntry {
-        DPEntry entry;
-        entry.best_path = current_path;
-        entry.cost = current_path ? current_path->totalCost() : 0.0;
-        entry.rows = current_rows;
-        return entry;
-    };
+    DPFrontier current_frontier = baseFrontierForRelation(relations_[0]);
 
     while (true)
     {
@@ -809,28 +932,30 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
                 continue;
             }
 
-            ++telemetry_.pair_evaluation_count;
-            ++round_candidates;
-            DPEntry relation_entry;
-            relation_entry.best_path = relations_[candidate_rel].best_path;
-            relation_entry.cost = relation_entry.best_path
-                ? relation_entry.best_path->totalCost()
-                : 0.0;
-            relation_entry.rows = relations_[candidate_rel].rows;
-            DPEntry next_entry = costJoin(currentEntry(),
-                                         relation_entry,
-                                         edge,
-                                         ctx,
-                                         true);
+            const auto relation_frontier = baseFrontierForRelation(relations_[candidate_rel]);
+            DPFrontier next_frontier;
+            for (const auto& left_entry : current_frontier)
+            {
+                for (const auto& relation_entry : relation_frontier)
+                {
+                    ++telemetry_.pair_evaluation_count;
+                    ++round_candidates;
+                    pushFrontierEntry(next_frontier,
+                                      costJoin(left_entry,
+                                               relation_entry,
+                                               edge,
+                                               ctx,
+                                               true));
+                }
+            }
 
-            if (!next_entry.best_path)
+            if (next_frontier.empty())
             {
                 continue;
             }
 
             joined[candidate_rel] = true;
-            current_path = next_entry.best_path;
-            current_rows = next_entry.rows;
+            current_frontier = std::move(next_frontier);
             made_progress = true;
             break;
         }
@@ -838,7 +963,8 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
         if (!made_progress)
         {
             size_t best_rel = std::numeric_limits<size_t>::max();
-            DPEntry best_entry;
+            DPFrontier best_frontier;
+            double best_cost = std::numeric_limits<double>::max();
             for (size_t i = 0; i < relations_.size(); ++i)
             {
                 if (joined[i])
@@ -846,31 +972,37 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
                     continue;
                 }
 
-                ++telemetry_.pair_evaluation_count;
-                ++round_candidates;
-                DPEntry relation_entry;
-                relation_entry.best_path = relations_[i].best_path;
-                relation_entry.cost = relation_entry.best_path
-                    ? relation_entry.best_path->totalCost()
-                    : 0.0;
-                relation_entry.rows = relations_[i].rows;
-                auto join_entry = costCrossJoin(currentEntry(), relation_entry, ctx);
-                if (!join_entry.best_path || join_entry.cost >= best_entry.cost)
+                const auto relation_frontier = baseFrontierForRelation(relations_[i]);
+                DPFrontier candidate_frontier;
+                for (const auto& left_entry : current_frontier)
+                {
+                    for (const auto& relation_entry : relation_frontier)
+                    {
+                        ++telemetry_.pair_evaluation_count;
+                        ++round_candidates;
+                        pushFrontierEntry(candidate_frontier,
+                                          costCrossJoin(left_entry,
+                                                        relation_entry,
+                                                        ctx));
+                    }
+                }
+                const auto* best_entry = frontierBestEntry(candidate_frontier);
+                if (best_entry == nullptr || best_entry->cost >= best_cost)
                 {
                     continue;
                 }
-                best_entry = std::move(join_entry);
+                best_cost = best_entry->cost;
+                best_frontier = std::move(candidate_frontier);
                 best_rel = i;
             }
 
-            if (!best_entry.best_path || best_rel == std::numeric_limits<size_t>::max())
+            if (best_frontier.empty() || best_rel == std::numeric_limits<size_t>::max())
             {
                 break;
             }
 
             joined[best_rel] = true;
-            current_path = best_entry.best_path;
-            current_rows = best_entry.rows;
+            current_frontier = std::move(best_frontier);
         }
 
         telemetry_.considered_state_count += round_candidates;
@@ -885,13 +1017,13 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
         }
     }
 
-    return current_path;
+    return frontierBestPath(current_frontier);
 }
 
-JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::generateSubsetPlan(
+JoinOrderingOptimizer::DPFrontier JoinOrderingOptimizer::generateSubsetPlans(
     RelationSet subset, core::ErrorContext* ctx)
 {
-    DPEntry best_entry;
+    DPFrontier best_frontier;
 
     // Try all ways to partition subset into two non-empty subsets
     // such that there's a join edge connecting them
@@ -915,19 +1047,16 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::generateSubsetPlan(
 
         if (connecting_edges.empty())
         {
-            ++telemetry_.pair_evaluation_count;
-            DPEntry join_entry = costCrossJoin(left_it->second, right_it->second, ctx);
-            if (join_entry.best_path && join_entry.cost < best_entry.cost)
+            for (const auto& left_entry : left_it->second)
             {
-                if (best_entry.best_path)
+                for (const auto& right_entry : right_it->second)
                 {
-                    ++telemetry_.pruned_state_count;
+                    ++telemetry_.pair_evaluation_count;
+                    pushFrontierEntry(best_frontier,
+                                      costCrossJoin(left_entry,
+                                                    right_entry,
+                                                    ctx));
                 }
-                best_entry = std::move(join_entry);
-            }
-            else if (join_entry.best_path)
-            {
-                ++telemetry_.pruned_state_count;
             }
             continue;
         }
@@ -935,26 +1064,22 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::generateSubsetPlan(
         // Try each connecting edge
         for (size_t edge_idx : connecting_edges)
         {
-            ++telemetry_.pair_evaluation_count;
-            DPEntry join_entry = costJoin(left_it->second, right_it->second,
-                                          join_edges_[edge_idx], ctx);
-
-            if (join_entry.best_path && join_entry.cost < best_entry.cost)
+            for (const auto& left_entry : left_it->second)
             {
-                if (best_entry.best_path)
+                for (const auto& right_entry : right_it->second)
                 {
-                    ++telemetry_.pruned_state_count;
+                    ++telemetry_.pair_evaluation_count;
+                    pushFrontierEntry(best_frontier,
+                                      costJoin(left_entry,
+                                               right_entry,
+                                               join_edges_[edge_idx],
+                                               ctx));
                 }
-                best_entry = join_entry;
-            }
-            else if (join_entry.best_path)
-            {
-                ++telemetry_.pruned_state_count;
             }
         }
     }
 
-    return best_entry;
+    return best_frontier;
 }
 
 JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
@@ -1038,6 +1163,48 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             hash_keys_inner,
             selectivity,
             hash_cost);
+        AccessPathDescriptor descriptor;
+        descriptor.family = "HASH_JOIN";
+        descriptor.path_name = "HASH_JOIN";
+        descriptor.parameterized =
+            (left_entry.best_path &&
+             left_entry.best_path->accessDescriptor().parameterized) ||
+            (right_entry.best_path &&
+             right_entry.best_path->accessDescriptor().parameterized);
+        descriptor.requires_recheck =
+            (left_entry.best_path &&
+             left_entry.best_path->accessDescriptor().requires_recheck) ||
+            (right_entry.best_path &&
+             right_entry.best_path->accessDescriptor().requires_recheck);
+        descriptor.exactness_class =
+            std::max(left_entry.best_path
+                         ? left_entry.best_path->accessDescriptor().exactness_class
+                         : AccessPathExactnessClass::UNKNOWN,
+                     right_entry.best_path
+                         ? right_entry.best_path->accessDescriptor().exactness_class
+                         : AccessPathExactnessClass::UNKNOWN);
+        if (left_entry.best_path)
+        {
+            descriptor.required_outer_relation_indexes =
+                left_entry.best_path->accessDescriptor()
+                    .required_outer_relation_indexes;
+        }
+        if (right_entry.best_path)
+        {
+            descriptor.required_outer_relation_indexes.insert(
+                descriptor.required_outer_relation_indexes.end(),
+                right_entry.best_path->accessDescriptor()
+                    .required_outer_relation_indexes.begin(),
+                right_entry.best_path->accessDescriptor()
+                    .required_outer_relation_indexes.end());
+            std::sort(descriptor.required_outer_relation_indexes.begin(),
+                      descriptor.required_outer_relation_indexes.end());
+            descriptor.required_outer_relation_indexes.erase(
+                std::unique(descriptor.required_outer_relation_indexes.begin(),
+                            descriptor.required_outer_relation_indexes.end()),
+                descriptor.required_outer_relation_indexes.end());
+        }
+        result.best_path->setAccessDescriptor(std::move(descriptor));
     }
     else
     {
@@ -1051,6 +1218,55 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             edge.join_condition,
             selectivity,
             nl_cost);
+        AccessPathDescriptor descriptor;
+        descriptor.family = "NESTED_LOOP_JOIN";
+        descriptor.path_name = "NESTED_LOOP_JOIN";
+        if (left_entry.best_path)
+        {
+            const auto& left_descriptor = left_entry.best_path->accessDescriptor();
+            descriptor.ordered_output = left_descriptor.ordered_output;
+            descriptor.ordered_prefix_length =
+                left_descriptor.ordered_prefix_length;
+            descriptor.ordering_keys = left_descriptor.ordering_keys;
+            descriptor.order_complete = left_descriptor.order_complete;
+            descriptor.interesting_order_score =
+                left_descriptor.interesting_order_score;
+            descriptor.required_outer_relation_indexes =
+                left_descriptor.required_outer_relation_indexes;
+        }
+        descriptor.parameterized =
+            (left_entry.best_path &&
+             left_entry.best_path->accessDescriptor().parameterized) ||
+            (right_entry.best_path &&
+             right_entry.best_path->accessDescriptor().parameterized);
+        descriptor.requires_recheck =
+            (left_entry.best_path &&
+             left_entry.best_path->accessDescriptor().requires_recheck) ||
+            (right_entry.best_path &&
+             right_entry.best_path->accessDescriptor().requires_recheck);
+        descriptor.exactness_class =
+            std::max(left_entry.best_path
+                         ? left_entry.best_path->accessDescriptor().exactness_class
+                         : AccessPathExactnessClass::UNKNOWN,
+                     right_entry.best_path
+                         ? right_entry.best_path->accessDescriptor().exactness_class
+                         : AccessPathExactnessClass::UNKNOWN);
+        if (right_entry.best_path)
+        {
+            descriptor.required_outer_relation_indexes.insert(
+                descriptor.required_outer_relation_indexes.end(),
+                right_entry.best_path->accessDescriptor()
+                    .required_outer_relation_indexes.begin(),
+                right_entry.best_path->accessDescriptor()
+                    .required_outer_relation_indexes.end());
+            std::sort(descriptor.required_outer_relation_indexes.begin(),
+                      descriptor.required_outer_relation_indexes.end());
+            descriptor.required_outer_relation_indexes.erase(
+                std::unique(descriptor.required_outer_relation_indexes.begin(),
+                            descriptor.required_outer_relation_indexes.end()),
+                descriptor.required_outer_relation_indexes.end());
+        }
+        result.best_path->setAccessDescriptor(std::move(descriptor));
     }
 
     return result;
@@ -1085,6 +1301,54 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costCrossJoin(
         nullptr,
         selectivity,
         nl_cost);
+    AccessPathDescriptor descriptor;
+    descriptor.family = "NESTED_LOOP_JOIN";
+    descriptor.path_name = "NESTED_LOOP_JOIN";
+    if (left_entry.best_path)
+    {
+        const auto& left_descriptor = left_entry.best_path->accessDescriptor();
+        descriptor.ordered_output = left_descriptor.ordered_output;
+        descriptor.ordered_prefix_length = left_descriptor.ordered_prefix_length;
+        descriptor.ordering_keys = left_descriptor.ordering_keys;
+        descriptor.order_complete = left_descriptor.order_complete;
+        descriptor.interesting_order_score =
+            left_descriptor.interesting_order_score;
+        descriptor.required_outer_relation_indexes =
+            left_descriptor.required_outer_relation_indexes;
+    }
+    descriptor.parameterized =
+        (left_entry.best_path &&
+         left_entry.best_path->accessDescriptor().parameterized) ||
+        (right_entry.best_path &&
+         right_entry.best_path->accessDescriptor().parameterized);
+    descriptor.requires_recheck =
+        (left_entry.best_path &&
+         left_entry.best_path->accessDescriptor().requires_recheck) ||
+        (right_entry.best_path &&
+         right_entry.best_path->accessDescriptor().requires_recheck);
+    descriptor.exactness_class =
+        std::max(left_entry.best_path
+                     ? left_entry.best_path->accessDescriptor().exactness_class
+                     : AccessPathExactnessClass::UNKNOWN,
+                 right_entry.best_path
+                     ? right_entry.best_path->accessDescriptor().exactness_class
+                     : AccessPathExactnessClass::UNKNOWN);
+    if (right_entry.best_path)
+    {
+        descriptor.required_outer_relation_indexes.insert(
+            descriptor.required_outer_relation_indexes.end(),
+            right_entry.best_path->accessDescriptor()
+                .required_outer_relation_indexes.begin(),
+            right_entry.best_path->accessDescriptor()
+                .required_outer_relation_indexes.end());
+        std::sort(descriptor.required_outer_relation_indexes.begin(),
+                  descriptor.required_outer_relation_indexes.end());
+        descriptor.required_outer_relation_indexes.erase(
+            std::unique(descriptor.required_outer_relation_indexes.begin(),
+                        descriptor.required_outer_relation_indexes.end()),
+            descriptor.required_outer_relation_indexes.end());
+    }
+    result.best_path->setAccessDescriptor(std::move(descriptor));
     return result;
 }
 

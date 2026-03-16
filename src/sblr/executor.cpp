@@ -66497,6 +66497,33 @@ namespace scratchbird
                                 {
                                     line << " scan_family=" << relation.scan_family;
                                 }
+                                if (!relation.path_name.empty())
+                                {
+                                    line << " path_name=" << relation.path_name;
+                                }
+                                line << " family_kind="
+                                     << optimizer::plannerAccessFamilyName(
+                                            relation.scan_family_kind);
+                                line << " exactness="
+                                     << optimizer::accessPathExactnessClassName(
+                                            relation.exactness_class);
+                                line << " visibility_enforcement="
+                                     << optimizer::accessPathVisibilityEnforcementName(
+                                            relation.visibility_enforcement);
+                                line << " queryability_state="
+                                     << optimizer::accessPathQueryabilityStateName(
+                                            relation.queryability_state);
+                                line << " coverage_fraction="
+                                     << relation.coverage_fraction;
+                                if (relation.requires_recheck)
+                                {
+                                    line << " requires_recheck=true";
+                                }
+                                if (relation.candidate_budget > 0)
+                                {
+                                    line << " candidate_budget="
+                                         << relation.candidate_budget;
+                                }
                                 if (!relation.scan_family_tags.empty())
                                 {
                                     line << " family_tags=";
@@ -67060,6 +67087,17 @@ namespace scratchbird
                                         << escape_json(entry.scan_kind) << "\""
                                         << ",\"scan_family\":\""
                                         << escape_json(entry.scan_family) << "\""
+                                        << ",\"path_name\":\""
+                                        << escape_json(entry.path_name) << "\""
+                                        << ",\"scan_family_kind\":\""
+                                        << escape_json(
+                                               optimizer::plannerAccessFamilyName(
+                                                   entry.scan_family_kind))
+                                        << "\""
+                                        << ",\"scan_family_kind_id\":"
+                                        << static_cast<uint32_t>(entry.scan_family_kind)
+                                        << ",\"taxonomy_version\":"
+                                        << entry.taxonomy_version
                                         << ",\"scan_family_tags\":[";
                                     for (size_t tag_index = 0;
                                          tag_index < entry.scan_family_tags.size();
@@ -67091,6 +67129,40 @@ namespace scratchbird
                                             << "\"";
                                     }
                                     out << "]"
+                                        << ",\"exactness_class\":\""
+                                        << escape_json(
+                                               optimizer::accessPathExactnessClassName(
+                                                   entry.exactness_class))
+                                        << "\""
+                                        << ",\"exactness_class_id\":"
+                                        << static_cast<uint32_t>(entry.exactness_class)
+                                        << ",\"requires_recheck\":"
+                                        << (entry.requires_recheck ? "true" : "false")
+                                        << ",\"coverage_fraction\":"
+                                        << entry.coverage_fraction
+                                        << ",\"candidate_budget\":"
+                                        << entry.candidate_budget
+                                        << ",\"visibility_enforcement\":\""
+                                        << escape_json(
+                                               optimizer::accessPathVisibilityEnforcementName(
+                                                   entry.visibility_enforcement))
+                                        << "\""
+                                        << ",\"visibility_enforcement_id\":"
+                                        << static_cast<uint32_t>(
+                                               entry.visibility_enforcement)
+                                        << ",\"family_metrics_version\":"
+                                        << entry.family_metrics_version
+                                        << ",\"metrics_confidence_class\":\""
+                                        << escape_json(entry.metrics_confidence_class)
+                                        << "\""
+                                        << ",\"queryability_state\":\""
+                                        << escape_json(
+                                               optimizer::accessPathQueryabilityStateName(
+                                                   entry.queryability_state))
+                                        << "\""
+                                        << ",\"queryability_state_id\":"
+                                        << static_cast<uint32_t>(
+                                               entry.queryability_state)
                                         << ",\"lateral\":"
                                         << (entry.lateral ? "true" : "false")
                                         << ",\"parameterized\":"
@@ -67099,6 +67171,14 @@ namespace scratchbird
                                         << (entry.ordered_output ? "true" : "false")
                                         << ",\"ordered_prefix_length\":"
                                         << entry.ordered_prefix_length
+                                        << ",\"formula_profile_id\":\""
+                                        << escape_json(entry.formula_profile_id)
+                                        << "\""
+                                        << ",\"formula_profile_version\":"
+                                        << entry.formula_profile_version
+                                        << ",\"calibration_profile_id\":\""
+                                        << escape_json(entry.calibration_profile_id)
+                                        << "\""
                                         << ",\"required_outer_relation_aliases\":[";
                                     for (size_t alias_index = 0;
                                          alias_index <

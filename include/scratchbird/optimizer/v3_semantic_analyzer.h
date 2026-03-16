@@ -4,6 +4,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/optimizer/join_legality.h"
+#include "scratchbird/optimizer/index_family_lowering.h"
 #include "scratchbird/optimizer/statistics_manager.h"
 #include "scratchbird/parser/ast_v3.h"
 
@@ -35,6 +36,8 @@ namespace scratchbird::optimizer
         const parser::v3::Expression *expression = nullptr;
         bool has_index_match = false;
         core::CatalogManager::IndexInfo matched_index{};
+        PlannerAccessFamily matched_family = PlannerAccessFamily::UNKNOWN;
+        std::string matched_path_name;
     };
 
     struct ResolvedRelation

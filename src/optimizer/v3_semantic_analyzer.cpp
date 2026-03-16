@@ -426,7 +426,9 @@ namespace scratchbird::optimizer
 
         auto chooseIndexForColumn(const ResolvedRelation &relation,
                                   const core::ID &column_id,
-                                  IndexInfo &index_out) -> bool
+                                  ResolvedPredicateKind predicate_kind,
+                                  IndexInfo &index_out,
+                                  PlannerFamilyLoweringResult &lowering_out) -> bool
         {
             for (const auto &index : relation.indexes)
             {
@@ -434,13 +436,36 @@ namespace scratchbird::optimizer
                 {
                     continue;
                 }
-                if (index.index_type != core::CatalogManager::IndexType::BTREE &&
-                    index.index_type != core::CatalogManager::IndexType::LSM)
-                {
-                    continue;
-                }
                 if (index.column_ids.front() == column_id)
                 {
+                    PlannerFamilyLoweringRequest lowering_request;
+                    lowering_request.index_type = index.index_type;
+                    switch (predicate_kind)
+                    {
+                        case ResolvedPredicateKind::EQUALITY:
+                            lowering_request.predicate_shape =
+                                PredicateMatchShape::EQUALITY;
+                            break;
+                        case ResolvedPredicateKind::RANGE:
+                            lowering_request.predicate_shape =
+                                PredicateMatchShape::RANGE;
+                            break;
+                        case ResolvedPredicateKind::LIKE_PREFIX:
+                            lowering_request.predicate_shape =
+                                PredicateMatchShape::LIKE_PREFIX;
+                            break;
+                        case ResolvedPredicateKind::NONE:
+                        default:
+                            lowering_request.predicate_shape =
+                                PredicateMatchShape::NONE;
+                            break;
+                    }
+                    lowering_out = lowerPlannerFamily(lowering_request);
+                    if (lowering_out.queryability_state ==
+                        AccessPathQueryabilityState::INVALID)
+                    {
+                        continue;
+                    }
                     index_out = index;
                     return true;
                 }
@@ -515,10 +540,17 @@ namespace scratchbird::optimizer
                 predicate_out.predicate_text = expressionToString(expr, pool);
                 predicate_out.expression = expr;
                 IndexInfo matched_index;
-                if (chooseIndexForColumn(relations[*relation_index], column_id, matched_index))
+                PlannerFamilyLoweringResult lowering;
+                if (chooseIndexForColumn(relations[*relation_index],
+                                         column_id,
+                                         kind,
+                                         matched_index,
+                                         lowering))
                 {
                     predicate_out.has_index_match = true;
                     predicate_out.matched_index = matched_index;
+                    predicate_out.matched_family = lowering.family;
+                    predicate_out.matched_path_name = lowering.path_name;
                 }
                 return true;
             }
@@ -570,10 +602,17 @@ namespace scratchbird::optimizer
                 predicate_out.predicate_text = expressionToString(expr, pool);
                 predicate_out.expression = expr;
                 IndexInfo matched_index;
-                if (chooseIndexForColumn(relations[*relation_index], column_id, matched_index))
+                PlannerFamilyLoweringResult lowering;
+                if (chooseIndexForColumn(relations[*relation_index],
+                                         column_id,
+                                         ResolvedPredicateKind::LIKE_PREFIX,
+                                         matched_index,
+                                         lowering))
                 {
                     predicate_out.has_index_match = true;
                     predicate_out.matched_index = matched_index;
+                    predicate_out.matched_family = lowering.family;
+                    predicate_out.matched_path_name = lowering.path_name;
                 }
                 return true;
             }

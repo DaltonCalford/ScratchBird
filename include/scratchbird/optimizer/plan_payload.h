@@ -5,11 +5,13 @@
 #include <string>
 #include <vector>
 
+#include "scratchbird/optimizer/path.h"
+
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 7;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v7";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 8;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v8";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
@@ -34,8 +36,21 @@ namespace scratchbird::optimizer
         std::string table_id_text;
         std::string scan_kind;
         std::string scan_family;
+        std::string path_name;
+        PlannerAccessFamily scan_family_kind = PlannerAccessFamily::UNKNOWN;
+        uint32_t taxonomy_version = kPlannerFamilyTaxonomyVersion;
         std::vector<std::string> scan_family_tags;
         std::vector<std::string> candidate_scan_families;
+        AccessPathExactnessClass exactness_class = AccessPathExactnessClass::UNKNOWN;
+        bool requires_recheck = false;
+        double coverage_fraction = 0.0;
+        uint64_t candidate_budget = 0;
+        AccessPathVisibilityEnforcement visibility_enforcement =
+            AccessPathVisibilityEnforcement::UNKNOWN;
+        uint32_t family_metrics_version = 0;
+        std::string metrics_confidence_class;
+        AccessPathQueryabilityState queryability_state =
+            AccessPathQueryabilityState::UNKNOWN;
         std::string index_name;
         std::string index_id_text;
         RuntimePlanIndexPredicate index_predicate;
@@ -73,6 +88,9 @@ namespace scratchbird::optimizer
         double startup_cost = 0.0;
         double total_cost = 0.0;
         uint64_t estimated_rows = 0;
+        std::string formula_profile_id;
+        uint32_t formula_profile_version = 0;
+        std::string calibration_profile_id;
         uint64_t actual_rows = 0;
         uint64_t rows_examined = 0;
         uint64_t rows_filtered = 0;

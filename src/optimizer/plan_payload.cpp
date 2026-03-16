@@ -16,8 +16,32 @@ namespace scratchbird::optimizer
             out["table_id_text"] = relation.table_id_text;
             out["scan_kind"] = relation.scan_kind;
             out["scan_family"] = relation.scan_family;
+            out["path_name"] = relation.path_name;
+            out["scan_family_kind"] =
+                plannerAccessFamilyName(relation.scan_family_kind);
+            out["scan_family_kind_id"] =
+                static_cast<uint32_t>(relation.scan_family_kind);
+            out["taxonomy_version"] = relation.taxonomy_version;
             out["scan_family_tags"] = relation.scan_family_tags;
             out["candidate_scan_families"] = relation.candidate_scan_families;
+            out["exactness_class"] =
+                accessPathExactnessClassName(relation.exactness_class);
+            out["exactness_class_id"] =
+                static_cast<uint32_t>(relation.exactness_class);
+            out["requires_recheck"] = relation.requires_recheck;
+            out["coverage_fraction"] = relation.coverage_fraction;
+            out["candidate_budget"] = relation.candidate_budget;
+            out["visibility_enforcement"] =
+                accessPathVisibilityEnforcementName(
+                    relation.visibility_enforcement);
+            out["visibility_enforcement_id"] =
+                static_cast<uint32_t>(relation.visibility_enforcement);
+            out["family_metrics_version"] = relation.family_metrics_version;
+            out["metrics_confidence_class"] = relation.metrics_confidence_class;
+            out["queryability_state"] =
+                accessPathQueryabilityStateName(relation.queryability_state);
+            out["queryability_state_id"] =
+                static_cast<uint32_t>(relation.queryability_state);
             out["index_name"] = relation.index_name;
             out["index_id_text"] = relation.index_id_text;
             out["bitmap_op"] = relation.bitmap_op;
@@ -57,6 +81,9 @@ namespace scratchbird::optimizer
             out["startup_cost"] = relation.startup_cost;
             out["total_cost"] = relation.total_cost;
             out["estimated_rows"] = relation.estimated_rows;
+            out["formula_profile_id"] = relation.formula_profile_id;
+            out["formula_profile_version"] = relation.formula_profile_version;
+            out["calibration_profile_id"] = relation.calibration_profile_id;
             out["actual_rows"] = relation.actual_rows;
             out["rows_examined"] = relation.rows_examined;
             out["rows_filtered"] = relation.rows_filtered;
@@ -119,6 +146,24 @@ namespace scratchbird::optimizer
             relation_out.table_id_text = json_in.value("table_id_text", std::string());
             relation_out.scan_kind = json_in.value("scan_kind", std::string());
             relation_out.scan_family = json_in.value("scan_family", std::string());
+            relation_out.path_name =
+                json_in.value("path_name", relation_out.scan_family);
+            relation_out.taxonomy_version =
+                json_in.value("taxonomy_version", kPlannerFamilyTaxonomyVersion);
+            const auto scan_family_kind_id_it =
+                json_in.find("scan_family_kind_id");
+            if (scan_family_kind_id_it != json_in.end() &&
+                scan_family_kind_id_it->is_number_unsigned())
+            {
+                relation_out.scan_family_kind = static_cast<PlannerAccessFamily>(
+                    scan_family_kind_id_it->get<uint32_t>());
+            }
+            else
+            {
+                relation_out.scan_family_kind = plannerAccessFamilyFromLegacy(
+                    json_in.value("scan_family_kind", relation_out.scan_family),
+                    relation_out.scan_kind);
+            }
             relation_out.scan_family_tags.clear();
             const auto scan_family_tags_it = json_in.find("scan_family_tags");
             if (scan_family_tags_it != json_in.end() && scan_family_tags_it->is_array())
@@ -145,6 +190,66 @@ namespace scratchbird::optimizer
                             entry.get<std::string>());
                     }
                 }
+            }
+            const auto exactness_class_id_it = json_in.find("exactness_class_id");
+            if (exactness_class_id_it != json_in.end() &&
+                exactness_class_id_it->is_number_unsigned())
+            {
+                relation_out.exactness_class =
+                    static_cast<AccessPathExactnessClass>(
+                        exactness_class_id_it->get<uint32_t>());
+            }
+            else
+            {
+                relation_out.exactness_class = accessPathExactnessFromLegacy(
+                    relation_out.scan_family, relation_out.scan_kind);
+            }
+            relation_out.requires_recheck =
+                json_in.value("requires_recheck",
+                              relation_out.exactness_class ==
+                                      AccessPathExactnessClass::CANDIDATE_REGION ||
+                                  relation_out.exactness_class ==
+                                      AccessPathExactnessClass::LOWER_BOUND_ORDERED ||
+                                  relation_out.exactness_class ==
+                                      AccessPathExactnessClass::APPROX_TOPK);
+            relation_out.coverage_fraction =
+                json_in.value("coverage_fraction", 0.0);
+            relation_out.candidate_budget =
+                json_in.value("candidate_budget", 0ULL);
+            const auto visibility_enforcement_id_it =
+                json_in.find("visibility_enforcement_id");
+            if (visibility_enforcement_id_it != json_in.end() &&
+                visibility_enforcement_id_it->is_number_unsigned())
+            {
+                relation_out.visibility_enforcement =
+                    static_cast<AccessPathVisibilityEnforcement>(
+                        visibility_enforcement_id_it->get<uint32_t>());
+            }
+            else
+            {
+                relation_out.visibility_enforcement =
+                    accessPathVisibilityEnforcementFromLegacy(
+                        relation_out.scan_family, relation_out.scan_kind);
+            }
+            relation_out.family_metrics_version =
+                json_in.value("family_metrics_version", 0U);
+            relation_out.metrics_confidence_class =
+                json_in.value("metrics_confidence_class", std::string());
+            const auto queryability_state_id_it =
+                json_in.find("queryability_state_id");
+            if (queryability_state_id_it != json_in.end() &&
+                queryability_state_id_it->is_number_unsigned())
+            {
+                relation_out.queryability_state =
+                    static_cast<AccessPathQueryabilityState>(
+                        queryability_state_id_it->get<uint32_t>());
+            }
+            else
+            {
+                relation_out.queryability_state =
+                    relation_out.scan_family_kind == PlannerAccessFamily::UNKNOWN
+                        ? AccessPathQueryabilityState::UNKNOWN
+                        : AccessPathQueryabilityState::QUERYABLE;
             }
             relation_out.index_name = json_in.value("index_name", std::string());
             relation_out.index_id_text = json_in.value("index_id_text", std::string());
@@ -274,6 +379,12 @@ namespace scratchbird::optimizer
             relation_out.startup_cost = json_in.value("startup_cost", 0.0);
             relation_out.total_cost = json_in.value("total_cost", 0.0);
             relation_out.estimated_rows = json_in.value("estimated_rows", 0ULL);
+            relation_out.formula_profile_id =
+                json_in.value("formula_profile_id", std::string());
+            relation_out.formula_profile_version =
+                json_in.value("formula_profile_version", 0U);
+            relation_out.calibration_profile_id =
+                json_in.value("calibration_profile_id", std::string());
             relation_out.actual_rows = json_in.value("actual_rows", 0ULL);
             relation_out.rows_examined = json_in.value("rows_examined", 0ULL);
             relation_out.rows_filtered = json_in.value("rows_filtered", 0ULL);
