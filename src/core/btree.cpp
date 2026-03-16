@@ -1540,13 +1540,21 @@ namespace scratchbird::core
             return true;
         }
 
-        // User-facing searches must respect the active connection snapshot when present,
-        // but maintenance callers without a connection still need deterministic inventory truth.
-        if (ConnectionContext::getCurrent() != nullptr)
+        // User-facing searches should respect the active connection runtime context only when
+        // the caller-provided reader XID matches that connection's live transaction/statement.
+        // Tests and maintenance paths can legitimately pass explicit XIDs on a thread that still
+        // has an unrelated ConnectionContext bound, and those callers need deterministic
+        // inventory truth instead of inheriting the ambient connection state.
+        if (ConnectionContext *conn_ctx = ConnectionContext::getCurrent(); conn_ctx != nullptr)
         {
-            return txn_mgr->evaluateRuntimeRecordVisibility(
-                              xmin, xmax, current_xid, ConnectionContext::getCurrent())
-                .visible;
+            const uint64_t runtime_reader_xid = conn_ctx->getStatementXID();
+            const uint64_t runtime_tx_xid = conn_ctx->getCurrentXid();
+            if (current_xid == runtime_reader_xid || current_xid == runtime_tx_xid)
+            {
+                return txn_mgr->evaluateRuntimeRecordVisibility(
+                                  xmin, xmax, current_xid, conn_ctx)
+                    .visible;
+            }
         }
 
         return txn_mgr->isInventoryRecordVisible(xmin, xmax, current_xid);
