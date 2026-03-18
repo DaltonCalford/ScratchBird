@@ -1,4 +1,4 @@
-Last updated: 2026-03-11
+Last updated: 2026-03-18
 
 # FB-EMU-041 Legacy fbtest/TCS Integration Report
 
@@ -37,7 +37,7 @@ gtcs_total=86
 - `timed_out`: `false`
 
 ```text
-Firebird compatibility tests passed. Logs: /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260311_191326
+Firebird compatibility tests passed. Logs: /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260318_013900
 ```
 
 ## Notes

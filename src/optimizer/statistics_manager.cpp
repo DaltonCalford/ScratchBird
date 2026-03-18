@@ -52,6 +52,54 @@ namespace scratchbird::optimizer
         return true;
     }
 
+    static bool parseUuidFromString(const std::string &text, ID &out)
+    {
+        std::string hex;
+        hex.reserve(32);
+        for (char c : text)
+        {
+            if (c == '-')
+            {
+                continue;
+            }
+            if ((c >= '0' && c <= '9') ||
+                (c >= 'a' && c <= 'f') ||
+                (c >= 'A' && c <= 'F'))
+            {
+                hex.push_back(c);
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        if (hex.size() != 32)
+        {
+            return false;
+        }
+
+        auto hexToNibble = [](char c) -> uint8_t {
+            if (c >= '0' && c <= '9')
+            {
+                return static_cast<uint8_t>(c - '0');
+            }
+            if (c >= 'a' && c <= 'f')
+            {
+                return static_cast<uint8_t>(10 + (c - 'a'));
+            }
+            return static_cast<uint8_t>(10 + (c - 'A'));
+        };
+
+        for (size_t i = 0; i < 16; ++i)
+        {
+            const uint8_t hi = hexToNibble(hex[i * 2]);
+            const uint8_t lo = hexToNibble(hex[i * 2 + 1]);
+            out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        return true;
+    }
+
     auto getIndexMetricsCacheKey(const ID &index_id) -> uint64_t
     {
         uint64_t key = 0;
@@ -3930,6 +3978,32 @@ namespace scratchbird::optimizer
             try
             {
                 const auto metadata = nlohmann::json::parse(metadata_text);
+                if (metadata.contains("column_ids") &&
+                    metadata["column_ids"].is_array())
+                {
+                    std::vector<ID> persisted_column_ids;
+                    persisted_column_ids.reserve(metadata["column_ids"].size());
+                    for (const auto &entry : metadata["column_ids"])
+                    {
+                        if (!entry.is_string())
+                        {
+                            persisted_column_ids.clear();
+                            break;
+                        }
+                        ID parsed_id{};
+                        if (!parseUuidFromString(entry.get<std::string>(), parsed_id))
+                        {
+                            persisted_column_ids.clear();
+                            break;
+                        }
+                        persisted_column_ids.push_back(parsed_id);
+                    }
+                    if (persisted_column_ids.size() == column_ids.size())
+                    {
+                        stats_out.column_ids = persisted_column_ids;
+                        stats_out.ndistinct.column_ids = persisted_column_ids;
+                    }
+                }
                 if (metadata.contains("column_names") &&
                     metadata["column_names"].is_array())
                 {
@@ -4605,10 +4679,8 @@ namespace scratchbird::optimizer
         {
             for (size_t right_idx = left_idx + 1; right_idx < columns.size(); ++right_idx)
             {
-                const bool keep_order =
-                    columns[left_idx].column_id < columns[right_idx].column_id;
-                const size_t first_idx = keep_order ? left_idx : right_idx;
-                const size_t second_idx = keep_order ? right_idx : left_idx;
+                const size_t first_idx = left_idx;
+                const size_t second_idx = right_idx;
 
                 const auto &first_values = extracted_values[first_idx];
                 const auto &second_values = extracted_values[second_idx];

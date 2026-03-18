@@ -1,0 +1,5 @@
+Run complete at 2026-03-17T18:49:19Z
+Configure log: /home/dcalford/CliWork/ScratchBird/artifacts/full_cycle/20260317T180357Z/configure.log
+Build log: /home/dcalford/CliWork/ScratchBird/artifacts/full_cycle/20260317T180357Z/build.log
+Test log: /home/dcalford/CliWork/ScratchBird/artifacts/full_cycle/20260317T180357Z/ctest_all.log
+Full cycle status: configure=0 build=0 test=143
