@@ -103,6 +103,7 @@ namespace scratchbird::core
                                                             current_tuple_size,
                                                             prior_tuple_data,
                                                             prior_tuple_size,
+                                                            transient_tuple_images,
                                                             prior_row_present,
                                                             rollback_xid,
                                                             ctx);

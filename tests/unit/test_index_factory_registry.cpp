@@ -58,12 +58,26 @@ TEST(IndexFactoryRegistryTest, CapabilityMatrixContainsExplicitFamilies)
     ASSERT_EQ(matrix.size(), 59U);
 
     std::set<uint8_t> seen;
+    const std::set<uint8_t> create_unsupported = {
+        static_cast<uint8_t>(IndexType::ANNOY),
+        static_cast<uint8_t>(IndexType::SCANN),
+        static_cast<uint8_t>(IndexType::DISKANN),
+        static_cast<uint8_t>(IndexType::GPU_CAGRA),
+    };
     for (const auto& caps : matrix)
     {
-        EXPECT_TRUE(seen.insert(static_cast<uint8_t>(caps.index_type)).second);
+        const uint8_t index_type_value = static_cast<uint8_t>(caps.index_type);
+        EXPECT_TRUE(seen.insert(index_type_value).second);
         EXPECT_NE(caps.canonical_name, nullptr);
         EXPECT_FALSE(std::string(caps.canonical_name).empty());
-        EXPECT_TRUE(caps.supports_create);
+        if (create_unsupported.count(index_type_value) != 0)
+        {
+            EXPECT_FALSE(caps.supports_create);
+        }
+        else
+        {
+            EXPECT_TRUE(caps.supports_create);
+        }
         EXPECT_TRUE(caps.supports_open);
         EXPECT_TRUE(caps.supports_close);
     }

@@ -923,20 +923,17 @@ namespace scratchbird::core
             for (uint16_t i = 0; i < page->btr_count; ++i)
             {
                 const auto *node = reinterpret_cast<const SBBTreeNode *>(page_data + offsets[i]);
-                if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
-                {
-                    continue;
-                }
-
                 const uint8_t *node_key_data =
                     reinterpret_cast<const uint8_t *>(node) + sizeof(SBBTreeNode);
                 std::vector<uint8_t> full_key = decompress_key(prev_key, node_key_data,
                                                                node->btn_key_len,
                                                                node->btn_prefix_len);
+                const bool is_deleted =
+                    (node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0;
                 int cmp = compare_keys(key, full_key.data(), full_key.size());
                 if (cmp == 0)
                 {
-                    if (isEntryVisible(node->btn_xmin, node->btn_xmax, current_xid))
+                    if (!is_deleted && isEntryVisible(node->btn_xmin, node->btn_xmax, current_xid))
                     {
                         const auto *tuple_ids_ptr = reinterpret_cast<const OnDiskTID *>(
                             node_key_data + node->btn_key_len);
@@ -1059,10 +1056,12 @@ namespace scratchbird::core
                     ? prev_key
                     : decompress_key(prev_key, node_key_data, node->btn_key_len,
                                      node->btn_prefix_len);
+            const bool is_deleted =
+                (node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0;
             int cmp = compare_keys(key, full_key.data(), full_key.size());
             if (cmp == 0)
             {
-                if (isEntryVisible(node->btn_xmin, node->btn_xmax, current_xid))
+                if (!is_deleted && isEntryVisible(node->btn_xmin, node->btn_xmax, current_xid))
                 {
                     const auto *tuple_ids_ptr =
                         reinterpret_cast<const OnDiskTID *>(node_key_data + node->btn_key_len);
@@ -1640,20 +1639,16 @@ namespace scratchbird::core
         {
             auto *node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[i]);
 
-            // Skip already deleted nodes
-            if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
-            {
-                continue;
-            }
-
             // Extract key (with decompression if needed)
             uint8_t *node_key_data = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
             std::vector<uint8_t> node_key = decompress_key(prev_key, node_key_data,
                                                            node->btn_key_len,
                                                            node->btn_prefix_len);
+            const bool is_deleted =
+                (node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0;
 
             // Check if key matches
-            if (compare_keys(key, node_key) == 0)
+            if (!is_deleted && compare_keys(key, node_key) == 0)
             {
                 // Key matches - check if TID matches
                 uint8_t *tid_data = node_key_data + node->btn_key_len;
@@ -1741,19 +1736,16 @@ namespace scratchbird::core
         for (uint16_t i = 0; i < page->btr_count; ++i)
         {
             auto *node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[i]);
-            if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
-            {
-                continue;
-            }
-
             uint8_t *node_key_data = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
             std::vector<uint8_t> node_key = decompress_key(prev_key,
                                                            node_key_data,
                                                            node->btn_key_len,
                                                            node->btn_prefix_len);
             prev_key = node_key;
+            const bool is_deleted =
+                (node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0;
 
-            if (compare_keys(key, node_key) != 0)
+            if (is_deleted || compare_keys(key, node_key) != 0)
             {
                 continue;
             }
@@ -1833,19 +1825,16 @@ namespace scratchbird::core
         for (uint16_t i = 0; i < page->btr_count; ++i)
         {
             auto *node = reinterpret_cast<SBBTreeNode *>(page_data + offsets[i]);
-            if ((node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0)
-            {
-                continue;
-            }
-
             uint8_t *node_key_data = reinterpret_cast<uint8_t *>(node) + sizeof(SBBTreeNode);
             std::vector<uint8_t> node_key = decompress_key(prev_key,
                                                            node_key_data,
                                                            node->btn_key_len,
                                                            node->btn_prefix_len);
             prev_key = node_key;
+            const bool is_deleted =
+                (node->btn_flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0;
 
-            if (compare_keys(key, node_key) != 0)
+            if (is_deleted || compare_keys(key, node_key) != 0)
             {
                 continue;
             }

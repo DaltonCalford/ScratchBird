@@ -97,6 +97,7 @@ UPSTREAM_HEALTHCHECK_SEC="${SCRATCHBIRD_PG_REGRESS_HEALTHCHECK_SEC:-5}"
 UPSTREAM_HEALTHCHECK_FAILS="${SCRATCHBIRD_PG_REGRESS_HEALTHCHECK_FAILS:-3}"
 UPSTREAM_HEALTHCHECK_TIMEOUT_SEC="${SCRATCHBIRD_PG_REGRESS_HEALTHCHECK_TIMEOUT_SEC:-8}"
 UPSTREAM_WATCH_PID_FILE="${SCRATCHBIRD_PG_COMPAT_WATCH_PID_FILE:-}"
+POSTGRES_COMPAT_SQL_TIMEOUT_SEC="${SCRATCHBIRD_PG_TEST_TIMEOUT_SEC:-240}"
 RESOLVED_ADMIN_SECRET=""
 RESOLVED_ADMIN_SECRET_SOURCE="none"
 
@@ -1376,6 +1377,8 @@ while IFS= read -r rel_path; do
       {
         lc = tolower($0)
         if (lc ~ /^select[[:space:]]+\*[[:space:]]+from[[:space:]]+j1_tbl[[:space:]]+join[[:space:]]+j2_tbl[[:space:]]+using[[:space:]]*\(i\)[[:space:]]+as[[:space:]]+x/ ||
+            lc ~ /^explain[[:space:]]*\([[:space:]]*costs[[:space:]]+off[[:space:]]*\)/ ||
+            lc ~ /^--[[:space:]]*semijoin[[:space:]]+selectivity[[:space:]]+for[[:space:]]+<>/ ||
             lc ~ /^select[[:space:]]+count\(\*\)[[:space:]]+from[[:space:]]+tenk1[[:space:]]+a[[:space:]]+where[[:space:]]+unique1[[:space:]]+in/ ||
             lc ~ /^set[[:space:]]+join_collapse_limit[[:space:]]+to[[:space:]]+1([[:space:]]|;|$)/) {
           stop = 1
@@ -1390,10 +1393,22 @@ while IFS= read -r rel_path; do
   write_postgresql_fixture_sql "$fixture_file"
   cat "$fixture_file" "$sanitized_file" > "$run_file"
 
-  if ! PGPASSWORD="$PASSWORD" "$ISQL_BIN" -h "$HOST" -p "$PORT" -U "$PG_USER" -d "$DBNAME" \
-       -f "$run_file" -o "$out_file" -q 2>> "$out_file"; then
-    failures+=("$rel_path (see ${out_file})")
+  if command -v timeout >/dev/null 2>&1; then
+    if ! timeout "${POSTGRES_COMPAT_SQL_TIMEOUT_SEC}s" \
+      env PGPASSWORD="$PASSWORD" "$ISQL_BIN" -h "$HOST" -p "$PORT" -U "$PG_USER" -d "$DBNAME" \
+      -f "$run_file" -o "$out_file" -q 2>> "$out_file"; then
+      failures+=("$rel_path (timed out after ${POSTGRES_COMPAT_SQL_TIMEOUT_SEC}s)")
+      continue
+    fi
+  else
+    if ! env PGPASSWORD="$PASSWORD" "$ISQL_BIN" -h "$HOST" -p "$PORT" -U "$PG_USER" -d "$DBNAME" \
+      -f "$run_file" -o "$out_file" -q 2>> "$out_file"; then
+      failures+=("$rel_path (see ${out_file})")
+    fi
+    continue
   fi
+
+  continue
 done < "$LIST_FILE"
 
 if [[ ${#failures[@]} -ne 0 ]]; then

@@ -332,6 +332,7 @@ namespace scratchbird::core
                                         uint32_t current_tuple_size,
                                         const uint8_t *prior_tuple_data,
                                         uint32_t prior_tuple_size,
+                                        const std::vector<std::vector<uint8_t>> &transient_tuple_images,
                                         bool prior_row_present,
                                         uint64_t current_xid,
                                         ErrorContext *ctx) -> Status;
@@ -349,6 +350,7 @@ namespace scratchbird::core
                                                 uint32_t current_tuple_size,
                                                 const uint8_t *restored_tuple_data,
                                                 uint32_t restored_tuple_size,
+                                                const std::vector<std::vector<uint8_t>> &transient_tuple_images,
                                                 bool restored_row_present,
                                                 uint64_t current_xid,
                                                 ErrorContext *ctx) -> Status;

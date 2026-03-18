@@ -111,7 +111,7 @@ constexpr std::array<IndexCaps, 59> kIndexFamilyRegistry = {{
     {IndexType::ANNOY, "ANNOY", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
      false, true, true, false, true, true, false, false},
     {IndexType::NSG, "NSG", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
-     false, true, true, false, true, true, false, false},
+     true, true, true, false, true, true, false, false},
     {IndexType::DISKANN, "DISKANN", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
      false, true, true, false, true, true, false, false},
     {IndexType::SCANN, "SCANN", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,

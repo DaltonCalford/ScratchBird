@@ -6836,8 +6836,16 @@ namespace scratchbird::optimizer
                                                    std::max<uint64_t>(
                                                        1,
                                                        cost_index_pages))))));
+                    const double base_candidate_fraction =
+                        have_costing_index_metrics &&
+                                costing_index_metrics_packet.coverage_fraction > 0.0
+                            ? std::clamp(
+                                  1.0 - costing_index_metrics_packet.coverage_fraction,
+                                  0.0,
+                                  1.0)
+                            : std::clamp(1.0 - prune_ratio_est, 0.0, 1.0);
                     const double candidate_fraction = std::clamp(
-                        (1.0 - prune_ratio_est) + unsummarized_range_fraction +
+                        base_candidate_fraction + unsummarized_range_fraction +
                             summary_staleness_fraction,
                         0.001,
                         1.0);
@@ -6907,9 +6915,11 @@ namespace scratchbird::optimizer
                         0.0,
                         1.0);
                     const double candidate_fraction = std::clamp(
-                        std::max(predicate_selectivity, bitmap_density) +
-                            bitmap_false_positive_ratio +
-                            (lossy_container_fraction * 0.10),
+                        (have_costing_index_metrics
+                             ? bitmap_density
+                             : std::max(predicate_selectivity, bitmap_density)) *
+                            (1.0 + bitmap_false_positive_ratio +
+                             (lossy_container_fraction * 0.10)),
                         0.001,
                         1.0);
                     cost_heap_tuples =
@@ -6988,8 +6998,10 @@ namespace scratchbird::optimizer
                         0.0,
                         1.0);
                     const double candidate_fraction = std::clamp(
-                        std::max(predicate_selectivity,
-                                 row_groups_touched_ratio) +
+                        (have_costing_index_metrics
+                             ? row_groups_touched_ratio
+                             : std::max(predicate_selectivity,
+                                        row_groups_touched_ratio)) +
                             (delta_fraction * 0.10),
                         0.001,
                         1.0);
@@ -7253,6 +7265,22 @@ namespace scratchbird::optimizer
                         ctx);
                     scan_kind = "INDEX_ONLY_SCAN";
                     runtime_coverage_fraction = 1.0;
+                    if (have_costing_index_metrics && cost_index_pages > base_pages)
+                    {
+                        const double page_amplification =
+                            static_cast<double>(cost_index_pages) /
+                            static_cast<double>(std::max<uint64_t>(1, base_pages));
+                        const double structural_penalty =
+                            planner_params.random_page_cost *
+                            std::min(64.0, page_amplification) *
+                            std::log2(page_amplification + 1.0) *
+                            std::log2(static_cast<double>(
+                                          std::max<uint64_t>(2, cost_index_height)) +
+                                      1.0);
+                        candidate_cost.startup_cost += structural_penalty;
+                        candidate_cost.total_cost =
+                            candidate_cost.startup_cost + candidate_cost.run_cost;
+                    }
                 }
                 else
                 {
@@ -7453,6 +7481,30 @@ namespace scratchbird::optimizer
                     index_plan->setCost(candidate_cost);
                     candidate_plan = index_plan;
                 }
+                const bool structurally_overweight_exact_path =
+                    have_costing_index_metrics &&
+                    exact_key_lookup &&
+                    cost_index_height >= 32 &&
+                    cost_index_pages >=
+                        std::max<uint64_t>(4096,
+                                           std::max<uint64_t>(1, base_pages) * 32);
+                if (structurally_overweight_exact_path)
+                {
+                    appendRuntimeTrace(
+                        rejected_paths,
+                        "ACCESS_PATH",
+                        relation_subject,
+                        accessTraceCandidateLabel(scan_kind,
+                                                 index.index_name,
+                                                 std::string()),
+                        "REJECTED",
+                        "family metrics mark exact path structurally overweight",
+                        candidate_cost.startup_cost,
+                        candidate_cost.total_cost,
+                        candidate_cost.rows);
+                    continue;
+                }
+
                 registerBundleCandidate(makeBaseAccessChoice(
                     candidate_path,
                     candidate_plan,
@@ -7477,7 +7529,15 @@ namespace scratchbird::optimizer
                     index,
                     candidate_scan_families));
 
-                if (candidate_cost.total_cost > best_cost.total_cost)
+                const bool prefer_family_candidate =
+                    lowered_candidate.exactness_class ==
+                        AccessPathExactnessClass::CANDIDATE_REGION &&
+                    lowered_candidate.queryability_state !=
+                        AccessPathQueryabilityState::INVALID &&
+                    scan_kind != "SEQ_SCAN" && best_scan_kind == "SEQ_SCAN" &&
+                    !index.index_name.empty();
+                if (candidate_cost.total_cost > best_cost.total_cost &&
+                    !prefer_family_candidate)
                 {
                     appendRuntimeTrace(rejected_paths,
                                        "ACCESS_PATH",
@@ -7550,11 +7610,24 @@ namespace scratchbird::optimizer
                     relationOutputRows(base_rows, predicate_selectivity);
                 const uint64_t index_pages =
                     std::max<uint64_t>(1, base_pages / 8);
+                const uint64_t skip_result_rows =
+                    skip_predicate_it->kind == ResolvedPredicateKind::EQUALITY
+                        ? 1
+                        : std::max<uint64_t>(1, expected_rows);
                 const uint64_t heap_pages =
-                    std::max<uint64_t>(1,
-                                       static_cast<uint64_t>(
-                                           static_cast<double>(base_pages) *
-                                           predicate_selectivity));
+                    std::max<uint64_t>(
+                        1,
+                        static_cast<uint64_t>(std::ceil(
+                            static_cast<double>(base_pages) *
+                            (static_cast<double>(skip_result_rows) /
+                             static_cast<double>(std::max<uint64_t>(1, base_rows))))));
+                const uint64_t skip_index_pages =
+                    std::max<uint64_t>(1, std::min<uint64_t>(index_pages, skip_result_rows * 3));
+                const double skip_coverage_fraction = std::clamp(
+                    static_cast<double>(skip_result_rows) /
+                        static_cast<double>(std::max<uint64_t>(1, base_rows)),
+                    0.0,
+                    1.0);
                 PlannerFamilyLoweringRequest skip_lowering_request;
                 skip_lowering_request =
                     loweringRequestForPredicate(index,
@@ -7586,15 +7659,13 @@ namespace scratchbird::optimizer
                                                     skip_cost_input));
                 CostEstimate skip_cost =
                     skip_cost_model.costIndexScan(3,
-                                                  index_pages,
-                                                  expected_rows,
+                                                  skip_index_pages,
+                                                  skip_result_rows,
                                                   heap_pages,
-                                                  expected_rows,
+                                                  skip_result_rows,
                                                   qual_cost,
                                                   0.15,
                                                   ctx);
-                skip_cost.startup_cost *= 1.20;
-                skip_cost.total_cost *= 1.20;
                 if (relation_stats_penalty > 1.0)
                 {
                     skip_cost.startup_cost *= relation_stats_penalty;
@@ -7653,10 +7724,10 @@ namespace scratchbird::optimizer
                     index.index_id,
                     index.index_name,
                     3,
-                    index_pages,
-                    expected_rows,
+                    skip_index_pages,
+                    skip_result_rows,
                     heap_pages,
-                    expected_rows,
+                    skip_result_rows,
                     qual_cost,
                     0.15,
                     skip_cost);
@@ -7675,14 +7746,15 @@ namespace scratchbird::optimizer
                     skip_path,
                     skip_plan,
                     skip_cost,
-                    "INDEX_SCAN",
+                    skip_lowered.family_name,
                     skip_lowered.family_name,
                     skip_lowered,
                     {"SKIP_SCAN"},
                     {makeRuntimePredicate(*skip_predicate_it, &index)},
                     std::string(),
                     false,
-                    false,
+                    skip_lowered.exactness_class ==
+                        AccessPathExactnessClass::EXACT_KEY,
                     false,
                     0,
                     {},
@@ -7690,11 +7762,16 @@ namespace scratchbird::optimizer
                     0.0,
                     {},
                     {},
-                    0.0,
-                    0,
+                    skip_coverage_fraction,
+                    skip_result_rows,
                     index,
                     {"INDEX_SCAN", skip_lowered.family_name}));
-                if (skip_cost.total_cost > best_cost.total_cost)
+                const bool prefer_exact_skip =
+                    skip_predicate_it->kind == ResolvedPredicateKind::EQUALITY &&
+                    skip_lowered.exactness_class ==
+                        AccessPathExactnessClass::EXACT_KEY &&
+                    skip_cost.total_cost <= (best_cost.total_cost * 1.5);
+                if (skip_cost.total_cost > best_cost.total_cost && !prefer_exact_skip)
                 {
                     appendRuntimeTrace(rejected_paths,
                                        "ACCESS_PATH",
@@ -7712,7 +7789,7 @@ namespace scratchbird::optimizer
 
                 matched_index = index;
                 best_cost = skip_cost;
-                best_scan_kind = "INDEX_SCAN";
+                best_scan_kind = skip_lowered.family_name;
                 best_scan_family = skip_lowered.family_name;
                 best_lowering = skip_lowered;
                 best_scan_family_tags = {"SKIP_SCAN"};
@@ -7720,9 +7797,11 @@ namespace scratchbird::optimizer
                     makeRuntimePredicate(*skip_predicate_it, &index)};
                 best_bitmap_op.clear();
                 best_covering_index = false;
-                best_exact_key_lookup = false;
-                best_coverage_fraction = 0.0;
-                best_candidate_budget = 0;
+                best_exact_key_lookup =
+                    skip_lowered.exactness_class ==
+                    AccessPathExactnessClass::EXACT_KEY;
+                best_coverage_fraction = skip_coverage_fraction;
+                best_candidate_budget = skip_result_rows;
                 best_ordered_output = false;
                 best_ordered_prefix_length = 0;
                 best_ordering_keys.clear();
@@ -8047,6 +8126,16 @@ namespace scratchbird::optimizer
                         relation.index_predicates.size() > 1)
                     {
                         priority += 32;
+                    }
+                    if (relation.scan_kind != "SEQ_SCAN" &&
+                        descriptor.exactness_class ==
+                            AccessPathExactnessClass::CANDIDATE_REGION &&
+                        descriptor.queryability_state !=
+                            AccessPathQueryabilityState::INVALID &&
+                        relation.family_metrics_version > 0 &&
+                        relation.coverage_fraction < 1.0)
+                    {
+                        priority += 6;
                     }
                     if (query_requests_text_ranking &&
                         descriptor.family_kind ==

@@ -3346,6 +3346,13 @@ namespace scratchbird
                 return true;
             }
 
+            // xmin == 0 is used throughout GIN posting storage as the canonical
+            // "universally visible / no transaction ownership" marker.
+            if (xmin == 0)
+            {
+                return true;
+            }
+
             // Own changes always visible (Firebird MGA Rule 3)
             if (xmin == current_xid)
             {
@@ -3393,24 +3400,39 @@ namespace scratchbird
                 Status status = buffer_pool->pinPageGlobal(tid.gpid, (void **)&page_data, ctx);
                 if (status != Status::OK)
                 {
-                    // If we can't read the page, skip this TID
+                    // GIN is a candidate-region index family. If the heap tuple cannot be
+                    // resolved here, keep the candidate and let later recheck/visibility
+                    // stages decide rather than silently discarding it.
+                    visible_tids.push_back(tid);
                     continue;
                 }
 
                 // Get page header to read tuple
                 auto *page_header = reinterpret_cast<PageHeader *>(page_data);
 
+                if (page_header->page_type != PAGE_TYPE_HEAP)
+                {
+                    buffer_pool->unpinPageGlobal(tid.gpid, false, ctx);
+                    visible_tids.push_back(tid);
+                    continue;
+                }
+
                 // Get item pointer array (starts after page header)
                 auto *item_pointers = reinterpret_cast<struct ItemPointer *>(page_data + sizeof(PageHeader));
 
                 // Check if item_id is valid
                 // We need to calculate how many items are on the page
-                uint16_t item_count = pageLower(*page_header) / sizeof(struct ItemPointer);
+                uint16_t item_count =
+                    pageLower(*page_header) > sizeof(PageHeader)
+                        ? static_cast<uint16_t>(
+                              (pageLower(*page_header) - sizeof(PageHeader)) /
+                              sizeof(struct ItemPointer))
+                        : 0;
 
                 if (item_id >= item_count)
                 {
-                    // Invalid item_id
                     buffer_pool->unpinPageGlobal(tid.gpid, false, ctx);
+                    visible_tids.push_back(tid);
                     continue;
                 }
 
@@ -3421,6 +3443,7 @@ namespace scratchbird
                 if (item_ptr->isDeleted() || item_ptr->isUnused())
                 {
                     buffer_pool->unpinPageGlobal(tid.gpid, false, ctx);
+                    visible_tids.push_back(tid);
                     continue;
                 }
 
@@ -4128,80 +4151,8 @@ namespace scratchbird
             uint32_t max_threads,
             ErrorContext *ctx)
         {
-            std::vector<TID> result;
-
-            if (keys.empty())
-            {
-                return result;
-            }
-
-            if (max_threads <= 1 || keys.size() <= 1)
-            {
-                // Use standard implementation for single thread or single key
-                // P0-6: Pass current_xid for proper MGA visibility
-                return findAll(keys, current_xid, ctx);
-            }
-
-            // Parallel key lookup with thread pool
-            std::vector<std::vector<TID>> tid_lists(keys.size());
-            std::mutex error_mutex;
-            bool has_error = false;
-
-            // Limit threads to available cores and key count
-            uint32_t num_threads = std::min(max_threads, static_cast<uint32_t>(keys.size()));
-            num_threads = std::min(num_threads, std::thread::hardware_concurrency());
-
-            std::vector<std::thread> threads;
-            threads.reserve(num_threads);
-
-            // Distribute keys across threads
-            for (uint32_t t = 0; t < num_threads; t++)
-            {
-                threads.emplace_back([&, t]()
-                {
-                    // Process keys assigned to this thread
-                    for (size_t i = t; i < keys.size(); i += num_threads)
-                    {
-                        uint64_t posting_page = 0;
-                        Status status = searchKeysTree(keys[i], &posting_page, ctx);
-
-                        if (status != Status::OK || posting_page == 0)
-                        {
-                            // Key not found - intersection is empty
-                            std::lock_guard<std::mutex> lock(error_mutex);
-                            has_error = true;
-                            return;
-                        }
-
-                        std::vector<TID> tids;
-                        // P0-6: Fixed to use current_xid for proper MGA visibility
-                        status = getPostingListTids(posting_page, &tids, current_xid, ctx);
-
-                        if (status != Status::OK || tids.empty())
-                        {
-                            std::lock_guard<std::mutex> lock(error_mutex);
-                            has_error = true;
-                            return;
-                        }
-
-                        tid_lists[i] = std::move(tids);
-                    }
-                });
-            }
-
-            // Wait for all threads to complete
-            for (auto &thread : threads)
-            {
-                thread.join();
-            }
-
-            if (has_error)
-            {
-                return result; // Empty result
-            }
-
-            // Use SIMD-optimized intersection
-            return mergeTidListsSIMD(tid_lists);
+            (void)max_threads;
+            return findAll(keys, current_xid, ctx);
         }
 
         // Parallel multi-key OR query
@@ -4212,70 +4163,8 @@ namespace scratchbird
             uint32_t max_threads,
             ErrorContext *ctx)
         {
-            std::vector<TID> result;
-
-            if (keys.empty())
-            {
-                return result;
-            }
-
-            if (max_threads <= 1 || keys.size() <= 1)
-            {
-                // P0-6: Pass current_xid for proper MGA visibility
-                return findAny(keys, current_xid, ctx);
-            }
-
-            // Parallel key lookup
-            std::vector<std::vector<TID>> tid_lists;
-            std::mutex list_mutex;
-
-            uint32_t num_threads = std::min(max_threads, static_cast<uint32_t>(keys.size()));
-            num_threads = std::min(num_threads, std::thread::hardware_concurrency());
-
-            std::vector<std::thread> threads;
-            threads.reserve(num_threads);
-
-            for (uint32_t t = 0; t < num_threads; t++)
-            {
-                threads.emplace_back([&, t]()
-                {
-                    for (size_t i = t; i < keys.size(); i += num_threads)
-                    {
-                        uint64_t posting_page = 0;
-                        Status status = searchKeysTree(keys[i], &posting_page, ctx);
-
-                        if (status != Status::OK || posting_page == 0)
-                        {
-                            continue; // Skip missing keys
-                        }
-
-                        std::vector<TID> tids;
-                        // P0-6: Fixed to use current_xid for proper MGA visibility
-                        status = getPostingListTids(posting_page, &tids, current_xid, ctx);
-
-                        if (status != Status::OK || tids.empty())
-                        {
-                            continue;
-                        }
-
-                        std::lock_guard<std::mutex> lock(list_mutex);
-                        tid_lists.push_back(std::move(tids));
-                    }
-                });
-            }
-
-            for (auto &thread : threads)
-            {
-                thread.join();
-            }
-
-            if (tid_lists.empty())
-            {
-                return result;
-            }
-
-            // Use standard union (SIMD doesn't help much here)
-            return unionTidLists(tid_lists);
+            (void)max_threads;
+            return findAny(keys, current_xid, ctx);
         }
 
         // Range query implementation

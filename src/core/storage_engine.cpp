@@ -4071,6 +4071,7 @@ namespace scratchbird::core
                                                    uint32_t current_tuple_size,
                                                    const uint8_t *prior_tuple_data,
                                                    uint32_t prior_tuple_size,
+                                                   const std::vector<std::vector<uint8_t>> &transient_tuple_images,
                                                    bool prior_row_present,
                                                    uint64_t current_xid,
                                                    ErrorContext *ctx) -> Status
@@ -4083,6 +4084,7 @@ namespace scratchbird::core
                                                   current_tuple_size,
                                                   prior_tuple_data,
                                                   prior_tuple_size,
+                                                  transient_tuple_images,
                                                   prior_row_present,
                                                   current_xid,
                                                   ctx);
@@ -4096,6 +4098,7 @@ namespace scratchbird::core
                                                            uint32_t current_tuple_size,
                                                            const uint8_t *restored_tuple_data,
                                                            uint32_t restored_tuple_size,
+                                                           const std::vector<std::vector<uint8_t>> &transient_tuple_images,
                                                            bool restored_row_present,
                                                            uint64_t current_xid,
                                                            ErrorContext *ctx) -> Status
@@ -4130,6 +4133,13 @@ namespace scratchbird::core
         TID tid(makeGPID(tablespace_id, static_cast<uint64_t>(stable_page_id)), stable_item_id);
         IndexKeyExtractor extractor;
         ToastManager *toast_mgr = getOrCreateToastManager(table_id, ctx);
+        auto appendUniqueKey = [](std::vector<std::vector<uint8_t>> &keys,
+                                  const std::vector<uint8_t> &candidate) {
+            if (std::find(keys.begin(), keys.end(), candidate) == keys.end())
+            {
+                keys.push_back(candidate);
+            }
+        };
 
         std::vector<uint8_t> materialized_current_tuple;
         const uint8_t *current_key_tuple_data = nullptr;
@@ -4325,39 +4335,101 @@ namespace scratchbird::core
 
             if (exact_lookup_family)
             {
-                const bool same_key_restore = have_restored_key && (current_key == restored_key);
-                if (same_key_restore)
+                std::vector<std::vector<uint8_t>> purge_keys;
+                appendUniqueKey(purge_keys, current_key);
+
+                for (const auto &transient_tuple_image : transient_tuple_images)
                 {
-                    Status restore_status = restoreExactIndexEntry(actual_index_type,
-                                                                  index_ptr,
-                                                                  restored_key,
-                                                                  tid,
-                                                                  current_xid,
-                                                                  ctx);
-                    if (restore_status != Status::OK)
+                    if (transient_tuple_image.size() < sizeof(TupleHeader))
                     {
-                        LOG_WARNING(STORAGE, "Failed to restore soft-deleted key in %s during savepoint rollback: %s",
+                        continue;
+                    }
+
+                    std::vector<uint8_t> materialized_transient_tuple;
+                    const uint8_t *transient_key_tuple_data = nullptr;
+                    uint32_t transient_key_tuple_size = 0;
+                    Status transient_materialize_status =
+                        materializeTupleForKeyExtraction(
+                            transient_tuple_image.data(),
+                            static_cast<uint32_t>(transient_tuple_image.size()),
+                            toast_mgr,
+                            current_xid,
+                            materialized_transient_tuple,
+                            &transient_key_tuple_data,
+                            &transient_key_tuple_size,
+                            ctx);
+                    if (transient_materialize_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE,
+                                    "Skipping transient rollback key purge on index %s due to tuple materialization failure (status=%d)",
+                                    index_info.index_name.c_str(),
+                                    static_cast<int>(transient_materialize_status));
+                        continue;
+                    }
+
+                    std::vector<size_t> transient_offsets;
+                    std::vector<size_t> transient_sizes;
+                    Status transient_layout_status =
+                        computeColumnLayout(transient_key_tuple_data,
+                                            transient_key_tuple_size,
+                                            columns,
+                                            db_->domain_manager(),
+                                            transient_offsets,
+                                            transient_sizes,
+                                            ctx);
+                    if (transient_layout_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE,
+                                    "Skipping transient rollback key purge on index %s due to column layout failure",
+                                    index_info.index_name.c_str());
+                        continue;
+                    }
+
+                    std::vector<uint8_t> transient_key;
+                    extractor.clearCache();
+                    Status extract_transient_status =
+                        extractor.extractKey(transient_key_tuple_data,
+                                             transient_key_tuple_size,
+                                             transient_offsets,
+                                             transient_sizes,
+                                             column_indices,
+                                             toast_mgr,
+                                             current_xid,
+                                             &transient_key,
+                                             ctx);
+                    if (extract_transient_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE,
+                                    "Failed to extract transient key for rollback on index %s: %s",
+                                    index_info.index_name.c_str(),
+                                    ctx ? ctx->message.c_str() : "unknown error");
+                        continue;
+                    }
+
+                    appendUniqueKey(purge_keys, transient_key);
+                }
+
+                for (const auto &purge_key : purge_keys)
+                {
+                    if (have_restored_key && purge_key == restored_key)
+                    {
+                        continue;
+                    }
+
+                    Status purge_status = retireExactIndexEntry(actual_index_type,
+                                                                index_ptr,
+                                                                purge_key,
+                                                                tid,
+                                                                current_xid,
+                                                                ExactIndexRetirementMode::HARD_REMOVE,
+                                                                ctx);
+                    if (purge_status != Status::OK)
+                    {
+                        LOG_WARNING(STORAGE, "Failed to purge current key from %s during savepoint rollback: %s",
                                     indexTypeToString(actual_index_type).c_str(),
                                     index_info.index_name.c_str(),
                                     ctx ? ctx->message.c_str() : "unknown error");
                     }
-                    refreshed_index_ids.push_back(index_info.index_id);
-                    continue;
-                }
-
-                Status purge_status = retireExactIndexEntry(actual_index_type,
-                                                            index_ptr,
-                                                            current_key,
-                                                            tid,
-                                                            current_xid,
-                                                            ExactIndexRetirementMode::HARD_REMOVE,
-                                                            ctx);
-                if (purge_status != Status::OK)
-                {
-                    LOG_WARNING(STORAGE, "Failed to purge current key from %s during savepoint rollback: %s",
-                                indexTypeToString(actual_index_type).c_str(),
-                                index_info.index_name.c_str(),
-                                ctx ? ctx->message.c_str() : "unknown error");
                 }
 
                 if (have_restored_key)
