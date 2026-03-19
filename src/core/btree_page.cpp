@@ -203,6 +203,7 @@ namespace scratchbird::core
 
         std::vector<uint8_t> prev_full_key;
         uint16_t min_prefix = 0;
+        bool has_garbage = false;
 
         for (size_t entry_index = 0; entry_index < entries.size(); ++entry_index)
         {
@@ -244,7 +245,18 @@ namespace scratchbird::core
 
             new_header.btr_high_water -= node_size;
             auto *node = reinterpret_cast<SBBTreeNode *>(temp.data() + new_header.btr_high_water);
-            node->btn_flags = entry.flags;
+            uint16_t node_flags = entry.flags;
+            node_flags &= ~(static_cast<uint16_t>(BTreeNodeFlags::FIRST_ON_PAGE) |
+                            static_cast<uint16_t>(BTreeNodeFlags::LAST_ON_PAGE));
+            if (entry_index == 0)
+            {
+                node_flags |= static_cast<uint16_t>(BTreeNodeFlags::FIRST_ON_PAGE);
+            }
+            if (entry_index + 1 == entries.size())
+            {
+                node_flags |= static_cast<uint16_t>(BTreeNodeFlags::LAST_ON_PAGE);
+            }
+            node->btn_flags = node_flags;
             node->btn_prefix_len = prefix_len;
             node->btn_suffix_trunc = 0;
             node->btn_key_len = static_cast<uint16_t>(stored_key.size());
@@ -271,6 +283,10 @@ namespace scratchbird::core
             new_header.btr_free_space -= (node_size + sizeof(uint16_t));
 
             prev_full_key = entry.key;
+            has_garbage =
+                has_garbage ||
+                ((entry.flags & static_cast<uint16_t>(BTreeNodeFlags::DELETED)) != 0) ||
+                (entry.xmax != 0);
         }
 
         new_header.btr_min_prefix_len = min_prefix;
@@ -281,6 +297,15 @@ namespace scratchbird::core
         else
         {
             new_header.btr_flags &= ~static_cast<uint16_t>(BTreeFlags::COMPRESSED);
+        }
+
+        if (has_garbage)
+        {
+            new_header.btr_flags |= static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
+        }
+        else
+        {
+            new_header.btr_flags &= ~static_cast<uint16_t>(BTreeFlags::HAS_GARBAGE);
         }
 
         std::memcpy(temp.data(), &new_header, sizeof(SBBTreePage));

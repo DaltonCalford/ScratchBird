@@ -44,6 +44,12 @@ namespace scratchbird::parser::v3 {
 namespace scratchbird::optimizer
 {
 
+inline constexpr const char* kJoinSearchContractId = "sb_join_search/v1";
+inline constexpr const char* kJoinSearchPropertySignatureContractId =
+    "sb_join_search_property_signature/v1";
+inline constexpr const char* kJoinSearchFrontierMode =
+    "SUBSET_PROPERTY_DOMINANCE_FRONTIER";
+
 // Forward declarations
 class QueryPlanner;
 
@@ -68,6 +74,7 @@ struct JoinSearchEntry
     std::shared_ptr<Path> best_path;
     double cost = std::numeric_limits<double>::max();
     uint64_t rows = 0;
+    uint64_t relation_set_mask = 0;
 };
 
 using JoinSearchFrontier = std::vector<JoinSearchEntry>;
@@ -86,6 +93,12 @@ struct JoinEdge
     JoinLegalityClass legality_class = JoinLegalityClass::INNER_REORDERABLE;
     bool reorderable = true;
     bool requires_original_order = false;
+    bool natural_barrier = false;
+    bool using_barrier = false;
+    bool equi_join = false;
+    bool has_key_metadata = false;
+    std::string left_order_key_text;
+    std::string right_order_key_text;
 };
 
 enum class JoinSearchStrategy
@@ -98,9 +111,19 @@ enum class JoinSearchStrategy
     INPUT_ORDER
 };
 
+enum class JoinMethodPolicy
+{
+    AUTO,
+    NESTED_LOOP_ONLY,
+    HASH_ONLY,
+    MERGE_ONLY
+};
+
 struct JoinPlanningControls
 {
     JoinSearchStrategy strategy = JoinSearchStrategy::AUTO;
+    JoinMethodPolicy method_policy = JoinMethodPolicy::AUTO;
+    bool disallow_temp_spill = false;
     size_t max_exhaustive_relations = 8;
     size_t max_bounded_dp_relations = 12;
     size_t max_pair_evaluations = 64;
@@ -112,6 +135,11 @@ struct JoinPlanningTelemetry
 {
     JoinSearchStrategy requested_strategy = JoinSearchStrategy::AUTO;
     JoinSearchStrategy selected_strategy = JoinSearchStrategy::AUTO;
+    std::string search_contract_id = kJoinSearchContractId;
+    std::string property_signature_contract_id =
+        kJoinSearchPropertySignatureContractId;
+    std::string frontier_retention_mode = kJoinSearchFrontierMode;
+    std::string strategy_source = "AUTO_POLICY";
     size_t exhaustive_join_limit = 0;
     size_t bounded_dp_join_limit = 0;
     size_t max_pair_evaluations = 0;
@@ -120,6 +148,10 @@ struct JoinPlanningTelemetry
     size_t considered_state_count = 0;
     size_t pruned_state_count = 0;
     size_t pair_evaluation_count = 0;
+    size_t base_candidate_path_count = 0;
+    size_t retained_frontier_entry_count = 0;
+    size_t dominated_state_count = 0;
+    size_t max_frontier_width = 0;
     std::string fallback_reason;
     std::string fallback_threshold_name;
     size_t fallback_threshold_value = 0;
@@ -161,7 +193,13 @@ public:
                        JoinLegalityClass legality_class =
                            JoinLegalityClass::INNER_REORDERABLE,
                        bool reorderable = true,
-                       bool requires_original_order = false);
+                       bool requires_original_order = false,
+                       bool natural_barrier = false,
+                       bool using_barrier = false,
+                       bool equi_join = false,
+                       bool has_key_metadata = false,
+                       const std::string& left_order_key_text = {},
+                       const std::string& right_order_key_text = {});
 
     void setJoinSelectivity(size_t edge_idx, double selectivity);
 
@@ -204,8 +242,12 @@ private:
     void pushFrontierEntry(DPFrontier& frontier, DPEntry entry);
     auto frontierBestPath(const DPFrontier& frontier) const -> std::shared_ptr<Path>;
     auto frontierBestEntry(const DPFrontier& frontier) const -> const DPEntry*;
-    auto baseFrontierForRelation(const RelationInfo& relation) -> DPFrontier;
+    auto baseFrontierForRelation(const RelationInfo& relation,
+                                size_t relation_index) -> DPFrontier;
     auto frontierSignature(const DPEntry& entry) const -> std::string;
+    auto frontierBucketSignature(const DPEntry& entry) const -> std::string;
+    auto frontierEntryDominates(const DPEntry& left,
+                                const DPEntry& right) const -> bool;
     std::vector<size_t> findConnectingEdges(RelationSet left_set, RelationSet right_set) const;
     bool hasJoinReorderBarrier() const;
     bool isConnected(RelationSet set) const;

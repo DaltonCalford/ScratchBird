@@ -18,7 +18,10 @@ namespace scratchbird::optimizer
                 << node.index_name << ':'
                 << (node.parallel_enabled ? 1 : 0) << ':'
                 << (node.gather_merge ? 1 : 0) << ':'
-                << node.parallel_stage << '|';
+                << node.parallel_stage << ':'
+                << node.formula_profile_id << ':'
+                << node.formula_profile_version << ':'
+                << node.calibration_profile_id << '|';
             for (const auto &child : node.children)
             {
                 appendNodeIdentitySeed(out, child);
@@ -36,6 +39,7 @@ namespace scratchbird::optimizer
             out["table_id_text"] = relation.table_id_text;
             out["scan_kind"] = relation.scan_kind;
             out["scan_family"] = relation.scan_family;
+            out["physical_family"] = relation.physical_family;
             out["path_name"] = relation.path_name;
             out["scan_family_kind"] =
                 plannerAccessFamilyName(relation.scan_family_kind);
@@ -53,6 +57,10 @@ namespace scratchbird::optimizer
             out["exactness_class_id"] =
                 static_cast<uint32_t>(relation.exactness_class);
             out["requires_recheck"] = relation.requires_recheck;
+            out["mga_family_visibility_state"] =
+                relation.mga_family_visibility_state;
+            out["mga_recheck_contract_id"] =
+                relation.mga_recheck_contract_id;
             out["coverage_fraction"] = relation.coverage_fraction;
             out["candidate_budget"] = relation.candidate_budget;
             out["visibility_enforcement"] =
@@ -66,6 +74,41 @@ namespace scratchbird::optimizer
                 accessPathQueryabilityStateName(relation.queryability_state);
             out["queryability_state_id"] =
                 static_cast<uint32_t>(relation.queryability_state);
+            out["native_trust_class"] = relation.native_trust_class;
+            out["locator_granularity"] = relation.locator_granularity;
+            out["family_capability_contract_id"] =
+                relation.family_capability_contract_id;
+            out["publication_model"] = relation.publication_model;
+            out["mga_certification_class"] =
+                relation.mga_certification_class;
+            out["supports_exact"] = relation.supports_exact;
+            out["supports_ordered_output"] =
+                relation.supports_ordered_output;
+            out["supports_covering_payload"] =
+                relation.supports_covering_payload;
+            out["supports_late_materialization"] =
+                relation.supports_late_materialization;
+            out["supports_bulk_filter"] = relation.supports_bulk_filter;
+            out["supports_parallel_merge"] =
+                relation.supports_parallel_merge;
+            out["supports_specialized_collector_modes"] =
+                relation.supports_specialized_collector_modes;
+            out["maintenance_state_class"] =
+                relation.maintenance_state_class;
+            out["publish_lag_xids"] = relation.publish_lag_xids;
+            out["maintenance_backlog_ops"] =
+                relation.maintenance_backlog_ops;
+            out["reclaim_lag_xids"] = relation.reclaim_lag_xids;
+            out["pruning_granularity_class"] =
+                relation.pruning_granularity_class;
+            out["projection_layout_id"] = relation.projection_layout_id;
+            out["storage_layer_shape"] = relation.storage_layer_shape;
+            out["collector_specialization_id"] =
+                relation.collector_specialization_id;
+            out["clustered_lookup_shape"] =
+                relation.clustered_lookup_shape;
+            out["parallel_property_signature"] =
+                relation.parallel_property_signature;
             out["index_name"] = relation.index_name;
             out["index_id_text"] = relation.index_id_text;
             out["bitmap_op"] = relation.bitmap_op;
@@ -100,6 +143,13 @@ namespace scratchbird::optimizer
             out["parallel_workers_planned"] = relation.parallel_workers_planned;
             out["parallel_stage"] = relation.parallel_stage;
             out["parallel_rejection_reason"] = relation.parallel_rejection_reason;
+            out["parallel_distribution_mode"] =
+                relation.parallel_distribution_mode;
+            out["parallel_order_preservation"] =
+                relation.parallel_order_preservation;
+            out["exchange_topology_id"] = relation.exchange_topology_id;
+            out["gather_decision_reason"] =
+                relation.gather_decision_reason;
             out["base_rows"] = relation.base_rows;
             out["selectivity"] = relation.selectivity;
             out["startup_cost"] = relation.startup_cost;
@@ -108,6 +158,16 @@ namespace scratchbird::optimizer
             out["formula_profile_id"] = relation.formula_profile_id;
             out["formula_profile_version"] = relation.formula_profile_version;
             out["calibration_profile_id"] = relation.calibration_profile_id;
+            out["candidate_bundle_contract_id"] =
+                relation.candidate_bundle_contract_id;
+            out["candidate_bundle_owner_pass_id"] =
+                relation.candidate_bundle_owner_pass_id;
+            out["candidate_bundle_candidate_count"] =
+                relation.candidate_bundle_candidate_count;
+            out["candidate_bundle_frozen"] =
+                relation.candidate_bundle_frozen;
+            out["rejected_composition_reasons"] =
+                relation.rejected_composition_reasons;
             out["actual_rows"] = relation.actual_rows;
             out["rows_examined"] = relation.rows_examined;
             out["rows_filtered"] = relation.rows_filtered;
@@ -170,6 +230,9 @@ namespace scratchbird::optimizer
             relation_out.table_id_text = json_in.value("table_id_text", std::string());
             relation_out.scan_kind = json_in.value("scan_kind", std::string());
             relation_out.scan_family = json_in.value("scan_family", std::string());
+            relation_out.physical_family =
+                json_in.value("physical_family",
+                              relation_out.scan_family);
             relation_out.path_name =
                 json_in.value("path_name", relation_out.scan_family);
             relation_out.taxonomy_version =
@@ -267,6 +330,10 @@ namespace scratchbird::optimizer
                                       AccessPathExactnessClass::LOWER_BOUND_ORDERED ||
                                   relation_out.exactness_class ==
                                       AccessPathExactnessClass::APPROX_TOPK);
+            relation_out.mga_family_visibility_state =
+                json_in.value("mga_family_visibility_state", std::string());
+            relation_out.mga_recheck_contract_id =
+                json_in.value("mga_recheck_contract_id", std::string());
             relation_out.coverage_fraction =
                 json_in.value("coverage_fraction", 0.0);
             relation_out.candidate_budget =
@@ -306,6 +373,91 @@ namespace scratchbird::optimizer
                         ? AccessPathQueryabilityState::UNKNOWN
                         : AccessPathQueryabilityState::QUERYABLE;
             }
+            relation_out.native_trust_class =
+                json_in.value("native_trust_class",
+                              std::string(accessPathNativeTrustClassName(
+                                  relation_out.scan_family_kind,
+                                  relation_out.exactness_class,
+                                  relation_out.visibility_enforcement,
+                                  relation_out.requires_recheck)));
+            relation_out.locator_granularity =
+                json_in.value("locator_granularity",
+                              std::string(accessPathLocatorGranularityName(
+                                  relation_out.scan_family_kind,
+                                  relation_out.exactness_class,
+                                  relation_out.visibility_enforcement)));
+            relation_out.family_capability_contract_id =
+                json_in.value("family_capability_contract_id",
+                              std::string("sb_index_family_capability/v1"));
+            relation_out.publication_model =
+                json_in.value("publication_model",
+                              std::string(accessPathPublicationModelName(
+                                  relation_out.scan_family_kind,
+                                  relation_out.exactness_class,
+                                  relation_out.visibility_enforcement)));
+            relation_out.mga_certification_class =
+                json_in.value("mga_certification_class",
+                              std::string(accessPathMgaCertificationClassName(
+                                  relation_out.exactness_class,
+                                  relation_out.visibility_enforcement,
+                                  relation_out.requires_recheck)));
+            relation_out.supports_exact =
+                json_in.value("supports_exact",
+                              accessPathSupportsExact(
+                                  relation_out.exactness_class));
+            relation_out.supports_ordered_output =
+                json_in.value("supports_ordered_output",
+                              accessPathSupportsOrderedOutput(
+                                  relation_out.scan_family_kind,
+                                  relation_out.ordered_output));
+            relation_out.supports_covering_payload =
+                json_in.value("supports_covering_payload",
+                              accessPathSupportsCoveringPayload(
+                                  relation_out.scan_family_kind,
+                                  relation_out.covering_index));
+            relation_out.supports_late_materialization =
+                json_in.value("supports_late_materialization",
+                              accessPathSupportsLateMaterialization(
+                                  relation_out.locator_granularity));
+            relation_out.supports_bulk_filter =
+                json_in.value("supports_bulk_filter",
+                              accessPathSupportsBulkFilter(
+                                  relation_out.scan_family_kind));
+            relation_out.supports_parallel_merge =
+                json_in.value("supports_parallel_merge",
+                              accessPathSupportsParallelMerge(
+                                  relation_out.scan_family_kind));
+            relation_out.supports_specialized_collector_modes =
+                json_in.value(
+                    "supports_specialized_collector_modes",
+                    accessPathSupportsSpecializedCollectorModes(
+                        relation_out.collector_specialization_id));
+            relation_out.publish_lag_xids =
+                json_in.value("publish_lag_xids", 0ULL);
+            relation_out.maintenance_backlog_ops =
+                json_in.value("maintenance_backlog_ops", 0ULL);
+            relation_out.reclaim_lag_xids =
+                json_in.value("reclaim_lag_xids", 0ULL);
+            relation_out.maintenance_state_class =
+                json_in.value("maintenance_state_class",
+                              std::string(accessPathMaintenanceStateClassName(
+                                  relation_out.queryability_state,
+                                  relation_out.metrics_confidence_class,
+                                  relation_out.publish_lag_xids,
+                                  relation_out.maintenance_backlog_ops,
+                                  relation_out.reclaim_lag_xids)));
+            relation_out.pruning_granularity_class =
+                json_in.value("pruning_granularity_class", std::string());
+            relation_out.projection_layout_id =
+                json_in.value("projection_layout_id", std::string());
+            relation_out.storage_layer_shape =
+                json_in.value("storage_layer_shape", std::string());
+            relation_out.collector_specialization_id =
+                json_in.value("collector_specialization_id", std::string());
+            relation_out.clustered_lookup_shape =
+                json_in.value("clustered_lookup_shape", std::string());
+            relation_out.parallel_property_signature =
+                json_in.value("parallel_property_signature", std::string());
             relation_out.index_name = json_in.value("index_name", std::string());
             relation_out.index_id_text = json_in.value("index_id_text", std::string());
             relation_out.bitmap_op = json_in.value("bitmap_op", std::string());
@@ -317,6 +469,21 @@ namespace scratchbird::optimizer
             relation_out.ordered_output = json_in.value("ordered_output", false);
             relation_out.ordered_prefix_length =
                 json_in.value("ordered_prefix_length", 0ULL);
+            relation_out.supports_ordered_output =
+                json_in.value("supports_ordered_output",
+                              accessPathSupportsOrderedOutput(
+                                  relation_out.scan_family_kind,
+                                  relation_out.ordered_output));
+            relation_out.supports_covering_payload =
+                json_in.value("supports_covering_payload",
+                              accessPathSupportsCoveringPayload(
+                                  relation_out.scan_family_kind,
+                                  relation_out.covering_index));
+            relation_out.supports_specialized_collector_modes =
+                json_in.value(
+                    "supports_specialized_collector_modes",
+                    accessPathSupportsSpecializedCollectorModes(
+                        relation_out.collector_specialization_id));
             relation_out.required_outer_relation_indexes.clear();
             const auto required_outer_relation_indexes_it =
                 json_in.find("required_outer_relation_indexes");
@@ -429,6 +596,14 @@ namespace scratchbird::optimizer
                 json_in.value("parallel_stage", std::string());
             relation_out.parallel_rejection_reason =
                 json_in.value("parallel_rejection_reason", std::string());
+            relation_out.parallel_distribution_mode =
+                json_in.value("parallel_distribution_mode", std::string());
+            relation_out.parallel_order_preservation =
+                json_in.value("parallel_order_preservation", std::string());
+            relation_out.exchange_topology_id =
+                json_in.value("exchange_topology_id", std::string());
+            relation_out.gather_decision_reason =
+                json_in.value("gather_decision_reason", std::string());
             relation_out.base_rows = json_in.value("base_rows", 0ULL);
             relation_out.selectivity = json_in.value("selectivity", 1.0);
             relation_out.startup_cost = json_in.value("startup_cost", 0.0);
@@ -440,6 +615,29 @@ namespace scratchbird::optimizer
                 json_in.value("formula_profile_version", 0U);
             relation_out.calibration_profile_id =
                 json_in.value("calibration_profile_id", std::string());
+            relation_out.candidate_bundle_contract_id =
+                json_in.value("candidate_bundle_contract_id", std::string());
+            relation_out.candidate_bundle_owner_pass_id =
+                json_in.value("candidate_bundle_owner_pass_id", std::string());
+            relation_out.candidate_bundle_candidate_count =
+                json_in.value("candidate_bundle_candidate_count", 0ULL);
+            relation_out.candidate_bundle_frozen =
+                json_in.value("candidate_bundle_frozen", false);
+            relation_out.rejected_composition_reasons.clear();
+            const auto rejected_compositions_it =
+                json_in.find("rejected_composition_reasons");
+            if (rejected_compositions_it != json_in.end() &&
+                rejected_compositions_it->is_array())
+            {
+                for (const auto &entry : *rejected_compositions_it)
+                {
+                    if (entry.is_string())
+                    {
+                        relation_out.rejected_composition_reasons.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
             relation_out.actual_rows = json_in.value("actual_rows", 0ULL);
             relation_out.rows_examined = json_in.value("rows_examined", 0ULL);
             relation_out.rows_filtered = json_in.value("rows_filtered", 0ULL);
@@ -563,6 +761,13 @@ namespace scratchbird::optimizer
             out["has_merge_keys"] = join_step.has_merge_keys;
             out["merge_outer_presorted"] = join_step.merge_outer_presorted;
             out["merge_inner_presorted"] = join_step.merge_inner_presorted;
+            out["merge_enabled_by_explicit_sort"] =
+                join_step.merge_enabled_by_explicit_sort;
+            out["merge_viability_source"] = join_step.merge_viability_source;
+            out["ordered_output"] = join_step.ordered_output;
+            out["order_complete"] = join_step.order_complete;
+            out["ordered_prefix_length"] = join_step.ordered_prefix_length;
+            out["ordering_class"] = join_step.ordering_class;
             out["selectivity"] = join_step.selectivity;
             out["startup_cost"] = join_step.startup_cost;
             out["total_cost"] = join_step.total_cost;
@@ -579,6 +784,13 @@ namespace scratchbird::optimizer
             out["parallel_stage"] = join_step.parallel_stage;
             out["parallel_rejection_reason"] =
                 join_step.parallel_rejection_reason;
+            out["parallel_distribution_mode"] =
+                join_step.parallel_distribution_mode;
+            out["parallel_order_preservation"] =
+                join_step.parallel_order_preservation;
+            out["exchange_topology_id"] = join_step.exchange_topology_id;
+            out["gather_decision_reason"] =
+                join_step.gather_decision_reason;
             out["actual_rows"] = join_step.actual_rows;
             out["rows_examined"] = join_step.rows_examined;
             out["rows_filtered"] = join_step.rows_filtered;
@@ -760,6 +972,18 @@ namespace scratchbird::optimizer
                 json_in.value("merge_outer_presorted", false);
             join_step_out.merge_inner_presorted =
                 json_in.value("merge_inner_presorted", false);
+            join_step_out.merge_enabled_by_explicit_sort =
+                json_in.value("merge_enabled_by_explicit_sort", false);
+            join_step_out.merge_viability_source =
+                json_in.value("merge_viability_source", std::string());
+            join_step_out.ordered_output =
+                json_in.value("ordered_output", false);
+            join_step_out.order_complete =
+                json_in.value("order_complete", false);
+            join_step_out.ordered_prefix_length =
+                json_in.value("ordered_prefix_length", 0ULL);
+            join_step_out.ordering_class =
+                json_in.value("ordering_class", std::string());
             join_step_out.selectivity = json_in.value("selectivity", 1.0);
             join_step_out.startup_cost = json_in.value("startup_cost", 0.0);
             join_step_out.total_cost = json_in.value("total_cost", 0.0);
@@ -783,6 +1007,14 @@ namespace scratchbird::optimizer
                 json_in.value("parallel_stage", std::string());
             join_step_out.parallel_rejection_reason =
                 json_in.value("parallel_rejection_reason", std::string());
+            join_step_out.parallel_distribution_mode =
+                json_in.value("parallel_distribution_mode", std::string());
+            join_step_out.parallel_order_preservation =
+                json_in.value("parallel_order_preservation", std::string());
+            join_step_out.exchange_topology_id =
+                json_in.value("exchange_topology_id", std::string());
+            join_step_out.gather_decision_reason =
+                json_in.value("gather_decision_reason", std::string());
             join_step_out.actual_rows = json_in.value("actual_rows", 0ULL);
             join_step_out.rows_examined = json_in.value("rows_examined", 0ULL);
             join_step_out.rows_filtered = json_in.value("rows_filtered", 0ULL);
@@ -1117,14 +1349,25 @@ namespace scratchbird::optimizer
             out["replan_suppressed"] = feedback.replan_suppressed;
             out["stats_refresh_requested"] = feedback.stats_refresh_requested;
             out["stats_refresh_applied"] = feedback.stats_refresh_applied;
+            out["calibration_bundle_proposed"] =
+                feedback.calibration_bundle_proposed;
             out["correction_applied"] = feedback.correction_applied;
+            out["calibration_applied"] = feedback.calibration_applied;
             out["observation_count"] = feedback.observation_count;
             out["replan_action_count"] = feedback.replan_action_count;
             out["last_estimated_rows"] = feedback.last_estimated_rows;
             out["last_actual_rows"] = feedback.last_actual_rows;
             out["estimation_error_ratio"] = feedback.estimation_error_ratio;
             out["correction_factor"] = feedback.correction_factor;
+            out["cost_reweight_factor"] = feedback.cost_reweight_factor;
+            out["calibration_profile_version"] =
+                feedback.calibration_profile_version;
             out["last_plan_hash"] = feedback.last_plan_hash;
+            out["calibration_profile_id"] = feedback.calibration_profile_id;
+            out["calibration_profile_delta_id"] =
+                feedback.calibration_profile_delta_id;
+            out["calibration_evidence_id"] =
+                feedback.calibration_evidence_id;
             out["guardrail_reason"] = feedback.guardrail_reason;
             return out;
         }
@@ -1147,8 +1390,12 @@ namespace scratchbird::optimizer
                 json_in.value("stats_refresh_requested", false);
             feedback_out.stats_refresh_applied =
                 json_in.value("stats_refresh_applied", false);
+            feedback_out.calibration_bundle_proposed =
+                json_in.value("calibration_bundle_proposed", false);
             feedback_out.correction_applied =
                 json_in.value("correction_applied", false);
+            feedback_out.calibration_applied =
+                json_in.value("calibration_applied", false);
             feedback_out.observation_count =
                 json_in.value("observation_count", 0ULL);
             feedback_out.replan_action_count =
@@ -1161,8 +1408,18 @@ namespace scratchbird::optimizer
                 json_in.value("estimation_error_ratio", 1.0);
             feedback_out.correction_factor =
                 json_in.value("correction_factor", 1.0);
+            feedback_out.cost_reweight_factor =
+                json_in.value("cost_reweight_factor", 1.0);
+            feedback_out.calibration_profile_version =
+                json_in.value("calibration_profile_version", 0U);
             feedback_out.last_plan_hash =
                 json_in.value("last_plan_hash", std::string());
+            feedback_out.calibration_profile_id =
+                json_in.value("calibration_profile_id", std::string());
+            feedback_out.calibration_profile_delta_id =
+                json_in.value("calibration_profile_delta_id", std::string());
+            feedback_out.calibration_evidence_id =
+                json_in.value("calibration_evidence_id", std::string());
             feedback_out.guardrail_reason =
                 json_in.value("guardrail_reason", std::string());
             return true;
@@ -1383,6 +1640,10 @@ namespace scratchbird::optimizer
             out["considered_state_count"] = summary.considered_state_count;
             out["pruned_state_count"] = summary.pruned_state_count;
             out["pair_evaluation_count"] = summary.pair_evaluation_count;
+            out["retained_frontier_entry_count"] =
+                summary.retained_frontier_entry_count;
+            out["dominated_state_count"] = summary.dominated_state_count;
+            out["max_frontier_width"] = summary.max_frontier_width;
             out["rejected_candidate_count"] = summary.rejected_candidate_count;
             out["max_pair_evaluations"] = summary.max_pair_evaluations;
             out["max_states_considered"] = summary.max_states_considered;
@@ -1416,6 +1677,12 @@ namespace scratchbird::optimizer
                 json_in.value("pruned_state_count", 0ULL);
             summary_out.pair_evaluation_count =
                 json_in.value("pair_evaluation_count", 0ULL);
+            summary_out.retained_frontier_entry_count =
+                json_in.value("retained_frontier_entry_count", 0ULL);
+            summary_out.dominated_state_count =
+                json_in.value("dominated_state_count", 0ULL);
+            summary_out.max_frontier_width =
+                json_in.value("max_frontier_width", 0ULL);
             summary_out.rejected_candidate_count =
                 json_in.value("rejected_candidate_count", 0ULL);
             summary_out.max_pair_evaluations =
@@ -1448,10 +1715,35 @@ namespace scratchbird::optimizer
             root["version"] = plan.version;
             root["contract_id"] = plan.contract_id;
             root["join_graph_contract_id"] = plan.join_graph_contract_id;
+            root["join_search_contract_id"] = plan.join_search_contract_id;
+            root["join_search_property_signature_contract_id"] =
+                plan.join_search_property_signature_contract_id;
+            root["join_search_frontier_mode"] =
+                plan.join_search_frontier_mode;
+            root["join_search_mode_source"] =
+                plan.join_search_mode_source;
+            root["base_candidate_bundle_contract_id"] =
+                plan.base_candidate_bundle_contract_id;
+            root["base_candidate_bundle_owner_pass_id"] =
+                plan.base_candidate_bundle_owner_pass_id;
+            root["base_candidate_bundle_consumer_pass_id"] =
+                plan.base_candidate_bundle_consumer_pass_id;
+            root["base_candidate_bundle_frozen"] =
+                plan.base_candidate_bundle_frozen;
+            root["base_candidate_bundle_rejection_count"] =
+                plan.base_candidate_bundle_rejection_count;
+            root["planner_front_door_contract_id"] =
+                plan.planner_front_door_contract_id;
             root["diagnostics_contract_id"] = plan.diagnostics_contract_id;
+            root["planner_status_code"] = plan.planner_status_code;
             root["plan_hash"] = plan.plan_hash;
             root["explain_text"] = plan.explain_text;
+            root["normalized_request_digest"] =
+                plan.normalized_request_digest;
+            root["normalized_statement_id"] = plan.normalized_statement_id;
+            root["statement_kind"] = plan.statement_kind;
             root["cache_mode"] = plan.cache_mode;
+            root["chosen_reuse_mode"] = plan.chosen_reuse_mode;
             root["plan_profile_signature"] = plan.plan_profile_signature;
             root["index_family_signature"] = plan.index_family_signature;
             root["family_statistics_signature"] =
@@ -1459,7 +1751,40 @@ namespace scratchbird::optimizer
             root["selectivity_bucket_signature"] =
                 plan.selectivity_bucket_signature;
             root["query_feedback_key"] = plan.query_feedback_key;
+            root["storage_layer_shape"] = plan.storage_layer_shape;
+            root["publication_state_summary"] =
+                plan.publication_state_summary;
+            root["collector_specialization_id"] =
+                plan.collector_specialization_id;
+            root["execution_intent_class"] =
+                plan.execution_intent_class;
+            root["continuation_token_contract"] =
+                plan.continuation_token_contract;
+            root["rewrite_before_search_contract_id"] =
+                plan.rewrite_before_search_contract_id;
+            root["rewrite_before_search_owner_pass_id"] =
+                plan.rewrite_before_search_owner_pass_id;
+            root["rewrite_before_search_terminal_pass_id"] =
+                plan.rewrite_before_search_terminal_pass_id;
+            root["rewrite_before_search_frozen"] =
+                plan.rewrite_before_search_frozen;
+            root["tagging_contract_id"] = plan.tagging_contract_id;
+            root["tagging_owner_pass_id"] = plan.tagging_owner_pass_id;
+            root["join_search_owner_pass_id"] =
+                plan.join_search_owner_pass_id;
+            root["result_shape_finalize_pass_id"] =
+                plan.result_shape_finalize_pass_id;
+            root["diagnostics_payload_json"] =
+                plan.diagnostics_payload_json;
             root["parameter_sensitive"] = plan.parameter_sensitive;
+            root["join_search_base_candidate_count"] =
+                plan.join_search_base_candidate_count;
+            root["invalidation_dependencies"] =
+                plan.invalidation_dependencies;
+            root["compatibility_version_identifiers"] =
+                plan.compatibility_version_identifiers;
+            root["fallback_and_rejection_stream"] =
+                plan.fallback_and_rejection_stream;
             root["search_summary"] = searchSummaryToJson(plan.search_summary);
             root["root"] = nodeToJson(plan.root);
             root["relations"] = nlohmann::json::array();
@@ -1538,12 +1863,47 @@ namespace scratchbird::optimizer
             plan_out.join_graph_contract_id =
                 root.value("join_graph_contract_id",
                            std::string(kJoinGraphContractId));
+            plan_out.join_search_contract_id =
+                root.value("join_search_contract_id",
+                           std::string(kJoinSearchContractId));
+            plan_out.join_search_property_signature_contract_id =
+                root.value("join_search_property_signature_contract_id",
+                           std::string(kJoinSearchPropertySignatureContractId));
+            plan_out.join_search_frontier_mode =
+                root.value("join_search_frontier_mode",
+                           std::string(kJoinSearchFrontierMode));
+            plan_out.join_search_mode_source =
+                root.value("join_search_mode_source", std::string());
+            plan_out.base_candidate_bundle_contract_id =
+                root.value("base_candidate_bundle_contract_id", std::string());
+            plan_out.base_candidate_bundle_owner_pass_id =
+                root.value("base_candidate_bundle_owner_pass_id", std::string());
+            plan_out.base_candidate_bundle_consumer_pass_id =
+                root.value("base_candidate_bundle_consumer_pass_id",
+                           std::string());
+            plan_out.base_candidate_bundle_frozen =
+                root.value("base_candidate_bundle_frozen", false);
+            plan_out.base_candidate_bundle_rejection_count =
+                root.value("base_candidate_bundle_rejection_count", 0ULL);
+            plan_out.planner_front_door_contract_id =
+                root.value("planner_front_door_contract_id",
+                           std::string(kPlannerFrontDoorContractId));
             plan_out.diagnostics_contract_id =
                 root.value("diagnostics_contract_id",
                            std::string(kOptimizerDiagnosticsContractId));
+            plan_out.planner_status_code =
+                root.value("planner_status_code", 0U);
             plan_out.plan_hash = root.value("plan_hash", std::string());
             plan_out.explain_text = root.value("explain_text", std::string());
+            plan_out.normalized_request_digest =
+                root.value("normalized_request_digest", std::string());
+            plan_out.normalized_statement_id =
+                root.value("normalized_statement_id", std::string());
+            plan_out.statement_kind =
+                root.value("statement_kind", std::string());
             plan_out.cache_mode = root.value("cache_mode", std::string());
+            plan_out.chosen_reuse_mode =
+                root.value("chosen_reuse_mode", plan_out.cache_mode);
             plan_out.plan_profile_signature =
                 root.value("plan_profile_signature", std::string());
             plan_out.index_family_signature =
@@ -1554,8 +1914,99 @@ namespace scratchbird::optimizer
                 root.value("selectivity_bucket_signature", std::string());
             plan_out.query_feedback_key =
                 root.value("query_feedback_key", std::string());
+            plan_out.storage_layer_shape =
+                root.value("storage_layer_shape", std::string("ROW_STORE_MGA"));
+            plan_out.publication_state_summary =
+                root.value("publication_state_summary", std::string());
+            plan_out.collector_specialization_id =
+                root.value("collector_specialization_id", std::string());
+            plan_out.execution_intent_class =
+                root.value("execution_intent_class", std::string());
+            plan_out.continuation_token_contract =
+                root.value("continuation_token_contract", std::string());
+            plan_out.rewrite_before_search_contract_id =
+                root.value("rewrite_before_search_contract_id",
+                           std::string(kRewriteBeforeSearchContractId));
+            plan_out.rewrite_before_search_owner_pass_id =
+                root.value("rewrite_before_search_owner_pass_id",
+                           std::string("P01_SEMANTIC_NORMALIZE"));
+            plan_out.rewrite_before_search_terminal_pass_id =
+                root.value("rewrite_before_search_terminal_pass_id",
+                           std::string("P07_FILTER_PUSH_DOWN"));
+            plan_out.rewrite_before_search_frozen =
+                root.value("rewrite_before_search_frozen", false);
+            plan_out.tagging_contract_id =
+                root.value("tagging_contract_id",
+                           std::string(kAccessPathTaggingContractId));
+            plan_out.tagging_owner_pass_id =
+                root.value("tagging_owner_pass_id",
+                           std::string("P08_ACCESS_PATH_ANNOTATE"));
+            plan_out.join_search_owner_pass_id =
+                root.value("join_search_owner_pass_id",
+                           std::string("P09_JOIN_ORDER_PLAN"));
+            plan_out.result_shape_finalize_pass_id =
+                root.value("result_shape_finalize_pass_id",
+                           std::string("P10_RESULT_SHAPE_FINALIZE"));
+            plan_out.diagnostics_payload_json =
+                root.value("diagnostics_payload_json", std::string());
             plan_out.parameter_sensitive =
                 root.value("parameter_sensitive", false);
+            plan_out.join_search_base_candidate_count =
+                root.value("join_search_base_candidate_count", 0ULL);
+            plan_out.invalidation_dependencies.clear();
+            const auto invalidation_dependencies_it =
+                root.find("invalidation_dependencies");
+            if (invalidation_dependencies_it != root.end() &&
+                invalidation_dependencies_it->is_array())
+            {
+                for (const auto &entry : *invalidation_dependencies_it)
+                {
+                    if (entry.is_string())
+                    {
+                        plan_out.invalidation_dependencies.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
+            plan_out.compatibility_version_identifiers.clear();
+            const auto compatibility_versions_it =
+                root.find("compatibility_version_identifiers");
+            if (compatibility_versions_it != root.end() &&
+                compatibility_versions_it->is_array())
+            {
+                for (const auto &entry : *compatibility_versions_it)
+                {
+                    if (entry.is_string())
+                    {
+                        plan_out.compatibility_version_identifiers.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
+            if (plan_out.compatibility_version_identifiers.empty())
+            {
+                plan_out.compatibility_version_identifiers = {
+                    plan_out.planner_front_door_contract_id,
+                    plan_out.contract_id,
+                    plan_out.join_graph_contract_id,
+                    plan_out.diagnostics_contract_id,
+                };
+            }
+            plan_out.fallback_and_rejection_stream.clear();
+            const auto fallback_stream_it =
+                root.find("fallback_and_rejection_stream");
+            if (fallback_stream_it != root.end() &&
+                fallback_stream_it->is_array())
+            {
+                for (const auto &entry : *fallback_stream_it)
+                {
+                    if (entry.is_string())
+                    {
+                        plan_out.fallback_and_rejection_stream.push_back(
+                            entry.get<std::string>());
+                    }
+                }
+            }
             const auto search_summary_it = root.find("search_summary");
             if (search_summary_it != root.end())
             {
@@ -1744,7 +2195,15 @@ namespace scratchbird::optimizer
                  << (relation.covering_index ? 1 : 0) << ':'
                  << (relation.exact_key_lookup ? 1 : 0) << ':'
                  << (relation.ordered_output ? 1 : 0) << ':'
-                 << relation.ordered_prefix_length << '|';
+                 << relation.ordered_prefix_length << ':'
+                 << (relation.parallel_eligible ? 1 : 0) << ':'
+                 << (relation.parallel_enabled ? 1 : 0) << ':'
+                 << relation.parallel_workers_planned << ':'
+                 << relation.parallel_stage << ':'
+                 << relation.parallel_distribution_mode << ':'
+                 << relation.parallel_order_preservation << ':'
+                 << relation.exchange_topology_id << ':'
+                 << relation.gather_decision_reason << '|';
             for (size_t outer_index : relation.required_outer_relation_indexes)
             {
                 seed << outer_index << ';';
@@ -1771,7 +2230,22 @@ namespace scratchbird::optimizer
                  << join.right_merge_key.qualifier << ':'
                  << join.right_merge_key.column_name << ':'
                  << (join.merge_outer_presorted ? 1 : 0) << ':'
-                 << (join.merge_inner_presorted ? 1 : 0) << '|';
+                 << (join.merge_inner_presorted ? 1 : 0) << ':'
+                 << (join.merge_enabled_by_explicit_sort ? 1 : 0) << ':'
+                 << join.merge_viability_source << ':'
+                 << (join.ordered_output ? 1 : 0) << ':'
+                 << (join.order_complete ? 1 : 0) << ':'
+                 << join.ordered_prefix_length << ':'
+                 << join.ordering_class << ':'
+                 << (join.parallel_eligible ? 1 : 0) << ':'
+                 << (join.parallel_enabled ? 1 : 0) << ':'
+                 << join.parallel_workers_planned << ':'
+                 << join.parallel_stage << ':'
+                 << join.parallel_distribution_mode << ':'
+                 << join.parallel_order_preservation << ':'
+                 << join.exchange_topology_id << ':'
+                 << join.gather_decision_reason << ':'
+                 << join.parallel_rejection_reason << '|';
             for (const auto &key_pair : join.equijoin_keys)
             {
                 seed << key_pair.left_qualifier << '.'

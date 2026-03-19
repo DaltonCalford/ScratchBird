@@ -13,7 +13,9 @@
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/parser/shared_types.h"      // For JoinType, WindowFunc, GroupingType, etc.
 #include <algorithm>
+#include <initializer_list>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,7 +41,24 @@ namespace scratchbird::optimizer
         INDEX_SCAN,        // Index scan with heap fetch
         INDEX_ONLY_SCAN,   // Index-only scan (covering index, no heap access) - TASK-BYTECODE-4
         BITMAP_INDEX_SCAN, // Bitmap index scan (combine multiple indexes) - TASK-BYTECODE-4
+        SUMMARY_SCAN,      // Summary-family pruning scan
+        BITMAP_STORAGE_SCAN, // Physical bitmap storage scan
+        COLUMNSTORE_SCAN,  // Columnstore-family scan
+        GIN_FILTER_SCAN,   // GIN boolean token filter scan
+        TEXT_BITMAP_SCAN,  // Inverted text bitmap or row-id set scan
+        TEXT_SCORE_SCAN,   // Inverted ranked text scan
+        TEXT_RECHECK_SCAN, // Inverted phrase or recheck-heavy text scan
+        VECTOR_FLAT_SCAN,  // Exact vector baseline scan
+        HNSW_SCAN,         // HNSW approximate vector scan
+        IVF_SCAN,          // IVF approximate vector scan
+        ANN_RERANK_SCAN,   // ANN rerank scan
+        ANN_HYBRID_FALLBACK_SCAN, // ANN exact fallback scan
+        GIST_SCAN,         // GiST generalized search scan
+        SPGIST_SCAN,       // SP-GiST generalized search scan
+        GIST_NEAREST_SCAN, // GiST nearest-order search scan
+        SPGIST_NEAREST_SCAN, // SP-GiST nearest-order search scan
         RTREE_SCAN,        // R-tree spatial index scan (Phase 2, Task 9.2)
+        RTREE_NEAREST_SCAN, // R-tree nearest-order spatial scan
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
         HASH_JOIN,         // Hash join (Phase 1, Task 3.2)
         MERGE_JOIN,        // Merge join (NCW-040C)
@@ -236,6 +255,518 @@ namespace scratchbird::optimizer
         return "UNKNOWN";
     }
 
+    inline auto accessPathNativeTrustClassName(
+        PlannerAccessFamily family,
+        AccessPathExactnessClass exactness,
+        AccessPathVisibilityEnforcement visibility_enforcement =
+            AccessPathVisibilityEnforcement::UNKNOWN,
+        bool requires_recheck = false)
+        -> const char *
+    {
+        (void)visibility_enforcement;
+        (void)requires_recheck;
+        switch (exactness)
+        {
+            case AccessPathExactnessClass::EXACT_ROW:
+                return "NATIVE_EXACT";
+            case AccessPathExactnessClass::EXACT_KEY:
+                return "NATIVE_WITH_RECHECK";
+            case AccessPathExactnessClass::CANDIDATE_REGION:
+                switch (family)
+                {
+                    case PlannerAccessFamily::BRIN_SCAN:
+                    case PlannerAccessFamily::SUMMARY_FILTER_SCAN:
+                    case PlannerAccessFamily::COLUMNSTORE_SCAN:
+                        return "PRUNING_ONLY";
+                    default:
+                        return "FILTER_ACCELERATOR";
+                }
+            case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+            case AccessPathExactnessClass::APPROX_TOPK:
+                return "APPROX_CANDIDATE";
+            case AccessPathExactnessClass::UNKNOWN:
+            default:
+                break;
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto accessPathLocatorGranularityName(
+        PlannerAccessFamily family,
+        AccessPathExactnessClass exactness,
+        AccessPathVisibilityEnforcement visibility_enforcement =
+            AccessPathVisibilityEnforcement::UNKNOWN)
+        -> const char *
+    {
+        (void)visibility_enforcement;
+        switch (exactness)
+        {
+            case AccessPathExactnessClass::EXACT_ROW:
+            case AccessPathExactnessClass::EXACT_KEY:
+                switch (family)
+                {
+                    case PlannerAccessFamily::VECTOR_FLAT_SCAN:
+                    case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+                        return "ROW_ID_SET";
+                    case PlannerAccessFamily::BITMAP_STORAGE_SCAN:
+                    case PlannerAccessFamily::BITMAP_COMBINE_SCAN:
+                    case PlannerAccessFamily::GIN_FILTER_SCAN:
+                    case PlannerAccessFamily::TEXT_BITMAP_SCAN:
+                    case PlannerAccessFamily::TEXT_SCORE_SCAN:
+                    case PlannerAccessFamily::TEXT_RECHECK_SCAN:
+                        return "POSTING_SET";
+                    case PlannerAccessFamily::COLUMNSTORE_SCAN:
+                        return "PROJECTION";
+                    default:
+                        return "ROW_TID";
+                }
+            case AccessPathExactnessClass::CANDIDATE_REGION:
+                switch (family)
+                {
+                    case PlannerAccessFamily::BRIN_SCAN:
+                    case PlannerAccessFamily::SUMMARY_FILTER_SCAN:
+                        return "PAGE_RANGE";
+                    case PlannerAccessFamily::COLUMNSTORE_SCAN:
+                        return "ROW_GROUP";
+                    case PlannerAccessFamily::BITMAP_STORAGE_SCAN:
+                    case PlannerAccessFamily::BITMAP_COMBINE_SCAN:
+                    case PlannerAccessFamily::GIN_FILTER_SCAN:
+                    case PlannerAccessFamily::TEXT_BITMAP_SCAN:
+                    case PlannerAccessFamily::TEXT_SCORE_SCAN:
+                    case PlannerAccessFamily::TEXT_RECHECK_SCAN:
+                        return "POSTING_SET";
+                    case PlannerAccessFamily::HNSW_SCAN:
+                    case PlannerAccessFamily::IVF_SCAN:
+                    case PlannerAccessFamily::ANN_RERANK_SCAN:
+                    case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+                        return "SEGMENT";
+                    default:
+                        return "ROW_ID_SET";
+                }
+            case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+                switch (family)
+                {
+                    case PlannerAccessFamily::HNSW_SCAN:
+                    case PlannerAccessFamily::IVF_SCAN:
+                    case PlannerAccessFamily::ANN_RERANK_SCAN:
+                    case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+                        return "SEGMENT";
+                    default:
+                        return "ROW_ID_SET";
+                }
+            case AccessPathExactnessClass::APPROX_TOPK:
+                switch (family)
+                {
+                    case PlannerAccessFamily::HNSW_SCAN:
+                    case PlannerAccessFamily::IVF_SCAN:
+                    case PlannerAccessFamily::ANN_RERANK_SCAN:
+                    case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+                        return "SEGMENT";
+                    case PlannerAccessFamily::VECTOR_FLAT_SCAN:
+                        return "ROW_ID_SET";
+                    default:
+                        return "NONE";
+                }
+            case AccessPathExactnessClass::UNKNOWN:
+            default:
+                break;
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto accessPathFamilyLegalityCode(
+        PlannerAccessFamily family,
+        AccessPathExactnessClass exactness_class,
+        std::string_view native_trust_class,
+        std::string_view locator_granularity,
+        AccessPathVisibilityEnforcement visibility_enforcement)
+        -> const char *
+    {
+        const auto visibility_matches =
+            [&](AccessPathVisibilityEnforcement first,
+                AccessPathVisibilityEnforcement second) -> bool {
+                return visibility_enforcement == first ||
+                       visibility_enforcement == second;
+            };
+        const auto locator_matches =
+            [&](std::initializer_list<std::string_view> allowed) -> bool {
+                return std::find(allowed.begin(),
+                                 allowed.end(),
+                                 locator_granularity) != allowed.end();
+            };
+
+        if (native_trust_class.empty() || locator_granularity.empty() ||
+            native_trust_class == "UNKNOWN" ||
+            locator_granularity == "UNKNOWN" ||
+            visibility_enforcement == AccessPathVisibilityEnforcement::UNKNOWN ||
+            exactness_class == AccessPathExactnessClass::UNKNOWN)
+        {
+            return "P08_FAMILY_LEGALITY_UNDECLARED";
+        }
+
+        if ((family == PlannerAccessFamily::GIST_SCAN ||
+             family == PlannerAccessFamily::SPGIST_SCAN ||
+             family == PlannerAccessFamily::RTREE_SCAN) &&
+            exactness_class == AccessPathExactnessClass::CANDIDATE_REGION &&
+            native_trust_class == "FILTER_ACCELERATOR" &&
+            locator_granularity == "ROW_ID_SET" &&
+            visibility_matches(AccessPathVisibilityEnforcement::POST_FILTER,
+                               AccessPathVisibilityEnforcement::HYBRID))
+        {
+            return "";
+        }
+
+        switch (exactness_class)
+        {
+            case AccessPathExactnessClass::EXACT_ROW:
+                if (native_trust_class != "NATIVE_EXACT")
+                {
+                    return "P08_FAMILY_LEGALITY_TRUST";
+                }
+                if (!locator_matches({"ROW_TID", "ROW_ID_SET", "PROJECTION"}))
+                {
+                    return "P08_FAMILY_LEGALITY_LOCATOR";
+                }
+                if (!visibility_matches(AccessPathVisibilityEnforcement::INDEX_NATIVE,
+                                        AccessPathVisibilityEnforcement::HYBRID))
+                {
+                    return "P08_FAMILY_LEGALITY_VISIBILITY";
+                }
+                return "";
+            case AccessPathExactnessClass::EXACT_KEY:
+                if (native_trust_class != "NATIVE_WITH_RECHECK")
+                {
+                    return "P08_FAMILY_LEGALITY_TRUST";
+                }
+                if (!locator_matches({"ROW_TID", "ROW_ID_SET", "POSTING_SET"}))
+                {
+                    return "P08_FAMILY_LEGALITY_LOCATOR";
+                }
+                if (!visibility_matches(AccessPathVisibilityEnforcement::INDEX_NATIVE,
+                                        AccessPathVisibilityEnforcement::HYBRID))
+                {
+                    return "P08_FAMILY_LEGALITY_VISIBILITY";
+                }
+                return "";
+            case AccessPathExactnessClass::CANDIDATE_REGION:
+                if (native_trust_class != "PRUNING_ONLY" &&
+                    native_trust_class != "FILTER_ACCELERATOR")
+                {
+                    return "P08_FAMILY_LEGALITY_TRUST";
+                }
+                if (!locator_matches({"PAGE_RANGE",
+                                      "ROW_GROUP",
+                                      "SEGMENT",
+                                      "PARTITION",
+                                      "POSTING_SET",
+                                      "PROJECTION"}))
+                {
+                    return "P08_FAMILY_LEGALITY_LOCATOR";
+                }
+                if (!visibility_matches(AccessPathVisibilityEnforcement::POST_FILTER,
+                                        AccessPathVisibilityEnforcement::HYBRID))
+                {
+                    return "P08_FAMILY_LEGALITY_VISIBILITY";
+                }
+                return "";
+            case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+                if (native_trust_class != "APPROX_CANDIDATE")
+                {
+                    return "P08_FAMILY_LEGALITY_TRUST";
+                }
+                if (!locator_matches(
+                        {"ROW_ID_SET", "POSTING_SET", "SEGMENT", "PARTITION"}))
+                {
+                    return "P08_FAMILY_LEGALITY_LOCATOR";
+                }
+                if (!visibility_matches(AccessPathVisibilityEnforcement::POST_FILTER,
+                                        AccessPathVisibilityEnforcement::HYBRID))
+                {
+                    return "P08_FAMILY_LEGALITY_VISIBILITY";
+                }
+                return "";
+            case AccessPathExactnessClass::APPROX_TOPK:
+                if (native_trust_class != "APPROX_CANDIDATE")
+                {
+                    return "P08_FAMILY_LEGALITY_TRUST";
+                }
+                if (!locator_matches({"ROW_ID_SET",
+                                      "SEGMENT",
+                                      "PARTITION",
+                                      "NONE"}))
+                {
+                    return "P08_FAMILY_LEGALITY_LOCATOR";
+                }
+                if (!visibility_matches(AccessPathVisibilityEnforcement::POST_FILTER,
+                                        AccessPathVisibilityEnforcement::HYBRID))
+                {
+                    return "P08_FAMILY_LEGALITY_VISIBILITY";
+                }
+                return "";
+            case AccessPathExactnessClass::UNKNOWN:
+            default:
+                return "P08_FAMILY_LEGALITY_UNDECLARED";
+        }
+    }
+
+    inline auto accessPathFamilyLegalityDetail(
+        PlannerAccessFamily family,
+        AccessPathExactnessClass exactness_class,
+        std::string_view native_trust_class,
+        std::string_view locator_granularity,
+        AccessPathVisibilityEnforcement visibility_enforcement)
+        -> std::string
+    {
+        std::ostringstream out;
+        out << "family=" << plannerAccessFamilyName(family)
+            << " exactness=" << accessPathExactnessClassName(exactness_class)
+            << " trust=" << native_trust_class
+            << " locator=" << locator_granularity
+            << " visibility="
+            << accessPathVisibilityEnforcementName(visibility_enforcement);
+        return out.str();
+    }
+
+    inline auto accessPathMaintenanceStateClassName(
+        AccessPathQueryabilityState queryability_state,
+        std::string_view metrics_confidence_class = {},
+        uint64_t publish_lag_xids = 0,
+        uint64_t maintenance_backlog_ops = 0,
+        uint64_t reclaim_lag_xids = 0) -> const char *
+    {
+        if (metrics_confidence_class == "INVALID" ||
+            queryability_state == AccessPathQueryabilityState::INVALID)
+        {
+            return "FAILED";
+        }
+        if (publish_lag_xids > 0)
+        {
+            return "PUBLISH_LAGGED";
+        }
+        if (maintenance_backlog_ops > 0 || reclaim_lag_xids > 0)
+        {
+            return "MAINTENANCE_DEBT";
+        }
+        switch (queryability_state)
+        {
+            case AccessPathQueryabilityState::QUERYABLE:
+                return "CURRENT";
+            case AccessPathQueryabilityState::LIMITED:
+                return "LIMITED";
+            case AccessPathQueryabilityState::INVALID:
+                return "FAILED";
+            case AccessPathQueryabilityState::UNKNOWN:
+            default:
+                break;
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto accessPathMaintenanceStateCompatible(
+        std::string_view native_trust_class,
+        std::string_view maintenance_state_class) -> bool
+    {
+        if (native_trust_class.empty() || maintenance_state_class.empty() ||
+            native_trust_class == "UNKNOWN" ||
+            maintenance_state_class == "UNKNOWN" ||
+            maintenance_state_class == "FAILED")
+        {
+            return false;
+        }
+        if (native_trust_class == "NATIVE_EXACT")
+        {
+            return maintenance_state_class == "CURRENT" ||
+                   maintenance_state_class == "MAINTENANCE_DEBT";
+        }
+        if (native_trust_class == "NATIVE_WITH_RECHECK")
+        {
+            return maintenance_state_class == "CURRENT" ||
+                   maintenance_state_class == "LIMITED" ||
+                   maintenance_state_class == "MAINTENANCE_DEBT";
+        }
+        if (native_trust_class == "PRUNING_ONLY" ||
+            native_trust_class == "FILTER_ACCELERATOR" ||
+            native_trust_class == "APPROX_CANDIDATE")
+        {
+            return maintenance_state_class == "CURRENT" ||
+                   maintenance_state_class == "LIMITED" ||
+                   maintenance_state_class == "MAINTENANCE_DEBT" ||
+                   maintenance_state_class == "PUBLISH_LAGGED";
+        }
+        return false;
+    }
+
+    inline auto accessPathPublicationModelName(
+        PlannerAccessFamily family,
+        AccessPathExactnessClass exactness_class,
+        AccessPathVisibilityEnforcement visibility_enforcement) -> const char *
+    {
+        if (family == PlannerAccessFamily::SEQ_SCAN)
+        {
+            return "HEAP_TRUTH_MGA";
+        }
+        switch (exactness_class)
+        {
+            case AccessPathExactnessClass::EXACT_ROW:
+                return visibility_enforcement ==
+                           AccessPathVisibilityEnforcement::INDEX_NATIVE
+                           ? "INDEX_EXACT_NATIVE_MGA"
+                           : "INDEX_EXACT_PLUS_HEAP_MGA";
+            case AccessPathExactnessClass::EXACT_KEY:
+                return "KEY_EXACT_PLUS_HEAP_RECHECK_MGA";
+            case AccessPathExactnessClass::CANDIDATE_REGION:
+                return "PRUNING_PLUS_HEAP_MGA";
+            case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+            case AccessPathExactnessClass::APPROX_TOPK:
+                return "APPROX_CANDIDATE_PLUS_HEAP_MGA";
+            case AccessPathExactnessClass::UNKNOWN:
+            default:
+                break;
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto accessPathMgaCertificationClassName(
+        AccessPathExactnessClass exactness_class,
+        AccessPathVisibilityEnforcement visibility_enforcement,
+        bool requires_recheck) -> const char *
+    {
+        (void)visibility_enforcement;
+        switch (exactness_class)
+        {
+            case AccessPathExactnessClass::EXACT_ROW:
+                return "MGA_CERTIFIED_EXACT";
+            case AccessPathExactnessClass::EXACT_KEY:
+                return requires_recheck ? "MGA_CERTIFIED_RECHECK"
+                                        : "MGA_CERTIFIED_EXACT";
+            case AccessPathExactnessClass::CANDIDATE_REGION:
+                return "MGA_CERTIFIED_PRUNING";
+            case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+            case AccessPathExactnessClass::APPROX_TOPK:
+                return "MGA_CERTIFIED_APPROX_CANDIDATE";
+            case AccessPathExactnessClass::UNKNOWN:
+            default:
+                break;
+        }
+        return "UNKNOWN";
+    }
+
+    inline auto accessPathSupportsExact(
+        AccessPathExactnessClass exactness_class) -> bool
+    {
+        return exactness_class == AccessPathExactnessClass::EXACT_ROW ||
+               exactness_class == AccessPathExactnessClass::EXACT_KEY;
+    }
+
+    inline auto accessPathSupportsOrderedOutput(PlannerAccessFamily family,
+                                                bool ordered_output = false)
+        -> bool
+    {
+        if (ordered_output)
+        {
+            return true;
+        }
+        switch (family)
+        {
+            case PlannerAccessFamily::BTREE_ORDERED_SCAN:
+            case PlannerAccessFamily::LSM_ORDERED_RANGE_SCAN:
+            case PlannerAccessFamily::TEXT_SCORE_SCAN:
+            case PlannerAccessFamily::VECTOR_FLAT_SCAN:
+            case PlannerAccessFamily::HNSW_SCAN:
+            case PlannerAccessFamily::IVF_SCAN:
+            case PlannerAccessFamily::ANN_RERANK_SCAN:
+            case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+            case PlannerAccessFamily::GIST_NEAREST_SCAN:
+            case PlannerAccessFamily::SPGIST_NEAREST_SCAN:
+            case PlannerAccessFamily::RTREE_NEAREST_SCAN:
+                return true;
+            default:
+                break;
+        }
+        return false;
+    }
+
+    inline auto accessPathSupportsCoveringPayload(PlannerAccessFamily family,
+                                                  bool covering_index = false)
+        -> bool
+    {
+        return covering_index ||
+               family == PlannerAccessFamily::COLUMNSTORE_SCAN;
+    }
+
+    inline auto accessPathSupportsLateMaterialization(
+        std::string_view locator_granularity) -> bool
+    {
+        return locator_granularity == "ROW_ID_SET" ||
+               locator_granularity == "POSTING_SET" ||
+               locator_granularity == "PAGE_RANGE" ||
+               locator_granularity == "ROW_GROUP" ||
+               locator_granularity == "SEGMENT" ||
+               locator_granularity == "PARTITION" ||
+               locator_granularity == "PROJECTION";
+    }
+
+    inline auto accessPathSupportsBulkFilter(PlannerAccessFamily family) -> bool
+    {
+        switch (family)
+        {
+            case PlannerAccessFamily::BRIN_SCAN:
+            case PlannerAccessFamily::BITMAP_STORAGE_SCAN:
+            case PlannerAccessFamily::BITMAP_COMBINE_SCAN:
+            case PlannerAccessFamily::COLUMNSTORE_SCAN:
+            case PlannerAccessFamily::GIN_FILTER_SCAN:
+            case PlannerAccessFamily::TEXT_BITMAP_SCAN:
+            case PlannerAccessFamily::TEXT_SCORE_SCAN:
+            case PlannerAccessFamily::TEXT_RECHECK_SCAN:
+            case PlannerAccessFamily::VECTOR_FLAT_SCAN:
+            case PlannerAccessFamily::HNSW_SCAN:
+            case PlannerAccessFamily::IVF_SCAN:
+            case PlannerAccessFamily::ANN_RERANK_SCAN:
+            case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+            case PlannerAccessFamily::SUMMARY_FILTER_SCAN:
+                return true;
+            default:
+                break;
+        }
+        return false;
+    }
+
+    inline auto accessPathSupportsParallelMerge(PlannerAccessFamily family)
+        -> bool
+    {
+        switch (family)
+        {
+            case PlannerAccessFamily::BRIN_SCAN:
+            case PlannerAccessFamily::BITMAP_STORAGE_SCAN:
+            case PlannerAccessFamily::BITMAP_COMBINE_SCAN:
+            case PlannerAccessFamily::COLUMNSTORE_SCAN:
+            case PlannerAccessFamily::GIN_FILTER_SCAN:
+            case PlannerAccessFamily::TEXT_BITMAP_SCAN:
+            case PlannerAccessFamily::TEXT_SCORE_SCAN:
+            case PlannerAccessFamily::TEXT_RECHECK_SCAN:
+            case PlannerAccessFamily::VECTOR_FLAT_SCAN:
+            case PlannerAccessFamily::HNSW_SCAN:
+            case PlannerAccessFamily::IVF_SCAN:
+            case PlannerAccessFamily::ANN_RERANK_SCAN:
+            case PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN:
+            case PlannerAccessFamily::GIST_NEAREST_SCAN:
+            case PlannerAccessFamily::SPGIST_NEAREST_SCAN:
+            case PlannerAccessFamily::RTREE_NEAREST_SCAN:
+            case PlannerAccessFamily::SUMMARY_FILTER_SCAN:
+                return true;
+            default:
+                break;
+        }
+        return false;
+    }
+
+    inline auto accessPathSupportsSpecializedCollectorModes(
+        std::string_view collector_specialization_id) -> bool
+    {
+        return !collector_specialization_id.empty() &&
+               collector_specialization_id != "GENERIC_ROW_COLLECTOR_V1";
+    }
+
     inline auto plannerAccessFamilyFromLegacy(std::string_view family_text,
                                               std::string_view scan_kind_text = {})
         -> PlannerAccessFamily
@@ -410,6 +941,11 @@ namespace scratchbird::optimizer
         {
             return AccessPathVisibilityEnforcement::INDEX_NATIVE;
         }
+        if (family_text == "VECTOR_FLAT_SCAN" ||
+            family_text == "ANN_HYBRID_FALLBACK_SCAN")
+        {
+            return AccessPathVisibilityEnforcement::HYBRID;
+        }
         if (family_text == "BITMAP_INDEX_SCAN" || scan_kind_text == "BITMAP_INDEX_SCAN" ||
             family_text == "RTREE_SCAN" || scan_kind_text == "RTREE_SCAN" ||
             family_text == "GIST_SCAN" || family_text == "SPGIST_SCAN" ||
@@ -456,6 +992,32 @@ namespace scratchbird::optimizer
         std::string metrics_confidence_class;
         AccessPathQueryabilityState queryability_state =
             AccessPathQueryabilityState::UNKNOWN;
+        std::string native_trust_class;
+        std::string locator_granularity;
+        std::string family_capability_contract_id;
+        std::string publication_model;
+        std::string mga_certification_class;
+        bool supports_exact = false;
+        bool supports_ordered_output = false;
+        bool supports_covering_payload = false;
+        bool supports_late_materialization = false;
+        bool supports_bulk_filter = false;
+        bool supports_parallel_merge = false;
+        bool supports_specialized_collector_modes = false;
+        std::string maintenance_state_class;
+        uint64_t publish_lag_xids = 0;
+        uint64_t maintenance_backlog_ops = 0;
+        uint64_t reclaim_lag_xids = 0;
+        std::string pruning_granularity_class;
+        std::string projection_layout_id;
+        std::string storage_layer_shape;
+        std::string collector_specialization_id;
+        std::string clustered_lookup_shape;
+        std::string parallel_property_signature;
+        std::string parallel_distribution_mode;
+        std::string parallel_order_preservation;
+        std::string exchange_topology_id;
+        std::string gather_decision_reason;
         std::string formula_profile_id;
         uint32_t formula_profile_version = 0;
         std::string calibration_profile_id;
@@ -485,8 +1047,42 @@ namespace scratchbird::optimizer
                 return "BTREE_EQ_SCAN";
             case PathType::BITMAP_INDEX_SCAN:
                 return "BITMAP_COMBINE_SCAN";
+            case PathType::SUMMARY_SCAN:
+                return "SUMMARY_FILTER_SCAN";
+            case PathType::BITMAP_STORAGE_SCAN:
+                return "BITMAP_STORAGE_SCAN";
+            case PathType::COLUMNSTORE_SCAN:
+                return "COLUMNSTORE_SCAN";
+            case PathType::GIN_FILTER_SCAN:
+                return "GIN_FILTER_SCAN";
+            case PathType::TEXT_BITMAP_SCAN:
+                return "TEXT_BITMAP_SCAN";
+            case PathType::TEXT_SCORE_SCAN:
+                return "TEXT_SCORE_SCAN";
+            case PathType::TEXT_RECHECK_SCAN:
+                return "TEXT_RECHECK_SCAN";
+            case PathType::VECTOR_FLAT_SCAN:
+                return "VECTOR_FLAT_SCAN";
+            case PathType::HNSW_SCAN:
+                return "HNSW_SCAN";
+            case PathType::IVF_SCAN:
+                return "IVF_SCAN";
+            case PathType::ANN_RERANK_SCAN:
+                return "ANN_RERANK_SCAN";
+            case PathType::ANN_HYBRID_FALLBACK_SCAN:
+                return "ANN_HYBRID_FALLBACK_SCAN";
+            case PathType::GIST_SCAN:
+                return "GIST_SCAN";
+            case PathType::SPGIST_SCAN:
+                return "SPGIST_SCAN";
+            case PathType::GIST_NEAREST_SCAN:
+                return "GIST_NEAREST_SCAN";
+            case PathType::SPGIST_NEAREST_SCAN:
+                return "SPGIST_NEAREST_SCAN";
             case PathType::RTREE_SCAN:
                 return "RTREE_SCAN";
+            case PathType::RTREE_NEAREST_SCAN:
+                return "RTREE_NEAREST_SCAN";
             case PathType::NESTED_LOOP_JOIN:
                 return "NESTED_LOOP_JOIN";
             case PathType::HASH_JOIN:
@@ -521,8 +1117,42 @@ namespace scratchbird::optimizer
                 return PlannerAccessFamily::BTREE_EQ_SCAN;
             case PathType::BITMAP_INDEX_SCAN:
                 return PlannerAccessFamily::BITMAP_COMBINE_SCAN;
+            case PathType::SUMMARY_SCAN:
+                return PlannerAccessFamily::SUMMARY_FILTER_SCAN;
+            case PathType::BITMAP_STORAGE_SCAN:
+                return PlannerAccessFamily::BITMAP_STORAGE_SCAN;
+            case PathType::COLUMNSTORE_SCAN:
+                return PlannerAccessFamily::COLUMNSTORE_SCAN;
+            case PathType::GIN_FILTER_SCAN:
+                return PlannerAccessFamily::GIN_FILTER_SCAN;
+            case PathType::TEXT_BITMAP_SCAN:
+                return PlannerAccessFamily::TEXT_BITMAP_SCAN;
+            case PathType::TEXT_SCORE_SCAN:
+                return PlannerAccessFamily::TEXT_SCORE_SCAN;
+            case PathType::TEXT_RECHECK_SCAN:
+                return PlannerAccessFamily::TEXT_RECHECK_SCAN;
+            case PathType::VECTOR_FLAT_SCAN:
+                return PlannerAccessFamily::VECTOR_FLAT_SCAN;
+            case PathType::HNSW_SCAN:
+                return PlannerAccessFamily::HNSW_SCAN;
+            case PathType::IVF_SCAN:
+                return PlannerAccessFamily::IVF_SCAN;
+            case PathType::ANN_RERANK_SCAN:
+                return PlannerAccessFamily::ANN_RERANK_SCAN;
+            case PathType::ANN_HYBRID_FALLBACK_SCAN:
+                return PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN;
+            case PathType::GIST_SCAN:
+                return PlannerAccessFamily::GIST_SCAN;
+            case PathType::SPGIST_SCAN:
+                return PlannerAccessFamily::SPGIST_SCAN;
+            case PathType::GIST_NEAREST_SCAN:
+                return PlannerAccessFamily::GIST_NEAREST_SCAN;
+            case PathType::SPGIST_NEAREST_SCAN:
+                return PlannerAccessFamily::SPGIST_NEAREST_SCAN;
             case PathType::RTREE_SCAN:
                 return PlannerAccessFamily::RTREE_SCAN;
+            case PathType::RTREE_NEAREST_SCAN:
+                return PlannerAccessFamily::RTREE_NEAREST_SCAN;
             default:
                 return PlannerAccessFamily::UNKNOWN;
         }
@@ -538,9 +1168,28 @@ namespace scratchbird::optimizer
             case PathType::INDEX_ONLY_SCAN:
                 return AccessPathExactnessClass::EXACT_KEY;
             case PathType::BITMAP_INDEX_SCAN:
-                return AccessPathExactnessClass::CANDIDATE_REGION;
+            case PathType::SUMMARY_SCAN:
+            case PathType::BITMAP_STORAGE_SCAN:
+            case PathType::COLUMNSTORE_SCAN:
+            case PathType::GIN_FILTER_SCAN:
+            case PathType::TEXT_BITMAP_SCAN:
+            case PathType::TEXT_SCORE_SCAN:
+            case PathType::TEXT_RECHECK_SCAN:
             case PathType::RTREE_SCAN:
+            case PathType::GIST_SCAN:
+            case PathType::SPGIST_SCAN:
                 return AccessPathExactnessClass::CANDIDATE_REGION;
+            case PathType::VECTOR_FLAT_SCAN:
+            case PathType::ANN_HYBRID_FALLBACK_SCAN:
+                return AccessPathExactnessClass::EXACT_ROW;
+            case PathType::HNSW_SCAN:
+            case PathType::IVF_SCAN:
+            case PathType::ANN_RERANK_SCAN:
+                return AccessPathExactnessClass::APPROX_TOPK;
+            case PathType::GIST_NEAREST_SCAN:
+            case PathType::SPGIST_NEAREST_SCAN:
+            case PathType::RTREE_NEAREST_SCAN:
+                return AccessPathExactnessClass::LOWER_BOUND_ORDERED;
             default:
                 return AccessPathExactnessClass::UNKNOWN;
         }
@@ -554,7 +1203,26 @@ namespace scratchbird::optimizer
             case PathType::SEQ_SCAN:
                 return AccessPathVisibilityEnforcement::INDEX_NATIVE;
             case PathType::BITMAP_INDEX_SCAN:
+            case PathType::SUMMARY_SCAN:
+            case PathType::BITMAP_STORAGE_SCAN:
+            case PathType::COLUMNSTORE_SCAN:
+            case PathType::GIN_FILTER_SCAN:
+            case PathType::TEXT_BITMAP_SCAN:
+            case PathType::TEXT_SCORE_SCAN:
+            case PathType::TEXT_RECHECK_SCAN:
+            case PathType::GIST_SCAN:
+            case PathType::SPGIST_SCAN:
+            case PathType::GIST_NEAREST_SCAN:
+            case PathType::SPGIST_NEAREST_SCAN:
             case PathType::RTREE_SCAN:
+            case PathType::RTREE_NEAREST_SCAN:
+                return AccessPathVisibilityEnforcement::POST_FILTER;
+            case PathType::VECTOR_FLAT_SCAN:
+            case PathType::ANN_HYBRID_FALLBACK_SCAN:
+                return AccessPathVisibilityEnforcement::HYBRID;
+            case PathType::HNSW_SCAN:
+            case PathType::IVF_SCAN:
+            case PathType::ANN_RERANK_SCAN:
                 return AccessPathVisibilityEnforcement::POST_FILTER;
             case PathType::INDEX_SCAN:
             case PathType::INDEX_ONLY_SCAN:
@@ -604,6 +1272,19 @@ namespace scratchbird::optimizer
                 AccessPathQueryabilityState::QUERYABLE;
             access_descriptor_.coverage_fraction =
                 type_ == PathType::SEQ_SCAN ? 1.0 : 0.0;
+            access_descriptor_.native_trust_class = accessPathNativeTrustClassName(
+                access_descriptor_.family_kind,
+                access_descriptor_.exactness_class,
+                access_descriptor_.visibility_enforcement,
+                access_descriptor_.requires_recheck);
+            access_descriptor_.locator_granularity =
+                accessPathLocatorGranularityName(
+                    access_descriptor_.family_kind,
+                    access_descriptor_.exactness_class,
+                    access_descriptor_.visibility_enforcement);
+            access_descriptor_.maintenance_state_class =
+                accessPathMaintenanceStateClassName(
+                    access_descriptor_.queryability_state);
             access_descriptor_.formula_profile_id = cost_.formula_profile_id;
             access_descriptor_.formula_profile_version = cost_.formula_profile_version;
             access_descriptor_.calibration_profile_id = cost_.calibration_profile_id;
@@ -671,6 +1352,33 @@ namespace scratchbird::optimizer
             {
                 access_descriptor_.queryability_state =
                     AccessPathQueryabilityState::QUERYABLE;
+            }
+            if (access_descriptor_.native_trust_class.empty())
+            {
+                access_descriptor_.native_trust_class =
+                    accessPathNativeTrustClassName(
+                        access_descriptor_.family_kind,
+                        access_descriptor_.exactness_class,
+                        access_descriptor_.visibility_enforcement,
+                        access_descriptor_.requires_recheck);
+            }
+            if (access_descriptor_.locator_granularity.empty())
+            {
+                access_descriptor_.locator_granularity =
+                    accessPathLocatorGranularityName(
+                        access_descriptor_.family_kind,
+                        access_descriptor_.exactness_class,
+                        access_descriptor_.visibility_enforcement);
+            }
+            if (access_descriptor_.maintenance_state_class.empty())
+            {
+                access_descriptor_.maintenance_state_class =
+                    accessPathMaintenanceStateClassName(
+                        access_descriptor_.queryability_state,
+                        access_descriptor_.metrics_confidence_class,
+                        access_descriptor_.publish_lag_xids,
+                        access_descriptor_.maintenance_backlog_ops,
+                        access_descriptor_.reclaim_lag_xids);
             }
         }
 
@@ -947,6 +1655,490 @@ namespace scratchbird::optimizer
         double qual_cost_;
         double correlation_;
         const parser::v3::Expression* where_expr_ = nullptr;  // OPT-L2: WHERE clause for EXPLAIN (V3)
+    };
+
+    class SummaryScanPath : public Path
+    {
+    public:
+        SummaryScanPath(const core::ID &table_id,
+                        const std::string &table_name,
+                        const core::ID &index_id,
+                        const std::string &index_name,
+                        const std::string &summary_kind,
+                        uint64_t summary_pages_read,
+                        uint64_t candidate_heap_pages,
+                        uint64_t candidate_tuples,
+                        uint64_t pages_per_range,
+                        double prune_ratio,
+                        double qual_cost,
+                        const CostEstimate &cost)
+            : Path(PathType::SUMMARY_SCAN, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              summary_kind_(summary_kind),
+              summary_pages_read_(summary_pages_read),
+              candidate_heap_pages_(candidate_heap_pages),
+              candidate_tuples_(candidate_tuples),
+              pages_per_range_(pages_per_range),
+              prune_ratio_(prune_ratio),
+              qual_cost_(qual_cost)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &summaryKind() const { return summary_kind_; }
+        uint64_t summaryPagesRead() const { return summary_pages_read_; }
+        uint64_t candidateHeapPages() const { return candidate_heap_pages_; }
+        uint64_t candidateTuples() const { return candidate_tuples_; }
+        uint64_t pagesPerRange() const { return pages_per_range_; }
+        double pruneRatio() const { return prune_ratio_; }
+        double qualCost() const { return qual_cost_; }
+
+        auto toString() const -> std::string override
+        {
+            return "SummaryScanPath(kind=" + summary_kind_ +
+                   ", index=" + index_name_ +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string summary_kind_;
+        uint64_t summary_pages_read_;
+        uint64_t candidate_heap_pages_;
+        uint64_t candidate_tuples_;
+        uint64_t pages_per_range_;
+        double prune_ratio_;
+        double qual_cost_;
+    };
+
+    class BitmapStorageScanPath : public Path
+    {
+    public:
+        BitmapStorageScanPath(const core::ID &table_id,
+                              const std::string &table_name,
+                              const core::ID &index_id,
+                              const std::string &index_name,
+                              uint64_t bitmap_pages,
+                              uint64_t estimated_heap_pages,
+                              uint64_t estimated_tuples,
+                              double bitmap_density,
+                              double lossy_container_fraction,
+                              double qual_cost,
+                              const CostEstimate &cost)
+            : Path(PathType::BITMAP_STORAGE_SCAN, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              bitmap_pages_(bitmap_pages),
+              estimated_heap_pages_(estimated_heap_pages),
+              estimated_tuples_(estimated_tuples),
+              bitmap_density_(bitmap_density),
+              lossy_container_fraction_(lossy_container_fraction),
+              qual_cost_(qual_cost)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        uint64_t bitmapPages() const { return bitmap_pages_; }
+        uint64_t estimatedHeapPages() const { return estimated_heap_pages_; }
+        uint64_t estimatedTuples() const { return estimated_tuples_; }
+        double bitmapDensity() const { return bitmap_density_; }
+        double lossyContainerFraction() const { return lossy_container_fraction_; }
+        double qualCost() const { return qual_cost_; }
+
+        auto toString() const -> std::string override
+        {
+            return "BitmapStorageScanPath(index=" + index_name_ +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        uint64_t bitmap_pages_;
+        uint64_t estimated_heap_pages_;
+        uint64_t estimated_tuples_;
+        double bitmap_density_;
+        double lossy_container_fraction_;
+        double qual_cost_;
+    };
+
+    class ColumnstoreScanPath : public Path
+    {
+    public:
+        ColumnstoreScanPath(const core::ID &table_id,
+                            const std::string &table_name,
+                            const core::ID &index_id,
+                            const std::string &index_name,
+                            uint64_t bytes_read_est,
+                            uint64_t rows_materialized,
+                            const std::string &projection_layout_id,
+                            double column_bytes_pruned_ratio,
+                            double delta_fraction,
+                            double qual_cost,
+                            const CostEstimate &cost)
+            : Path(PathType::COLUMNSTORE_SCAN, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              bytes_read_est_(bytes_read_est),
+              rows_materialized_(rows_materialized),
+              projection_layout_id_(projection_layout_id),
+              column_bytes_pruned_ratio_(column_bytes_pruned_ratio),
+              delta_fraction_(delta_fraction),
+              qual_cost_(qual_cost)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        uint64_t bytesReadEstimate() const { return bytes_read_est_; }
+        uint64_t rowsMaterialized() const { return rows_materialized_; }
+        const std::string &projectionLayoutId() const { return projection_layout_id_; }
+        double columnBytesPrunedRatio() const { return column_bytes_pruned_ratio_; }
+        double deltaFraction() const { return delta_fraction_; }
+        double qualCost() const { return qual_cost_; }
+
+        auto toString() const -> std::string override
+        {
+            return "ColumnstoreScanPath(index=" + index_name_ +
+                   ", layout=" + projection_layout_id_ +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        uint64_t bytes_read_est_;
+        uint64_t rows_materialized_;
+        std::string projection_layout_id_;
+        double column_bytes_pruned_ratio_;
+        double delta_fraction_;
+        double qual_cost_;
+    };
+
+    class GeneralizedSearchScanPath : public Path
+    {
+    public:
+        GeneralizedSearchScanPath(PathType path_type,
+                                  const core::ID &table_id,
+                                  const std::string &table_name,
+                                  const core::ID &index_id,
+                                  const std::string &index_name,
+                                  const std::string &family_name,
+                                  uint16_t strategy_number,
+                                  uint64_t tree_pages,
+                                  uint64_t matched_entries,
+                                  double overlap_ratio,
+                                  double candidate_amplification,
+                                  double qual_cost,
+                                  const CostEstimate &cost)
+            : Path(path_type, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              family_name_(family_name),
+              strategy_number_(strategy_number),
+              tree_pages_(tree_pages),
+              matched_entries_(matched_entries),
+              overlap_ratio_(overlap_ratio),
+              candidate_amplification_(candidate_amplification),
+              qual_cost_(qual_cost)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &familyName() const { return family_name_; }
+        uint16_t strategyNumber() const { return strategy_number_; }
+        uint64_t treePages() const { return tree_pages_; }
+        uint64_t matchedEntries() const { return matched_entries_; }
+        double overlapRatio() const { return overlap_ratio_; }
+        double candidateAmplification() const
+        {
+            return candidate_amplification_;
+        }
+        double qualCost() const { return qual_cost_; }
+
+        auto toString() const -> std::string override
+        {
+            return family_name_ + "Path(index=" + index_name_ +
+                   ", strategy=" + std::to_string(strategy_number_) +
+                   ", overlap=" + std::to_string(overlap_ratio_) +
+                   ", amp=" + std::to_string(candidate_amplification_) +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string family_name_;
+        uint16_t strategy_number_;
+        uint64_t tree_pages_;
+        uint64_t matched_entries_;
+        double overlap_ratio_;
+        double candidate_amplification_;
+        double qual_cost_;
+    };
+
+    class GeneralizedNearestScanPath : public Path
+    {
+    public:
+        GeneralizedNearestScanPath(PathType path_type,
+                                   const core::ID &table_id,
+                                   const std::string &table_name,
+                                   const core::ID &index_id,
+                                   const std::string &index_name,
+                                   const std::string &family_name,
+                                   uint16_t strategy_number,
+                                   uint64_t candidate_budget,
+                                   double nearest_lb_tightness,
+                                   double distance_recheck_ratio,
+                                   double qual_cost,
+                                   const CostEstimate &cost)
+            : Path(path_type, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              family_name_(family_name),
+              strategy_number_(strategy_number),
+              candidate_budget_(candidate_budget),
+              nearest_lb_tightness_(nearest_lb_tightness),
+              distance_recheck_ratio_(distance_recheck_ratio),
+              qual_cost_(qual_cost)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &familyName() const { return family_name_; }
+        uint16_t strategyNumber() const { return strategy_number_; }
+        uint64_t candidateBudget() const { return candidate_budget_; }
+        double nearestLowerBoundTightness() const
+        {
+            return nearest_lb_tightness_;
+        }
+        double distanceRecheckRatio() const { return distance_recheck_ratio_; }
+        double qualCost() const { return qual_cost_; }
+
+        auto toString() const -> std::string override
+        {
+            return family_name_ + "Path(index=" + index_name_ +
+                   ", strategy=" + std::to_string(strategy_number_) +
+                   ", budget=" + std::to_string(candidate_budget_) +
+                   ", lb=" + std::to_string(nearest_lb_tightness_) +
+                   ", recheck=" +
+                   std::to_string(distance_recheck_ratio_) +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string family_name_;
+        uint16_t strategy_number_;
+        uint64_t candidate_budget_;
+        double nearest_lb_tightness_;
+        double distance_recheck_ratio_;
+        double qual_cost_;
+    };
+
+    class TextSearchScanPath : public Path
+    {
+    public:
+        TextSearchScanPath(PathType path_type,
+                           const core::ID &table_id,
+                           const std::string &table_name,
+                           const core::ID &index_id,
+                           const std::string &index_name,
+                           const std::string &family_name,
+                           uint64_t postings_or_budget,
+                           double phrase_hit_rate,
+                           double recheck_ratio,
+                           double merge_debt,
+                           double collector_early_stop_gain,
+                           double qual_cost,
+                           const CostEstimate &cost)
+            : Path(path_type, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              family_name_(family_name),
+              postings_or_budget_(postings_or_budget),
+              phrase_hit_rate_(phrase_hit_rate),
+              recheck_ratio_(recheck_ratio),
+              merge_debt_(merge_debt),
+              collector_early_stop_gain_(collector_early_stop_gain),
+              qual_cost_(qual_cost)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &familyName() const { return family_name_; }
+        uint64_t postingsOrBudget() const { return postings_or_budget_; }
+        double phraseHitRate() const { return phrase_hit_rate_; }
+        double recheckRatio() const { return recheck_ratio_; }
+        double mergeDebt() const { return merge_debt_; }
+        double collectorEarlyStopGain() const
+        {
+            return collector_early_stop_gain_;
+        }
+        double qualCost() const { return qual_cost_; }
+
+        auto toString() const -> std::string override
+        {
+            return family_name_ + "Path(index=" + index_name_ +
+                   ", postings_or_budget=" +
+                   std::to_string(postings_or_budget_) +
+                   ", phrase=" + std::to_string(phrase_hit_rate_) +
+                   ", recheck=" + std::to_string(recheck_ratio_) +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string family_name_;
+        uint64_t postings_or_budget_;
+        double phrase_hit_rate_;
+        double recheck_ratio_;
+        double merge_debt_;
+        double collector_early_stop_gain_;
+        double qual_cost_;
+    };
+
+    class VectorSearchScanPath : public Path
+    {
+    public:
+        VectorSearchScanPath(PathType path_type,
+                             const core::ID &table_id,
+                             const std::string &table_name,
+                             const core::ID &index_id,
+                             const std::string &index_name,
+                             const std::string &family_name,
+                             uint64_t candidate_budget,
+                             double recall_estimate,
+                             double rerank_fraction,
+                             double segment_coverage_fraction,
+                             double growing_fraction,
+                             double segment_merge_cost_est,
+                             const std::string &hybrid_filter_mode,
+                             const std::string &coordinator_merge_mode,
+                             double qual_cost,
+                             const CostEstimate &cost)
+            : Path(path_type, cost),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              family_name_(family_name),
+              candidate_budget_(candidate_budget),
+              recall_estimate_(recall_estimate),
+              rerank_fraction_(rerank_fraction),
+              segment_coverage_fraction_(segment_coverage_fraction),
+              growing_fraction_(growing_fraction),
+              segment_merge_cost_est_(segment_merge_cost_est),
+              hybrid_filter_mode_(hybrid_filter_mode),
+              coordinator_merge_mode_(coordinator_merge_mode),
+              qual_cost_(qual_cost)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &familyName() const { return family_name_; }
+        uint64_t candidateBudget() const { return candidate_budget_; }
+        double recallEstimate() const { return recall_estimate_; }
+        double rerankFraction() const { return rerank_fraction_; }
+        double segmentCoverageFraction() const
+        {
+            return segment_coverage_fraction_;
+        }
+        double growingFraction() const { return growing_fraction_; }
+        double segmentMergeCostEstimate() const
+        {
+            return segment_merge_cost_est_;
+        }
+        const std::string &hybridFilterMode() const
+        {
+            return hybrid_filter_mode_;
+        }
+        const std::string &coordinatorMergeMode() const
+        {
+            return coordinator_merge_mode_;
+        }
+        double qualCost() const { return qual_cost_; }
+
+        auto toString() const -> std::string override
+        {
+            return family_name_ + "Path(index=" + index_name_ +
+                   ", budget=" + std::to_string(candidate_budget_) +
+                   ", recall=" + std::to_string(recall_estimate_) +
+                   ", rerank=" + std::to_string(rerank_fraction_) +
+                   ", merge=" + coordinator_merge_mode_ +
+                   ", cost=" + std::to_string(cost_.total_cost) +
+                   ", rows=" + std::to_string(cost_.rows) + ")";
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string family_name_;
+        uint64_t candidate_budget_;
+        double recall_estimate_;
+        double rerank_fraction_;
+        double segment_coverage_fraction_;
+        double growing_fraction_;
+        double segment_merge_cost_est_;
+        std::string hybrid_filter_mode_;
+        std::string coordinator_merge_mode_;
+        double qual_cost_;
     };
 
     /**

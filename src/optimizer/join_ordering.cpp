@@ -28,6 +28,44 @@ namespace scratchbird::optimizer
 {
 namespace
 {
+    constexpr double kFrontierDominanceEpsilon = 1e-9;
+
+    auto appendUniqueTag(std::vector<std::string>& tags,
+                         const std::string& tag) -> void
+    {
+        if (tag.empty())
+        {
+            return;
+        }
+        if (std::find(tags.begin(), tags.end(), tag) == tags.end())
+        {
+            tags.push_back(tag);
+        }
+    }
+
+    auto descriptorProvidesMergeJoinOrder(const AccessPathDescriptor& descriptor,
+                                          const std::string& order_key_text)
+        -> bool
+    {
+        if (order_key_text.empty() || !descriptor.order_complete ||
+            descriptor.ordering_keys.empty())
+        {
+            return false;
+        }
+        return descriptor.ordering_keys.front().expression_text == order_key_text;
+    }
+
+    auto pathProvidesMergeJoinOrder(const std::shared_ptr<Path>& path,
+                                    const std::string& order_key_text) -> bool
+    {
+        if (!path)
+        {
+            return false;
+        }
+        return descriptorProvidesMergeJoinOrder(path->accessDescriptor(),
+                                                order_key_text);
+    }
+
     auto quantizePropertyScore(double value) -> int64_t
     {
         if (!std::isfinite(value))
@@ -40,6 +78,419 @@ namespace
     auto appendSignatureText(std::ostringstream& out, const std::string& text) -> void
     {
         out << text.size() << '#' << text << ';';
+    }
+
+    auto accessPathExactnessStrength(AccessPathExactnessClass value) -> int
+    {
+        switch (value)
+        {
+            case AccessPathExactnessClass::EXACT_KEY:
+                return 5;
+            case AccessPathExactnessClass::EXACT_ROW:
+                return 4;
+            case AccessPathExactnessClass::CANDIDATE_REGION:
+                return 3;
+            case AccessPathExactnessClass::LOWER_BOUND_ORDERED:
+                return 2;
+            case AccessPathExactnessClass::APPROX_TOPK:
+                return 1;
+            case AccessPathExactnessClass::UNKNOWN:
+            default:
+                return 0;
+        }
+    }
+
+    auto weakerExactness(AccessPathExactnessClass left,
+                         AccessPathExactnessClass right)
+        -> AccessPathExactnessClass
+    {
+        return accessPathExactnessStrength(left) <=
+                   accessPathExactnessStrength(right)
+               ? left
+               : right;
+    }
+
+    auto accessPathVisibilityStrength(AccessPathVisibilityEnforcement value)
+        -> int
+    {
+        switch (value)
+        {
+            case AccessPathVisibilityEnforcement::INDEX_NATIVE:
+                return 3;
+            case AccessPathVisibilityEnforcement::HYBRID:
+                return 2;
+            case AccessPathVisibilityEnforcement::POST_FILTER:
+                return 1;
+            case AccessPathVisibilityEnforcement::UNKNOWN:
+            default:
+                return 0;
+        }
+    }
+
+    auto weakerVisibility(AccessPathVisibilityEnforcement left,
+                          AccessPathVisibilityEnforcement right)
+        -> AccessPathVisibilityEnforcement
+    {
+        return accessPathVisibilityStrength(left) <=
+                   accessPathVisibilityStrength(right)
+               ? left
+               : right;
+    }
+
+    auto accessPathQueryabilityStrength(AccessPathQueryabilityState value)
+        -> int
+    {
+        switch (value)
+        {
+            case AccessPathQueryabilityState::QUERYABLE:
+                return 3;
+            case AccessPathQueryabilityState::LIMITED:
+                return 2;
+            case AccessPathQueryabilityState::INVALID:
+                return 1;
+            case AccessPathQueryabilityState::UNKNOWN:
+            default:
+                return 0;
+        }
+    }
+
+    auto weakerQueryability(AccessPathQueryabilityState left,
+                            AccessPathQueryabilityState right)
+        -> AccessPathQueryabilityState
+    {
+        return accessPathQueryabilityStrength(left) <=
+                   accessPathQueryabilityStrength(right)
+               ? left
+               : right;
+    }
+
+    auto sameOrderingKey(const AccessPathDescriptor::OrderingKey& left,
+                         const AccessPathDescriptor::OrderingKey& right) -> bool
+    {
+        return left.expression_text == right.expression_text &&
+               left.descending == right.descending &&
+               left.nulls_first == right.nulls_first &&
+               left.comparator_family == right.comparator_family;
+    }
+
+    auto orderingPrefixMatches(
+        const std::vector<AccessPathDescriptor::OrderingKey>& left_keys,
+        const std::vector<AccessPathDescriptor::OrderingKey>& right_keys,
+        size_t required_prefix) -> bool
+    {
+        if (required_prefix == 0)
+        {
+            return true;
+        }
+        if (left_keys.size() < required_prefix ||
+            right_keys.size() < required_prefix)
+        {
+            return false;
+        }
+        for (size_t index = 0; index < required_prefix; ++index)
+        {
+            if (!sameOrderingKey(left_keys[index], right_keys[index]))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    auto orderingDominates(const AccessPathDescriptor& left,
+                           const AccessPathDescriptor& right) -> bool
+    {
+        const size_t required_prefix =
+            std::min<size_t>(right.ordered_prefix_length,
+                             right.ordering_keys.size());
+        if (!right.ordered_output && required_prefix == 0 &&
+            right.ordering_keys.empty())
+        {
+            return left.interesting_order_score + kFrontierDominanceEpsilon >=
+                   right.interesting_order_score;
+        }
+
+        const size_t available_prefix =
+            std::min<size_t>(left.ordered_prefix_length,
+                             left.ordering_keys.size());
+        if (!orderingPrefixMatches(left.ordering_keys,
+                                   right.ordering_keys,
+                                   required_prefix))
+        {
+            return false;
+        }
+        if (available_prefix < required_prefix)
+        {
+            return false;
+        }
+        if (right.ordered_output && !left.ordered_output)
+        {
+            return false;
+        }
+        if (right.order_complete && !left.order_complete)
+        {
+            return false;
+        }
+        return left.interesting_order_score + kFrontierDominanceEpsilon >=
+               right.interesting_order_score;
+    }
+
+    auto requiredOuterDominates(const std::vector<size_t>& left,
+                                const std::vector<size_t>& right) -> bool
+    {
+        std::vector<size_t> left_sorted = left;
+        std::vector<size_t> right_sorted = right;
+        std::sort(left_sorted.begin(), left_sorted.end());
+        left_sorted.erase(std::unique(left_sorted.begin(), left_sorted.end()),
+                          left_sorted.end());
+        std::sort(right_sorted.begin(), right_sorted.end());
+        right_sorted.erase(
+            std::unique(right_sorted.begin(), right_sorted.end()),
+            right_sorted.end());
+        return std::includes(right_sorted.begin(),
+                             right_sorted.end(),
+                             left_sorted.begin(),
+                             left_sorted.end());
+    }
+
+    auto mergeRequiredOuter(const AccessPathDescriptor* left,
+                            const AccessPathDescriptor* right)
+        -> std::vector<size_t>
+    {
+        std::vector<size_t> merged;
+        if (left != nullptr)
+        {
+            merged = left->required_outer_relation_indexes;
+        }
+        if (right != nullptr)
+        {
+            merged.insert(merged.end(),
+                          right->required_outer_relation_indexes.begin(),
+                          right->required_outer_relation_indexes.end());
+        }
+        std::sort(merged.begin(), merged.end());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        return merged;
+    }
+
+    auto mergeFamilyTags(const AccessPathDescriptor* left,
+                         const AccessPathDescriptor* right)
+        -> std::vector<std::string>
+    {
+        std::vector<std::string> merged;
+        if (left != nullptr)
+        {
+            merged = left->family_tags;
+        }
+        if (right != nullptr)
+        {
+            merged.insert(merged.end(),
+                          right->family_tags.begin(),
+                          right->family_tags.end());
+        }
+        std::sort(merged.begin(), merged.end());
+        merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+        return merged;
+    }
+
+    auto mergeMetricsConfidenceClass(const AccessPathDescriptor* left,
+                                     const AccessPathDescriptor* right)
+        -> std::string
+    {
+        const std::string left_value =
+            left != nullptr ? left->metrics_confidence_class : std::string();
+        const std::string right_value =
+            right != nullptr ? right->metrics_confidence_class : std::string();
+        if (left_value.empty())
+        {
+            return right_value;
+        }
+        if (right_value.empty() || right_value == left_value)
+        {
+            return left_value;
+        }
+        return "MIXED";
+    }
+
+    auto mergeCoverageFraction(const AccessPathDescriptor* left,
+                               const AccessPathDescriptor* right) -> double
+    {
+        const double left_value =
+            left != nullptr ? left->coverage_fraction : 0.0;
+        const double right_value =
+            right != nullptr ? right->coverage_fraction : 0.0;
+        if (left == nullptr)
+        {
+            return right_value;
+        }
+        if (right == nullptr)
+        {
+            return left_value;
+        }
+        return std::min(left_value, right_value);
+    }
+
+    auto mergeParallelTextProperty(const std::string& left_value,
+                                   const std::string& right_value,
+                                   const std::string& mixed_value)
+        -> std::string
+    {
+        if (left_value.empty())
+        {
+            return right_value;
+        }
+        if (right_value.empty() || right_value == left_value)
+        {
+            return left_value;
+        }
+        return mixed_value;
+    }
+
+    auto parallelOrderPreservationStrength(const std::string& value) -> int
+    {
+        if (value == "TOTAL_ORDER")
+        {
+            return 4;
+        }
+        if (value == "ORDERED_PREFIX")
+        {
+            return 3;
+        }
+        if (value == "PARTIAL_ORDER")
+        {
+            return 2;
+        }
+        if (value == "UNORDERED")
+        {
+            return 1;
+        }
+        return 0;
+    }
+
+    auto weakerParallelOrderPreservation(const std::string& left_value,
+                                         const std::string& right_value)
+        -> std::string
+    {
+        if (left_value.empty())
+        {
+            return right_value;
+        }
+        if (right_value.empty())
+        {
+            return left_value;
+        }
+        return parallelOrderPreservationStrength(left_value) <=
+                   parallelOrderPreservationStrength(right_value)
+               ? left_value
+               : right_value;
+    }
+
+    auto mergeExchangeTopologyId(const AccessPathDescriptor* left,
+                                 const AccessPathDescriptor* right)
+        -> std::string
+    {
+        const std::string left_value =
+            left != nullptr ? left->exchange_topology_id : std::string();
+        const std::string right_value =
+            right != nullptr ? right->exchange_topology_id : std::string();
+        if (left_value.empty())
+        {
+            return right_value;
+        }
+        if (right_value.empty() || right_value == left_value)
+        {
+            return left_value;
+        }
+        return left_value + "+" + right_value;
+    }
+
+    auto mergeGatherDecisionReason(const AccessPathDescriptor* left,
+                                   const AccessPathDescriptor* right)
+        -> std::string
+    {
+        const std::string left_value =
+            left != nullptr ? left->gather_decision_reason : std::string();
+        const std::string right_value =
+            right != nullptr ? right->gather_decision_reason : std::string();
+        if (left_value.empty())
+        {
+            return right_value;
+        }
+        if (right_value.empty() || right_value == left_value)
+        {
+            return left_value;
+        }
+        return left_value + " | " + right_value;
+    }
+
+    auto combineJoinDescriptorCommon(const AccessPathDescriptor* left,
+                                     const AccessPathDescriptor* right,
+                                     AccessPathDescriptor& out) -> void
+    {
+        out.required_outer_relation_indexes = mergeRequiredOuter(left, right);
+        out.family_tags = mergeFamilyTags(left, right);
+        out.parameterized =
+            (left != nullptr && left->parameterized) ||
+            (right != nullptr && right->parameterized);
+        out.requires_recheck =
+            (left != nullptr && left->requires_recheck) ||
+            (right != nullptr && right->requires_recheck);
+
+        const auto left_exactness =
+            left != nullptr ? left->exactness_class
+                            : AccessPathExactnessClass::UNKNOWN;
+        const auto right_exactness =
+            right != nullptr ? right->exactness_class
+                             : AccessPathExactnessClass::UNKNOWN;
+        out.exactness_class = weakerExactness(left_exactness, right_exactness);
+
+        const auto left_visibility =
+            left != nullptr ? left->visibility_enforcement
+                            : AccessPathVisibilityEnforcement::UNKNOWN;
+        const auto right_visibility =
+            right != nullptr ? right->visibility_enforcement
+                             : AccessPathVisibilityEnforcement::UNKNOWN;
+        out.visibility_enforcement =
+            weakerVisibility(left_visibility, right_visibility);
+
+        const auto left_queryability =
+            left != nullptr ? left->queryability_state
+                            : AccessPathQueryabilityState::UNKNOWN;
+        const auto right_queryability =
+            right != nullptr ? right->queryability_state
+                             : AccessPathQueryabilityState::UNKNOWN;
+        out.queryability_state =
+            weakerQueryability(left_queryability, right_queryability);
+
+        out.coverage_fraction = mergeCoverageFraction(left, right);
+        out.family_metrics_version = std::max(
+            left != nullptr ? left->family_metrics_version : 0U,
+            right != nullptr ? right->family_metrics_version : 0U);
+        out.metrics_confidence_class =
+            mergeMetricsConfidenceClass(left, right);
+        out.parallel_aware =
+            (left != nullptr && left->parallel_aware) ||
+            (right != nullptr && right->parallel_aware);
+        out.parallel_enabled =
+            (left != nullptr && left->parallel_enabled) ||
+            (right != nullptr && right->parallel_enabled);
+        out.parallel_workers_planned = std::max(
+            left != nullptr ? left->parallel_workers_planned : 0U,
+            right != nullptr ? right->parallel_workers_planned : 0U);
+        out.parallel_stage = mergeParallelTextProperty(
+            left != nullptr ? left->parallel_stage : std::string(),
+            right != nullptr ? right->parallel_stage : std::string(),
+            "MIXED_PARALLEL_STAGE");
+        out.parallel_distribution_mode = mergeParallelTextProperty(
+            left != nullptr ? left->parallel_distribution_mode : std::string(),
+            right != nullptr ? right->parallel_distribution_mode : std::string(),
+            "MIXED_DISTRIBUTION");
+        out.parallel_order_preservation = weakerParallelOrderPreservation(
+            left != nullptr ? left->parallel_order_preservation : std::string(),
+            right != nullptr ? right->parallel_order_preservation
+                             : std::string());
+        out.exchange_topology_id = mergeExchangeTopologyId(left, right);
+        out.gather_decision_reason = mergeGatherDecisionReason(left, right);
     }
 } // namespace
 
@@ -55,6 +506,14 @@ void JoinOrderingOptimizer::resetTelemetry()
     telemetry_ = JoinPlanningTelemetry{};
     telemetry_.requested_strategy = controls_.strategy;
     telemetry_.selected_strategy = controls_.strategy;
+    telemetry_.search_contract_id = kJoinSearchContractId;
+    telemetry_.property_signature_contract_id =
+        kJoinSearchPropertySignatureContractId;
+    telemetry_.frontier_retention_mode = kJoinSearchFrontierMode;
+    telemetry_.strategy_source =
+        controls_.strategy == JoinSearchStrategy::AUTO
+            ? "AUTO_POLICY"
+            : "EXPLICIT_POLICY";
     telemetry_.exhaustive_join_limit =
         std::min(MAX_DP_RELATIONS, std::max<size_t>(1, controls_.max_exhaustive_relations));
     telemetry_.bounded_dp_join_limit = std::min(
@@ -108,6 +567,7 @@ auto joinSearchPropertySignature(const AccessPathDescriptor& descriptor)
     key << static_cast<uint32_t>(descriptor.exactness_class) << ':'
         << static_cast<uint32_t>(descriptor.visibility_enforcement) << ':'
         << static_cast<uint32_t>(descriptor.queryability_state) << ':'
+        << descriptor.family_metrics_version << ':'
         << static_cast<uint32_t>(descriptor.requires_recheck ? 1U : 0U) << ':'
         << static_cast<uint32_t>(descriptor.parameterized ? 1U : 0U) << ':'
         << static_cast<uint32_t>(descriptor.parallel_aware ? 1U : 0U) << ':'
@@ -120,6 +580,10 @@ auto joinSearchPropertySignature(const AccessPathDescriptor& descriptor)
         << quantizePropertyScore(descriptor.coverage_fraction) << ':'
         << quantizePropertyScore(descriptor.interesting_order_score) << ':';
     appendSignatureText(key, descriptor.parallel_stage);
+    appendSignatureText(key, descriptor.parallel_distribution_mode);
+    appendSignatureText(key, descriptor.parallel_order_preservation);
+    appendSignatureText(key, descriptor.exchange_topology_id);
+    appendSignatureText(key, descriptor.metrics_confidence_class);
 
     key << descriptor.ordering_keys.size() << ':';
     for (const auto& ordering_key : descriptor.ordering_keys)
@@ -154,7 +618,112 @@ auto JoinOrderingOptimizer::frontierSignature(const DPEntry& entry) const
         return "NULL";
     }
 
-    return joinSearchPropertySignature(entry.best_path->accessDescriptor());
+    std::ostringstream key;
+    key << entry.relation_set_mask << '|'
+        << joinSearchPropertySignature(entry.best_path->accessDescriptor());
+    return key.str();
+}
+
+auto JoinOrderingOptimizer::frontierBucketSignature(const DPEntry& entry) const
+    -> std::string
+{
+    if (!entry.best_path)
+    {
+        return "NULL";
+    }
+
+    const auto& descriptor = entry.best_path->accessDescriptor();
+    std::ostringstream key;
+    key << entry.relation_set_mask << ':'
+        << static_cast<uint32_t>(descriptor.family_kind) << ':';
+    appendSignatureText(key, descriptor.family);
+    appendSignatureText(key, descriptor.path_name);
+    key << descriptor.family_metrics_version << ':'
+        << static_cast<uint32_t>(descriptor.parallel_aware ? 1U : 0U) << ':'
+        << static_cast<uint32_t>(descriptor.parallel_enabled ? 1U : 0U) << ':'
+        << descriptor.parallel_workers_planned << ':'
+        << static_cast<uint32_t>(descriptor.gather_merge ? 1U : 0U) << ':';
+    appendSignatureText(key, descriptor.parallel_stage);
+    appendSignatureText(key, descriptor.parallel_distribution_mode);
+    appendSignatureText(key, descriptor.parallel_order_preservation);
+    appendSignatureText(key, descriptor.exchange_topology_id);
+    appendSignatureText(key, descriptor.metrics_confidence_class);
+    key << descriptor.ordering_keys.size() << ':';
+    for (const auto& ordering_key : descriptor.ordering_keys)
+    {
+        appendSignatureText(key, ordering_key.expression_text);
+        key << static_cast<uint32_t>(ordering_key.descending ? 1U : 0U) << ':'
+            << static_cast<uint32_t>(ordering_key.nulls_first ? 1U : 0U) << ':';
+        appendSignatureText(key, ordering_key.comparator_family);
+    }
+    auto family_tags = descriptor.family_tags;
+    std::sort(family_tags.begin(), family_tags.end());
+    key << family_tags.size() << ':';
+    for (const auto& tag : family_tags)
+    {
+        appendSignatureText(key, tag);
+    }
+    return key.str();
+}
+
+auto JoinOrderingOptimizer::frontierEntryDominates(const DPEntry& left,
+                                                   const DPEntry& right) const
+    -> bool
+{
+    if (!left.best_path || !right.best_path)
+    {
+        return false;
+    }
+    if (frontierBucketSignature(left) != frontierBucketSignature(right))
+    {
+        return false;
+    }
+    if (left.cost > right.cost + kFrontierDominanceEpsilon)
+    {
+        return false;
+    }
+    if (left.rows > right.rows)
+    {
+        return false;
+    }
+
+    const auto& left_descriptor = left.best_path->accessDescriptor();
+    const auto& right_descriptor = right.best_path->accessDescriptor();
+    if (accessPathExactnessStrength(left_descriptor.exactness_class) <
+        accessPathExactnessStrength(right_descriptor.exactness_class))
+    {
+        return false;
+    }
+    if (accessPathVisibilityStrength(left_descriptor.visibility_enforcement) <
+        accessPathVisibilityStrength(right_descriptor.visibility_enforcement))
+    {
+        return false;
+    }
+    if (accessPathQueryabilityStrength(left_descriptor.queryability_state) <
+        accessPathQueryabilityStrength(right_descriptor.queryability_state))
+    {
+        return false;
+    }
+    if (left_descriptor.requires_recheck &&
+        !right_descriptor.requires_recheck)
+    {
+        return false;
+    }
+    if (left_descriptor.coverage_fraction + kFrontierDominanceEpsilon <
+        right_descriptor.coverage_fraction)
+    {
+        return false;
+    }
+    if (!requiredOuterDominates(left_descriptor.required_outer_relation_indexes,
+                                right_descriptor.required_outer_relation_indexes))
+    {
+        return false;
+    }
+    if (!orderingDominates(left_descriptor, right_descriptor))
+    {
+        return false;
+    }
+    return true;
 }
 
 void JoinOrderingOptimizer::pushFrontierEntry(DPFrontier& frontier, DPEntry entry)
@@ -176,18 +745,27 @@ void JoinOrderingOptimizer::pushFrontierEntry(DPFrontier& frontier, DPEntry entr
     const std::string entry_signature = frontierSignature(entry);
     for (auto it = frontier.begin(); it != frontier.end();)
     {
-        if (frontierSignature(*it) != entry_signature)
+        const bool same_signature =
+            frontierSignature(*it) == entry_signature;
+        const bool existing_dominates =
+            frontierEntryDominates(*it, entry) ||
+            (same_signature &&
+             it->cost <= entry.cost + kFrontierDominanceEpsilon &&
+             it->rows <= entry.rows);
+        if (existing_dominates)
         {
-            ++it;
-            continue;
-        }
-        if (it->cost <= entry.cost && it->rows <= entry.rows)
-        {
+            ++telemetry_.dominated_state_count;
             ++telemetry_.pruned_state_count;
             return;
         }
-        if (entry.cost <= it->cost && entry.rows <= it->rows)
+        const bool entry_dominates =
+            frontierEntryDominates(entry, *it) ||
+            (same_signature &&
+             entry.cost <= it->cost + kFrontierDominanceEpsilon &&
+             entry.rows <= it->rows);
+        if (entry_dominates)
         {
+            ++telemetry_.dominated_state_count;
             ++telemetry_.pruned_state_count;
             it = frontier.erase(it);
             continue;
@@ -205,6 +783,9 @@ void JoinOrderingOptimizer::pushFrontierEntry(DPFrontier& frontier, DPEntry entr
                   }
                   return left.cost < right.cost;
               });
+    ++telemetry_.retained_frontier_entry_count;
+    telemetry_.max_frontier_width =
+        std::max(telemetry_.max_frontier_width, frontier.size());
 }
 
 auto JoinOrderingOptimizer::frontierBestEntry(const DPFrontier& frontier) const
@@ -224,7 +805,8 @@ auto JoinOrderingOptimizer::frontierBestPath(const DPFrontier& frontier) const
     return best_entry != nullptr ? best_entry->best_path : nullptr;
 }
 
-auto JoinOrderingOptimizer::baseFrontierForRelation(const RelationInfo& relation)
+auto JoinOrderingOptimizer::baseFrontierForRelation(const RelationInfo& relation,
+                                                    size_t relation_index)
     -> DPFrontier
 {
     DPFrontier frontier;
@@ -238,6 +820,7 @@ auto JoinOrderingOptimizer::baseFrontierForRelation(const RelationInfo& relation
         entry.best_path = candidate_path;
         entry.cost = candidate_path->totalCost();
         entry.rows = candidate_path->rows();
+        entry.relation_set_mask = 1ULL << relation_index;
         pushFrontierEntry(frontier, std::move(entry));
     }
 
@@ -247,6 +830,7 @@ auto JoinOrderingOptimizer::baseFrontierForRelation(const RelationInfo& relation
         entry.best_path = relation.best_path;
         entry.cost = relation.best_path->totalCost();
         entry.rows = relation.best_path->rows();
+        entry.relation_set_mask = 1ULL << relation_index;
         pushFrontierEntry(frontier, std::move(entry));
     }
     return frontier;
@@ -275,7 +859,8 @@ size_t JoinOrderingOptimizer::addRelation(const core::ID& table_id,
     info.table_name = table_name;
     info.alias = alias;
     info.candidate_paths = candidate_paths;
-    auto frontier = baseFrontierForRelation(info);
+    auto frontier = baseFrontierForRelation(info, relations_.size());
+    telemetry_.base_candidate_path_count += frontier.size();
     if (const auto* best_entry = frontierBestEntry(frontier))
     {
         info.best_path = best_entry->best_path;
@@ -303,7 +888,13 @@ size_t JoinOrderingOptimizer::addJoinEdge(size_t left_idx, size_t right_idx,
                                           size_t source_join_index,
                                           JoinLegalityClass legality_class,
                                           bool reorderable,
-                                          bool requires_original_order)
+                                          bool requires_original_order,
+                                          bool natural_barrier,
+                                          bool using_barrier,
+                                          bool equi_join,
+                                          bool has_key_metadata,
+                                          const std::string& left_order_key_text,
+                                          const std::string& right_order_key_text)
 {
     if (legality_class == JoinLegalityClass::INNER_REORDERABLE &&
         reorderable &&
@@ -325,6 +916,12 @@ size_t JoinOrderingOptimizer::addJoinEdge(size_t left_idx, size_t right_idx,
     edge.legality_class = legality_class;
     edge.reorderable = reorderable;
     edge.requires_original_order = requires_original_order;
+    edge.natural_barrier = natural_barrier;
+    edge.using_barrier = using_barrier;
+    edge.equi_join = equi_join;
+    edge.has_key_metadata = has_key_metadata;
+    edge.left_order_key_text = left_order_key_text;
+    edge.right_order_key_text = right_order_key_text;
 
     join_edges_.push_back(std::move(edge));
 
@@ -367,7 +964,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         DEBUG_LOG_DB("JoinOrdering: Single relation, returning best path");
         last_strategy_used_ = JoinSearchStrategy::AUTO;
         telemetry_.selected_strategy = last_strategy_used_;
-        return frontierBestPath(baseFrontierForRelation(relations_[0]));
+        return frontierBestPath(baseFrontierForRelation(relations_[0], 0));
     }
 
     if (hasJoinReorderBarrier())
@@ -398,6 +995,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         DEBUG_LOG_DB("JoinOrdering: Explicit hypergraph-greedy strategy requested");
         last_strategy_used_ = JoinSearchStrategy::HYPERGRAPH_GREEDY;
         telemetry_.selected_strategy = last_strategy_used_;
+        telemetry_.strategy_source = "EXPLICIT_POLICY";
         return optimizeHypergraphGreedy(ctx);
     }
 
@@ -406,6 +1004,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         DEBUG_LOG_DB("JoinOrdering: Explicit heuristic-greedy strategy requested");
         last_strategy_used_ = JoinSearchStrategy::HEURISTIC_GREEDY;
         telemetry_.selected_strategy = last_strategy_used_;
+        telemetry_.strategy_source = "EXPLICIT_POLICY";
         return optimizeGreedy(ctx);
     }
 
@@ -415,6 +1014,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         {
             last_strategy_used_ = JoinSearchStrategy::EXHAUSTIVE_DP;
             telemetry_.selected_strategy = last_strategy_used_;
+            telemetry_.strategy_source = "EXPLICIT_POLICY";
         }
         else
         {
@@ -442,7 +1042,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimize(core::ErrorContext* ctx)
         for (size_t i = 0; i < relations_.size(); ++i)
         {
             RelationSet singleton = 1ULL << i;
-            dp_table_[singleton] = baseFrontierForRelation(relations_[i]);
+            dp_table_[singleton] = baseFrontierForRelation(relations_[i], i);
         }
 
         RelationSet full_set = (1ULL << relations_.size()) - 1;
@@ -523,7 +1123,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeBoundedDP(
     for (size_t i = 0; i < relations_.size(); ++i)
     {
         RelationSet singleton = 1ULL << i;
-        dp_table_[singleton] = baseFrontierForRelation(relations_[i]);
+        dp_table_[singleton] = baseFrontierForRelation(relations_[i], i);
     }
 
     RelationSet full_set = (1ULL << relations_.size()) - 1;
@@ -618,7 +1218,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
 
     if (relations_.size() == 1)
     {
-        return frontierBestPath(baseFrontierForRelation(relations_[0]));
+        return frontierBestPath(baseFrontierForRelation(relations_[0], 0));
     }
 
     if (hasJoinReorderBarrier())
@@ -641,7 +1241,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
     uint64_t min_rows = std::numeric_limits<uint64_t>::max();
     for (size_t i = 0; i < relations_.size(); ++i)
     {
-        const auto frontier = baseFrontierForRelation(relations_[i]);
+        const auto frontier = baseFrontierForRelation(relations_[i], i);
         const auto* best_entry = frontierBestEntry(frontier);
         if (best_entry != nullptr && best_entry->rows < min_rows)
         {
@@ -651,13 +1251,14 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
     }
     if (min_rows == std::numeric_limits<uint64_t>::max())
     {
-        const auto frontier = baseFrontierForRelation(relations_[0]);
+        const auto frontier = baseFrontierForRelation(relations_[0], 0);
         const auto* best_entry = frontierBestEntry(frontier);
         min_rows = best_entry != nullptr ? best_entry->rows : 0;
     }
 
     joined[best_start] = true;
-    auto current_frontier = baseFrontierForRelation(relations_[best_start]);
+    auto current_frontier =
+        baseFrontierForRelation(relations_[best_start], best_start);
     const auto* current_best = frontierBestEntry(current_frontier);
     if (current_best == nullptr)
     {
@@ -677,12 +1278,12 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
         size_t best_frontier_size = 0;
         DPFrontier best_frontier;
         size_t round_candidates = 0;
-        size_t round_retained = 0;
 
         for (size_t i = 0; i < relations_.size(); ++i)
         {
             if (joined[i]) continue;
-            const auto relation_frontier = baseFrontierForRelation(relations_[i]);
+            const auto relation_frontier =
+                baseFrontierForRelation(relations_[i], i);
             if (relation_frontier.empty())
             {
                 continue;
@@ -731,7 +1332,6 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
 
             if (!candidate_frontier.empty())
             {
-                round_retained += candidate_frontier.size();
                 const auto* candidate_best = frontierBestEntry(candidate_frontier);
                 if (candidate_best != nullptr &&
                     (candidate_best->cost < best_cost ||
@@ -757,7 +1357,8 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
             for (size_t i = 0; i < relations_.size(); ++i)
             {
                 if (joined[i]) continue;
-                const auto relation_frontier = baseFrontierForRelation(relations_[i]);
+                const auto relation_frontier =
+                    baseFrontierForRelation(relations_[i], i);
                 DPFrontier candidate_frontier;
                 for (const auto& left_entry : current_frontier)
                 {
@@ -776,7 +1377,6 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
                     continue;
                 }
 
-                round_retained += candidate_frontier.size();
                 const auto* candidate_best = frontierBestEntry(candidate_frontier);
                 if (candidate_best != nullptr &&
                     (candidate_best->cost < best_cost ||
@@ -811,10 +1411,6 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
         }
 
         telemetry_.considered_state_count += round_candidates;
-        if (round_candidates > round_retained)
-        {
-            telemetry_.pruned_state_count += round_candidates - round_retained;
-        }
     }
 
     return frontierBestPath(current_frontier);
@@ -830,7 +1426,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
 
     if (relations_.size() == 1)
     {
-        return frontierBestPath(baseFrontierForRelation(relations_[0]));
+        return frontierBestPath(baseFrontierForRelation(relations_[0], 0));
     }
 
     if (hasJoinReorderBarrier())
@@ -852,7 +1448,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
     {
         Component component;
         component.relation_set = 1ULL << i;
-        component.frontier = baseFrontierForRelation(relations_[i]);
+        component.frontier = baseFrontierForRelation(relations_[i], i);
         components.push_back(std::move(component));
     }
 
@@ -866,6 +1462,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
         size_t best_right = 0;
         DPFrontier best_frontier;
         double best_cost = std::numeric_limits<double>::max();
+        size_t best_frontier_size = 0;
         size_t pair_evaluations = 0;
         size_t round_candidates = 0;
 
@@ -905,11 +1502,18 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
                         }
                     }
                     const auto* best_entry = frontierBestEntry(candidate_frontier);
-                    if (best_entry == nullptr || best_entry->cost >= best_cost)
+                    if (best_entry == nullptr)
+                    {
+                        continue;
+                    }
+                    if (best_entry->cost > best_cost ||
+                        (best_entry->cost == best_cost &&
+                         candidate_frontier.size() <= best_frontier_size))
                     {
                         continue;
                     }
                     best_cost = best_entry->cost;
+                    best_frontier_size = candidate_frontier.size();
                     best_frontier = std::move(candidate_frontier);
                     best_left = left;
                     best_right = right;
@@ -926,6 +1530,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
         {
             best_frontier.clear();
             best_cost = std::numeric_limits<double>::max();
+            best_frontier_size = 0;
             for (size_t left = 0; left < components.size(); ++left)
             {
                 for (size_t right = left + 1; right < components.size(); ++right)
@@ -944,11 +1549,18 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
                         }
                     }
                     const auto* best_entry = frontierBestEntry(candidate_frontier);
-                    if (best_entry == nullptr || best_entry->cost >= best_cost)
+                    if (best_entry == nullptr)
+                    {
+                        continue;
+                    }
+                    if (best_entry->cost > best_cost ||
+                        (best_entry->cost == best_cost &&
+                         candidate_frontier.size() <= best_frontier_size))
                     {
                         continue;
                     }
                     best_cost = best_entry->cost;
+                    best_frontier_size = candidate_frontier.size();
                     best_frontier = std::move(candidate_frontier);
                     best_left = left;
                     best_right = right;
@@ -965,10 +1577,6 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeHypergraphGreedy(
         }
 
         telemetry_.considered_state_count += round_candidates;
-        if (round_candidates > 1)
-        {
-            telemetry_.pruned_state_count += round_candidates - 1;
-        }
 
         Component merged;
         merged.relation_set =
@@ -999,12 +1607,12 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
 
     if (relations_.size() == 1)
     {
-        return frontierBestPath(baseFrontierForRelation(relations_[0]));
+        return frontierBestPath(baseFrontierForRelation(relations_[0], 0));
     }
 
     std::vector<bool> joined(relations_.size(), false);
     joined[0] = true;
-    DPFrontier current_frontier = baseFrontierForRelation(relations_[0]);
+    DPFrontier current_frontier = baseFrontierForRelation(relations_[0], 0);
 
     while (true)
     {
@@ -1036,7 +1644,9 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
                 continue;
             }
 
-            const auto relation_frontier = baseFrontierForRelation(relations_[candidate_rel]);
+            const auto relation_frontier =
+                baseFrontierForRelation(relations_[candidate_rel],
+                                       candidate_rel);
             DPFrontier next_frontier;
             for (const auto& left_entry : current_frontier)
             {
@@ -1069,6 +1679,7 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
             size_t best_rel = std::numeric_limits<size_t>::max();
             DPFrontier best_frontier;
             double best_cost = std::numeric_limits<double>::max();
+            size_t best_frontier_size = 0;
             for (size_t i = 0; i < relations_.size(); ++i)
             {
                 if (joined[i])
@@ -1076,7 +1687,8 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
                     continue;
                 }
 
-                const auto relation_frontier = baseFrontierForRelation(relations_[i]);
+                const auto relation_frontier =
+                    baseFrontierForRelation(relations_[i], i);
                 DPFrontier candidate_frontier;
                 for (const auto& left_entry : current_frontier)
                 {
@@ -1091,11 +1703,18 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
                     }
                 }
                 const auto* best_entry = frontierBestEntry(candidate_frontier);
-                if (best_entry == nullptr || best_entry->cost >= best_cost)
+                if (best_entry == nullptr)
+                {
+                    continue;
+                }
+                if (best_entry->cost > best_cost ||
+                    (best_entry->cost == best_cost &&
+                     candidate_frontier.size() <= best_frontier_size))
                 {
                     continue;
                 }
                 best_cost = best_entry->cost;
+                best_frontier_size = candidate_frontier.size();
                 best_frontier = std::move(candidate_frontier);
                 best_rel = i;
             }
@@ -1110,10 +1729,6 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizePreservingInputOrder(
         }
 
         telemetry_.considered_state_count += round_candidates;
-        if (round_candidates > 1)
-        {
-            telemetry_.pruned_state_count += round_candidates - 1;
-        }
 
         if (std::all_of(joined.begin(), joined.end(), [](bool value) { return value; }))
         {
@@ -1195,32 +1810,64 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
 {
     DPEntry result;
 
-    uint64_t left_rows = left_entry.rows;
-    uint64_t right_rows = right_entry.rows;
-    double selectivity = edge.selectivity;
+    const uint64_t left_rows = left_entry.rows;
+    const uint64_t right_rows = right_entry.rows;
+    const double selectivity = edge.selectivity;
+    const auto* left_descriptor =
+        left_entry.best_path != nullptr
+            ? &left_entry.best_path->accessDescriptor()
+            : nullptr;
+    const auto* right_descriptor =
+        right_entry.best_path != nullptr
+            ? &right_entry.best_path->accessDescriptor()
+            : nullptr;
+    const bool parameterized_inner =
+        right_descriptor != nullptr && right_descriptor->parameterized;
+    JoinLegalityDescriptor method_legality;
+    method_legality.legality_class = edge.legality_class;
+    method_legality.reorderable = edge.reorderable;
+    method_legality.requires_original_order = edge.requires_original_order;
+    method_legality.natural_barrier = edge.natural_barrier;
+    method_legality.using_barrier = edge.using_barrier;
+    method_legality.semi_duplicate_semantics =
+        edge.legality_class == JoinLegalityClass::SEMI_BARRIER;
+    method_legality.anti_duplicate_semantics =
+        edge.legality_class == JoinLegalityClass::ANTI_BARRIER;
+    method_legality.lateral_dependency = parameterized_inner;
+    const bool left_contains_edge_left =
+        edge.left_rel_idx < MAX_DP_RELATIONS &&
+        (left_entry.relation_set_mask & (1ULL << edge.left_rel_idx)) != 0;
+    const std::string outer_order_key =
+        left_contains_edge_left ? edge.left_order_key_text
+                                : edge.right_order_key_text;
+    const std::string inner_order_key =
+        left_contains_edge_left ? edge.right_order_key_text
+                                : edge.left_order_key_text;
+    const bool outer_presorted =
+        edge.has_key_metadata &&
+        pathProvidesMergeJoinOrder(left_entry.best_path, outer_order_key);
+    const bool inner_presorted =
+        edge.has_key_metadata &&
+        pathProvidesMergeJoinOrder(right_entry.best_path, inner_order_key);
 
-    // Estimate join output rows
     uint64_t join_rows = static_cast<uint64_t>(
         static_cast<double>(left_rows) *
         static_cast<double>(right_rows) * selectivity);
-    if (join_rows == 0) join_rows = 1;
-
-    // Try both Nested Loop Join and Hash Join, pick cheaper one
-    CostEstimate nl_cost = cost_model_.costNestedLoopJoin(
-        left_entry.best_path ? left_entry.best_path->cost() : CostEstimate{},
-        right_entry.best_path ? right_entry.best_path->cost() : CostEstimate{},
-        left_rows,
-        right_rows,
-        selectivity,
-        edge.join_type,
-        ctx);
-
-    CostEstimate hash_cost{};
-    bool allow_hash = (edge.join_type == parser::JoinType::INNER ||
-                       edge.join_type == parser::JoinType::LEFT);
-    if (allow_hash)
+    if (join_rows == 0)
     {
-        hash_cost = cost_model_.costHashJoin(
+        join_rows = 1;
+    }
+
+    const auto nested_legality =
+        evaluateNestedLoopLegality(method_legality, parameterized_inner);
+    const bool allow_nested_loop =
+        nested_legality.legal &&
+        controls_.method_policy != JoinMethodPolicy::HASH_ONLY &&
+        controls_.method_policy != JoinMethodPolicy::MERGE_ONLY;
+    CostEstimate nl_cost{};
+    if (allow_nested_loop)
+    {
+        nl_cost = cost_model_.costNestedLoopJoin(
             left_entry.best_path ? left_entry.best_path->cost() : CostEstimate{},
             right_entry.best_path ? right_entry.best_path->cost() : CostEstimate{},
             left_rows,
@@ -1231,19 +1878,151 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
     }
     else
     {
+        nl_cost.total_cost = std::numeric_limits<double>::max();
+    }
+
+    const auto hash_legality =
+        evaluateHashJoinLegality(method_legality,
+                                 edge.join_type,
+                                 edge.equi_join,
+                                 edge.has_key_metadata,
+                                 parameterized_inner);
+    CostEstimate hash_cost{};
+    bool allow_hash =
+        hash_legality.legal &&
+        controls_.method_policy != JoinMethodPolicy::NESTED_LOOP_ONLY &&
+        controls_.method_policy != JoinMethodPolicy::MERGE_ONLY;
+    if (allow_hash)
+    {
+        hash_cost = cost_model_.costHashJoin(
+            left_entry.best_path ? left_entry.best_path->cost() : CostEstimate{},
+            right_entry.best_path ? right_entry.best_path->cost() : CostEstimate{},
+            left_rows,
+            right_rows,
+            selectivity,
+            edge.join_type,
+            ctx);
+        if (controls_.disallow_temp_spill && hash_cost.spill_expected)
+        {
+            allow_hash = false;
+            hash_cost.total_cost = std::numeric_limits<double>::max();
+        }
+    }
+    else
+    {
         hash_cost.total_cost = std::numeric_limits<double>::max();
     }
 
-    // Choose cheaper join method
-    bool use_hash = (hash_cost.total_cost < nl_cost.total_cost);
+    const auto merge_legality =
+        evaluateMergeJoinLegality(method_legality,
+                                  edge.join_type,
+                                  edge.equi_join,
+                                  edge.has_key_metadata,
+                                  parameterized_inner,
+                                  outer_presorted,
+                                  inner_presorted);
+    CostEstimate merge_cost{};
+    bool allow_merge =
+        merge_legality.legal &&
+        controls_.method_policy != JoinMethodPolicy::NESTED_LOOP_ONLY &&
+        controls_.method_policy != JoinMethodPolicy::HASH_ONLY;
+    if (allow_merge)
+    {
+        merge_cost = cost_model_.costMergeJoin(
+            left_entry.best_path ? left_entry.best_path->cost() : CostEstimate{},
+            right_entry.best_path ? right_entry.best_path->cost() : CostEstimate{},
+            left_rows,
+            right_rows,
+            selectivity,
+            outer_presorted,
+            inner_presorted,
+            edge.join_type,
+            ctx);
+        if (controls_.disallow_temp_spill && merge_cost.spill_expected)
+        {
+            allow_merge = false;
+            merge_cost.total_cost = std::numeric_limits<double>::max();
+        }
+    }
+    else
+    {
+        merge_cost.total_cost = std::numeric_limits<double>::max();
+    }
 
-    if (use_hash)
+    enum class ChosenJoinMethod
+    {
+        NESTED_LOOP,
+        HASH_JOIN,
+        MERGE_JOIN
+    };
+
+    const bool merge_requires_explicit_sort =
+        merge_legality.requires_sort_outer || merge_legality.requires_sort_inner;
+
+    if (!allow_nested_loop && !allow_hash && !allow_merge)
+    {
+        if (ctx != nullptr)
+        {
+            std::string reject_reason;
+            if (controls_.method_policy == JoinMethodPolicy::HASH_ONLY)
+            {
+                reject_reason = hash_legality.legal
+                    ? "JOIN_METHOD_SPILL_DISALLOWED: HASH_JOIN requires temp spill under current work_mem policy"
+                    : joinMethodRejectReason(JoinMethodFamily::HASH_JOIN,
+                                             hash_legality.reject_code);
+            }
+            else if (controls_.method_policy == JoinMethodPolicy::MERGE_ONLY)
+            {
+                reject_reason = merge_legality.legal
+                    ? "JOIN_METHOD_SPILL_DISALLOWED: MERGE_JOIN requires temp spill under current work_mem policy"
+                    : joinMethodRejectReason(JoinMethodFamily::MERGE_JOIN,
+                                             merge_legality.reject_code);
+            }
+            if (!reject_reason.empty())
+            {
+                SET_ERROR_CONTEXT(ctx,
+                                  core::Status::INVALID_ARGUMENT,
+                                  reject_reason.c_str());
+            }
+        }
+        return result;
+    }
+
+    ChosenJoinMethod chosen_method = ChosenJoinMethod::NESTED_LOOP;
+    if (!allow_nested_loop)
+    {
+        chosen_method = allow_hash ? ChosenJoinMethod::HASH_JOIN
+                                   : ChosenJoinMethod::MERGE_JOIN;
+    }
+    double chosen_cost =
+        chosen_method == ChosenJoinMethod::HASH_JOIN
+            ? hash_cost.total_cost
+            : chosen_method == ChosenJoinMethod::MERGE_JOIN
+                  ? merge_cost.total_cost
+                  : nl_cost.total_cost;
+    if (allow_hash && hash_cost.total_cost < chosen_cost)
+    {
+        chosen_method = ChosenJoinMethod::HASH_JOIN;
+        chosen_cost = hash_cost.total_cost;
+    }
+    if (allow_merge &&
+        (controls_.method_policy == JoinMethodPolicy::MERGE_ONLY ||
+         (!allow_hash && merge_cost.total_cost < chosen_cost) ||
+         (!merge_requires_explicit_sort &&
+          controls_.method_policy != JoinMethodPolicy::AUTO &&
+          merge_cost.total_cost < chosen_cost)))
+    {
+        chosen_method = ChosenJoinMethod::MERGE_JOIN;
+        chosen_cost = merge_cost.total_cost;
+    }
+
+    result.rows = join_rows;
+    result.relation_set_mask =
+        left_entry.relation_set_mask | right_entry.relation_set_mask;
+
+    if (chosen_method == ChosenJoinMethod::HASH_JOIN)
     {
         result.cost = hash_cost.total_cost;
-        result.rows = join_rows;
-
-        // Preserve outer-join semantics by keeping the syntactic left/right
-        // orientation for non-inner joins.
         std::shared_ptr<Path> build_path = left_entry.best_path;
         std::shared_ptr<Path> probe_path = right_entry.best_path;
         if (edge.join_type == parser::JoinType::INNER && !preserve_orientation)
@@ -1254,10 +2033,8 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
                 ? right_entry.best_path : left_entry.best_path;
         }
 
-        // Hash keys are Expression* vectors (V3)
         std::vector<parser::v3::Expression*> hash_keys_outer;
         std::vector<parser::v3::Expression*> hash_keys_inner;
-
         result.best_path = std::make_shared<HashJoinPath>(
             edge.join_type,
             build_path,
@@ -1270,51 +2047,91 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
         AccessPathDescriptor descriptor;
         descriptor.family = "HASH_JOIN";
         descriptor.path_name = "HASH_JOIN";
-        descriptor.parameterized =
-            (left_entry.best_path &&
-             left_entry.best_path->accessDescriptor().parameterized) ||
-            (right_entry.best_path &&
-             right_entry.best_path->accessDescriptor().parameterized);
-        descriptor.requires_recheck =
-            (left_entry.best_path &&
-             left_entry.best_path->accessDescriptor().requires_recheck) ||
-            (right_entry.best_path &&
-             right_entry.best_path->accessDescriptor().requires_recheck);
-        descriptor.exactness_class =
-            std::max(left_entry.best_path
-                         ? left_entry.best_path->accessDescriptor().exactness_class
-                         : AccessPathExactnessClass::UNKNOWN,
-                     right_entry.best_path
-                         ? right_entry.best_path->accessDescriptor().exactness_class
-                         : AccessPathExactnessClass::UNKNOWN);
-        if (left_entry.best_path)
+        combineJoinDescriptorCommon(left_descriptor, right_descriptor, descriptor);
+        descriptor.ordered_output = false;
+        descriptor.ordered_prefix_length = 0;
+        descriptor.ordering_keys.clear();
+        descriptor.order_complete = false;
+        descriptor.interesting_order_score = 0.0;
+        descriptor.gather_merge = false;
+        descriptor.parallel_order_preservation = "UNORDERED";
+        appendUniqueTag(descriptor.family_tags, "HASH_JOIN");
+        if (descriptor.parallel_enabled || descriptor.parallel_aware)
         {
-            descriptor.required_outer_relation_indexes =
-                left_entry.best_path->accessDescriptor()
-                    .required_outer_relation_indexes;
+            descriptor.parallel_stage = "HASH_JOIN";
         }
-        if (right_entry.best_path)
+        result.best_path->setAccessDescriptor(std::move(descriptor));
+    }
+    else if (chosen_method == ChosenJoinMethod::MERGE_JOIN)
+    {
+        result.cost = merge_cost.total_cost;
+        std::vector<parser::v3::Expression*> merge_keys_outer;
+        std::vector<parser::v3::Expression*> merge_keys_inner;
+        result.best_path = std::make_shared<MergeJoinPath>(
+            edge.join_type,
+            left_entry.best_path,
+            right_entry.best_path,
+            edge.join_condition,
+            merge_keys_outer,
+            merge_keys_inner,
+            selectivity,
+            outer_presorted,
+            inner_presorted,
+            merge_cost);
+        AccessPathDescriptor descriptor;
+        descriptor.family = "MERGE_JOIN";
+        descriptor.path_name =
+            (merge_legality.requires_sort_outer ||
+             merge_legality.requires_sort_inner)
+                ? "MERGE_JOIN[SORT_TO_MERGE]"
+                : "MERGE_JOIN";
+        combineJoinDescriptorCommon(left_descriptor, right_descriptor, descriptor);
+        descriptor.ordered_output = true;
+        descriptor.order_complete = true;
+        descriptor.ordered_prefix_length = outer_order_key.empty() ? 0 : 1;
+        if (!outer_order_key.empty())
         {
-            descriptor.required_outer_relation_indexes.insert(
-                descriptor.required_outer_relation_indexes.end(),
-                right_entry.best_path->accessDescriptor()
-                    .required_outer_relation_indexes.begin(),
-                right_entry.best_path->accessDescriptor()
-                    .required_outer_relation_indexes.end());
-            std::sort(descriptor.required_outer_relation_indexes.begin(),
-                      descriptor.required_outer_relation_indexes.end());
-            descriptor.required_outer_relation_indexes.erase(
-                std::unique(descriptor.required_outer_relation_indexes.begin(),
-                            descriptor.required_outer_relation_indexes.end()),
-                descriptor.required_outer_relation_indexes.end());
+            AccessPathDescriptor::OrderingKey ordering_key;
+            ordering_key.expression_text = outer_order_key;
+            descriptor.ordering_keys.push_back(std::move(ordering_key));
+        }
+        descriptor.interesting_order_score =
+            descriptor.ordered_prefix_length > 0
+                ? static_cast<double>(descriptor.ordered_prefix_length)
+                : 1.0;
+        descriptor.gather_merge = false;
+        descriptor.parallel_order_preservation = "TOTAL_ORDER";
+        appendUniqueTag(descriptor.family_tags, "MERGE_JOIN");
+        if (merge_legality.requires_sort_outer ||
+            merge_legality.requires_sort_inner)
+        {
+            appendUniqueTag(descriptor.family_tags, "SORT_TO_MERGE");
+        }
+        if (merge_legality.requires_sort_outer)
+        {
+            appendUniqueTag(descriptor.family_tags, "SORT_OUTER");
+        }
+        if (merge_legality.requires_sort_inner)
+        {
+            appendUniqueTag(descriptor.family_tags, "SORT_INNER");
+        }
+        if (outer_presorted)
+        {
+            appendUniqueTag(descriptor.family_tags, "OUTER_PRESORTED");
+        }
+        if (inner_presorted)
+        {
+            appendUniqueTag(descriptor.family_tags, "INNER_PRESORTED");
+        }
+        if (descriptor.parallel_enabled || descriptor.parallel_aware)
+        {
+            descriptor.parallel_stage = "MERGE_JOIN";
         }
         result.best_path->setAccessDescriptor(std::move(descriptor));
     }
     else
     {
         result.cost = nl_cost.total_cost;
-        result.rows = join_rows;
-
         result.best_path = std::make_shared<NestedLoopJoinPath>(
             edge.join_type,
             left_entry.best_path,
@@ -1323,53 +2140,33 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             selectivity,
             nl_cost);
         AccessPathDescriptor descriptor;
-        descriptor.family = "NESTED_LOOP_JOIN";
-        descriptor.path_name = "NESTED_LOOP_JOIN";
-        if (left_entry.best_path)
+        descriptor.family = parameterized_inner ? "PARAMETERIZED_NESTED_LOOP"
+                                                : "NESTED_LOOP_JOIN";
+        descriptor.path_name = descriptor.family;
+        combineJoinDescriptorCommon(left_descriptor, right_descriptor, descriptor);
+        if (left_descriptor != nullptr)
         {
-            const auto& left_descriptor = left_entry.best_path->accessDescriptor();
-            descriptor.ordered_output = left_descriptor.ordered_output;
+            descriptor.ordered_output = left_descriptor->ordered_output;
             descriptor.ordered_prefix_length =
-                left_descriptor.ordered_prefix_length;
-            descriptor.ordering_keys = left_descriptor.ordering_keys;
-            descriptor.order_complete = left_descriptor.order_complete;
+                left_descriptor->ordered_prefix_length;
+            descriptor.ordering_keys = left_descriptor->ordering_keys;
+            descriptor.order_complete = left_descriptor->order_complete;
             descriptor.interesting_order_score =
-                left_descriptor.interesting_order_score;
-            descriptor.required_outer_relation_indexes =
-                left_descriptor.required_outer_relation_indexes;
+                left_descriptor->interesting_order_score;
+            descriptor.gather_merge = left_descriptor->gather_merge;
+            descriptor.parallel_stage = left_descriptor->parallel_stage;
+            descriptor.parallel_distribution_mode =
+                left_descriptor->parallel_distribution_mode;
+            descriptor.parallel_order_preservation =
+                left_descriptor->parallel_order_preservation;
+            descriptor.exchange_topology_id =
+                left_descriptor->exchange_topology_id;
+            descriptor.gather_decision_reason =
+                left_descriptor->gather_decision_reason;
         }
-        descriptor.parameterized =
-            (left_entry.best_path &&
-             left_entry.best_path->accessDescriptor().parameterized) ||
-            (right_entry.best_path &&
-             right_entry.best_path->accessDescriptor().parameterized);
-        descriptor.requires_recheck =
-            (left_entry.best_path &&
-             left_entry.best_path->accessDescriptor().requires_recheck) ||
-            (right_entry.best_path &&
-             right_entry.best_path->accessDescriptor().requires_recheck);
-        descriptor.exactness_class =
-            std::max(left_entry.best_path
-                         ? left_entry.best_path->accessDescriptor().exactness_class
-                         : AccessPathExactnessClass::UNKNOWN,
-                     right_entry.best_path
-                         ? right_entry.best_path->accessDescriptor().exactness_class
-                         : AccessPathExactnessClass::UNKNOWN);
-        if (right_entry.best_path)
-        {
-            descriptor.required_outer_relation_indexes.insert(
-                descriptor.required_outer_relation_indexes.end(),
-                right_entry.best_path->accessDescriptor()
-                    .required_outer_relation_indexes.begin(),
-                right_entry.best_path->accessDescriptor()
-                    .required_outer_relation_indexes.end());
-            std::sort(descriptor.required_outer_relation_indexes.begin(),
-                      descriptor.required_outer_relation_indexes.end());
-            descriptor.required_outer_relation_indexes.erase(
-                std::unique(descriptor.required_outer_relation_indexes.begin(),
-                            descriptor.required_outer_relation_indexes.end()),
-                descriptor.required_outer_relation_indexes.end());
-        }
+        appendUniqueTag(descriptor.family_tags,
+                        parameterized_inner ? "PARAMETERIZED_NESTED_LOOP"
+                                            : "NESTED_LOOP_JOIN");
         result.best_path->setAccessDescriptor(std::move(descriptor));
     }
 
@@ -1398,6 +2195,8 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costCrossJoin(
 
     result.cost = nl_cost.total_cost;
     result.rows = left_rows * right_rows;
+    result.relation_set_mask =
+        left_entry.relation_set_mask | right_entry.relation_set_mask;
     result.best_path = std::make_shared<NestedLoopJoinPath>(
         parser::JoinType::CROSS,
         left_entry.best_path,
@@ -1408,49 +2207,33 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costCrossJoin(
     AccessPathDescriptor descriptor;
     descriptor.family = "NESTED_LOOP_JOIN";
     descriptor.path_name = "NESTED_LOOP_JOIN";
-    if (left_entry.best_path)
+    const auto* left_descriptor =
+        left_entry.best_path != nullptr
+            ? &left_entry.best_path->accessDescriptor()
+            : nullptr;
+    const auto* right_descriptor =
+        right_entry.best_path != nullptr
+            ? &right_entry.best_path->accessDescriptor()
+            : nullptr;
+    combineJoinDescriptorCommon(left_descriptor, right_descriptor, descriptor);
+    if (left_descriptor != nullptr)
     {
-        const auto& left_descriptor = left_entry.best_path->accessDescriptor();
-        descriptor.ordered_output = left_descriptor.ordered_output;
-        descriptor.ordered_prefix_length = left_descriptor.ordered_prefix_length;
-        descriptor.ordering_keys = left_descriptor.ordering_keys;
-        descriptor.order_complete = left_descriptor.order_complete;
+        descriptor.ordered_output = left_descriptor->ordered_output;
+        descriptor.ordered_prefix_length = left_descriptor->ordered_prefix_length;
+        descriptor.ordering_keys = left_descriptor->ordering_keys;
+        descriptor.order_complete = left_descriptor->order_complete;
         descriptor.interesting_order_score =
-            left_descriptor.interesting_order_score;
-        descriptor.required_outer_relation_indexes =
-            left_descriptor.required_outer_relation_indexes;
-    }
-    descriptor.parameterized =
-        (left_entry.best_path &&
-         left_entry.best_path->accessDescriptor().parameterized) ||
-        (right_entry.best_path &&
-         right_entry.best_path->accessDescriptor().parameterized);
-    descriptor.requires_recheck =
-        (left_entry.best_path &&
-         left_entry.best_path->accessDescriptor().requires_recheck) ||
-        (right_entry.best_path &&
-         right_entry.best_path->accessDescriptor().requires_recheck);
-    descriptor.exactness_class =
-        std::max(left_entry.best_path
-                     ? left_entry.best_path->accessDescriptor().exactness_class
-                     : AccessPathExactnessClass::UNKNOWN,
-                 right_entry.best_path
-                     ? right_entry.best_path->accessDescriptor().exactness_class
-                     : AccessPathExactnessClass::UNKNOWN);
-    if (right_entry.best_path)
-    {
-        descriptor.required_outer_relation_indexes.insert(
-            descriptor.required_outer_relation_indexes.end(),
-            right_entry.best_path->accessDescriptor()
-                .required_outer_relation_indexes.begin(),
-            right_entry.best_path->accessDescriptor()
-                .required_outer_relation_indexes.end());
-        std::sort(descriptor.required_outer_relation_indexes.begin(),
-                  descriptor.required_outer_relation_indexes.end());
-        descriptor.required_outer_relation_indexes.erase(
-            std::unique(descriptor.required_outer_relation_indexes.begin(),
-                        descriptor.required_outer_relation_indexes.end()),
-            descriptor.required_outer_relation_indexes.end());
+            left_descriptor->interesting_order_score;
+        descriptor.gather_merge = left_descriptor->gather_merge;
+        descriptor.parallel_stage = left_descriptor->parallel_stage;
+        descriptor.parallel_distribution_mode =
+            left_descriptor->parallel_distribution_mode;
+        descriptor.parallel_order_preservation =
+            left_descriptor->parallel_order_preservation;
+        descriptor.exchange_topology_id =
+            left_descriptor->exchange_topology_id;
+        descriptor.gather_decision_reason =
+            left_descriptor->gather_decision_reason;
     }
     result.best_path->setAccessDescriptor(std::move(descriptor));
     return result;

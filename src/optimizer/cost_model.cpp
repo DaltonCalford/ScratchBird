@@ -430,8 +430,44 @@ namespace scratchbird::optimizer
             std::clamp(input.duplicate_density, 0.0, 1.0);
         const double false_positive_ratio =
             std::clamp(input.false_positive_ratio, 0.0, 1.0);
+        const double avg_range_pages_per_row =
+            std::max(0.0, input.avg_range_pages_per_row);
+        const double prefix_selectivity =
+            std::clamp(input.prefix_selectivity, 0.0, 1.0);
+        const double skip_group_count =
+            std::max(0.0, input.skip_group_count);
+        const double prefetchable_page_fraction =
+            std::clamp(input.prefetchable_page_fraction, 0.0, 1.0);
+        const double secondary_lookup_fraction =
+            std::clamp(input.secondary_lookup_fraction, 0.0, 1.0);
+        const double cluster_locality_gain_est =
+            std::clamp(input.cluster_locality_gain_est, 0.0, 1.0);
+        const double early_stop_gain_est =
+            std::clamp(input.early_stop_gain_est, 0.0, 1.0);
+        const double overflow_chain_depth =
+            std::max(0.0, input.overflow_chain_depth);
+        const double run_count =
+            std::max(0.0, input.run_count);
+        const double level_count =
+            std::max(0.0, input.level_count);
+        const double tombstone_fraction =
+            std::clamp(input.tombstone_fraction, 0.0, 1.0);
+        const double l0_run_count =
+            std::max(0.0, input.l0_run_count);
+        const double sort_avoidance_gain_est =
+            std::clamp(input.sort_avoidance_gain_est, 0.0, 1.0);
         const double confidence_penalty =
             confidencePenaltyMultiplier(input.metrics_confidence_class);
+        const bool is_skip_scan =
+            family_token.find("skip_scan") != std::string::npos;
+        const bool is_hash_family =
+            family_token.find("hash") != std::string::npos;
+        const bool is_lsm_family =
+            family_token.find("lsm") != std::string::npos;
+        const bool is_ordered_family =
+            input.ordered_output ||
+            family_token.find("btree") != std::string::npos ||
+            is_lsm_family;
 
         if (input.row_width_bytes > 0)
         {
@@ -451,6 +487,32 @@ namespace scratchbird::optimizer
             profile.parameters.cpu_operator_cost *
             (0.10 + (dead_fraction * 0.40) + (recheck_ratio * 0.30) +
              (false_positive_ratio * 0.20));
+        profile.parameters.calibrated_avg_range_pages_per_row =
+            avg_range_pages_per_row;
+        profile.parameters.calibrated_prefix_selectivity =
+            prefix_selectivity;
+        profile.parameters.calibrated_skip_group_count =
+            skip_group_count;
+        profile.parameters.calibrated_prefetchable_page_fraction =
+            prefetchable_page_fraction;
+        profile.parameters.calibrated_secondary_lookup_fraction =
+            secondary_lookup_fraction;
+        profile.parameters.calibrated_cluster_locality_gain_est =
+            cluster_locality_gain_est;
+        profile.parameters.calibrated_early_stop_gain_est =
+            early_stop_gain_est;
+        profile.parameters.calibrated_overflow_chain_depth =
+            overflow_chain_depth;
+        profile.parameters.calibrated_run_count =
+            run_count;
+        profile.parameters.calibrated_level_count =
+            level_count;
+        profile.parameters.calibrated_tombstone_fraction =
+            tombstone_fraction;
+        profile.parameters.calibrated_l0_run_count =
+            l0_run_count;
+        profile.parameters.calibrated_sort_avoidance_gain_est =
+            sort_avoidance_gain_est;
 
         profile.parameters.random_page_cost *=
             (1.0 + (bloat_ratio * 0.75)) * confidence_penalty;
@@ -462,6 +524,66 @@ namespace scratchbird::optimizer
         {
             profile.parameters.cpu_tuple_cost *= 0.85;
             profile.parameters.calibrated_visibility_tuple_cost *= 0.5;
+        }
+        if (is_ordered_family)
+        {
+            profile.parameters.random_page_cost *= std::clamp(
+                1.0 + (std::min(avg_range_pages_per_row, 16.0) * 0.03) -
+                    (prefetchable_page_fraction * 0.12) -
+                    (cluster_locality_gain_est * 0.12),
+                0.55,
+                2.50);
+            profile.parameters.cpu_tuple_cost *= std::clamp(
+                1.0 + (secondary_lookup_fraction * 0.20) -
+                    (early_stop_gain_est * 0.10),
+                0.60,
+                2.50);
+            profile.parameters.cpu_operator_cost *= std::clamp(
+                1.0 + ((1.0 - prefix_selectivity) * 0.08) -
+                    (sort_avoidance_gain_est * 0.08),
+                0.60,
+                2.50);
+            profile.parameters.sort_mem_cost *= std::clamp(
+                1.0 - (sort_avoidance_gain_est * 0.15),
+                0.50,
+                1.00);
+        }
+        if (is_skip_scan)
+        {
+            profile.parameters.random_page_cost *= std::clamp(
+                1.0 + (std::min(skip_group_count, 64.0) * 0.015),
+                1.00,
+                2.50);
+            profile.parameters.cpu_operator_cost *= std::clamp(
+                1.0 + (std::min(skip_group_count, 64.0) * 0.010),
+                1.00,
+                2.00);
+        }
+        if (is_hash_family)
+        {
+            profile.parameters.cpu_operator_cost *= std::clamp(
+                1.0 + (overflow_chain_depth * 0.15) +
+                    (secondary_lookup_fraction * 0.10),
+                1.00,
+                3.00);
+            profile.parameters.cpu_tuple_cost *= std::clamp(
+                1.0 + (secondary_lookup_fraction * 0.15),
+                1.00,
+                2.00);
+        }
+        if (is_lsm_family)
+        {
+            profile.parameters.random_page_cost *= std::clamp(
+                1.0 + (run_count * 0.04) +
+                    (std::log2(1.0 + level_count) * 0.08) +
+                    (l0_run_count * 0.04) +
+                    (tombstone_fraction * 0.20),
+                1.00,
+                3.50);
+            profile.parameters.cpu_index_tuple_cost *= std::clamp(
+                1.0 + (run_count * 0.02) + (tombstone_fraction * 0.20),
+                1.00,
+                2.50);
         }
         if (input.ordered_output || std::abs(input.correlation) > 0.8)
         {
@@ -575,8 +697,44 @@ namespace scratchbird::optimizer
             calibratedProbePages(params_, index_height);
         const double duplicate_density =
             std::clamp(params_.calibrated_duplicate_density, 0.0, 1.0);
+        const double avg_range_pages_per_row =
+            std::max(0.0, params_.calibrated_avg_range_pages_per_row);
+        const double prefix_selectivity =
+            std::clamp(params_.calibrated_prefix_selectivity, 0.0, 1.0);
+        const double skip_group_count =
+            std::max(0.0, params_.calibrated_skip_group_count);
+        const double prefetchable_page_fraction =
+            std::clamp(params_.calibrated_prefetchable_page_fraction, 0.0, 1.0);
+        const double secondary_lookup_fraction =
+            std::clamp(params_.calibrated_secondary_lookup_fraction, 0.0, 1.0);
+        const double cluster_locality_gain_est =
+            std::clamp(params_.calibrated_cluster_locality_gain_est, 0.0, 1.0);
+        const double early_stop_gain_est =
+            std::clamp(params_.calibrated_early_stop_gain_est, 0.0, 1.0);
+        const double overflow_chain_depth =
+            std::max(0.0, params_.calibrated_overflow_chain_depth);
+        const double run_count =
+            std::max(0.0, params_.calibrated_run_count);
+        const double level_count =
+            std::max(0.0, params_.calibrated_level_count);
+        const double tombstone_fraction =
+            std::clamp(params_.calibrated_tombstone_fraction, 0.0, 1.0);
+        const double l0_run_count =
+            std::max(0.0, params_.calibrated_l0_run_count);
+        const double sort_avoidance_gain_est =
+            std::clamp(params_.calibrated_sort_avoidance_gain_est, 0.0, 1.0);
         const double visibility_cpu_cost =
             static_cast<double>(heap_tuples) * calibratedVisibilityTupleCost(params_);
+        const bool is_skip_scan =
+            formula_profile_.profile_id.find("skip_scan") != std::string::npos;
+        const bool is_hash_family =
+            formula_profile_.profile_id.find("hash") != std::string::npos;
+        const bool is_lsm_family =
+            formula_profile_.profile_id.find("lsm") != std::string::npos;
+        const bool ordered_family =
+            formula_profile_.workload_profile == "ordered_read" ||
+            formula_profile_.profile_id.find("btree") != std::string::npos ||
+            is_lsm_family;
         appendInputEstimate(cost, "index_height", static_cast<double>(index_height), "levels");
         appendInputEstimate(cost, "index_pages", static_cast<double>(index_pages), "pages");
         appendInputEstimate(cost, "index_tuples", static_cast<double>(index_tuples), "rows");
@@ -600,6 +758,58 @@ namespace scratchbird::optimizer
                             "avg_probe_pages",
                             traversal_pages,
                             "pages");
+        appendInputEstimate(cost,
+                            "avg_range_pages_per_row",
+                            avg_range_pages_per_row,
+                            "pages_per_row");
+        appendInputEstimate(cost,
+                            "prefix_selectivity",
+                            prefix_selectivity,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "skip_group_count",
+                            skip_group_count,
+                            "groups");
+        appendInputEstimate(cost,
+                            "prefetchable_page_fraction",
+                            prefetchable_page_fraction,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "secondary_lookup_fraction",
+                            secondary_lookup_fraction,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "cluster_locality_gain_est",
+                            cluster_locality_gain_est,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "early_stop_gain_est",
+                            early_stop_gain_est,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "overflow_chain_depth",
+                            overflow_chain_depth,
+                            "levels");
+        appendInputEstimate(cost,
+                            "run_count",
+                            run_count,
+                            "runs");
+        appendInputEstimate(cost,
+                            "level_count",
+                            level_count,
+                            "levels");
+        appendInputEstimate(cost,
+                            "tombstone_fraction",
+                            tombstone_fraction,
+                            "ratio");
+        appendInputEstimate(cost,
+                            "l0_run_count",
+                            l0_run_count,
+                            "runs");
+        appendInputEstimate(cost,
+                            "sort_avoidance_gain_est",
+                            sort_avoidance_gain_est,
+                            "ratio");
 
         // Startup cost: traverse B-tree from root to first matching entry
         const double traversal_io_cost =
@@ -629,7 +839,61 @@ namespace scratchbird::optimizer
                 (1.0 + (duplicate_density * 0.25)));
         double index_io_cost =
             effective_index_pages * params_.random_page_cost;
+        if (ordered_family && avg_range_pages_per_row > 0.0)
+        {
+            const double ordered_range_penalty =
+                std::min(avg_range_pages_per_row, 8.0) * 0.15;
+            index_io_cost += ordered_range_penalty * params_.random_page_cost;
+            appendFormulaTerm(cost,
+                              "run.index_range_penalty",
+                              params_.random_page_cost,
+                              ordered_range_penalty,
+                              ordered_range_penalty * params_.random_page_cost,
+                              "cost");
+        }
+        if (ordered_family && prefetchable_page_fraction > 0.0)
+        {
+            const double prefetch_gain =
+                index_io_cost * std::min(0.35, prefetchable_page_fraction * 0.20);
+            index_io_cost -= prefetch_gain;
+            appendFormulaTerm(cost,
+                              "run.index_prefetch_gain",
+                              -params_.random_page_cost,
+                              std::min(0.35, prefetchable_page_fraction * 0.20) *
+                                  effective_index_pages,
+                              -prefetch_gain,
+                              "cost");
+        }
         double index_cpu_cost = static_cast<double>(index_tuples) * params_.cpu_index_tuple_cost;
+        if (is_lsm_family && run_count > 0.0)
+        {
+            const double merge_penalty =
+                params_.cpu_index_tuple_cost *
+                ((run_count * 0.50) +
+                 (std::log2(1.0 + level_count) * 0.75) +
+                 (l0_run_count * 0.50));
+            index_cpu_cost += merge_penalty;
+            appendFormulaTerm(cost,
+                              "run.lsm_merge_penalty",
+                              params_.cpu_index_tuple_cost,
+                              (run_count * 0.50) +
+                                  (std::log2(1.0 + level_count) * 0.75) +
+                                  (l0_run_count * 0.50),
+                              merge_penalty,
+                              "cost");
+        }
+        if (is_hash_family && overflow_chain_depth > 0.0)
+        {
+            const double overflow_penalty =
+                params_.cpu_operator_cost * overflow_chain_depth;
+            index_cpu_cost += overflow_penalty;
+            appendFormulaTerm(cost,
+                              "run.hash_overflow_penalty",
+                              params_.cpu_operator_cost,
+                              overflow_chain_depth,
+                              overflow_penalty,
+                              "cost");
+        }
         appendFormulaTerm(cost,
                           "run.index_io",
                           params_.random_page_cost,
@@ -658,11 +922,41 @@ namespace scratchbird::optimizer
             (sequential_heap_pages * correlation_weight) +
             (random_heap_pages * (1.0 - correlation_weight));
         effective_heap_pages *= (1.0 - (duplicate_density * 0.20));
+        effective_heap_pages *=
+            std::clamp(1.0 - (cluster_locality_gain_est * 0.25),
+                       0.50,
+                       1.00);
         effective_heap_pages = std::max(1.0, effective_heap_pages);
 
         // Apply cache effect to heap I/O cost
         double effective_random_cost = effectiveRandomPageCost(heap_pages);
         double heap_io_cost = effective_heap_pages * effective_random_cost;
+        if (secondary_lookup_fraction > 0.0)
+        {
+            const double secondary_lookup_penalty =
+                heap_io_cost * std::min(0.50, secondary_lookup_fraction * 0.20);
+            heap_io_cost += secondary_lookup_penalty;
+            appendFormulaTerm(cost,
+                              "run.secondary_lookup_penalty",
+                              effective_random_cost,
+                              effective_heap_pages *
+                                  std::min(0.50, secondary_lookup_fraction * 0.20),
+                              secondary_lookup_penalty,
+                              "cost");
+        }
+        if (ordered_family && early_stop_gain_est > 0.0)
+        {
+            const double early_stop_gain =
+                heap_io_cost * std::min(0.30, early_stop_gain_est * 0.15);
+            heap_io_cost -= early_stop_gain;
+            appendFormulaTerm(cost,
+                              "run.early_stop_gain",
+                              -effective_random_cost,
+                              effective_heap_pages *
+                                  std::min(0.30, early_stop_gain_est * 0.15),
+                              -early_stop_gain,
+                              "cost");
+        }
         appendInputEstimate(cost, "effective_heap_pages", effective_heap_pages, "pages");
         appendInputEstimate(cost,
                             "effective_random_page_cost",
@@ -672,6 +966,63 @@ namespace scratchbird::optimizer
         // CPU cost for heap tuples
         double heap_cpu_cost = static_cast<double>(heap_tuples) * params_.cpu_tuple_cost +
                                static_cast<double>(heap_tuples) * qual_cost;
+        if (is_skip_scan && skip_group_count > 0.0)
+        {
+            const double skip_restart_penalty =
+                params_.cpu_operator_cost *
+                std::min(skip_group_count, 128.0);
+            cost.startup_cost += skip_restart_penalty;
+            appendFormulaTerm(cost,
+                              "startup.skip_restart_penalty",
+                              params_.cpu_operator_cost,
+                              std::min(skip_group_count, 128.0),
+                              skip_restart_penalty,
+                              "cost");
+        }
+        if (ordered_family && sort_avoidance_gain_est > 0.0)
+        {
+            const double sort_avoid_gain =
+                heap_cpu_cost * std::min(0.25, sort_avoidance_gain_est * 0.10);
+            heap_cpu_cost -= sort_avoid_gain;
+            appendFormulaTerm(cost,
+                              "run.sort_avoidance_gain",
+                              -params_.cpu_tuple_cost,
+                              static_cast<double>(heap_tuples) *
+                                  std::min(0.25, sort_avoidance_gain_est * 0.10),
+                              -sort_avoid_gain,
+                              "cost");
+        }
+        if (is_lsm_family && tombstone_fraction > 0.0)
+        {
+            const double tombstone_penalty =
+                static_cast<double>(heap_tuples) *
+                params_.cpu_operator_cost *
+                std::min(1.0, tombstone_fraction);
+            heap_cpu_cost += tombstone_penalty;
+            appendFormulaTerm(cost,
+                              "run.lsm_tombstone_penalty",
+                              params_.cpu_operator_cost,
+                              static_cast<double>(heap_tuples) *
+                                  std::min(1.0, tombstone_fraction),
+                              tombstone_penalty,
+                              "cost");
+        }
+        if (ordered_family && prefix_selectivity > 0.0 &&
+            prefix_selectivity < 1.0)
+        {
+            const double prefix_gain =
+                index_cpu_cost *
+                std::min(0.20, (1.0 - prefix_selectivity) * 0.10);
+            index_cpu_cost -= prefix_gain;
+            appendFormulaTerm(cost,
+                              "run.prefix_selectivity_gain",
+                              -params_.cpu_index_tuple_cost,
+                              static_cast<double>(index_tuples) *
+                                  std::min(0.20,
+                                           (1.0 - prefix_selectivity) * 0.10),
+                              -prefix_gain,
+                              "cost");
+        }
         appendFormulaTerm(cost,
                           "run.heap_io",
                           effective_random_cost,

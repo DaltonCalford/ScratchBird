@@ -66445,6 +66445,12 @@ namespace scratchbird
                                      << " actual_rows=" << feedback.last_actual_rows
                                      << " error_ratio=" << feedback.estimation_error_ratio
                                      << " correction_factor=" << feedback.correction_factor
+                                     << " cost_reweight_factor="
+                                     << feedback.cost_reweight_factor
+                                     << " calibration_bundle_proposed="
+                                     << (feedback.calibration_bundle_proposed ? "true" : "false")
+                                     << " calibration_applied="
+                                     << (feedback.calibration_applied ? "true" : "false")
                                      << " replan_required="
                                      << (feedback.replan_required ? "true" : "false")
                                      << " stats_refresh_requested="
@@ -66454,6 +66460,16 @@ namespace scratchbird
                                 if (!feedback.last_plan_hash.empty())
                                 {
                                     line << " last_plan_hash=" << feedback.last_plan_hash;
+                                }
+                                if (!feedback.calibration_profile_id.empty())
+                                {
+                                    line << " calibration_profile_id="
+                                         << feedback.calibration_profile_id;
+                                }
+                                if (!feedback.calibration_profile_delta_id.empty())
+                                {
+                                    line << " calibration_profile_delta_id="
+                                         << feedback.calibration_profile_delta_id;
                                 }
                                 return line.str();
                             };
@@ -66473,6 +66489,12 @@ namespace scratchbird
                                      << summary.pruned_state_count
                                      << " pair_evaluations="
                                      << summary.pair_evaluation_count
+                                     << " retained_frontier_entries="
+                                     << summary.retained_frontier_entry_count
+                                     << " dominated_states="
+                                     << summary.dominated_state_count
+                                     << " max_frontier_width="
+                                     << summary.max_frontier_width
                                      << " rejected_candidates="
                                      << summary.rejected_candidate_count
                                      << " max_pair_evaluations="
@@ -66526,11 +66548,113 @@ namespace scratchbird
                                 line << " queryability_state="
                                      << optimizer::accessPathQueryabilityStateName(
                                             relation.queryability_state);
+                                if (!relation.native_trust_class.empty())
+                                {
+                                    line << " native_trust_class="
+                                         << relation.native_trust_class;
+                                }
+                                if (!relation.locator_granularity.empty())
+                                {
+                                    line << " locator_granularity="
+                                         << relation.locator_granularity;
+                                }
+                                if (!relation.family_capability_contract_id.empty())
+                                {
+                                    line << " family_capability_contract_id="
+                                         << relation.family_capability_contract_id;
+                                }
+                                if (!relation.publication_model.empty())
+                                {
+                                    line << " publication_model="
+                                         << relation.publication_model;
+                                }
+                                if (!relation.mga_certification_class.empty())
+                                {
+                                    line << " mga_certification_class="
+                                         << relation.mga_certification_class;
+                                }
+                                line << " supports_exact="
+                                     << (relation.supports_exact ? "true"
+                                                                 : "false");
+                                line << " supports_ordered_output="
+                                     << (relation.supports_ordered_output
+                                             ? "true"
+                                             : "false");
+                                line << " supports_covering_payload="
+                                     << (relation.supports_covering_payload
+                                             ? "true"
+                                             : "false");
+                                line << " supports_late_materialization="
+                                     << (relation.supports_late_materialization
+                                             ? "true"
+                                             : "false");
+                                line << " supports_bulk_filter="
+                                     << (relation.supports_bulk_filter
+                                             ? "true"
+                                             : "false");
+                                line << " supports_parallel_merge="
+                                     << (relation.supports_parallel_merge
+                                             ? "true"
+                                             : "false");
+                                line << " supports_specialized_collector_modes="
+                                     << (relation.supports_specialized_collector_modes
+                                             ? "true"
+                                             : "false");
+                                if (!relation.maintenance_state_class.empty())
+                                {
+                                    line << " maintenance_state_class="
+                                         << relation.maintenance_state_class;
+                                }
+                                if (!relation.pruning_granularity_class.empty())
+                                {
+                                    line << " pruning_granularity_class="
+                                         << relation.pruning_granularity_class;
+                                }
+                                if (!relation.projection_layout_id.empty())
+                                {
+                                    line << " projection_layout_id="
+                                         << relation.projection_layout_id;
+                                }
+                                if (!relation.storage_layer_shape.empty())
+                                {
+                                    line << " storage_layer_shape="
+                                         << relation.storage_layer_shape;
+                                }
+                                if (!relation.collector_specialization_id.empty())
+                                {
+                                    line << " collector_specialization_id="
+                                         << relation.collector_specialization_id;
+                                }
+                                if (!relation.clustered_lookup_shape.empty())
+                                {
+                                    line << " clustered_lookup_shape="
+                                         << relation.clustered_lookup_shape;
+                                }
                                 line << " coverage_fraction="
                                      << relation.coverage_fraction;
                                 if (relation.requires_recheck)
                                 {
                                     line << " requires_recheck=true";
+                                }
+                                if (relation.publish_lag_xids > 0)
+                                {
+                                    line << " publish_lag_xids="
+                                         << relation.publish_lag_xids;
+                                }
+                                if (relation.maintenance_backlog_ops > 0)
+                                {
+                                    line << " maintenance_backlog_ops="
+                                         << relation.maintenance_backlog_ops;
+                                }
+                                if (relation.reclaim_lag_xids > 0)
+                                {
+                                    line << " reclaim_lag_xids="
+                                         << relation.reclaim_lag_xids;
+                                }
+                                if (!relation.parallel_property_signature.empty())
+                                {
+                                    line << " parallel_property_signature="
+                                         << relation.parallel_property_signature;
                                 }
                                 if (relation.candidate_budget > 0)
                                 {
@@ -66634,7 +66758,11 @@ namespace scratchbird
                                     relation.parallel_enabled ||
                                     relation.parallel_workers_planned > 0 ||
                                     !relation.parallel_stage.empty() ||
-                                    !relation.parallel_rejection_reason.empty())
+                                    !relation.parallel_rejection_reason.empty() ||
+                                    !relation.parallel_distribution_mode.empty() ||
+                                    !relation.parallel_order_preservation.empty() ||
+                                    !relation.exchange_topology_id.empty() ||
+                                    !relation.gather_decision_reason.empty())
                                 {
                                     line << " parallel_eligible="
                                          << (relation.parallel_eligible ? "true"
@@ -66653,6 +66781,26 @@ namespace scratchbird
                                     {
                                         line << " parallel_reason="
                                              << relation.parallel_rejection_reason;
+                                    }
+                                    if (!relation.parallel_distribution_mode.empty())
+                                    {
+                                        line << " parallel_distribution_mode="
+                                             << relation.parallel_distribution_mode;
+                                    }
+                                    if (!relation.parallel_order_preservation.empty())
+                                    {
+                                        line << " parallel_order_preservation="
+                                             << relation.parallel_order_preservation;
+                                    }
+                                    if (!relation.exchange_topology_id.empty())
+                                    {
+                                        line << " exchange_topology_id="
+                                             << relation.exchange_topology_id;
+                                    }
+                                    if (!relation.gather_decision_reason.empty())
+                                    {
+                                        line << " gather_decision_reason="
+                                             << relation.gather_decision_reason;
                                     }
                                 }
                                 if (relation.actual_rows > 0 ||
@@ -66707,6 +66855,32 @@ namespace scratchbird
                                         line << step.method_enablers[i];
                                     }
                                 }
+                                if (step.ordered_output || step.order_complete ||
+                                    step.ordered_prefix_length > 0 ||
+                                    !step.ordering_class.empty())
+                                {
+                                    line << " ordering_class="
+                                         << (step.ordering_class.empty()
+                                                 ? "UNORDERED"
+                                                 : step.ordering_class)
+                                         << " ordered_output="
+                                         << (step.ordered_output ? "true"
+                                                                 : "false")
+                                         << " order_complete="
+                                         << (step.order_complete ? "true"
+                                                                 : "false")
+                                         << " ordered_prefix_length="
+                                         << step.ordered_prefix_length;
+                                }
+                                if (!step.merge_viability_source.empty())
+                                {
+                                    line << " merge_viability="
+                                         << step.merge_viability_source;
+                                }
+                                if (step.merge_enabled_by_explicit_sort)
+                                {
+                                    line << " merge_sort_enabled=true";
+                                }
                                 if (step.disconnected_component)
                                 {
                                     line << " disconnected_component=true";
@@ -66735,7 +66909,11 @@ namespace scratchbird
                                     step.parallel_enabled ||
                                     step.parallel_workers_planned > 0 ||
                                     !step.parallel_stage.empty() ||
-                                    !step.parallel_rejection_reason.empty())
+                                    !step.parallel_rejection_reason.empty() ||
+                                    !step.parallel_distribution_mode.empty() ||
+                                    !step.parallel_order_preservation.empty() ||
+                                    !step.exchange_topology_id.empty() ||
+                                    !step.gather_decision_reason.empty())
                                 {
                                     line << " parallel_eligible="
                                          << (step.parallel_eligible ? "true"
@@ -66754,6 +66932,26 @@ namespace scratchbird
                                     {
                                         line << " parallel_reason="
                                              << step.parallel_rejection_reason;
+                                    }
+                                    if (!step.parallel_distribution_mode.empty())
+                                    {
+                                        line << " parallel_distribution_mode="
+                                             << step.parallel_distribution_mode;
+                                    }
+                                    if (!step.parallel_order_preservation.empty())
+                                    {
+                                        line << " parallel_order_preservation="
+                                             << step.parallel_order_preservation;
+                                    }
+                                    if (!step.exchange_topology_id.empty())
+                                    {
+                                        line << " exchange_topology_id="
+                                             << step.exchange_topology_id;
+                                    }
+                                    if (!step.gather_decision_reason.empty())
+                                    {
+                                        line << " gather_decision_reason="
+                                             << step.gather_decision_reason;
                                     }
                                 }
                                 if (step.actual_rows > 0 ||
@@ -66885,8 +67083,12 @@ namespace scratchbird
                                     << (feedback.stats_refresh_requested ? "true" : "false")
                                     << ",\"stats_refresh_applied\":"
                                     << (feedback.stats_refresh_applied ? "true" : "false")
+                                    << ",\"calibration_bundle_proposed\":"
+                                    << (feedback.calibration_bundle_proposed ? "true" : "false")
                                     << ",\"correction_applied\":"
                                     << (feedback.correction_applied ? "true" : "false")
+                                    << ",\"calibration_applied\":"
+                                    << (feedback.calibration_applied ? "true" : "false")
                                     << ",\"observation_count\":"
                                     << feedback.observation_count
                                     << ",\"replan_action_count\":"
@@ -66899,8 +67101,18 @@ namespace scratchbird
                                     << feedback.estimation_error_ratio
                                     << ",\"correction_factor\":"
                                     << feedback.correction_factor
+                                    << ",\"cost_reweight_factor\":"
+                                    << feedback.cost_reweight_factor
+                                    << ",\"calibration_profile_version\":"
+                                    << feedback.calibration_profile_version
                                     << ",\"last_plan_hash\":\""
                                     << escape_json(feedback.last_plan_hash) << "\""
+                                    << ",\"calibration_profile_id\":\""
+                                    << escape_json(feedback.calibration_profile_id) << "\""
+                                    << ",\"calibration_profile_delta_id\":\""
+                                    << escape_json(feedback.calibration_profile_delta_id) << "\""
+                                    << ",\"calibration_evidence_id\":\""
+                                    << escape_json(feedback.calibration_evidence_id) << "\""
                                     << ",\"guardrail_reason\":\""
                                     << escape_json(feedback.guardrail_reason) << "\""
                                     << "}";
@@ -67113,6 +67325,12 @@ namespace scratchbird
                                     << summary.pruned_state_count
                                     << ",\"pair_evaluation_count\":"
                                     << summary.pair_evaluation_count
+                                    << ",\"retained_frontier_entry_count\":"
+                                    << summary.retained_frontier_entry_count
+                                    << ",\"dominated_state_count\":"
+                                    << summary.dominated_state_count
+                                    << ",\"max_frontier_width\":"
+                                    << summary.max_frontier_width
                                     << ",\"rejected_candidate_count\":"
                                     << summary.rejected_candidate_count
                                     << ",\"max_pair_evaluations\":"
@@ -67234,6 +67452,84 @@ namespace scratchbird
                                         << ",\"queryability_state_id\":"
                                         << static_cast<uint32_t>(
                                                entry.queryability_state)
+                                        << ",\"native_trust_class\":\""
+                                        << escape_json(entry.native_trust_class)
+                                        << "\""
+                                        << ",\"locator_granularity\":\""
+                                        << escape_json(entry.locator_granularity)
+                                        << "\""
+                                        << ",\"family_capability_contract_id\":\""
+                                        << escape_json(
+                                               entry.family_capability_contract_id)
+                                        << "\""
+                                        << ",\"publication_model\":\""
+                                        << escape_json(
+                                               entry.publication_model)
+                                        << "\""
+                                        << ",\"mga_certification_class\":\""
+                                        << escape_json(
+                                               entry.mga_certification_class)
+                                        << "\""
+                                        << ",\"supports_exact\":"
+                                        << (entry.supports_exact ? "true"
+                                                                 : "false")
+                                        << ",\"supports_ordered_output\":"
+                                        << (entry.supports_ordered_output
+                                                ? "true"
+                                                : "false")
+                                        << ",\"supports_covering_payload\":"
+                                        << (entry.supports_covering_payload
+                                                ? "true"
+                                                : "false")
+                                        << ",\"supports_late_materialization\":"
+                                        << (entry.supports_late_materialization
+                                                ? "true"
+                                                : "false")
+                                        << ",\"supports_bulk_filter\":"
+                                        << (entry.supports_bulk_filter
+                                                ? "true"
+                                                : "false")
+                                        << ",\"supports_parallel_merge\":"
+                                        << (entry.supports_parallel_merge
+                                                ? "true"
+                                                : "false")
+                                        << ",\"supports_specialized_collector_modes\":"
+                                        << (entry.supports_specialized_collector_modes
+                                                ? "true"
+                                                : "false")
+                                        << ",\"maintenance_state_class\":\""
+                                        << escape_json(
+                                               entry.maintenance_state_class)
+                                        << "\""
+                                        << ",\"publish_lag_xids\":"
+                                        << entry.publish_lag_xids
+                                        << ",\"maintenance_backlog_ops\":"
+                                        << entry.maintenance_backlog_ops
+                                        << ",\"reclaim_lag_xids\":"
+                                        << entry.reclaim_lag_xids
+                                        << ",\"pruning_granularity_class\":\""
+                                        << escape_json(
+                                               entry.pruning_granularity_class)
+                                        << "\""
+                                        << ",\"projection_layout_id\":\""
+                                        << escape_json(
+                                               entry.projection_layout_id)
+                                        << "\""
+                                        << ",\"storage_layer_shape\":\""
+                                        << escape_json(entry.storage_layer_shape)
+                                        << "\""
+                                        << ",\"collector_specialization_id\":\""
+                                        << escape_json(
+                                               entry.collector_specialization_id)
+                                        << "\""
+                                        << ",\"clustered_lookup_shape\":\""
+                                        << escape_json(
+                                               entry.clustered_lookup_shape)
+                                        << "\""
+                                        << ",\"parallel_property_signature\":\""
+                                        << escape_json(
+                                               entry.parallel_property_signature)
+                                        << "\""
                                         << ",\"lateral\":"
                                         << (entry.lateral ? "true" : "false")
                                         << ",\"parameterized\":"
@@ -67379,6 +67675,20 @@ namespace scratchbird
                                         << escape_json(
                                                entry.parallel_rejection_reason)
                                         << "\""
+                                        << ",\"parallel_distribution_mode\":\""
+                                        << escape_json(
+                                               entry.parallel_distribution_mode)
+                                        << "\""
+                                        << ",\"parallel_order_preservation\":\""
+                                        << escape_json(
+                                               entry.parallel_order_preservation)
+                                        << "\""
+                                        << ",\"exchange_topology_id\":\""
+                                        << escape_json(entry.exchange_topology_id)
+                                        << "\""
+                                        << ",\"gather_decision_reason\":\""
+                                        << escape_json(entry.gather_decision_reason)
+                                        << "\""
                                         << "}";
                                 }
                                 out << "]";
@@ -67443,6 +67753,22 @@ namespace scratchbird
                                             << "\"";
                                     }
                                     out << "]"
+                                        << ",\"ordered_output\":"
+                                        << (entry.ordered_output ? "true" : "false")
+                                        << ",\"order_complete\":"
+                                        << (entry.order_complete ? "true" : "false")
+                                        << ",\"ordered_prefix_length\":"
+                                        << entry.ordered_prefix_length
+                                        << ",\"ordering_class\":\""
+                                        << escape_json(entry.ordering_class)
+                                        << "\""
+                                        << ",\"merge_enabled_by_explicit_sort\":"
+                                        << (entry.merge_enabled_by_explicit_sort
+                                                ? "true"
+                                                : "false")
+                                        << ",\"merge_viability_source\":\""
+                                        << escape_json(entry.merge_viability_source)
+                                        << "\""
                                         << ",\"disconnected_component\":"
                                         << (entry.disconnected_component ? "true" : "false")
                                         << ",\"reorderable\":"
@@ -67552,6 +67878,20 @@ namespace scratchbird
                                         << escape_json(
                                                entry.parallel_rejection_reason)
                                         << "\""
+                                        << ",\"parallel_distribution_mode\":\""
+                                        << escape_json(
+                                               entry.parallel_distribution_mode)
+                                        << "\""
+                                        << ",\"parallel_order_preservation\":\""
+                                        << escape_json(
+                                               entry.parallel_order_preservation)
+                                        << "\""
+                                        << ",\"exchange_topology_id\":\""
+                                        << escape_json(entry.exchange_topology_id)
+                                        << "\""
+                                        << ",\"gather_decision_reason\":\""
+                                        << escape_json(entry.gather_decision_reason)
+                                        << "\""
                                         << "}";
                                 }
                                 out << "]";
@@ -67618,8 +67958,12 @@ namespace scratchbird
                                     << (feedback.stats_refresh_requested ? "true" : "false")
                                     << "\" stats_refresh_applied=\""
                                     << (feedback.stats_refresh_applied ? "true" : "false")
+                                    << "\" calibration_bundle_proposed=\""
+                                    << (feedback.calibration_bundle_proposed ? "true" : "false")
                                     << "\" correction_applied=\""
                                     << (feedback.correction_applied ? "true" : "false")
+                                    << "\" calibration_applied=\""
+                                    << (feedback.calibration_applied ? "true" : "false")
                                     << "\" observation_count=\""
                                     << feedback.observation_count
                                     << "\" replan_action_count=\""
@@ -67632,8 +67976,18 @@ namespace scratchbird
                                     << feedback.estimation_error_ratio
                                     << "\" correction_factor=\""
                                     << feedback.correction_factor
+                                    << "\" cost_reweight_factor=\""
+                                    << feedback.cost_reweight_factor
+                                    << "\" calibration_profile_version=\""
+                                    << feedback.calibration_profile_version
                                     << "\" last_plan_hash=\""
                                     << escape_xml(feedback.last_plan_hash)
+                                    << "\" calibration_profile_id=\""
+                                    << escape_xml(feedback.calibration_profile_id)
+                                    << "\" calibration_profile_delta_id=\""
+                                    << escape_xml(feedback.calibration_profile_delta_id)
+                                    << "\" calibration_evidence_id=\""
+                                    << escape_xml(feedback.calibration_evidence_id)
                                     << "\" guardrail_reason=\""
                                     << escape_xml(feedback.guardrail_reason) << "\"/>";
                             };
@@ -67795,8 +68149,12 @@ namespace scratchbird
                                     << (feedback.stats_refresh_requested ? "true" : "false") << "\n"
                                     << "  stats_refresh_applied: "
                                     << (feedback.stats_refresh_applied ? "true" : "false") << "\n"
+                                    << "  calibration_bundle_proposed: "
+                                    << (feedback.calibration_bundle_proposed ? "true" : "false") << "\n"
                                     << "  correction_applied: "
                                     << (feedback.correction_applied ? "true" : "false") << "\n"
+                                    << "  calibration_applied: "
+                                    << (feedback.calibration_applied ? "true" : "false") << "\n"
                                     << "  observation_count: "
                                     << feedback.observation_count << "\n"
                                     << "  replan_action_count: "
@@ -67809,8 +68167,18 @@ namespace scratchbird
                                     << feedback.estimation_error_ratio << "\n"
                                     << "  correction_factor: "
                                     << feedback.correction_factor << "\n"
+                                    << "  cost_reweight_factor: "
+                                    << feedback.cost_reweight_factor << "\n"
+                                    << "  calibration_profile_version: "
+                                    << feedback.calibration_profile_version << "\n"
                                     << "  last_plan_hash: \""
                                     << escape_json(feedback.last_plan_hash) << "\"\n"
+                                    << "  calibration_profile_id: \""
+                                    << escape_json(feedback.calibration_profile_id) << "\"\n"
+                                    << "  calibration_profile_delta_id: \""
+                                    << escape_json(feedback.calibration_profile_delta_id) << "\"\n"
+                                    << "  calibration_evidence_id: \""
+                                    << escape_json(feedback.calibration_evidence_id) << "\"\n"
                                     << "  guardrail_reason: \""
                                     << escape_json(feedback.guardrail_reason) << "\"\n";
                             };
@@ -68037,15 +68405,214 @@ namespace scratchbird
                                                                runtime_plan.join_graph_contract_id)});
                             }
                             if (has_runtime_plan &&
+                                !runtime_plan.join_search_contract_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar("Join Search Contract: " +
+                                                               runtime_plan.join_search_contract_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.join_search_property_signature_contract_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Join Search Property Contract: " +
+                                    runtime_plan.join_search_property_signature_contract_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.base_candidate_bundle_contract_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Base Candidate Bundle Contract: " +
+                                    runtime_plan.base_candidate_bundle_contract_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.base_candidate_bundle_owner_pass_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Base Candidate Bundle Owner: " +
+                                    runtime_plan.base_candidate_bundle_owner_pass_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.base_candidate_bundle_consumer_pass_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Base Candidate Bundle Consumer: " +
+                                    runtime_plan.base_candidate_bundle_consumer_pass_id)});
+                            }
+                            if (has_runtime_plan)
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    std::string("Base Candidate Bundle Frozen: ") +
+                                    (runtime_plan.base_candidate_bundle_frozen
+                                         ? "true"
+                                         : "false"))});
+                            }
+                            if (has_runtime_plan &&
+                                runtime_plan.base_candidate_bundle_rejection_count != 0)
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Base Candidate Bundle Rejections: " +
+                                    std::to_string(
+                                        runtime_plan
+                                            .base_candidate_bundle_rejection_count))});
+                            }
+                            if (has_runtime_plan &&
                                 !runtime_plan.diagnostics_contract_id.empty())
                             {
                                 rs->addRow({Value::makeVarchar("Diagnostics Contract: " +
                                                                runtime_plan.diagnostics_contract_id)});
                             }
+                            if (has_runtime_plan &&
+                                !runtime_plan.planner_front_door_contract_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Planner Front Door Contract: " +
+                                    runtime_plan.planner_front_door_contract_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.normalized_request_digest.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Request Digest: " +
+                                    runtime_plan.normalized_request_digest)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.statement_kind.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Statement Kind: " +
+                                    runtime_plan.statement_kind)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.normalized_statement_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Normalized Statement Id: " +
+                                    runtime_plan.normalized_statement_id)});
+                            }
                             if (has_runtime_plan && !runtime_plan.cache_mode.empty())
                             {
                                 rs->addRow({Value::makeVarchar("Cache Mode: " +
                                                                runtime_plan.cache_mode)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.chosen_reuse_mode.empty())
+                            {
+                                rs->addRow({Value::makeVarchar("Reuse Mode: " +
+                                                               runtime_plan.chosen_reuse_mode)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.storage_layer_shape.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Storage Layer Shape: " +
+                                    runtime_plan.storage_layer_shape)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.publication_state_summary.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Publication State Summary: " +
+                                    runtime_plan.publication_state_summary)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.collector_specialization_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Collector Specialization: " +
+                                    runtime_plan.collector_specialization_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.continuation_token_contract.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Continuation Token Contract: " +
+                                    runtime_plan.continuation_token_contract)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.rewrite_before_search_contract_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Rewrite Before Search Contract: " +
+                                    runtime_plan.rewrite_before_search_contract_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.rewrite_before_search_owner_pass_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Rewrite Before Search Owner: " +
+                                    runtime_plan.rewrite_before_search_owner_pass_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.rewrite_before_search_terminal_pass_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Rewrite Before Search Terminal Pass: " +
+                                    runtime_plan.rewrite_before_search_terminal_pass_id)});
+                            }
+                            if (has_runtime_plan)
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    std::string("Rewrite Before Search Frozen: ") +
+                                    (runtime_plan.rewrite_before_search_frozen
+                                         ? "true"
+                                         : "false"))});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.tagging_contract_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Tagging Contract: " +
+                                    runtime_plan.tagging_contract_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.tagging_owner_pass_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Tagging Owner: " +
+                                    runtime_plan.tagging_owner_pass_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.join_search_owner_pass_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Join Search Owner: " +
+                                    runtime_plan.join_search_owner_pass_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.result_shape_finalize_pass_id.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Result Shape Finalize Pass: " +
+                                    runtime_plan.result_shape_finalize_pass_id)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.execution_intent_class.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Execution Intent: " +
+                                    runtime_plan.execution_intent_class)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.join_search_frontier_mode.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Join Search Frontier Mode: " +
+                                    runtime_plan.join_search_frontier_mode)});
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.join_search_mode_source.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Join Search Mode Source: " +
+                                    runtime_plan.join_search_mode_source)});
+                            }
+                            if (has_runtime_plan &&
+                                runtime_plan.join_search_base_candidate_count != 0)
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Join Search Base Candidates: " +
+                                    std::to_string(
+                                        runtime_plan.join_search_base_candidate_count))});
                             }
                             if (has_runtime_plan &&
                                 !runtime_plan.plan_profile_signature.empty())
@@ -68172,6 +68739,39 @@ namespace scratchbird
                                         "  " + formatAdvisorRecommendationLine(entry))});
                                 }
                             }
+                            if (has_runtime_plan &&
+                                !runtime_plan.invalidation_dependencies.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Invalidation Dependencies:")});
+                                for (const auto& entry :
+                                     runtime_plan.invalidation_dependencies)
+                                {
+                                    rs->addRow({Value::makeVarchar("  " + entry)});
+                                }
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.compatibility_version_identifiers.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Compatibility Versions:")});
+                                for (const auto& entry :
+                                     runtime_plan.compatibility_version_identifiers)
+                                {
+                                    rs->addRow({Value::makeVarchar("  " + entry)});
+                                }
+                            }
+                            if (has_runtime_plan &&
+                                !runtime_plan.fallback_and_rejection_stream.empty())
+                            {
+                                rs->addRow({Value::makeVarchar(
+                                    "Fallback and Rejection Stream:")});
+                                for (const auto& entry :
+                                     runtime_plan.fallback_and_rejection_stream)
+                                {
+                                    rs->addRow({Value::makeVarchar("  " + entry)});
+                                }
+                            }
                             if (analyze)
                             {
                                 rs->addRow({Value::makeVarchar("Actual Rows: " +
@@ -68208,8 +68808,135 @@ namespace scratchbird
                             {
                                 formatted << ",\"runtime_plan_contract\":\""
                                           << escape_json(runtime_plan.contract_id) << "\"";
+                                formatted << ",\"join_search_contract\":\""
+                                          << escape_json(
+                                                 runtime_plan.join_search_contract_id)
+                                          << "\"";
+                                formatted
+                                    << ",\"join_search_property_signature_contract\":\""
+                                    << escape_json(
+                                           runtime_plan
+                                               .join_search_property_signature_contract_id)
+                                    << "\"";
+                                formatted << ",\"base_candidate_bundle_contract\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .base_candidate_bundle_contract_id)
+                                          << "\"";
+                                formatted << ",\"base_candidate_bundle_owner\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .base_candidate_bundle_owner_pass_id)
+                                          << "\"";
+                                formatted << ",\"base_candidate_bundle_consumer\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .base_candidate_bundle_consumer_pass_id)
+                                          << "\"";
+                                formatted << ",\"base_candidate_bundle_frozen\":"
+                                          << (runtime_plan.base_candidate_bundle_frozen
+                                                  ? "true"
+                                                  : "false");
+                                formatted
+                                    << ",\"base_candidate_bundle_rejection_count\":"
+                                    << runtime_plan
+                                           .base_candidate_bundle_rejection_count;
+                                formatted << ",\"join_search_frontier_mode\":\""
+                                          << escape_json(
+                                                 runtime_plan.join_search_frontier_mode)
+                                          << "\"";
+                                formatted << ",\"join_search_mode_source\":\""
+                                          << escape_json(
+                                                 runtime_plan.join_search_mode_source)
+                                          << "\"";
+                                formatted << ",\"join_search_base_candidate_count\":"
+                                          << runtime_plan.join_search_base_candidate_count;
+                                formatted << ",\"planner_front_door_contract\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .planner_front_door_contract_id)
+                                          << "\"";
+                                formatted << ",\"normalized_request_digest\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .normalized_request_digest)
+                                          << "\"";
+                                formatted << ",\"statement_kind\":\""
+                                          << escape_json(runtime_plan.statement_kind)
+                                          << "\"";
+                                formatted << ",\"normalized_statement_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .normalized_statement_id)
+                                          << "\"";
                                 formatted << ",\"cache_mode\":\""
                                           << escape_json(runtime_plan.cache_mode) << "\"";
+                                formatted << ",\"chosen_reuse_mode\":\""
+                                          << escape_json(
+                                                 runtime_plan.chosen_reuse_mode)
+                                          << "\"";
+                                formatted << ",\"storage_layer_shape\":\""
+                                          << escape_json(
+                                                 runtime_plan.storage_layer_shape)
+                                          << "\"";
+                                formatted << ",\"publication_state_summary\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .publication_state_summary)
+                                          << "\"";
+                                formatted << ",\"collector_specialization_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .collector_specialization_id)
+                                          << "\"";
+                                formatted << ",\"continuation_token_contract\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .continuation_token_contract)
+                                          << "\"";
+                                formatted << ",\"rewrite_before_search_contract_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .rewrite_before_search_contract_id)
+                                          << "\"";
+                                formatted << ",\"rewrite_before_search_owner_pass_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .rewrite_before_search_owner_pass_id)
+                                          << "\"";
+                                formatted << ",\"rewrite_before_search_terminal_pass_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .rewrite_before_search_terminal_pass_id)
+                                          << "\"";
+                                formatted << ",\"rewrite_before_search_frozen\":"
+                                          << (runtime_plan.rewrite_before_search_frozen
+                                                  ? "true"
+                                                  : "false");
+                                formatted << ",\"tagging_contract_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .tagging_contract_id)
+                                          << "\"";
+                                formatted << ",\"tagging_owner_pass_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .tagging_owner_pass_id)
+                                          << "\"";
+                                formatted << ",\"join_search_owner_pass_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .join_search_owner_pass_id)
+                                          << "\"";
+                                formatted << ",\"result_shape_finalize_pass_id\":\""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .result_shape_finalize_pass_id)
+                                          << "\"";
+                                formatted << ",\"execution_intent_class\":\""
+                                          << escape_json(
+                                                 runtime_plan.execution_intent_class)
+                                          << "\"";
                                 formatted << ",\"plan_profile_signature\":\""
                                           << escape_json(runtime_plan.plan_profile_signature)
                                           << "\"";
@@ -68277,6 +69004,49 @@ namespace scratchbird
                                 appendAdvisorRecommendationsJson(
                                     runtime_plan.advisor_recommendations,
                                     formatted);
+                                formatted << ",\"invalidation_dependencies\":[";
+                                for (size_t i = 0;
+                                     i < runtime_plan.invalidation_dependencies.size();
+                                     ++i)
+                                {
+                                    if (i > 0) formatted << ",";
+                                    formatted << "\""
+                                              << escape_json(
+                                                     runtime_plan
+                                                         .invalidation_dependencies[i])
+                                              << "\"";
+                                }
+                                formatted << "]";
+                                formatted
+                                    << ",\"compatibility_version_identifiers\":[";
+                                for (size_t i = 0;
+                                     i < runtime_plan
+                                             .compatibility_version_identifiers.size();
+                                     ++i)
+                                {
+                                    if (i > 0) formatted << ",";
+                                    formatted << "\""
+                                              << escape_json(
+                                                     runtime_plan
+                                                         .compatibility_version_identifiers[i])
+                                              << "\"";
+                                }
+                                formatted << "]";
+                                formatted
+                                    << ",\"fallback_and_rejection_stream\":[";
+                                for (size_t i = 0;
+                                     i < runtime_plan
+                                             .fallback_and_rejection_stream.size();
+                                     ++i)
+                                {
+                                    if (i > 0) formatted << ",";
+                                    formatted << "\""
+                                              << escape_json(
+                                                     runtime_plan
+                                                         .fallback_and_rejection_stream[i])
+                                              << "\"";
+                                }
+                                formatted << "]";
                                 formatted << "}";
                             }
                             if (analyze)
@@ -68314,6 +69084,68 @@ namespace scratchbird
                             {
                                 formatted << "<optimizer_trace cache_mode=\""
                                           << escape_xml(runtime_plan.cache_mode)
+                                          << "\" reuse_mode=\""
+                                          << escape_xml(
+                                                 runtime_plan.chosen_reuse_mode)
+                                          << "\" join_search_contract=\""
+                                          << escape_xml(
+                                                 runtime_plan.join_search_contract_id)
+                                          << "\" join_search_frontier_mode=\""
+                                          << escape_xml(
+                                                 runtime_plan.join_search_frontier_mode)
+                                          << "\" statement_kind=\""
+                                          << escape_xml(runtime_plan.statement_kind)
+                                          << "\" request_digest=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .normalized_request_digest)
+                                          << "\" storage_layer_shape=\""
+                                          << escape_xml(
+                                                 runtime_plan.storage_layer_shape)
+                                          << "\" publication_state_summary=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .publication_state_summary)
+                                          << "\" collector_specialization_id=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .collector_specialization_id)
+                                          << "\" continuation_token_contract=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .continuation_token_contract)
+                                          << "\" rewrite_before_search_contract_id=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .rewrite_before_search_contract_id)
+                                          << "\" rewrite_before_search_owner_pass_id=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .rewrite_before_search_owner_pass_id)
+                                          << "\" rewrite_before_search_terminal_pass_id=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .rewrite_before_search_terminal_pass_id)
+                                          << "\" rewrite_before_search_frozen=\""
+                                          << (runtime_plan.rewrite_before_search_frozen
+                                                  ? "true"
+                                                  : "false")
+                                          << "\" tagging_contract_id=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .tagging_contract_id)
+                                          << "\" tagging_owner_pass_id=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .tagging_owner_pass_id)
+                                          << "\" join_search_owner_pass_id=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .join_search_owner_pass_id)
+                                          << "\" result_shape_finalize_pass_id=\""
+                                          << escape_xml(
+                                                 runtime_plan
+                                                     .result_shape_finalize_pass_id)
                                           << "\" plan_profile_signature=\""
                                           << escape_xml(
                                                  runtime_plan.plan_profile_signature)
@@ -68396,6 +69228,124 @@ namespace scratchbird
                             {
                                 formatted << "cache_mode: \""
                                           << escape_json(runtime_plan.cache_mode) << "\"\n";
+                                formatted << "chosen_reuse_mode: \""
+                                          << escape_json(
+                                                 runtime_plan.chosen_reuse_mode)
+                                          << "\"\n";
+                                formatted << "base_candidate_bundle_contract: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .base_candidate_bundle_contract_id)
+                                          << "\"\n";
+                                formatted << "base_candidate_bundle_owner: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .base_candidate_bundle_owner_pass_id)
+                                          << "\"\n";
+                                formatted << "base_candidate_bundle_consumer: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .base_candidate_bundle_consumer_pass_id)
+                                          << "\"\n";
+                                formatted << "base_candidate_bundle_frozen: "
+                                          << (runtime_plan.base_candidate_bundle_frozen
+                                                  ? "true"
+                                                  : "false")
+                                          << "\n";
+                                formatted
+                                    << "base_candidate_bundle_rejection_count: "
+                                    << runtime_plan
+                                           .base_candidate_bundle_rejection_count
+                                    << "\n";
+                                formatted << "join_search_contract: \""
+                                          << escape_json(
+                                                 runtime_plan.join_search_contract_id)
+                                          << "\"\n";
+                                formatted
+                                    << "join_search_property_signature_contract: \""
+                                    << escape_json(
+                                           runtime_plan
+                                               .join_search_property_signature_contract_id)
+                                    << "\"\n";
+                                formatted << "join_search_frontier_mode: \""
+                                          << escape_json(
+                                                 runtime_plan.join_search_frontier_mode)
+                                          << "\"\n";
+                                formatted << "join_search_mode_source: \""
+                                          << escape_json(
+                                                 runtime_plan.join_search_mode_source)
+                                          << "\"\n";
+                                formatted << "join_search_base_candidate_count: "
+                                          << runtime_plan.join_search_base_candidate_count
+                                          << "\n";
+                                formatted << "statement_kind: \""
+                                          << escape_json(
+                                                 runtime_plan.statement_kind)
+                                          << "\"\n";
+                                formatted << "normalized_request_digest: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .normalized_request_digest)
+                                          << "\"\n";
+                                formatted << "storage_layer_shape: \""
+                                          << escape_json(
+                                                 runtime_plan.storage_layer_shape)
+                                          << "\"\n";
+                                formatted << "publication_state_summary: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .publication_state_summary)
+                                          << "\"\n";
+                                formatted << "collector_specialization_id: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .collector_specialization_id)
+                                          << "\"\n";
+                                formatted << "continuation_token_contract: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .continuation_token_contract)
+                                          << "\"\n";
+                                formatted << "rewrite_before_search_contract_id: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .rewrite_before_search_contract_id)
+                                          << "\"\n";
+                                formatted << "rewrite_before_search_owner_pass_id: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .rewrite_before_search_owner_pass_id)
+                                          << "\"\n";
+                                formatted << "rewrite_before_search_terminal_pass_id: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .rewrite_before_search_terminal_pass_id)
+                                          << "\"\n";
+                                formatted << "rewrite_before_search_frozen: "
+                                          << (runtime_plan.rewrite_before_search_frozen
+                                                  ? "true"
+                                                  : "false")
+                                          << "\n";
+                                formatted << "tagging_contract_id: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .tagging_contract_id)
+                                          << "\"\n";
+                                formatted << "tagging_owner_pass_id: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .tagging_owner_pass_id)
+                                          << "\"\n";
+                                formatted << "join_search_owner_pass_id: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .join_search_owner_pass_id)
+                                          << "\"\n";
+                                formatted << "result_shape_finalize_pass_id: \""
+                                          << escape_json(
+                                                 runtime_plan
+                                                     .result_shape_finalize_pass_id)
+                                          << "\"\n";
                                 formatted << "plan_profile_signature: \""
                                           << escape_json(
                                                  runtime_plan.plan_profile_signature)

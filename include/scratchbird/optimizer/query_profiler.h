@@ -79,13 +79,19 @@ struct CardinalityFeedbackSignal {
     bool replan_suppressed = false;
     bool stats_refresh_requested = false;
     bool stats_refresh_applied = false;
+    bool calibration_bundle_proposed = false;
     uint64_t last_estimated_rows = 0;
     uint64_t last_actual_rows = 0;
     double estimation_error_ratio = 1.0;
     double correction_factor = 1.0;
+    double cost_reweight_factor = 1.0;
     uint64_t observation_count = 0;
     uint64_t replan_action_count = 0;
+    uint32_t calibration_profile_version = 0;
     std::string last_plan_hash;
+    std::string calibration_profile_id;
+    std::string calibration_profile_delta_id;
+    std::string calibration_evidence_id;
     std::string guardrail_reason;
 };
 
@@ -351,6 +357,7 @@ private:
     {
         CardinalityFeedbackSignal signal;
         uint64_t last_consumed_observation = 0;
+        uint32_t calibration_bundle_version = 0;
         std::unordered_map<std::string, uint64_t> replan_actions_by_plan_hash;
     };
     std::unordered_map<std::string, CardinalityFeedbackState> cardinality_feedback_;

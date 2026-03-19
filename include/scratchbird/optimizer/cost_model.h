@@ -57,6 +57,19 @@ namespace scratchbird::optimizer
         double calibrated_dead_fraction = 0.0;       // Dead or stale entry fraction
         double calibrated_false_positive_ratio = 0.0; // Family false positive or lossy ratio
         double calibrated_visibility_tuple_cost = 0.0; // Per-row MGA visibility overhead
+        double calibrated_avg_range_pages_per_row = 0.0; // Range pages touched per candidate row
+        double calibrated_prefix_selectivity = 0.0; // Ordered-prefix selectivity
+        double calibrated_skip_group_count = 0.0; // Skip-scan restart group count
+        double calibrated_prefetchable_page_fraction = 0.0; // Prefetch or multi-range gain
+        double calibrated_secondary_lookup_fraction = 0.0; // Secondary-to-row-fetch fraction
+        double calibrated_cluster_locality_gain_est = 0.0; // MRR or clustered locality gain
+        double calibrated_early_stop_gain_est = 0.0; // Early termination gain
+        double calibrated_overflow_chain_depth = 0.0; // Hash overflow depth
+        double calibrated_run_count = 0.0; // LSM run count
+        double calibrated_level_count = 0.0; // LSM level count
+        double calibrated_tombstone_fraction = 0.0; // LSM tombstone share
+        double calibrated_l0_run_count = 0.0; // LSM L0 run count
+        double calibrated_sort_avoidance_gain_est = 0.0; // Ordered-read sort avoidance gain
 
         // Parallelism (future use)
         double parallel_setup_cost = 1000.0;  // Cost of starting parallel workers
@@ -112,6 +125,19 @@ namespace scratchbird::optimizer
         double duplicate_density = 0.0;
         double avg_probe_pages = 0.0;
         double false_positive_ratio = 0.0;
+        double avg_range_pages_per_row = 0.0;
+        double prefix_selectivity = 0.0;
+        double skip_group_count = 0.0;
+        double prefetchable_page_fraction = 0.0;
+        double secondary_lookup_fraction = 0.0;
+        double cluster_locality_gain_est = 0.0;
+        double early_stop_gain_est = 0.0;
+        double overflow_chain_depth = 0.0;
+        double run_count = 0.0;
+        double level_count = 0.0;
+        double tombstone_fraction = 0.0;
+        double l0_run_count = 0.0;
+        double sort_avoidance_gain_est = 0.0;
     };
 
     auto deriveIndexFamilyFormulaProfile(

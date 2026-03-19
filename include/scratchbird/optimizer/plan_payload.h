@@ -5,14 +5,21 @@
 #include <string>
 #include <vector>
 
+#include "scratchbird/optimizer/join_ordering.h"
 #include "scratchbird/optimizer/path.h"
 
 namespace scratchbird::optimizer
 {
 
-    inline constexpr uint32_t kRuntimePlanPayloadVersion = 11;
-    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v12";
+    inline constexpr uint32_t kRuntimePlanPayloadVersion = 20;
+    inline constexpr const char *kRuntimePlanContractId = "sb_runtime_plan/v21";
+    inline constexpr const char *kRewriteBeforeSearchContractId =
+        "sb_rewrite_before_search/v1";
+    inline constexpr const char *kAccessPathTaggingContractId =
+        "sb_access_path_tagging/v1";
     inline constexpr const char *kJoinGraphContractId = "sb_join_graph/v1";
+    inline constexpr const char *kPlannerFrontDoorContractId =
+        "sb_planner_front_door/v1";
     inline constexpr const char *kOptimizerDiagnosticsContractId =
         "sb_optimizer_diagnostics/v1";
 
@@ -36,6 +43,7 @@ namespace scratchbird::optimizer
         std::string table_id_text;
         std::string scan_kind;
         std::string scan_family;
+        std::string physical_family;
         std::string path_name;
         PlannerAccessFamily scan_family_kind = PlannerAccessFamily::UNKNOWN;
         uint32_t taxonomy_version = kPlannerFamilyTaxonomyVersion;
@@ -45,6 +53,8 @@ namespace scratchbird::optimizer
         std::vector<std::string> candidate_family_statistics_signatures;
         AccessPathExactnessClass exactness_class = AccessPathExactnessClass::UNKNOWN;
         bool requires_recheck = false;
+        std::string mga_family_visibility_state;
+        std::string mga_recheck_contract_id;
         double coverage_fraction = 0.0;
         uint64_t candidate_budget = 0;
         AccessPathVisibilityEnforcement visibility_enforcement =
@@ -53,6 +63,32 @@ namespace scratchbird::optimizer
         std::string metrics_confidence_class;
         AccessPathQueryabilityState queryability_state =
             AccessPathQueryabilityState::UNKNOWN;
+        std::string native_trust_class;
+        std::string locator_granularity;
+        std::string family_capability_contract_id;
+        std::string publication_model;
+        std::string mga_certification_class;
+        bool supports_exact = false;
+        bool supports_ordered_output = false;
+        bool supports_covering_payload = false;
+        bool supports_late_materialization = false;
+        bool supports_bulk_filter = false;
+        bool supports_parallel_merge = false;
+        bool supports_specialized_collector_modes = false;
+        std::string maintenance_state_class;
+        uint64_t publish_lag_xids = 0;
+        uint64_t maintenance_backlog_ops = 0;
+        uint64_t reclaim_lag_xids = 0;
+        std::string pruning_granularity_class;
+        std::string projection_layout_id;
+        std::string storage_layer_shape;
+        std::string collector_specialization_id;
+        std::string clustered_lookup_shape;
+        std::string parallel_property_signature;
+        std::string parallel_distribution_mode;
+        std::string parallel_order_preservation;
+        std::string exchange_topology_id;
+        std::string gather_decision_reason;
         std::string index_name;
         std::string index_id_text;
         RuntimePlanIndexPredicate index_predicate;
@@ -93,6 +129,11 @@ namespace scratchbird::optimizer
         std::string formula_profile_id;
         uint32_t formula_profile_version = 0;
         std::string calibration_profile_id;
+        std::string candidate_bundle_contract_id;
+        std::string candidate_bundle_owner_pass_id;
+        uint64_t candidate_bundle_candidate_count = 0;
+        bool candidate_bundle_frozen = false;
+        std::vector<std::string> rejected_composition_reasons;
         uint64_t actual_rows = 0;
         uint64_t rows_examined = 0;
         uint64_t rows_filtered = 0;
@@ -127,6 +168,9 @@ namespace scratchbird::optimizer
         uint64_t considered_state_count = 0;
         uint64_t pruned_state_count = 0;
         uint64_t pair_evaluation_count = 0;
+        uint64_t retained_frontier_entry_count = 0;
+        uint64_t dominated_state_count = 0;
+        uint64_t max_frontier_width = 0;
         uint64_t rejected_candidate_count = 0;
         uint64_t max_pair_evaluations = 0;
         uint64_t max_states_considered = 0;
@@ -182,6 +226,12 @@ namespace scratchbird::optimizer
         RuntimePlanMergeKey right_merge_key;
         bool merge_outer_presorted = false;
         bool merge_inner_presorted = false;
+        bool merge_enabled_by_explicit_sort = false;
+        std::string merge_viability_source;
+        bool ordered_output = false;
+        bool order_complete = false;
+        uint64_t ordered_prefix_length = 0;
+        std::string ordering_class;
         double selectivity = 1.0;
         double startup_cost = 0.0;
         double total_cost = 0.0;
@@ -197,6 +247,10 @@ namespace scratchbird::optimizer
         uint32_t parallel_workers_planned = 0;
         std::string parallel_stage;
         std::string parallel_rejection_reason;
+        std::string parallel_distribution_mode;
+        std::string parallel_order_preservation;
+        std::string exchange_topology_id;
+        std::string gather_decision_reason;
         uint64_t actual_rows = 0;
         uint64_t rows_examined = 0;
         uint64_t rows_filtered = 0;
@@ -237,14 +291,21 @@ namespace scratchbird::optimizer
         bool replan_suppressed = false;
         bool stats_refresh_requested = false;
         bool stats_refresh_applied = false;
+        bool calibration_bundle_proposed = false;
         bool correction_applied = false;
+        bool calibration_applied = false;
         uint64_t observation_count = 0;
         uint64_t replan_action_count = 0;
         uint64_t last_estimated_rows = 0;
         uint64_t last_actual_rows = 0;
         double estimation_error_ratio = 1.0;
         double correction_factor = 1.0;
+        double cost_reweight_factor = 1.0;
+        uint32_t calibration_profile_version = 0;
         std::string last_plan_hash;
+        std::string calibration_profile_id;
+        std::string calibration_profile_delta_id;
+        std::string calibration_evidence_id;
         std::string guardrail_reason;
     };
 
@@ -364,16 +425,55 @@ namespace scratchbird::optimizer
         uint32_t version = kRuntimePlanPayloadVersion;
         std::string contract_id = kRuntimePlanContractId;
         std::string join_graph_contract_id = kJoinGraphContractId;
+        std::string join_search_contract_id = kJoinSearchContractId;
+        std::string join_search_property_signature_contract_id =
+            kJoinSearchPropertySignatureContractId;
+        std::string join_search_frontier_mode = kJoinSearchFrontierMode;
+        std::string join_search_mode_source;
+        std::string base_candidate_bundle_contract_id;
+        std::string base_candidate_bundle_owner_pass_id;
+        std::string base_candidate_bundle_consumer_pass_id;
+        bool base_candidate_bundle_frozen = false;
+        uint64_t base_candidate_bundle_rejection_count = 0;
+        std::string planner_front_door_contract_id =
+            kPlannerFrontDoorContractId;
         std::string diagnostics_contract_id = kOptimizerDiagnosticsContractId;
+        uint32_t planner_status_code = 0;
         std::string plan_hash;
         std::string explain_text;
+        std::string normalized_request_digest;
+        std::string normalized_statement_id;
+        std::string statement_kind;
         std::string cache_mode;
+        std::string chosen_reuse_mode;
         std::string plan_profile_signature;
         std::string index_family_signature;
         std::string family_statistics_signature;
         std::string selectivity_bucket_signature;
         std::string query_feedback_key;
+        std::string storage_layer_shape = "ROW_STORE_MGA";
+        std::string publication_state_summary;
+        std::string collector_specialization_id;
+        std::string execution_intent_class;
+        std::string continuation_token_contract;
+        std::string rewrite_before_search_contract_id =
+            kRewriteBeforeSearchContractId;
+        std::string rewrite_before_search_owner_pass_id =
+            "P01_SEMANTIC_NORMALIZE";
+        std::string rewrite_before_search_terminal_pass_id =
+            "P07_FILTER_PUSH_DOWN";
+        bool rewrite_before_search_frozen = false;
+        std::string tagging_contract_id = kAccessPathTaggingContractId;
+        std::string tagging_owner_pass_id = "P08_ACCESS_PATH_ANNOTATE";
+        std::string join_search_owner_pass_id = "P09_JOIN_ORDER_PLAN";
+        std::string result_shape_finalize_pass_id =
+            "P10_RESULT_SHAPE_FINALIZE";
+        std::string diagnostics_payload_json;
         bool parameter_sensitive = false;
+        uint64_t join_search_base_candidate_count = 0;
+        std::vector<std::string> invalidation_dependencies;
+        std::vector<std::string> compatibility_version_identifiers;
+        std::vector<std::string> fallback_and_rejection_stream;
         RuntimePlanSearchSummary search_summary;
         RuntimePlanNode root;
         std::vector<RuntimePlanRelation> relations;

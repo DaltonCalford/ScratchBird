@@ -604,6 +604,10 @@ namespace scratchbird::sblr::detail
                 {
                     profile << '@' << node.formula_profile_version;
                 }
+                if (!node.calibration_profile_id.empty())
+                {
+                    profile << ':' << node.calibration_profile_id;
+                }
                 profiles.insert(profile.str());
             }
             for (const auto &child : node.children)
@@ -674,7 +678,65 @@ namespace scratchbird::sblr::detail
             root.attributes.push_back(
                 optimizer::PlanHashAttribute::makeString("cache_mode", plan.cache_mode));
             root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "chosen_reuse_mode", plan.chosen_reuse_mode));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "join_search_contract_id", plan.join_search_contract_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "join_search_frontier_mode", plan.join_search_frontier_mode));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "join_search_mode_source", plan.join_search_mode_source));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "base_candidate_bundle_contract_id",
+                plan.base_candidate_bundle_contract_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "base_candidate_bundle_owner_pass_id",
+                plan.base_candidate_bundle_owner_pass_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "base_candidate_bundle_consumer_pass_id",
+                plan.base_candidate_bundle_consumer_pass_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
+                "base_candidate_bundle_rejection_count",
+                plan.base_candidate_bundle_rejection_count));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
                 "plan_profile_signature", plan.plan_profile_signature));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "normalized_request_digest", plan.normalized_request_digest));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "execution_intent_class", plan.execution_intent_class));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "storage_layer_shape", plan.storage_layer_shape));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "publication_state_summary", plan.publication_state_summary));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "collector_specialization_id",
+                plan.collector_specialization_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "continuation_token_contract",
+                plan.continuation_token_contract));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "rewrite_before_search_contract_id",
+                plan.rewrite_before_search_contract_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "rewrite_before_search_owner_pass_id",
+                plan.rewrite_before_search_owner_pass_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "rewrite_before_search_terminal_pass_id",
+                plan.rewrite_before_search_terminal_pass_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeBool(
+                "rewrite_before_search_frozen",
+                plan.rewrite_before_search_frozen));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "tagging_contract_id",
+                plan.tagging_contract_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "tagging_owner_pass_id",
+                plan.tagging_owner_pass_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "join_search_owner_pass_id",
+                plan.join_search_owner_pass_id));
+            root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
+                "result_shape_finalize_pass_id",
+                plan.result_shape_finalize_pass_id));
             root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
                 "index_family_signature", plan.index_family_signature));
             root.attributes.push_back(optimizer::PlanHashAttribute::makeString(
@@ -708,6 +770,30 @@ namespace scratchbird::sblr::detail
                     optimizer::PlanHashAttribute::makeU64(
                         "family_metrics_version",
                         relation.family_metrics_version));
+                relation_node.attributes.push_back(
+                    optimizer::PlanHashAttribute::makeString(
+                        "pruning_granularity_class",
+                        relation.pruning_granularity_class));
+                relation_node.attributes.push_back(
+                    optimizer::PlanHashAttribute::makeString(
+                        "projection_layout_id",
+                        relation.projection_layout_id));
+                relation_node.attributes.push_back(
+                    optimizer::PlanHashAttribute::makeString(
+                        "storage_layer_shape",
+                        relation.storage_layer_shape));
+                relation_node.attributes.push_back(
+                    optimizer::PlanHashAttribute::makeString(
+                        "collector_specialization_id",
+                        relation.collector_specialization_id));
+                relation_node.attributes.push_back(
+                    optimizer::PlanHashAttribute::makeString(
+                        "clustered_lookup_shape",
+                        relation.clustered_lookup_shape));
+                relation_node.attributes.push_back(
+                    optimizer::PlanHashAttribute::makeString(
+                        "parallel_property_signature",
+                        relation.parallel_property_signature));
                 relation_node.attributes.push_back(optimizer::PlanHashAttribute::makeU64(
                     "estimated_rows", relation.estimated_rows));
                 root.children.push_back(std::move(relation_node));
@@ -1041,19 +1127,49 @@ namespace scratchbird::sblr::detail
             optimizer::QueryPlanner planner(db,
                                             optimizer::CostModel(),
                                             db != nullptr ? db->statistics_manager() : nullptr);
-            optimizer::PlannedSelectQuery planned;
             core::ErrorContext plan_ctx;
             const optimizer::ParameterBindings *planner_parameter_bindings =
                 plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM
                     ? parameter_bindings
                     : nullptr;
-            const auto status = planner.buildSelectPlan(select_stmt,
-                                                       pool,
-                                                       planned,
-                                                       &plan_ctx,
-                                                       core::ConnectionContext::getCurrent(),
-                                                       current_schema_id,
-                                                       planner_parameter_bindings);
+            const auto *conn = core::ConnectionContext::getCurrent();
+            optimizer::StatementPlanRequest plan_request;
+            plan_request.statement_kind =
+                optimizer::PlannerStatementKind::SELECT;
+            plan_request.normalized_statement_id =
+                query_feedback_key.empty()
+                    ? std::string("SBLR_SELECT")
+                    : query_feedback_key;
+            plan_request.normalized_statement_payload = select_stmt;
+            plan_request.string_pool = &pool;
+            plan_request.string_pool_snapshot_id = "parser_v3/live";
+            plan_request.parameter_bindings = planner_parameter_bindings;
+            plan_request.current_schema_id = current_schema_id;
+            plan_request.security_snapshot_id =
+                conn != nullptr
+                    ? std::to_string(conn->policyEpochGlobal())
+                    : std::string();
+            plan_request.planner_policy_snapshot_id =
+                conn != nullptr
+                    ? conn->dialect_tag()
+                    : std::string();
+            plan_request.cache_mode =
+                plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM
+                    ? "CUSTOM"
+                    : "GENERIC";
+            plan_request.reuse_mode =
+                plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM
+                    ? "PARAMETER_SENSITIVE"
+                    : "GENERIC_REUSE";
+            plan_request.collector_specialization_request = "SBLR_SELECT";
+            plan_request.execution_intent_class = "EXECUTE";
+
+            optimizer::StatementPlanResult plan_result;
+            const auto status = planner.planStatement(plan_request,
+                                                      plan_result,
+                                                      &plan_ctx,
+                                                      const_cast<core::ConnectionContext *>(
+                                                          conn));
             if (status != core::Status::OK)
             {
                 if (status == core::Status::INVALID_ARGUMENT ||
@@ -1070,6 +1186,8 @@ namespace scratchbird::sblr::detail
                 return true;
             }
 
+            optimizer::PlannedSelectQuery planned =
+                std::move(plan_result.planned_select);
             planned.runtime_plan.cache_mode =
                 plan_profile_mode == QueryCompilerV3PlanProfileMode::CUSTOM
                     ? "CUSTOM"
@@ -1268,13 +1386,22 @@ namespace scratchbird::sblr::detail
             feedback.replan_suppressed = signal.replan_suppressed;
             feedback.stats_refresh_requested = signal.stats_refresh_requested;
             feedback.stats_refresh_applied = signal.stats_refresh_applied;
+            feedback.calibration_bundle_proposed =
+                signal.calibration_bundle_proposed;
             feedback.observation_count = signal.observation_count;
             feedback.replan_action_count = signal.replan_action_count;
             feedback.last_estimated_rows = signal.last_estimated_rows;
             feedback.last_actual_rows = signal.last_actual_rows;
             feedback.estimation_error_ratio = signal.estimation_error_ratio;
             feedback.correction_factor = signal.correction_factor;
+            feedback.cost_reweight_factor = signal.cost_reweight_factor;
+            feedback.calibration_profile_version =
+                signal.calibration_profile_version;
             feedback.last_plan_hash = signal.last_plan_hash;
+            feedback.calibration_profile_id = signal.calibration_profile_id;
+            feedback.calibration_profile_delta_id =
+                signal.calibration_profile_delta_id;
+            feedback.calibration_evidence_id = signal.calibration_evidence_id;
             feedback.guardrail_reason = signal.guardrail_reason;
             return feedback;
         }
@@ -1288,6 +1415,14 @@ namespace scratchbird::sblr::detail
                    << ", actual_rows=" << signal.last_actual_rows
                    << ", error_ratio=" << signal.estimation_error_ratio
                    << ", correction_factor=" << signal.correction_factor
+                   << ", cost_reweight_factor=" << signal.cost_reweight_factor
+                   << ", calibration_bundle_proposed="
+                   << (signal.calibration_bundle_proposed ? "true" : "false")
+                   << ", calibration_profile_id=" << signal.calibration_profile_id
+                   << ", calibration_profile_delta_id="
+                   << signal.calibration_profile_delta_id
+                   << ", calibration_evidence_id="
+                   << signal.calibration_evidence_id
                    << ", replan_required=" << (signal.replan_required ? "true" : "false")
                    << ", replan_suppressed="
                    << (signal.replan_suppressed ? "true" : "false")
@@ -1323,7 +1458,8 @@ namespace scratchbird::sblr::detail
             auto is_adaptive_source =
                 [](const optimizer::RuntimePlanStatisticsProvenance &entry) {
                     return entry.source == "ADAPTIVE_CARDINALITY_FEEDBACK" ||
-                           entry.source == "ADAPTIVE_CARDINALITY_CORRECTION";
+                           entry.source == "ADAPTIVE_CARDINALITY_CORRECTION" ||
+                           entry.source == "ADAPTIVE_COST_CALIBRATION";
                 };
             plan.statistics_provenance.erase(
                 std::remove_if(plan.statistics_provenance.begin(),
@@ -1346,11 +1482,22 @@ namespace scratchbird::sblr::detail
                                plan.rejected_paths.end(),
                                is_adaptive_phase),
                 plan.rejected_paths.end());
+            plan.optimizer_controls.erase(
+                std::remove_if(
+                    plan.optimizer_controls.begin(),
+                    plan.optimizer_controls.end(),
+                    [](const optimizer::RuntimePlanControlEntry &entry) {
+                        return entry.name == "ADAPTIVE_CALIBRATION_PROFILE" ||
+                               entry.name == "ADAPTIVE_CALIBRATION_DELTA" ||
+                               entry.name == "ADAPTIVE_CALIBRATION_EVIDENCE";
+                    }),
+                plan.optimizer_controls.end());
         }
 
         auto applyAdaptiveEstimateCorrection(
             optimizer::RuntimePlan &plan,
-            const optimizer::CardinalityFeedbackSignal &signal) -> bool
+            const optimizer::CardinalityFeedbackSignal &signal,
+            bool record_provenance = true) -> bool
         {
             if (!signal.available || signal.estimation_error_ratio <= 1.0 ||
                 signal.last_actual_rows == 0)
@@ -1405,7 +1552,7 @@ namespace scratchbird::sblr::detail
             }
 
             const bool changed = plan.root.estimated_rows != original_root_rows;
-            if (changed)
+            if (changed && record_provenance)
             {
                 std::ostringstream detail;
                 detail << "correction_factor=" << correction_factor
@@ -1420,6 +1567,194 @@ namespace scratchbird::sblr::detail
             return changed;
         }
 
+        auto applyAdaptiveCostCalibration(
+            optimizer::RuntimePlan &plan,
+            const optimizer::CardinalityFeedbackSignal &signal,
+            bool record_provenance = true) -> bool
+        {
+            if (!signal.available ||
+                !signal.calibration_bundle_proposed ||
+                signal.calibration_profile_id.empty())
+            {
+                return false;
+            }
+
+            const double factor =
+                std::clamp(signal.cost_reweight_factor, 0.5, 2.0);
+            const bool costs_change = std::abs(factor - 1.0) >= 0.0001;
+            bool changed = false;
+
+            auto upsert_input =
+                [](std::vector<optimizer::RuntimePlanCostInputEstimate> &inputs,
+                   const std::string &name,
+                   double value,
+                   const std::string &unit) {
+                    for (auto &entry : inputs)
+                    {
+                        if (entry.name == name)
+                        {
+                            entry.value = value;
+                            entry.unit = unit;
+                            return;
+                        }
+                    }
+                    inputs.push_back(
+                        optimizer::RuntimePlanCostInputEstimate{name, value, unit});
+                };
+
+            auto upsert_term =
+                [](std::vector<optimizer::RuntimePlanCostTerm> &terms,
+                   const std::string &name,
+                   double coefficient,
+                   double input_value,
+                   double contribution,
+                   const std::string &unit) {
+                    for (auto &entry : terms)
+                    {
+                        if (entry.name == name)
+                        {
+                            entry.coefficient = coefficient;
+                            entry.input_value = input_value;
+                            entry.contribution = contribution;
+                            entry.unit = unit;
+                            return;
+                        }
+                    }
+                    terms.push_back(optimizer::RuntimePlanCostTerm{
+                        name,
+                        coefficient,
+                        input_value,
+                        contribution,
+                        unit});
+                };
+
+            auto apply_profile =
+                [&](double &startup_cost,
+                    double &total_cost,
+                    std::string &calibration_profile_id) -> double {
+                    const double previous_total = total_cost;
+                    const double previous_startup = startup_cost;
+                    if (costs_change)
+                    {
+                        startup_cost *= factor;
+                        total_cost *= factor;
+                    }
+                    if (calibration_profile_id != signal.calibration_profile_id)
+                    {
+                        calibration_profile_id = signal.calibration_profile_id;
+                        changed = true;
+                    }
+                    if (costs_change &&
+                        (std::abs(total_cost - previous_total) >= 0.0001 ||
+                         std::abs(startup_cost - previous_startup) >= 0.0001))
+                    {
+                        changed = true;
+                    }
+                    return previous_total;
+                };
+
+            auto apply_to_node =
+                [&](auto &&self, optimizer::RuntimePlanNode &node) -> void {
+                    const double previous_total =
+                        apply_profile(node.startup_cost,
+                                      node.total_cost,
+                                      node.calibration_profile_id);
+                    upsert_input(node.input_estimates,
+                                 "adaptive_cost_reweight_factor",
+                                 factor,
+                                 "ratio");
+                    upsert_input(node.input_estimates,
+                                 "adaptive_feedback_error_ratio",
+                                 signal.estimation_error_ratio,
+                                 "ratio");
+                    upsert_term(node.expanded_cost_terms,
+                                "adaptive_feedback_multiplier",
+                                factor,
+                                previous_total,
+                                node.total_cost - previous_total,
+                                "cost");
+                    for (auto &child : node.children)
+                    {
+                        self(self, child);
+                    }
+                };
+
+            apply_to_node(apply_to_node, plan.root);
+            for (auto &relation : plan.relations)
+            {
+                apply_profile(relation.startup_cost,
+                              relation.total_cost,
+                              relation.calibration_profile_id);
+            }
+            std::string join_calibration_profile_id =
+                !plan.root.calibration_profile_id.empty()
+                    ? plan.root.calibration_profile_id
+                    : plan.adaptive_feedback.calibration_profile_id;
+            for (auto &join : plan.join_steps)
+            {
+                apply_profile(join.startup_cost,
+                              join.total_cost,
+                              join_calibration_profile_id);
+            }
+            for (auto &entry : plan.considered_paths)
+            {
+                if (costs_change)
+                {
+                    entry.startup_cost *= factor;
+                    entry.total_cost *= factor;
+                    changed = true;
+                }
+            }
+            for (auto &entry : plan.rejected_paths)
+            {
+                if (costs_change)
+                {
+                    entry.startup_cost *= factor;
+                    entry.total_cost *= factor;
+                    changed = true;
+                }
+            }
+
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "ADAPTIVE_CALIBRATION_PROFILE",
+                                     signal.calibration_profile_id,
+                                     "RUNTIME_FEEDBACK");
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "ADAPTIVE_CALIBRATION_DELTA",
+                                     signal.calibration_profile_delta_id,
+                                     "RUNTIME_FEEDBACK");
+            upsertRuntimePlanControl(plan.optimizer_controls,
+                                     "ADAPTIVE_CALIBRATION_EVIDENCE",
+                                     signal.calibration_evidence_id,
+                                     "RUNTIME_FEEDBACK");
+
+            if (changed && record_provenance)
+            {
+                std::ostringstream detail;
+                detail << "profile=" << signal.calibration_profile_id
+                       << ", delta=" << signal.calibration_profile_delta_id
+                       << ", evidence=" << signal.calibration_evidence_id
+                       << ", factor=" << factor;
+                plan.statistics_provenance.push_back(
+                    optimizer::RuntimePlanStatisticsProvenance{
+                        "query",
+                        "ADAPTIVE_COST_CALIBRATION",
+                        detail.str()});
+                plan.considered_paths.push_back(
+                    optimizer::RuntimePlanTraceEntry{
+                        "ADAPTIVE_REPLAN",
+                        "query",
+                        "COST_CALIBRATION_BUNDLE",
+                        "APPLIED",
+                        detail.str(),
+                        plan.root.startup_cost,
+                        plan.root.total_cost,
+                        plan.root.estimated_rows});
+            }
+
+            return changed;
+        }
+
         auto annotateAdaptiveFeedback(
             optimizer::RuntimePlan &plan,
             const std::optional<optimizer::CardinalityFeedbackSignal> &signal,
@@ -1430,9 +1765,19 @@ namespace scratchbird::sblr::detail
                 return;
             }
 
+            const bool correction_already_applied =
+                plan.adaptive_feedback.correction_applied;
+            const bool calibration_already_applied =
+                plan.adaptive_feedback.calibration_applied;
             plan.adaptive_feedback = toRuntimeAdaptiveFeedback(*signal);
             plan.adaptive_feedback.correction_applied =
-                applyAdaptiveEstimateCorrection(plan, *signal);
+                correction_already_applied
+                    ? true
+                    : applyAdaptiveEstimateCorrection(plan, *signal);
+            plan.adaptive_feedback.calibration_applied =
+                calibration_already_applied
+                    ? true
+                    : applyAdaptiveCostCalibration(plan, *signal);
             plan.statistics_provenance.push_back(
                 optimizer::RuntimePlanStatisticsProvenance{
                     "query",
@@ -1982,6 +2327,23 @@ namespace scratchbird::sblr::detail
             if (!plan_ok)
             {
                 return false;
+            }
+
+            const auto adaptive_feedback =
+                optimizer::QueryProfiler::getInstance().latestCardinalityFeedback(
+                    query_feedback_key);
+            if (adaptive_feedback.has_value())
+            {
+                variant_out.runtime_plan.adaptive_feedback =
+                    toRuntimeAdaptiveFeedback(*adaptive_feedback);
+                variant_out.runtime_plan.adaptive_feedback.correction_applied =
+                    applyAdaptiveEstimateCorrection(variant_out.runtime_plan,
+                                                   *adaptive_feedback,
+                                                   false);
+                variant_out.runtime_plan.adaptive_feedback.calibration_applied =
+                    applyAdaptiveCostCalibration(variant_out.runtime_plan,
+                                                *adaptive_feedback,
+                                                false);
             }
 
             variant_out.stats_snapshot_signature =

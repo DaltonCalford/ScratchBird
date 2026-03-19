@@ -19,6 +19,7 @@
 #include "scratchbird/optimizer/query_profiler.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 
@@ -140,6 +141,23 @@ auto correctionFactor(uint64_t estimated_rows, uint64_t actual_rows) -> double {
         return actual_rows == 0 ? 1.0 : static_cast<double>(actual_rows);
     }
     return static_cast<double>(actual_rows) / static_cast<double>(estimated_rows);
+}
+
+auto boundedCostReweightFactor(double correction_factor,
+                               uint64_t observation_count,
+                               const CardinalityFeedbackPolicy& policy) -> double {
+    if (!std::isfinite(correction_factor) || correction_factor <= 0.0) {
+        return 1.0;
+    }
+
+    const double bounded_correction = std::clamp(correction_factor, 0.5, 2.0);
+    const double stability_denominator =
+        static_cast<double>(std::max<uint64_t>(1, policy.min_observations * 2));
+    const double stability =
+        std::clamp(static_cast<double>(observation_count) / stability_denominator,
+                   0.25,
+                   1.0);
+    return std::clamp(1.0 + ((bounded_correction - 1.0) * stability), 0.5, 2.0);
 }
 
 } // namespace
@@ -775,10 +793,16 @@ CardinalityFeedbackSignal QueryProfiler::recordCardinalityFeedback(
     signal.last_actual_rows = actual_rows;
     signal.estimation_error_ratio = estimationErrorRatio(estimated_rows, actual_rows);
     signal.correction_factor = correctionFactor(estimated_rows, actual_rows);
+    signal.cost_reweight_factor = 1.0;
     signal.observation_count += 1;
     signal.last_plan_hash = std::string(plan_hash);
     signal.stats_refresh_applied = false;
     signal.replan_suppressed = false;
+    signal.calibration_bundle_proposed = false;
+    signal.calibration_profile_version = 0;
+    signal.calibration_profile_id.clear();
+    signal.calibration_profile_delta_id.clear();
+    signal.calibration_evidence_id.clear();
     signal.guardrail_reason.clear();
 
     const bool mismatch_exceeds_threshold =
@@ -804,6 +828,26 @@ CardinalityFeedbackSignal QueryProfiler::recordCardinalityFeedback(
         signal.observation_count > state.last_consumed_observation;
     signal.replan_required = mismatch_exceeds_threshold && can_replan;
     signal.stats_refresh_requested = signal.replan_required;
+    if (signal.replan_required)
+    {
+        state.calibration_bundle_version =
+            std::max<uint32_t>(1, state.calibration_bundle_version + 1);
+        signal.calibration_bundle_proposed = true;
+        signal.calibration_profile_version = state.calibration_bundle_version;
+        signal.calibration_profile_id =
+            "sb_cost_calibration/runtime_feedback/" + std::string(feedback_key) +
+            "/v" + std::to_string(signal.calibration_profile_version);
+        signal.calibration_profile_delta_id =
+            signal.calibration_profile_id + "/delta/" +
+            std::to_string(signal.observation_count);
+        signal.calibration_evidence_id =
+            "sb_runtime_feedback/" + std::string(feedback_key) +
+            "/obs/" + std::to_string(signal.observation_count);
+        signal.cost_reweight_factor =
+            boundedCostReweightFactor(signal.correction_factor,
+                                      signal.observation_count,
+                                      cardinality_feedback_policy_);
+    }
     if (mismatch_exceeds_threshold &&
         cardinality_feedback_policy_.enabled &&
         signal.observation_count >= cardinality_feedback_policy_.min_observations &&
@@ -846,6 +890,12 @@ std::optional<CardinalityFeedbackSignal> QueryProfiler::acknowledgeCardinalityFe
         state.signal.replan_required = false;
         state.signal.stats_refresh_requested = false;
         state.signal.stats_refresh_applied = stats_refresh_applied;
+        state.signal.calibration_bundle_proposed = false;
+        state.signal.calibration_profile_version = 0;
+        state.signal.calibration_profile_id.clear();
+        state.signal.calibration_profile_delta_id.clear();
+        state.signal.calibration_evidence_id.clear();
+        state.signal.cost_reweight_factor = 1.0;
         state.signal.replan_action_count += 1;
         if (!state.signal.last_plan_hash.empty())
         {

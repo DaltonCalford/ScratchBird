@@ -42,9 +42,151 @@ namespace scratchbird::optimizer
             core::ID right_column_id{};
         };
 
+        auto clampSelectivity(double value) -> double
+        {
+            return std::max(0.0, std::min(1.0, value));
+        }
+
         auto isZeroId(const core::ID &id) -> bool
         {
             return id == core::ID{};
+        }
+
+        auto matchesForeignKeyJoin(core::Database *db,
+                                   const core::ID &left_table_id,
+                                   const core::ID &right_table_id,
+                                   const std::vector<JoinEqualityColumnPair> &join_pairs,
+                                   core::CatalogManager::ForeignKeyInfo &matched_fk,
+                                   bool &left_is_child,
+                                   core::ErrorContext *ctx) -> bool
+        {
+            if (db == nullptr || db->catalog_manager() == nullptr || join_pairs.empty())
+            {
+                return false;
+            }
+
+            std::vector<core::CatalogManager::ColumnInfo> left_columns;
+            std::vector<core::CatalogManager::ColumnInfo> right_columns;
+            if (db->catalog_manager()->getColumns(left_table_id, left_columns, ctx) !=
+                    core::Status::OK ||
+                db->catalog_manager()->getColumns(right_table_id, right_columns, ctx) !=
+                    core::Status::OK)
+            {
+                return false;
+            }
+
+            const auto resolve_column_name =
+                [](const std::vector<core::CatalogManager::ColumnInfo> &columns,
+                   const core::ID &column_id,
+                   std::string &column_name) -> bool {
+                    for (const auto &column : columns)
+                    {
+                        if (column.column_id == column_id)
+                        {
+                            column_name = column.column_name;
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+            const auto relation_matches =
+                [&](const core::CatalogManager::ForeignKeyInfo &fk,
+                    bool child_on_left) -> bool {
+                    if (!fk.is_enabled ||
+                        fk.child_columns.size() != join_pairs.size() ||
+                        fk.parent_columns.size() != join_pairs.size())
+                    {
+                        return false;
+                    }
+
+                    std::vector<bool> consumed(join_pairs.size(), false);
+                    for (size_t fk_index = 0; fk_index < fk.child_columns.size(); ++fk_index)
+                    {
+                        bool matched = false;
+                        for (size_t pair_index = 0; pair_index < join_pairs.size(); ++pair_index)
+                        {
+                            if (consumed[pair_index])
+                            {
+                                continue;
+                            }
+
+                            std::string child_name;
+                            std::string parent_name;
+                            const bool resolved =
+                                child_on_left
+                                    ? (resolve_column_name(left_columns,
+                                                           join_pairs[pair_index].left_column_id,
+                                                           child_name) &&
+                                       resolve_column_name(right_columns,
+                                                           join_pairs[pair_index].right_column_id,
+                                                           parent_name))
+                                    : (resolve_column_name(right_columns,
+                                                           join_pairs[pair_index].right_column_id,
+                                                           child_name) &&
+                                       resolve_column_name(left_columns,
+                                                           join_pairs[pair_index].left_column_id,
+                                                           parent_name));
+                            if (!resolved)
+                            {
+                                continue;
+                            }
+
+                            if (core::IdentifierUtils::namesMatch(child_name,
+                                                                  false,
+                                                                  fk.child_columns[fk_index],
+                                                                  false) &&
+                                core::IdentifierUtils::namesMatch(parent_name,
+                                                                  false,
+                                                                  fk.parent_columns[fk_index],
+                                                                  false))
+                            {
+                                consumed[pair_index] = true;
+                                matched = true;
+                                break;
+                            }
+                        }
+
+                        if (!matched)
+                        {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                };
+
+            std::vector<core::CatalogManager::ForeignKeyInfo> foreign_keys;
+            if (db->catalog_manager()->getForeignKeysForTable(left_table_id, foreign_keys, ctx) ==
+                core::Status::OK)
+            {
+                for (const auto &fk : foreign_keys)
+                {
+                    if (fk.parent_table_id == right_table_id && relation_matches(fk, true))
+                    {
+                        matched_fk = fk;
+                        left_is_child = true;
+                        return true;
+                    }
+                }
+            }
+
+            foreign_keys.clear();
+            if (db->catalog_manager()->getForeignKeysForTable(right_table_id, foreign_keys, ctx) ==
+                core::Status::OK)
+            {
+                for (const auto &fk : foreign_keys)
+                {
+                    if (fk.parent_table_id == left_table_id && relation_matches(fk, false))
+                    {
+                        matched_fk = fk;
+                        left_is_child = false;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
         auto unwrapCasts(const parser::v3::Expression *expr) -> const parser::v3::Expression *
@@ -82,6 +224,28 @@ namespace scratchbird::optimizer
                 --end;
             }
             return std::string(text.substr(start, end - start));
+        }
+
+        auto ltrimAsciiCopy(std::string_view text) -> std::string
+        {
+            size_t start = 0;
+            while (start < text.size() &&
+                   std::isspace(static_cast<unsigned char>(text[start])) != 0)
+            {
+                ++start;
+            }
+            return std::string(text.substr(start));
+        }
+
+        auto rtrimAsciiCopy(std::string_view text) -> std::string
+        {
+            size_t end = text.size();
+            while (end > 0 &&
+                   std::isspace(static_cast<unsigned char>(text[end - 1])) != 0)
+            {
+                --end;
+            }
+            return std::string(text.substr(0, end));
         }
 
         auto parseBoolText(std::string_view text, bool &value_out) -> bool
@@ -707,8 +871,9 @@ namespace scratchbird::optimizer
             return true;
         }
 
-        auto expressionStatsKey(const parser::v3::Expression *expr,
-                                const parser::v3::StringPool *pool) -> std::optional<std::string>
+        auto expressionStatsDescriptor(const parser::v3::Expression *expr,
+                                       const parser::v3::StringPool *pool)
+            -> std::optional<ExpressionStatsDescriptor>
         {
             const auto *current = unwrapCasts(expr);
             if (current == nullptr || pool == nullptr ||
@@ -735,18 +900,12 @@ namespace scratchbird::optimizer
                 return std::nullopt;
             }
 
-            const std::string func_name =
-                core::IdentifierUtils::toUpper(
-                    std::string(pool->get(func->function_path.components.back())));
-            if (func_name != "LOWER" && func_name != "UPPER")
-            {
-                return std::nullopt;
-            }
-
             const std::string column_name =
                 core::IdentifierUtils::toUpper(
                     std::string(pool->get(column_ref->column.column_name)));
-            return func_name + "(" + column_name + ")";
+            return buildExpressionStatsDescriptor(
+                pool->get(func->function_path.components.back()),
+                column_name);
         }
 
         auto resolveColumnRef(core::Database *db,
@@ -828,24 +987,49 @@ namespace scratchbird::optimizer
             return false;
         }
 
-        auto canonicalizeLiteralForExpression(std::string literal, const std::string &expression_key)
-            -> std::string
+        auto normalizeLiteralForExpression(std::vector<uint8_t> &literal,
+                                           const ExpressionStatsDescriptor &descriptor)
+            -> bool
         {
-            if (expression_key.rfind("LOWER(", 0) == 0)
+            if (literal.empty())
             {
-                std::transform(literal.begin(),
-                               literal.end(),
-                               literal.begin(),
-                               [](unsigned char ch) {
-                                   return static_cast<char>(std::tolower(ch));
-                               });
-                return literal;
+                return true;
             }
-            if (expression_key.rfind("UPPER(", 0) == 0)
+
+            std::string text;
+            if (!decodeLengthPrefixedString(literal, text))
             {
-                return core::IdentifierUtils::toUpper(literal);
+                return false;
             }
-            return literal;
+
+            switch (descriptor.function)
+            {
+                case ExpressionStatsFunction::LOWER:
+                    std::transform(text.begin(),
+                                   text.end(),
+                                   text.begin(),
+                                   [](unsigned char ch) {
+                                       return static_cast<char>(std::tolower(ch));
+                                   });
+                    break;
+                case ExpressionStatsFunction::UPPER:
+                    text = core::IdentifierUtils::toUpper(text);
+                    break;
+                case ExpressionStatsFunction::TRIM:
+                    text = trimAsciiCopy(text);
+                    break;
+                case ExpressionStatsFunction::LTRIM:
+                    text = ltrimAsciiCopy(text);
+                    break;
+                case ExpressionStatsFunction::RTRIM:
+                    text = rtrimAsciiCopy(text);
+                    break;
+                case ExpressionStatsFunction::UNKNOWN:
+                default:
+                    break;
+            }
+            encodeLengthPrefixedBytes(text, literal);
+            return true;
         }
 
         auto resolveEqualityPredicateTerm(core::Database *db,
@@ -1018,6 +1202,24 @@ namespace scratchbird::optimizer
                 if (dependency.determinant_column_ids.size() != 1 ||
                     dependency.dependent_column_ids.size() != 1)
                 {
+                    const bool forward =
+                        std::find(dependency.determinant_column_ids.begin(),
+                                  dependency.determinant_column_ids.end(),
+                                  first_column_id) != dependency.determinant_column_ids.end() &&
+                        std::find(dependency.dependent_column_ids.begin(),
+                                  dependency.dependent_column_ids.end(),
+                                  second_column_id) != dependency.dependent_column_ids.end();
+                    const bool reverse =
+                        std::find(dependency.determinant_column_ids.begin(),
+                                  dependency.determinant_column_ids.end(),
+                                  second_column_id) != dependency.determinant_column_ids.end() &&
+                        std::find(dependency.dependent_column_ids.begin(),
+                                  dependency.dependent_column_ids.end(),
+                                  first_column_id) != dependency.dependent_column_ids.end();
+                    if (forward || reverse)
+                    {
+                        strength = std::max(strength, dependency.strength);
+                    }
                     continue;
                 }
 
@@ -1178,6 +1380,57 @@ namespace scratchbird::optimizer
 
             return std::max(0.0, std::min(1.0, overlap + unseen));
         }
+
+        auto multivariateEqualitySelectivity(const MultivariateStatistics &stats,
+                                             const std::vector<core::ID> &requested_columns,
+                                             const std::vector<std::vector<uint8_t>> &requested_values,
+                                             const std::vector<double> &individual_selectivities)
+            -> std::optional<double>
+        {
+            if (stats.ndistinct.num_distinct == 0 && stats.mcv_list.empty())
+            {
+                return std::nullopt;
+            }
+
+            std::vector<std::vector<uint8_t>> ordered_values;
+            if (!reorderMultivariateValues(requested_columns,
+                                           requested_values,
+                                           stats.column_ids,
+                                           ordered_values))
+            {
+                return std::nullopt;
+            }
+
+            for (const auto &entry : stats.mcv_list)
+            {
+                if (valuesMatch(entry.values, ordered_values))
+                {
+                    return clampSelectivity(static_cast<double>(entry.frequency));
+                }
+            }
+
+            if (stats.ndistinct.num_distinct > 0 &&
+                stats.ndistinct.num_distinct <= stats.mcv_list.size())
+            {
+                return 0.0;
+            }
+
+            double selectivity = averageRemainingFrequency(stats);
+            if (stats.ndistinct.num_distinct > 0)
+            {
+                selectivity = std::max(
+                    selectivity,
+                    1.0 / static_cast<double>(stats.ndistinct.num_distinct));
+            }
+
+            double upper_bound = 1.0;
+            for (double term_selectivity : individual_selectivities)
+            {
+                upper_bound = std::min(upper_bound, term_selectivity);
+            }
+
+            return clampSelectivity(std::min(upper_bound, selectivity));
+        }
     } // namespace
 
     auto SelectivityEstimator::hasSampledRefresh(const core::ID &table_id) const -> bool
@@ -1280,99 +1533,209 @@ namespace scratchbird::optimizer
             return std::nullopt;
         }
 
-        EqualityPredicateTerm left_term;
-        EqualityPredicateTerm right_term;
-        if (!resolveEqualityPredicateTerm(db_,
-                                          table_id,
-                                          left_expr,
-                                          pool,
-                                          parameter_bindings_,
-                                          left_term,
-                                          ctx) ||
-            !resolveEqualityPredicateTerm(db_,
-                                          table_id,
-                                          right_expr,
-                                          pool,
-                                          parameter_bindings_,
-                                          right_term,
-                                          ctx))
+        std::vector<EqualityPredicateTerm> terms;
+        const auto collect_terms =
+            [&](const auto &self, const parser::v3::Expression *expr) -> bool {
+                const auto *current = unwrapCasts(expr);
+                if (current == nullptr)
+                {
+                    return false;
+                }
+
+                if (current->kind() == parser::v3::ASTKind::BinaryExpr)
+                {
+                    const auto *binary = static_cast<const parser::v3::BinaryExpr *>(current);
+                    if (binary->op == parser::v3::BinaryOp::AND)
+                    {
+                        return self(self, binary->left) && self(self, binary->right);
+                    }
+                }
+
+                EqualityPredicateTerm term;
+                if (!resolveEqualityPredicateTerm(db_,
+                                                  table_id,
+                                                  current,
+                                                  pool,
+                                                  parameter_bindings_,
+                                                  term,
+                                                  ctx))
+                {
+                    return false;
+                }
+
+                terms.push_back(std::move(term));
+                return true;
+            };
+
+        if (!collect_terms(collect_terms, left_expr) ||
+            !collect_terms(collect_terms, right_expr))
         {
             return std::nullopt;
         }
 
-        if (left_term.column.column_id == right_term.column.column_id)
+        std::vector<EqualityPredicateTerm> unique_terms;
+        unique_terms.reserve(terms.size());
+        for (auto &term : terms)
         {
-            return std::nullopt;
-        }
-
-        ColumnStatistics left_stats;
-        ColumnStatistics right_stats;
-        if (ensureColumnStatisticsForEstimation(table_id,
-                                                left_term.column.column_id,
-                                                left_stats,
-                                                ctx) != core::Status::OK ||
-            ensureColumnStatisticsForEstimation(table_id,
-                                                right_term.column.column_id,
-                                                right_stats,
-                                                ctx) != core::Status::OK)
-        {
-            return std::nullopt;
-        }
-
-        MultivariateStatistics multivariate_stats;
-        if (stats_manager_->getMultivariateStatistics(table_id,
-                                                      {left_term.column.column_id,
-                                                       right_term.column.column_id},
-                                                      multivariate_stats,
-                                                      ctx) != core::Status::OK)
-        {
-            return std::nullopt;
-        }
-
-        std::vector<std::vector<uint8_t>> ordered_values;
-        if (!reorderMultivariateValues({left_term.column.column_id, right_term.column.column_id},
-                                       {left_term.value, right_term.value},
-                                       multivariate_stats.column_ids,
-                                       ordered_values))
-        {
-            return std::nullopt;
-        }
-
-        double mcv_total = 0.0;
-        for (const auto &entry : multivariate_stats.mcv_list)
-        {
-            mcv_total += entry.frequency;
-            if (valuesMatch(entry.values, ordered_values))
+            auto existing_it =
+                std::find_if(unique_terms.begin(),
+                             unique_terms.end(),
+                             [&](const EqualityPredicateTerm &existing) {
+                                 return existing.column.column_id == term.column.column_id;
+                             });
+            if (existing_it != unique_terms.end())
             {
-                return std::max(0.0, std::min(1.0, static_cast<double>(entry.frequency)));
+                if (existing_it->value != term.value)
+                {
+                    return 0.0;
+                }
+                continue;
+            }
+            unique_terms.push_back(std::move(term));
+        }
+
+        if (unique_terms.size() < 2)
+        {
+            return std::nullopt;
+        }
+
+        std::vector<double> term_selectivities;
+        term_selectivities.reserve(unique_terms.size());
+        double base_selectivity = 1.0;
+        for (const auto &term : unique_terms)
+        {
+            ColumnStatistics column_stats;
+            if (ensureColumnStatisticsForEstimation(table_id,
+                                                    term.column.column_id,
+                                                    column_stats,
+                                                    ctx) != core::Status::OK)
+            {
+                return std::nullopt;
+            }
+
+            const double selectivity =
+                estimateEquality(table_id, term.column.column_id, term.value, ctx);
+            term_selectivities.push_back(selectivity);
+            base_selectivity *= selectivity;
+        }
+
+        double best_selectivity = clampSelectivity(base_selectivity);
+        bool found_enhanced_model = false;
+        std::vector<size_t> subset_indices;
+
+        const auto consider_subset =
+            [&](const std::vector<size_t> &indices) -> void {
+                std::vector<core::ID> subset_columns;
+                std::vector<std::vector<uint8_t>> subset_values;
+                std::vector<double> subset_term_selectivities;
+                subset_columns.reserve(indices.size());
+                subset_values.reserve(indices.size());
+                subset_term_selectivities.reserve(indices.size());
+
+                double uncovered_product = 1.0;
+                for (size_t term_index = 0; term_index < unique_terms.size(); ++term_index)
+                {
+                    if (std::find(indices.begin(), indices.end(), term_index) !=
+                        indices.end())
+                    {
+                        subset_columns.push_back(unique_terms[term_index].column.column_id);
+                        subset_values.push_back(unique_terms[term_index].value);
+                        subset_term_selectivities.push_back(term_selectivities[term_index]);
+                    }
+                    else
+                    {
+                        uncovered_product *= term_selectivities[term_index];
+                    }
+                }
+
+                MultivariateStatistics subset_stats;
+                if (stats_manager_->getMultivariateStatistics(table_id,
+                                                              subset_columns,
+                                                              subset_stats,
+                                                              ctx) != core::Status::OK)
+                {
+                    return;
+                }
+
+                auto subset_selectivity =
+                    multivariateEqualitySelectivity(subset_stats,
+                                                    subset_columns,
+                                                    subset_values,
+                                                    subset_term_selectivities);
+                if (!subset_selectivity.has_value())
+                {
+                    return;
+                }
+
+                if (indices.size() == 2)
+                {
+                    const double dependency_strength =
+                        bestDependencyStrength(subset_stats,
+                                               subset_columns[0],
+                                               subset_columns[1]);
+                    if (dependency_strength > 0.0)
+                    {
+                        const double pair_base =
+                            subset_term_selectivities[0] * subset_term_selectivities[1];
+                        double dependency_selectivity =
+                            pair_base + dependency_strength *
+                                            (std::min(subset_term_selectivities[0],
+                                                      subset_term_selectivities[1]) -
+                                             pair_base);
+                        const double average_remaining =
+                            averageRemainingFrequency(subset_stats);
+                        if (average_remaining > 0.0)
+                        {
+                            dependency_selectivity =
+                                std::max(dependency_selectivity, average_remaining);
+                        }
+                        subset_selectivity = std::max(
+                            *subset_selectivity,
+                            clampSelectivity(std::min(std::min(subset_term_selectivities[0],
+                                                               subset_term_selectivities[1]),
+                                                      dependency_selectivity)));
+                    }
+                }
+
+                best_selectivity = std::max(
+                    best_selectivity,
+                    clampSelectivity((*subset_selectivity) * uncovered_product));
+                found_enhanced_model = true;
+            };
+
+        const auto enumerate_subsets =
+            [&](const auto &self, size_t start, size_t target_size) -> void {
+                if (subset_indices.size() == target_size)
+                {
+                    consider_subset(subset_indices);
+                    return;
+                }
+
+                for (size_t index = start; index < unique_terms.size(); ++index)
+                {
+                    subset_indices.push_back(index);
+                    self(self, index + 1, target_size);
+                    subset_indices.pop_back();
+                }
+            };
+
+        for (size_t target_size = std::min<size_t>(3, unique_terms.size());
+             target_size >= 2;
+             --target_size)
+        {
+            enumerate_subsets(enumerate_subsets, 0, target_size);
+            if (target_size == 2)
+            {
+                break;
             }
         }
 
-        if (multivariate_stats.ndistinct.num_distinct > 0 &&
-            multivariate_stats.ndistinct.num_distinct <= multivariate_stats.mcv_list.size())
+        if (!found_enhanced_model)
         {
-            return 0.0;
+            return std::nullopt;
         }
 
-        const double left_sel =
-            estimateEquality(table_id, left_term.column.column_id, left_term.value, ctx);
-        const double right_sel =
-            estimateEquality(table_id, right_term.column.column_id, right_term.value, ctx);
-        const double base = std::max(0.0, std::min(1.0, left_sel * right_sel));
-        const double dependency_strength =
-            bestDependencyStrength(multivariate_stats,
-                                   left_term.column.column_id,
-                                   right_term.column.column_id);
-        double combined =
-            base + dependency_strength * (std::min(left_sel, right_sel) - base);
-
-        const double average_remaining = averageRemainingFrequency(multivariate_stats);
-        if (average_remaining > 0.0)
-        {
-            combined = std::max(combined, average_remaining);
-        }
-
-        return std::max(0.0, std::min(std::min(left_sel, right_sel), combined));
+        return clampSelectivity(best_selectivity);
     }
 
     auto SelectivityEstimator::estimateMultiColumnJoinSelectivity(
@@ -1410,63 +1773,193 @@ namespace scratchbird::optimizer
             right_join_columns.push_back(pair.right_column_id);
         }
 
-        for (const auto &column_id : left_join_columns)
+        std::vector<ColumnStatistics> left_column_stats(join_pairs.size());
+        std::vector<ColumnStatistics> right_column_stats(join_pairs.size());
+        for (size_t index = 0; index < left_join_columns.size(); ++index)
         {
-            ColumnStatistics column_stats;
             if (ensureColumnStatisticsForEstimation(left_table_id,
-                                                    column_id,
-                                                    column_stats,
+                                                    left_join_columns[index],
+                                                    left_column_stats[index],
                                                     ctx) != core::Status::OK)
             {
                 return std::nullopt;
             }
         }
 
-        for (const auto &column_id : right_join_columns)
+        for (size_t index = 0; index < right_join_columns.size(); ++index)
         {
-            ColumnStatistics column_stats;
             if (ensureColumnStatisticsForEstimation(right_table_id,
-                                                    column_id,
-                                                    column_stats,
+                                                    right_join_columns[index],
+                                                    right_column_stats[index],
                                                     ctx) != core::Status::OK)
             {
                 return std::nullopt;
             }
         }
 
-        MultivariateStatistics left_stats;
-        MultivariateStatistics right_stats;
-        if (stats_manager_->getMultivariateStatistics(left_table_id,
-                                                      left_join_columns,
-                                                      left_stats,
-                                                      ctx) != core::Status::OK ||
-            stats_manager_->getMultivariateStatistics(right_table_id,
-                                                      right_join_columns,
-                                                      right_stats,
-                                                      ctx) != core::Status::OK)
+        std::vector<double> pair_selectivities;
+        pair_selectivities.reserve(join_pairs.size());
+        double independence_product = 1.0;
+        for (const auto &pair : join_pairs)
+        {
+            const double pair_selectivity =
+                estimateEquiJoinSelectivity(pair.left_column_id,
+                                            pair.right_column_id,
+                                            left_table_id,
+                                            right_table_id,
+                                            ctx);
+            pair_selectivities.push_back(pair_selectivity);
+            independence_product *= pair_selectivity;
+        }
+
+        double best_selectivity = clampSelectivity(independence_product);
+        bool found_enhanced_model = false;
+        std::vector<size_t> subset_indices;
+
+        const auto consider_subset =
+            [&](const std::vector<size_t> &indices) -> void {
+                std::vector<core::ID> left_subset;
+                std::vector<core::ID> right_subset;
+                left_subset.reserve(indices.size());
+                right_subset.reserve(indices.size());
+
+                double uncovered_product = 1.0;
+                for (size_t pair_index = 0; pair_index < join_pairs.size(); ++pair_index)
+                {
+                    if (std::find(indices.begin(), indices.end(), pair_index) !=
+                        indices.end())
+                    {
+                        left_subset.push_back(join_pairs[pair_index].left_column_id);
+                        right_subset.push_back(join_pairs[pair_index].right_column_id);
+                    }
+                    else
+                    {
+                        uncovered_product *= pair_selectivities[pair_index];
+                    }
+                }
+
+                MultivariateStatistics left_subset_stats;
+                MultivariateStatistics right_subset_stats;
+                if (stats_manager_->getMultivariateStatistics(left_table_id,
+                                                              left_subset,
+                                                              left_subset_stats,
+                                                              ctx) != core::Status::OK ||
+                    stats_manager_->getMultivariateStatistics(right_table_id,
+                                                              right_subset,
+                                                              right_subset_stats,
+                                                              ctx) != core::Status::OK)
+                {
+                    return;
+                }
+
+                if ((left_subset_stats.ndistinct.num_distinct == 0 &&
+                     left_subset_stats.mcv_list.empty()) ||
+                    (right_subset_stats.ndistinct.num_distinct == 0 &&
+                     right_subset_stats.mcv_list.empty()))
+                {
+                    return;
+                }
+
+                best_selectivity = std::max(
+                    best_selectivity,
+                    clampSelectivity(
+                        multivariateMcvOverlapSelectivity(left_subset_stats,
+                                                          left_subset,
+                                                          right_subset_stats,
+                                                          right_subset) *
+                        uncovered_product));
+                found_enhanced_model = true;
+            };
+
+        const auto enumerate_subsets =
+            [&](const auto &self, size_t start, size_t target_size) -> void {
+                if (subset_indices.size() == target_size)
+                {
+                    consider_subset(subset_indices);
+                    return;
+                }
+
+                for (size_t index = start; index < join_pairs.size(); ++index)
+                {
+                    subset_indices.push_back(index);
+                    self(self, index + 1, target_size);
+                    subset_indices.pop_back();
+                }
+            };
+
+        for (size_t target_size = std::min<size_t>(3, join_pairs.size());
+             target_size >= 2;
+             --target_size)
+        {
+            enumerate_subsets(enumerate_subsets, 0, target_size);
+            if (target_size == 2)
+            {
+                break;
+            }
+        }
+
+        core::CatalogManager::ForeignKeyInfo matched_fk;
+        bool left_is_child = false;
+        if (matchesForeignKeyJoin(db_,
+                                  left_table_id,
+                                  right_table_id,
+                                  join_pairs,
+                                  matched_fk,
+                                  left_is_child,
+                                  ctx))
+        {
+            std::vector<core::ID> parent_columns;
+            parent_columns.reserve(join_pairs.size());
+            double child_non_null_fraction = 1.0;
+
+            for (size_t index = 0; index < join_pairs.size(); ++index)
+            {
+                const ColumnStatistics &child_stats =
+                    left_is_child ? left_column_stats[index] : right_column_stats[index];
+                parent_columns.push_back(left_is_child ? join_pairs[index].right_column_id
+                                                       : join_pairs[index].left_column_id);
+                child_non_null_fraction *=
+                    std::max(0.0, 1.0 - child_stats.null_fraction);
+            }
+
+            uint64_t parent_distinct = 0;
+            if (parent_columns.size() == 1)
+            {
+                parent_distinct =
+                    left_is_child ? right_column_stats.front().num_distinct
+                                  : left_column_stats.front().num_distinct;
+            }
+            else
+            {
+                MultivariateStatistics parent_stats;
+                const core::ID &parent_table_id =
+                    left_is_child ? right_table_id : left_table_id;
+                if (stats_manager_->getMultivariateStatistics(parent_table_id,
+                                                              parent_columns,
+                                                              parent_stats,
+                                                              ctx) == core::Status::OK)
+                {
+                    parent_distinct = parent_stats.ndistinct.num_distinct;
+                }
+            }
+
+            if (parent_distinct > 0)
+            {
+                best_selectivity = std::max(
+                    best_selectivity,
+                    clampSelectivity(
+                        child_non_null_fraction /
+                        static_cast<double>(parent_distinct)));
+                found_enhanced_model = true;
+            }
+        }
+
+        if (!found_enhanced_model)
         {
             return std::nullopt;
         }
 
-        const double selectivity =
-            multivariateMcvOverlapSelectivity(left_stats,
-                                              left_join_columns,
-                                              right_stats,
-                                              right_join_columns);
-        if (left_stats.ndistinct.num_distinct > 0 || right_stats.ndistinct.num_distinct > 0 ||
-            !left_stats.mcv_list.empty() || !right_stats.mcv_list.empty())
-        {
-            return selectivity;
-        }
-
-        if (left_stats.ndistinct.num_distinct == 0 || right_stats.ndistinct.num_distinct == 0)
-        {
-            return std::nullopt;
-        }
-
-        return 1.0 /
-               static_cast<double>(std::max(left_stats.ndistinct.num_distinct,
-                                            right_stats.ndistinct.num_distinct));
+        return clampSelectivity(best_selectivity);
     }
 
     auto SelectivityEstimator::estimateWhereClause(
@@ -1550,41 +2043,41 @@ namespace scratchbird::optimizer
                     auto column = resolveColumnRef(db_, table_id, column_expr, pool, ctx);
                     if (!column.has_value())
                     {
-                        auto expr_key = expressionStatsKey(column_expr, pool);
-                        if (!expr_key.has_value() || binary->op != parser::v3::BinaryOp::EQ ||
+                        auto expr_descriptor =
+                            expressionStatsDescriptor(column_expr, pool);
+                        if (!expr_descriptor.has_value() ||
+                            binary->op != parser::v3::BinaryOp::EQ ||
                             stats_manager_ == nullptr)
                         {
                             return std::nullopt;
                         }
 
-                        std::string literal_text;
-                        if (!literalExprToString(literal_expr,
-                                                 pool,
-                                                 parameter_bindings_,
-                                                 literal_text))
+                        std::vector<uint8_t> expr_value;
+                        if (!literalExprToBytes(
+                                literal_expr,
+                                pool,
+                                parameter_bindings_,
+                                static_cast<uint16_t>(
+                                    expr_descriptor->result_data_type),
+                                expr_value))
                         {
                             return std::nullopt;
                         }
 
                         ExpressionStatistics expr_stats;
                         if (stats_manager_->getExpressionStatistics(table_id,
-                                                                    *expr_key,
+                                                                    canonicalExpressionStatsKey(
+                                                                        *expr_descriptor),
                                                                     expr_stats,
                                                                     ctx) != core::Status::OK)
                         {
                             return std::nullopt;
                         }
 
-                        const std::string normalized =
-                            canonicalizeLiteralForExpression(literal_text, *expr_key);
-                        std::vector<uint8_t> expr_value(sizeof(uint32_t) + normalized.size());
-                        uint32_t len = static_cast<uint32_t>(normalized.size());
-                        std::memcpy(expr_value.data(), &len, sizeof(len));
-                        if (!normalized.empty())
+                        if (!normalizeLiteralForExpression(expr_value,
+                                                           *expr_descriptor))
                         {
-                            std::memcpy(expr_value.data() + sizeof(uint32_t),
-                                        normalized.data(),
-                                        normalized.size());
+                            return std::nullopt;
                         }
 
                         const auto &stats = expr_stats.stats;
@@ -2432,29 +2925,54 @@ namespace scratchbird::optimizer
             !left_stats.mcv_list.empty() || !right_stats.mcv_list.empty())
         {
             selectivity = singleColumnMcvOverlapSelectivity(left_stats, right_stats);
-            return selectivity;
         }
-
-        // Equi-join selectivity formula fallback:
-        // selectivity = 1 / MAX(n_distinct(left_col), n_distinct(right_col))
-        uint64_t max_distinct = std::max(left_stats.num_distinct, right_stats.num_distinct);
-
-        if (max_distinct == 0)
+        else
         {
-            // Avoid division by zero
-            DEBUG_LOG_DB("n_distinct is 0, using default: " +
-                       std::to_string(DEFAULT_EQUALITY_SEL));
-            return DEFAULT_EQUALITY_SEL;
+            // Equi-join selectivity formula fallback:
+            // selectivity = 1 / MAX(n_distinct(left_col), n_distinct(right_col))
+            uint64_t max_distinct = std::max(left_stats.num_distinct, right_stats.num_distinct);
+
+            if (max_distinct == 0)
+            {
+                // Avoid division by zero
+                DEBUG_LOG_DB("n_distinct is 0, using default: " +
+                           std::to_string(DEFAULT_EQUALITY_SEL));
+                selectivity = DEFAULT_EQUALITY_SEL;
+            }
+            else
+            {
+                selectivity = 1.0 / static_cast<double>(max_distinct);
+            }
         }
 
-        selectivity = 1.0 / static_cast<double>(max_distinct);
+        core::CatalogManager::ForeignKeyInfo matched_fk;
+        bool left_is_child = false;
+        if (matchesForeignKeyJoin(db_,
+                                  left_table_id,
+                                  right_table_id,
+                                  {{left_col_id, right_col_id}},
+                                  matched_fk,
+                                  left_is_child,
+                                  ctx))
+        {
+            const ColumnStatistics &child_stats = left_is_child ? left_stats : right_stats;
+            const ColumnStatistics &parent_stats = left_is_child ? right_stats : left_stats;
+            if (parent_stats.num_distinct > 0)
+            {
+                selectivity = std::max(
+                    selectivity,
+                    clampSelectivity(
+                        std::max(0.0, 1.0 - child_stats.null_fraction) /
+                        static_cast<double>(parent_stats.num_distinct)));
+            }
+        }
 
         DEBUG_LOG_DB("Equi-join selectivity: 1 / MAX(" +
                    std::to_string(left_stats.n_distinct) + ", " +
                    std::to_string(right_stats.n_distinct) + ") = " +
                    std::to_string(selectivity));
 
-        return selectivity;
+        return clampSelectivity(selectivity);
     }
 
 } // namespace scratchbird::optimizer

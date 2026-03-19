@@ -13,6 +13,10 @@
 #include <cstring>
 #include <vector>
 #include <string>
+#include <algorithm>
+#include <cctype>
+#include <optional>
+#include <string_view>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/types.h"
@@ -76,6 +80,16 @@ namespace scratchbird::optimizer
         LOW = 1,
         MEDIUM = 2,
         HIGH = 3
+    };
+
+    enum class ExpressionStatsFunction : uint32_t
+    {
+        UNKNOWN = 0,
+        LOWER = 1,
+        UPPER = 2,
+        TRIM = 3,
+        LTRIM = 4,
+        RTRIM = 5
     };
 
     enum class IndexFamilyMetricsType : uint32_t
@@ -256,10 +270,25 @@ namespace scratchbird::optimizer
         uint64_t last_analyzed_time = 0;
     };
 
+    struct ExpressionStatsDescriptor
+    {
+        std::string contract_id = "sb_expression_stats/v1";
+        ExpressionStatsFunction function = ExpressionStatsFunction::UNKNOWN;
+        std::string function_name;
+        std::string column_name;
+        core::DataType input_data_type = core::DataType::UNKNOWN;
+        core::DataType result_data_type = core::DataType::UNKNOWN;
+    };
+
     struct ExpressionStatistics
     {
         ID table_id;
         std::string expression_key;
+        std::string expression_contract_id = "sb_expression_stats/v1";
+        std::string function_name;
+        std::string base_column_name;
+        core::DataType input_data_type = core::DataType::UNKNOWN;
+        core::DataType result_data_type = core::DataType::UNKNOWN;
         ColumnStatistics stats;
     };
 
@@ -365,6 +394,186 @@ namespace scratchbird::optimizer
             default:
                 return "UNKNOWN";
         }
+    }
+
+    inline auto expressionStatsFunctionName(ExpressionStatsFunction value)
+        -> const char *
+    {
+        switch (value)
+        {
+            case ExpressionStatsFunction::LOWER:
+                return "LOWER";
+            case ExpressionStatsFunction::UPPER:
+                return "UPPER";
+            case ExpressionStatsFunction::TRIM:
+                return "TRIM";
+            case ExpressionStatsFunction::LTRIM:
+                return "LTRIM";
+            case ExpressionStatsFunction::RTRIM:
+                return "RTRIM";
+            case ExpressionStatsFunction::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    inline auto expressionStatsAsciiUpper(std::string text) -> std::string
+    {
+        std::transform(text.begin(),
+                       text.end(),
+                       text.begin(),
+                       [](unsigned char ch) {
+                           return static_cast<char>(std::toupper(ch));
+                       });
+        return text;
+    }
+
+    inline auto expressionStatsFunctionFromName(std::string_view name)
+        -> ExpressionStatsFunction
+    {
+        const std::string normalized =
+            expressionStatsAsciiUpper(std::string(name));
+        if (normalized == "LOWER" || normalized == "LCASE")
+        {
+            return ExpressionStatsFunction::LOWER;
+        }
+        if (normalized == "UPPER" || normalized == "UCASE")
+        {
+            return ExpressionStatsFunction::UPPER;
+        }
+        if (normalized == "TRIM" || normalized == "BTRIM")
+        {
+            return ExpressionStatsFunction::TRIM;
+        }
+        if (normalized == "LTRIM")
+        {
+            return ExpressionStatsFunction::LTRIM;
+        }
+        if (normalized == "RTRIM")
+        {
+            return ExpressionStatsFunction::RTRIM;
+        }
+        return ExpressionStatsFunction::UNKNOWN;
+    }
+
+    inline auto isTextLikeExpressionStatsInput(core::DataType type) -> bool
+    {
+        switch (type)
+        {
+            case core::DataType::CHAR:
+            case core::DataType::VARCHAR:
+            case core::DataType::TEXT:
+            case core::DataType::JSON:
+            case core::DataType::JSONB:
+            case core::DataType::XML:
+            case core::DataType::BLOB_SUB_TYPE_TEXT:
+                return true;
+            case core::DataType::UNKNOWN:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    inline auto expressionStatsResultType(ExpressionStatsFunction function,
+                                          core::DataType input_type)
+        -> core::DataType
+    {
+        switch (function)
+        {
+            case ExpressionStatsFunction::LOWER:
+            case ExpressionStatsFunction::UPPER:
+            case ExpressionStatsFunction::TRIM:
+            case ExpressionStatsFunction::LTRIM:
+            case ExpressionStatsFunction::RTRIM:
+                return input_type == core::DataType::UNKNOWN
+                           ? core::DataType::VARCHAR
+                           : input_type;
+            case ExpressionStatsFunction::UNKNOWN:
+            default:
+                return core::DataType::UNKNOWN;
+        }
+    }
+
+    inline auto buildExpressionStatsDescriptor(std::string_view function_name,
+                                               std::string_view column_name,
+                                               core::DataType input_type =
+                                                   core::DataType::UNKNOWN)
+        -> std::optional<ExpressionStatsDescriptor>
+    {
+        const ExpressionStatsFunction function =
+            expressionStatsFunctionFromName(function_name);
+        if (function == ExpressionStatsFunction::UNKNOWN ||
+            !isTextLikeExpressionStatsInput(input_type))
+        {
+            return std::nullopt;
+        }
+
+        ExpressionStatsDescriptor descriptor;
+        descriptor.function = function;
+        descriptor.function_name = expressionStatsFunctionName(function);
+        descriptor.column_name = expressionStatsAsciiUpper(std::string(column_name));
+        descriptor.input_data_type = input_type;
+        descriptor.result_data_type =
+            expressionStatsResultType(function, input_type);
+        return descriptor;
+    }
+
+    inline auto canonicalExpressionStatsKey(
+        const ExpressionStatsDescriptor &descriptor) -> std::string
+    {
+        return std::string("EXPRv1|") + descriptor.function_name + "|" +
+               expressionStatsAsciiUpper(descriptor.column_name);
+    }
+
+    inline auto legacyExpressionStatsKey(
+        const ExpressionStatsDescriptor &descriptor) -> std::string
+    {
+        return descriptor.function_name + "(" +
+               expressionStatsAsciiUpper(descriptor.column_name) + ")";
+    }
+
+    inline auto parseExpressionStatsKey(std::string_view key,
+                                        ExpressionStatsDescriptor &descriptor_out)
+        -> bool
+    {
+        const std::string normalized =
+            expressionStatsAsciiUpper(std::string(key));
+        if (normalized.rfind("EXPRV1|", 0) == 0)
+        {
+            const size_t first_sep = normalized.find('|', 7);
+            if (first_sep == std::string::npos || first_sep + 1 >= normalized.size())
+            {
+                return false;
+            }
+            auto descriptor = buildExpressionStatsDescriptor(
+                normalized.substr(7, first_sep - 7),
+                normalized.substr(first_sep + 1));
+            if (!descriptor.has_value())
+            {
+                return false;
+            }
+            descriptor_out = std::move(*descriptor);
+            return true;
+        }
+
+        const size_t open_paren = normalized.find('(');
+        const size_t close_paren = normalized.rfind(')');
+        if (open_paren == std::string::npos || close_paren == std::string::npos ||
+            close_paren <= open_paren + 1)
+        {
+            return false;
+        }
+
+        auto descriptor = buildExpressionStatsDescriptor(
+            normalized.substr(0, open_paren),
+            normalized.substr(open_paren + 1, close_paren - open_paren - 1));
+        if (!descriptor.has_value())
+        {
+            return false;
+        }
+        descriptor_out = std::move(*descriptor);
+        return true;
     }
 
     inline auto indexFamilyMetricsTypeName(IndexFamilyMetricsType value)

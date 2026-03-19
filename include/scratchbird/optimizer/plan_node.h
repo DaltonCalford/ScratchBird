@@ -59,7 +59,24 @@ namespace scratchbird::optimizer
         INDEX_SCAN,    // Index scan with heap fetch
         INDEX_ONLY_SCAN,   // Index-only scan (covering index, no heap access) - TASK-BYTECODE-4
         BITMAP_INDEX_SCAN, // Bitmap index scan (combine multiple indexes) - TASK-BYTECODE-4
+        SUMMARY_SCAN,      // Summary-family pruning scan
+        BITMAP_STORAGE_SCAN, // Physical bitmap storage scan
+        COLUMNSTORE_SCAN,  // Columnstore-family scan
+        GIN_FILTER_SCAN,   // GIN boolean token filter scan
+        TEXT_BITMAP_SCAN,  // Inverted text bitmap scan
+        TEXT_SCORE_SCAN,   // Ranked text scan
+        TEXT_RECHECK_SCAN, // Phrase/recheck-heavy text scan
+        VECTOR_FLAT_SCAN,  // Exact vector baseline scan
+        HNSW_SCAN,         // HNSW approximate scan
+        IVF_SCAN,          // IVF approximate scan
+        ANN_RERANK_SCAN,   // ANN rerank scan
+        ANN_HYBRID_FALLBACK_SCAN, // ANN exact fallback scan
+        GIST_SCAN,         // GiST generalized search scan
+        SPGIST_SCAN,       // SP-GiST generalized search scan
+        GIST_NEAREST_SCAN, // GiST nearest-order search scan
+        SPGIST_NEAREST_SCAN, // SP-GiST nearest-order search scan
         RTREE_SCAN,    // R-tree spatial index scan (Phase 2, Task 9.2)
+        RTREE_NEAREST_SCAN, // R-tree nearest-order spatial scan
         CTE_SCAN,      // CTE (Common Table Expression) scan (Phase 2 Wave 2)
         NESTED_LOOP_JOIN,  // Nested loop join (Phase 1, Task 3.2)
         HASH_JOIN,     // Hash join (Phase 1, Task 3.2)
@@ -566,6 +583,433 @@ namespace scratchbird::optimizer
     };
 
     /**
+     * GeneralizedSearchScanNode - GiST/SP-GiST generalized search plan node
+     */
+    class GeneralizedSearchScanNode : public PlanNode
+    {
+    public:
+        GeneralizedSearchScanNode(PlanNodeType type,
+                                  const core::ID &table_id,
+                                  const std::string &table_name,
+                                  const core::ID &index_id,
+                                  const std::string &index_name,
+                                  const std::string &family_name,
+                                  uint16_t strategy_number,
+                                  double overlap_ratio,
+                                  double candidate_amplification)
+            : PlanNode(type),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              family_name_(family_name),
+              strategy_number_(strategy_number),
+              overlap_ratio_(overlap_ratio),
+              candidate_amplification_(candidate_amplification)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &familyName() const { return family_name_; }
+        uint16_t strategyNumber() const { return strategy_number_; }
+        double overlapRatio() const { return overlap_ratio_; }
+        double candidateAmplification() const
+        {
+            return candidate_amplification_;
+        }
+
+        void setIndexCond(const std::string &index_cond)
+        {
+            index_cond_ = index_cond;
+        }
+
+        const std::string &indexCond() const { return index_cond_; }
+
+        void setFilter(const std::string &filter)
+        {
+            filter_ = filter;
+        }
+
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += family_name_ + " on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+            result += "\n";
+            result += std::string((indent + 1) * 2, ' ');
+            result += "Strategy: #" + std::to_string(strategy_number_);
+            result += " overlap=" + std::to_string(overlap_ratio_);
+            result += " amp=" + std::to_string(candidate_amplification_);
+            if (!index_cond_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Index Cond: " + index_cond_;
+            }
+            if (!filter_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string family_name_;
+        uint16_t strategy_number_;
+        double overlap_ratio_;
+        double candidate_amplification_;
+        std::string index_cond_;
+        std::string filter_;
+    };
+
+    /**
+     * GeneralizedNearestScanNode - nearest-order generalized/spatial plan node
+     */
+    class GeneralizedNearestScanNode : public PlanNode
+    {
+    public:
+        GeneralizedNearestScanNode(PlanNodeType type,
+                                   const core::ID &table_id,
+                                   const std::string &table_name,
+                                   const core::ID &index_id,
+                                   const std::string &index_name,
+                                   const std::string &family_name,
+                                   uint16_t strategy_number,
+                                   uint64_t candidate_budget,
+                                   double nearest_lb_tightness,
+                                   double distance_recheck_ratio)
+            : PlanNode(type),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              family_name_(family_name),
+              strategy_number_(strategy_number),
+              candidate_budget_(candidate_budget),
+              nearest_lb_tightness_(nearest_lb_tightness),
+              distance_recheck_ratio_(distance_recheck_ratio)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &familyName() const { return family_name_; }
+        uint16_t strategyNumber() const { return strategy_number_; }
+        uint64_t candidateBudget() const { return candidate_budget_; }
+        double nearestLowerBoundTightness() const
+        {
+            return nearest_lb_tightness_;
+        }
+        double distanceRecheckRatio() const { return distance_recheck_ratio_; }
+
+        void setIndexCond(const std::string &index_cond)
+        {
+            index_cond_ = index_cond;
+        }
+
+        const std::string &indexCond() const { return index_cond_; }
+
+        void setFilter(const std::string &filter)
+        {
+            filter_ = filter;
+        }
+
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += family_name_ + " on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+            result += "\n";
+            result += std::string((indent + 1) * 2, ' ');
+            result += "Strategy: #" + std::to_string(strategy_number_);
+            result += " budget=" + std::to_string(candidate_budget_);
+            result += " lb=" + std::to_string(nearest_lb_tightness_);
+            result += " recheck=" +
+                      std::to_string(distance_recheck_ratio_);
+            if (!index_cond_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Index Cond: " + index_cond_;
+            }
+            if (!filter_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string family_name_;
+        uint16_t strategy_number_;
+        uint64_t candidate_budget_;
+        double nearest_lb_tightness_;
+        double distance_recheck_ratio_;
+        std::string index_cond_;
+        std::string filter_;
+    };
+
+    /**
+     * TextSearchScanNode - native text-family scan plan node
+     */
+    class TextSearchScanNode : public PlanNode
+    {
+    public:
+        TextSearchScanNode(PlanNodeType type,
+                           const core::ID &table_id,
+                           const std::string &table_name,
+                           const core::ID &index_id,
+                           const std::string &index_name,
+                           const std::string &family_name,
+                           uint64_t postings_or_budget,
+                           double phrase_hit_rate,
+                           double recheck_ratio,
+                           double merge_debt,
+                           double collector_early_stop_gain)
+            : PlanNode(type),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              family_name_(family_name),
+              postings_or_budget_(postings_or_budget),
+              phrase_hit_rate_(phrase_hit_rate),
+              recheck_ratio_(recheck_ratio),
+              merge_debt_(merge_debt),
+              collector_early_stop_gain_(collector_early_stop_gain)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &familyName() const { return family_name_; }
+        uint64_t postingsOrBudget() const { return postings_or_budget_; }
+        double phraseHitRate() const { return phrase_hit_rate_; }
+        double recheckRatio() const { return recheck_ratio_; }
+        double mergeDebt() const { return merge_debt_; }
+        double collectorEarlyStopGain() const
+        {
+            return collector_early_stop_gain_;
+        }
+
+        void setIndexCond(const std::string &index_cond)
+        {
+            index_cond_ = index_cond;
+        }
+
+        const std::string &indexCond() const { return index_cond_; }
+
+        void setFilter(const std::string &filter)
+        {
+            filter_ = filter;
+        }
+
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += family_name_ + " on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+            result += "\n";
+            result += std::string((indent + 1) * 2, ' ');
+            result += "Budget/Postings: " +
+                      std::to_string(postings_or_budget_);
+            result += " phrase=" + std::to_string(phrase_hit_rate_);
+            result += " recheck=" + std::to_string(recheck_ratio_);
+            result += " merge=" + std::to_string(merge_debt_);
+            result += " early_stop=" +
+                      std::to_string(collector_early_stop_gain_);
+            if (!index_cond_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Index Cond: " + index_cond_;
+            }
+            if (!filter_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string family_name_;
+        uint64_t postings_or_budget_;
+        double phrase_hit_rate_;
+        double recheck_ratio_;
+        double merge_debt_;
+        double collector_early_stop_gain_;
+        std::string index_cond_;
+        std::string filter_;
+    };
+
+    class VectorSearchScanNode : public PlanNode
+    {
+    public:
+        VectorSearchScanNode(PlanNodeType type,
+                             const core::ID &table_id,
+                             const std::string &table_name,
+                             const core::ID &index_id,
+                             const std::string &index_name,
+                             const std::string &family_name,
+                             uint64_t candidate_budget,
+                             double recall_estimate,
+                             double rerank_fraction,
+                             double segment_coverage_fraction,
+                             double growing_fraction,
+                             double segment_merge_cost_est,
+                             const std::string &hybrid_filter_mode,
+                             const std::string &coordinator_merge_mode)
+            : PlanNode(type),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              family_name_(family_name),
+              candidate_budget_(candidate_budget),
+              recall_estimate_(recall_estimate),
+              rerank_fraction_(rerank_fraction),
+              segment_coverage_fraction_(segment_coverage_fraction),
+              growing_fraction_(growing_fraction),
+              segment_merge_cost_est_(segment_merge_cost_est),
+              hybrid_filter_mode_(hybrid_filter_mode),
+              coordinator_merge_mode_(coordinator_merge_mode)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &familyName() const { return family_name_; }
+        uint64_t candidateBudget() const { return candidate_budget_; }
+        double recallEstimate() const { return recall_estimate_; }
+        double rerankFraction() const { return rerank_fraction_; }
+        double segmentCoverageFraction() const
+        {
+            return segment_coverage_fraction_;
+        }
+        double growingFraction() const { return growing_fraction_; }
+        double segmentMergeCostEstimate() const
+        {
+            return segment_merge_cost_est_;
+        }
+        const std::string &hybridFilterMode() const
+        {
+            return hybrid_filter_mode_;
+        }
+        const std::string &coordinatorMergeMode() const
+        {
+            return coordinator_merge_mode_;
+        }
+
+        void setIndexCond(const std::string &index_cond)
+        {
+            index_cond_ = index_cond;
+        }
+
+        const std::string &indexCond() const { return index_cond_; }
+
+        void setFilter(const std::string &filter)
+        {
+            filter_ = filter;
+        }
+
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += family_name_ + " on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+            result += "\n";
+            result += std::string((indent + 1) * 2, ' ');
+            result += "Budget: " + std::to_string(candidate_budget_);
+            result += " recall=" + std::to_string(recall_estimate_);
+            result += " rerank=" + std::to_string(rerank_fraction_);
+            result += " coverage=" +
+                      std::to_string(segment_coverage_fraction_);
+            result += " growing=" + std::to_string(growing_fraction_);
+            result += " merge_cost=" +
+                      std::to_string(segment_merge_cost_est_);
+            result += " hybrid=" + hybrid_filter_mode_;
+            result += " merge_mode=" + coordinator_merge_mode_;
+            if (!index_cond_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Index Cond: " + index_cond_;
+            }
+            if (!filter_.empty())
+            {
+                result += "\n";
+                result += std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string family_name_;
+        uint64_t candidate_budget_;
+        double recall_estimate_;
+        double rerank_fraction_;
+        double segment_coverage_fraction_;
+        double growing_fraction_;
+        double segment_merge_cost_est_;
+        std::string hybrid_filter_mode_;
+        std::string coordinator_merge_mode_;
+        std::string index_cond_;
+        std::string filter_;
+    };
+
+    /**
      * RTreeScanNode - R-tree spatial index scan plan node
      *
      * Scans R-tree index to find tuples matching spatial predicate.
@@ -903,6 +1347,217 @@ namespace scratchbird::optimizer
         std::vector<std::string> index_names_;
         std::string bitmap_op_;  // "AND" or "OR"
         std::vector<std::string> index_conds_;
+        std::string filter_;
+    };
+
+    class SummaryScanNode : public PlanNode
+    {
+    public:
+        SummaryScanNode(const core::ID &table_id,
+                        const std::string &table_name,
+                        const core::ID &index_id,
+                        const std::string &index_name,
+                        const std::string &summary_kind,
+                        uint64_t pages_per_range,
+                        double prune_ratio)
+            : PlanNode(PlanNodeType::SUMMARY_SCAN),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              summary_kind_(summary_kind),
+              pages_per_range_(pages_per_range),
+              prune_ratio_(prune_ratio)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &summaryKind() const { return summary_kind_; }
+        uint64_t pagesPerRange() const { return pages_per_range_; }
+        double pruneRatio() const { return prune_ratio_; }
+        void setIndexCond(const std::string &index_cond) { index_cond_ = index_cond; }
+        const std::string &indexCond() const { return index_cond_; }
+        void setFilter(const std::string &filter) { filter_ = filter; }
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "SummaryScan on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Summary Kind: " + summary_kind_;
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Pages Per Range: " + std::to_string(pages_per_range_);
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Prune Ratio: " + std::to_string(prune_ratio_);
+            if (!index_cond_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Index Cond: " + index_cond_;
+            }
+            if (!filter_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string summary_kind_;
+        uint64_t pages_per_range_;
+        double prune_ratio_;
+        std::string index_cond_;
+        std::string filter_;
+    };
+
+    class BitmapStorageScanNode : public PlanNode
+    {
+    public:
+        BitmapStorageScanNode(const core::ID &table_id,
+                              const std::string &table_name,
+                              const core::ID &index_id,
+                              const std::string &index_name,
+                              double bitmap_density,
+                              double lossy_container_fraction)
+            : PlanNode(PlanNodeType::BITMAP_STORAGE_SCAN),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              bitmap_density_(bitmap_density),
+              lossy_container_fraction_(lossy_container_fraction)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        double bitmapDensity() const { return bitmap_density_; }
+        double lossyContainerFraction() const { return lossy_container_fraction_; }
+        void setIndexCond(const std::string &index_cond) { index_cond_ = index_cond; }
+        const std::string &indexCond() const { return index_cond_; }
+        void setFilter(const std::string &filter) { filter_ = filter; }
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "BitmapStorageScan on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Bitmap Density: " + std::to_string(bitmap_density_);
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Lossy Fraction: " +
+                      std::to_string(lossy_container_fraction_);
+            if (!index_cond_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Index Cond: " + index_cond_;
+            }
+            if (!filter_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        double bitmap_density_;
+        double lossy_container_fraction_;
+        std::string index_cond_;
+        std::string filter_;
+    };
+
+    class ColumnstoreScanNode : public PlanNode
+    {
+    public:
+        ColumnstoreScanNode(const core::ID &table_id,
+                            const std::string &table_name,
+                            const core::ID &index_id,
+                            const std::string &index_name,
+                            const std::string &projection_layout_id,
+                            uint64_t bytes_read_est,
+                            double delta_fraction)
+            : PlanNode(PlanNodeType::COLUMNSTORE_SCAN),
+              table_id_(table_id),
+              table_name_(table_name),
+              index_id_(index_id),
+              index_name_(index_name),
+              projection_layout_id_(projection_layout_id),
+              bytes_read_est_(bytes_read_est),
+              delta_fraction_(delta_fraction)
+        {
+        }
+
+        const core::ID &tableId() const { return table_id_; }
+        const std::string &tableName() const { return table_name_; }
+        const core::ID &indexId() const { return index_id_; }
+        const std::string &indexName() const { return index_name_; }
+        const std::string &projectionLayoutId() const { return projection_layout_id_; }
+        uint64_t bytesReadEstimate() const { return bytes_read_est_; }
+        double deltaFraction() const { return delta_fraction_; }
+        void setIndexCond(const std::string &index_cond) { index_cond_ = index_cond; }
+        const std::string &indexCond() const { return index_cond_; }
+        void setFilter(const std::string &filter) { filter_ = filter; }
+        const std::string &filter() const { return filter_; }
+
+        auto toString(int indent = 0) const -> std::string override
+        {
+            std::string result(indent * 2, ' ');
+            result += "ColumnstoreScan on " + table_name_;
+            result += " using " + index_name_;
+            result += " (cost=" + std::to_string(startup_cost_);
+            result += ".." + std::to_string(total_cost_);
+            result += " rows=" + std::to_string(rows_) + ")";
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Projection Layout: " + projection_layout_id_;
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Bytes Read Est: " + std::to_string(bytes_read_est_);
+            result += "\n" + std::string((indent + 1) * 2, ' ');
+            result += "Delta Fraction: " + std::to_string(delta_fraction_);
+            if (!index_cond_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Index Cond: " + index_cond_;
+            }
+            if (!filter_.empty())
+            {
+                result += "\n" + std::string((indent + 1) * 2, ' ');
+                result += "Filter: " + filter_;
+            }
+            return result;
+        }
+
+    private:
+        core::ID table_id_;
+        std::string table_name_;
+        core::ID index_id_;
+        std::string index_name_;
+        std::string projection_layout_id_;
+        uint64_t bytes_read_est_;
+        double delta_fraction_;
+        std::string index_cond_;
         std::string filter_;
     };
 

@@ -17,6 +17,17 @@
 namespace scratchbird::optimizer
 {
 
+    inline constexpr const char *kBaseRelationCandidateBundleContractId =
+        "sb_base_relation_candidate_bundle/v1";
+    inline constexpr const char *kBaseRelationCandidateBundleOwnerPassId =
+        "P08_ACCESS_PATH_ANNOTATE";
+    inline constexpr const char *kBaseRelationCandidateBundleConsumerPassId =
+        "P09_JOIN_ORDER_PLAN";
+    inline constexpr const char *kMgaRecheckContractId =
+        "sb_mga_recheck/v1";
+    inline constexpr const char *kIndexFamilyCapabilityContractId =
+        "sb_index_family_capability/v1";
+
     enum class PredicateMatchShape : uint8_t
     {
         NONE = 0,
@@ -79,5 +90,85 @@ namespace scratchbird::optimizer
         -> PlannerFamilyLoweringRequest;
 
     auto lowerSequentialPlannerFamily() -> PlannerFamilyLoweringResult;
+
+    inline auto plannerMgaVisibilityStateName(
+        AccessPathVisibilityEnforcement enforcement) -> const char *
+    {
+        switch (enforcement)
+        {
+            case AccessPathVisibilityEnforcement::INDEX_NATIVE:
+                return "INDEX_NATIVE";
+            case AccessPathVisibilityEnforcement::POST_FILTER:
+                return "HEAP_POST_FILTER";
+            case AccessPathVisibilityEnforcement::HYBRID:
+                return "HYBRID_INDEX_HEAP";
+            case AccessPathVisibilityEnforcement::UNKNOWN:
+            default:
+                return "UNKNOWN";
+        }
+    }
+
+    inline auto plannerFamilyLoweringRejectionCode(
+        const PlannerFamilyLoweringRequest &request,
+        const PlannerFamilyLoweringResult &result) -> const char *
+    {
+        if (result.queryability_state != AccessPathQueryabilityState::INVALID)
+        {
+            return "";
+        }
+        if (request.bitmap_combine)
+        {
+            return "P08_BITMAP_COMPOSE_UNAVAILABLE";
+        }
+        if (request.skip_scan)
+        {
+            return "P08_SKIP_SCAN_UNAVAILABLE";
+        }
+        if (request.nearest_order && !request.ann_metric_compatible)
+        {
+            return "P08_ANN_METRIC_INCOMPATIBLE";
+        }
+        if (request.nearest_order && !request.nearest_lower_bound_validated)
+        {
+            return "P08_NEAREST_ORDER_UNVALIDATED";
+        }
+        if (request.strategy_bound == false &&
+            (request.support_consistent || request.support_distance ||
+             request.nearest_order))
+        {
+            return "P08_OPERATOR_STRATEGY_UNBOUND";
+        }
+        return "P08_FAMILY_NOT_QUERYABLE";
+    }
+
+    inline auto plannerFamilyLoweringRejectionDetail(
+        const PlannerFamilyLoweringRequest &request,
+        const PlannerFamilyLoweringResult &result) -> std::string
+    {
+        (void)result;
+        if (request.bitmap_combine)
+        {
+            return "bitmap composition could not be lowered to a queryable planner family";
+        }
+        if (request.skip_scan)
+        {
+            return "skip-scan candidate did not lower to a queryable skip family";
+        }
+        if (request.nearest_order && !request.ann_metric_compatible)
+        {
+            return "nearest-order candidate was rejected because ANN metric compatibility was not proven";
+        }
+        if (request.nearest_order && !request.nearest_lower_bound_validated)
+        {
+            return "nearest-order candidate was rejected because lower-bound ordering was not validated";
+        }
+        if (request.strategy_bound == false &&
+            (request.support_consistent || request.support_distance ||
+             request.nearest_order))
+        {
+            return "generalized or nearest strategy binding was not available for the requested operator";
+        }
+        return "planner family lowering marked the candidate as invalid for query execution";
+    }
 
 } // namespace scratchbird::optimizer

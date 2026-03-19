@@ -965,10 +965,58 @@ namespace scratchbird::optimizer
         return compareByteVectors(lhs, rhs);
     }
 
-    auto canonicalExpressionKey(const std::string &func_name,
-                                const std::string &column_name) -> std::string
+    auto ltrimAsciiCopy(std::string_view text) -> std::string
     {
-        return func_name + "(" + core::IdentifierUtils::toUpper(column_name) + ")";
+        size_t start = 0;
+        while (start < text.size() &&
+               std::isspace(static_cast<unsigned char>(text[start])) != 0)
+        {
+            ++start;
+        }
+        return std::string(text.substr(start));
+    }
+
+    auto rtrimAsciiCopy(std::string_view text) -> std::string
+    {
+        size_t end = text.size();
+        while (end > 0 &&
+               std::isspace(static_cast<unsigned char>(text[end - 1])) != 0)
+        {
+            --end;
+        }
+        return std::string(text.substr(0, end));
+    }
+
+    auto applyExpressionStatsTextTransform(std::string &text,
+                                           ExpressionStatsFunction function)
+        -> void
+    {
+        switch (function)
+        {
+            case ExpressionStatsFunction::LOWER:
+                std::transform(text.begin(),
+                               text.end(),
+                               text.begin(),
+                               [](unsigned char ch) {
+                                   return static_cast<char>(std::tolower(ch));
+                               });
+                return;
+            case ExpressionStatsFunction::UPPER:
+                text = core::IdentifierUtils::toUpper(text);
+                return;
+            case ExpressionStatsFunction::TRIM:
+                text = ltrimAsciiCopy(rtrimAsciiCopy(text));
+                return;
+            case ExpressionStatsFunction::LTRIM:
+                text = ltrimAsciiCopy(text);
+                return;
+            case ExpressionStatsFunction::RTRIM:
+                text = rtrimAsciiCopy(text);
+                return;
+            case ExpressionStatsFunction::UNKNOWN:
+            default:
+                return;
+        }
     }
 
     auto isLengthPrefixedType(core::DataType type) -> bool
@@ -1771,16 +1819,44 @@ namespace scratchbird::optimizer
                          ? 1.0 / static_cast<double>(stats.distinct_count_est)
                          : 1.0},
                     {"skip_group_count", stats.distinct_count_est},
+                    {"prefetchable_page_fraction",
+                     std::clamp(std::max(packet.correlation, 0.0), 0.0, 1.0)},
+                    {"secondary_lookup_fraction",
+                     std::clamp(1.0 - packet.coverage_fraction, 0.0, 1.0)},
+                    {"cluster_locality_gain_est",
+                     std::clamp(packet.correlation < 0.0
+                                    ? -packet.correlation
+                                    : packet.correlation,
+                                0.0,
+                                1.0)},
+                    {"early_stop_gain_est",
+                     std::clamp(std::max(packet.correlation, 0.0) *
+                                    (1.0 - packet.recheck_ratio_est),
+                                0.0,
+                                1.0)},
                     {"overflow_chain_depth",
                      index_info.index_type == core::CatalogManager::IndexType::HASH
                          ? std::max<int>(0, static_cast<int>(packet.height) - 1)
                          : 0},
-                    {"run_count", 0},
+                    {"run_count",
+                     index_info.index_type == core::CatalogManager::IndexType::LSM
+                         ? std::max<uint16_t>(1, packet.height)
+                         : 0},
                     {"level_count", index_info.index_type == core::CatalogManager::IndexType::LSM
                                         ? packet.height
                                         : 0},
                     {"tombstone_fraction", packet.dead_fraction},
-                    {"L0_run_count", 0}
+                    {"L0_run_count",
+                     index_info.index_type == core::CatalogManager::IndexType::LSM
+                         ? 1
+                         : 0},
+                    {"sort_avoidance_gain_est",
+                     std::clamp((packet.correlation < 0.0
+                                     ? -packet.correlation
+                                     : packet.correlation) *
+                                    (1.0 - packet.dead_fraction),
+                                0.0,
+                                1.0)}
                 };
                 break;
             case IndexFamilyMetricsType::SUMMARY_CANDIDATE:
@@ -1794,8 +1870,40 @@ namespace scratchbird::optimizer
                                                                             : (confidence_class == IndexMetricsConfidenceClass::LOW ? 0.35 : 0.0)},
                     {"bitmap_density", packet.coverage_fraction},
                     {"bitmap_false_positive_ratio", packet.recheck_ratio_est},
+                    {"lossy_container_fraction",
+                     std::clamp(packet.recheck_ratio_est + (packet.dead_fraction * 0.25),
+                                0.0,
+                                1.0)},
                     {"column_bytes_pruned_ratio", std::clamp(1.0 - packet.coverage_fraction, 0.0, 1.0)},
                     {"row_groups_touched_ratio", std::clamp(packet.coverage_fraction, 0.0, 1.0)},
+                    {"chunk_prune_ratio", std::clamp(1.0 - packet.coverage_fraction, 0.0, 1.0)},
+                    {"projection_layout_count",
+                     index_info.index_type == core::CatalogManager::IndexType::COLUMNSTORE
+                         ? 2.0
+                         : 1.0},
+                    {"bulk_filter_gain_est",
+                     std::clamp((1.0 - packet.coverage_fraction) *
+                                    (1.0 - packet.recheck_ratio_est),
+                                0.0,
+                                1.0)},
+                    {"mutable_buffer_fraction",
+                     index_info.index_type == core::CatalogManager::IndexType::COLUMNSTORE
+                         ? std::clamp((packet.dead_fraction * 0.50) +
+                                          (packet.publish_lag_xids > 0 ? 0.20 : 0.0),
+                                      0.0,
+                                      1.0)
+                         : 0.0},
+                    {"projection_width_bytes",
+                     index_info.index_type == core::CatalogManager::IndexType::COLUMNSTORE
+                         ? 16.0
+                         : 8.0},
+                    {"delta_fraction",
+                     index_info.index_type == core::CatalogManager::IndexType::COLUMNSTORE
+                         ? std::clamp((packet.dead_fraction * 0.50) +
+                                          (packet.publish_lag_xids > 0 ? 0.10 : 0.0),
+                                      0.0,
+                                      1.0)
+                         : 0.0},
                     {"late_materialization_gain_est",
                      std::clamp(1.0 - packet.dead_fraction, 0.0, 1.0)}
                 };
@@ -1807,7 +1915,9 @@ namespace scratchbird::optimizer
                     {"all_the_same_fraction", duplicate_density},
                     {"branch_skew", 1.0 - std::min(1.0, std::abs(packet.correlation))},
                     {"candidate_amplification", 1.0 + (packet.recheck_ratio_est * 4.0)},
-                    {"nearest_lb_tightness", std::clamp(1.0 - packet.recheck_ratio_est, 0.0, 1.0)}
+                    {"nearest_lb_tightness", std::clamp(1.0 - packet.recheck_ratio_est, 0.0, 1.0)},
+                    {"distance_recheck_ratio",
+                     std::clamp(packet.recheck_ratio_est, 0.0, 1.0)}
                 };
                 break;
             case IndexFamilyMetricsType::TEXT_SEARCH:
@@ -1822,7 +1932,23 @@ namespace scratchbird::optimizer
                     {"pending_list_fraction", packet.dead_fraction},
                     {"phrase_hit_rate", std::clamp(1.0 - packet.recheck_ratio_est, 0.0, 1.0)},
                     {"score_rows_est", packet.row_count_est},
-                    {"merge_debt", packet.maintenance_backlog_ops}
+                    {"merge_debt", packet.maintenance_backlog_ops},
+                    {"stale_hit_ratio",
+                     std::clamp(packet.dead_fraction +
+                                    (packet.publish_lag_xids > 0 ? 0.10 : 0.0),
+                                0.0,
+                                1.0)},
+                    {"recheck_ratio_est",
+                     std::clamp(packet.recheck_ratio_est, 0.0, 1.0)},
+                    {"collector_early_stop_gain",
+                     std::clamp(1.0 - (packet.recheck_ratio_est * 0.75),
+                                0.0,
+                                1.0)},
+                    {"mutable_overlay_fraction",
+                     std::clamp((packet.dead_fraction * 0.50) +
+                                    (packet.publish_lag_xids > 0 ? 0.15 : 0.0),
+                                0.0,
+                                1.0)}
                 };
                 break;
             case IndexFamilyMetricsType::ANN:
@@ -1848,7 +1974,16 @@ namespace scratchbird::optimizer
                     {"rerank_fraction", packet.recheck_ratio_est},
                     {"stale_training_fraction",
                      confidence_class == IndexMetricsConfidenceClass::LOW ? 0.25 : 0.0},
-                    {"segment_coverage_fraction", packet.coverage_fraction}
+                    {"segment_coverage_fraction", packet.coverage_fraction},
+                    {"bytes_per_live_vector",
+                     std::max<double>(16.0, static_cast<double>(stats.avg_entry_len))},
+                    {"growing_fraction",
+                     std::clamp(packet.dead_fraction * 0.50, 0.0, 1.0)},
+                    {"segment_merge_cost_est",
+                     std::max(0.0,
+                              (packet.coverage_fraction * 2.0) +
+                                  (packet.recheck_ratio_est * 2.0) +
+                                  packet.maintenance_backlog_ops)}
                 };
                 break;
             case IndexFamilyMetricsType::UNKNOWN:
@@ -2239,7 +2374,14 @@ namespace scratchbird::optimizer
                                                     ExpressionStatistics &stats_out,
                                                     ErrorContext *ctx) -> Status
     {
-        const auto key = getExpressionCacheKey(table_id, expression_key);
+        ExpressionStatsDescriptor descriptor;
+        const bool have_descriptor =
+            parseExpressionStatsKey(expression_key, descriptor);
+        const std::string canonical_expression_key =
+            have_descriptor ? canonicalExpressionStatsKey(descriptor)
+                            : core::IdentifierUtils::toUpper(expression_key);
+        const auto key =
+            getExpressionCacheKey(table_id, canonical_expression_key);
         AnalyzeLifecycleDecision analyze_decision;
         Status auto_status = maybeAutoAnalyze(table_id, &analyze_decision, ctx);
         if (auto_status != Status::OK)
@@ -2258,9 +2400,28 @@ namespace scratchbird::optimizer
         }
 
         ColumnStatistics stored_stats;
-        const ID synthetic_column_id =
-            makeSyntheticStatisticId(table_id, "EXPR", key);
-        Status status = loadColumnStatistics(table_id, synthetic_column_id, stored_stats, ctx);
+        auto load_expression_stats = [&](const std::string &cache_key_value)
+            -> Status {
+                const ID synthetic_column_id =
+                    makeSyntheticStatisticId(table_id, "EXPR", cache_key_value);
+                return loadColumnStatistics(table_id,
+                                            synthetic_column_id,
+                                            stored_stats,
+                                            ctx);
+            };
+
+        Status status = load_expression_stats(key);
+        const std::string legacy_expression_key =
+            have_descriptor ? legacyExpressionStatsKey(descriptor) : std::string();
+        const std::string legacy_cache_key =
+            legacy_expression_key.empty()
+                ? std::string()
+                : getExpressionCacheKey(table_id, legacy_expression_key);
+        if (status == Status::NOT_FOUND && !legacy_cache_key.empty() &&
+            legacy_cache_key != key)
+        {
+            status = load_expression_stats(legacy_cache_key);
+        }
         if (status != Status::OK && status == Status::NOT_FOUND)
         {
             ErrorContext analyze_ctx;
@@ -2274,7 +2435,12 @@ namespace scratchbird::optimizer
                 return status;
             }
             analyze_decision.triggered = true;
-            status = loadColumnStatistics(table_id, synthetic_column_id, stored_stats, ctx);
+            status = load_expression_stats(key);
+            if (status == Status::NOT_FOUND && !legacy_cache_key.empty() &&
+                legacy_cache_key != key)
+            {
+                status = load_expression_stats(legacy_cache_key);
+            }
         }
         if (status != Status::OK)
         {
@@ -2282,8 +2448,19 @@ namespace scratchbird::optimizer
         }
 
         stats_out.table_id = table_id;
-        stats_out.expression_key = key;
-        stored_stats.column_name = key;
+        stats_out.expression_key = canonical_expression_key;
+        stats_out.expression_contract_id =
+            have_descriptor ? descriptor.contract_id : "sb_expression_stats/v1";
+        stats_out.function_name =
+            have_descriptor ? descriptor.function_name : std::string();
+        stats_out.base_column_name =
+            have_descriptor ? descriptor.column_name : std::string();
+        stats_out.input_data_type = stored_stats.data_type;
+        stats_out.result_data_type =
+            have_descriptor && descriptor.result_data_type != core::DataType::UNKNOWN
+                ? descriptor.result_data_type
+                : stored_stats.data_type;
+        stored_stats.column_name = canonical_expression_key;
         applyFreshnessMetadata(table_id,
                                analyze_decision.triggered,
                                analyze_decision.threshold,
@@ -4523,8 +4700,7 @@ namespace scratchbird::optimizer
                 continue;
             }
 
-            auto store_expression = [&](const std::string &expression_key,
-                                        bool upper_case) {
+            auto store_expression = [&](const ExpressionStatsDescriptor &descriptor) {
                 std::vector<std::vector<uint8_t>> expr_values;
                 expr_values.reserve(column_values.size());
                 for (const auto &value : column_values)
@@ -4539,19 +4715,7 @@ namespace scratchbird::optimizer
                     {
                         return;
                     }
-                    if (upper_case)
-                    {
-                        text = core::IdentifierUtils::toUpper(text);
-                    }
-                    else
-                    {
-                        std::transform(text.begin(),
-                                       text.end(),
-                                       text.begin(),
-                                       [](unsigned char ch) {
-                                           return static_cast<char>(std::tolower(ch));
-                                       });
-                    }
+                    applyExpressionStatsTextTransform(text, descriptor.function);
                     expr_values.push_back(encodeStringValue(text));
                 }
 
@@ -4559,7 +4723,7 @@ namespace scratchbird::optimizer
                 expr_stats.table_id = table_id;
                 expr_stats.column_id = column.column_id;
                 expr_stats.column_name = column.column_name;
-                expr_stats.data_type = type;
+                expr_stats.data_type = descriptor.result_data_type;
                 applyColumnMetadata(column, expr_stats);
                 expr_stats.num_rows = expr_values.size();
                 expr_stats.sample_size = expr_values.size();
@@ -4603,8 +4767,15 @@ namespace scratchbird::optimizer
                 (void)identifyMCVs(expr_values, 32, expr_stats.mcv_list, nullptr);
 
                 ExpressionStatistics info;
+                const std::string expression_key =
+                    canonicalExpressionStatsKey(descriptor);
                 info.table_id = table_id;
                 info.expression_key = expression_key;
+                info.expression_contract_id = descriptor.contract_id;
+                info.function_name = descriptor.function_name;
+                info.base_column_name = descriptor.column_name;
+                info.input_data_type = type;
+                info.result_data_type = descriptor.result_data_type;
                 expr_stats.column_id =
                     makeSyntheticStatisticId(table_id,
                                              "EXPR",
@@ -4625,8 +4796,17 @@ namespace scratchbird::optimizer
                 }
             };
 
-            store_expression(canonicalExpressionKey("LOWER", column.column_name), false);
-            store_expression(canonicalExpressionKey("UPPER", column.column_name), true);
+            for (const char *function_name :
+                 {"LOWER", "UPPER", "TRIM", "LTRIM", "RTRIM"})
+            {
+                auto descriptor = buildExpressionStatsDescriptor(function_name,
+                                                                 column.column_name,
+                                                                 type);
+                if (descriptor.has_value())
+                {
+                    store_expression(*descriptor);
+                }
+            }
         }
     }
 
@@ -4675,58 +4855,83 @@ namespace scratchbird::optimizer
                        static_cast<double>(total_rows);
             };
 
-        for (size_t left_idx = 0; left_idx < columns.size(); ++left_idx)
-        {
-            for (size_t right_idx = left_idx + 1; right_idx < columns.size(); ++right_idx)
-            {
-                const size_t first_idx = left_idx;
-                const size_t second_idx = right_idx;
-
-                const auto &first_values = extracted_values[first_idx];
-                const auto &second_values = extracted_values[second_idx];
-                const size_t row_count = std::min(first_values.size(), second_values.size());
+        std::vector<size_t> subset_indices;
+        const auto persist_subset =
+            [&](const std::vector<size_t> &subset) -> void {
+                size_t row_count = sample_rows.size();
+                for (size_t index : subset)
+                {
+                    row_count = std::min(row_count, extracted_values[index].size());
+                }
 
                 std::vector<std::vector<uint8_t>> composite_values;
                 composite_values.reserve(row_count);
-                std::unordered_map<std::vector<uint8_t>,
-                                   std::unordered_map<std::vector<uint8_t>,
-                                                      uint64_t,
-                                                      VectorHash>,
-                                   VectorHash>
-                    forward_dependencies;
-                std::unordered_map<std::vector<uint8_t>,
-                                   std::unordered_map<std::vector<uint8_t>,
-                                                      uint64_t,
-                                                      VectorHash>,
-                                   VectorHash>
-                    reverse_dependencies;
+                std::vector<std::unordered_map<std::vector<uint8_t>,
+                                               std::unordered_map<std::vector<uint8_t>,
+                                                                  uint64_t,
+                                                                  VectorHash>,
+                                               VectorHash>>
+                    forward_dependencies(subset.size());
+                std::vector<std::unordered_map<std::vector<uint8_t>,
+                                               std::unordered_map<std::vector<uint8_t>,
+                                                                  uint64_t,
+                                                                  VectorHash>,
+                                               VectorHash>>
+                    reverse_dependencies(subset.size());
 
                 for (size_t row = 0; row < row_count; ++row)
                 {
-                    const auto &first = first_values[row];
-                    const auto &second = second_values[row];
-                    if (first.empty() || second.empty())
+                    std::vector<std::vector<uint8_t>> row_values;
+                    row_values.reserve(subset.size());
+                    bool complete = true;
+                    for (size_t subset_index : subset)
+                    {
+                        const auto &value = extracted_values[subset_index][row];
+                        if (value.empty())
+                        {
+                            complete = false;
+                            break;
+                        }
+                        row_values.push_back(value);
+                    }
+
+                    if (!complete)
                     {
                         continue;
                     }
 
-                    composite_values.push_back(
-                        encodeCompositeStatisticValue({first, second}));
-                    forward_dependencies[first][second] += 1;
-                    reverse_dependencies[second][first] += 1;
+                    composite_values.push_back(encodeCompositeStatisticValue(row_values));
+                    for (size_t pivot = 0; pivot < row_values.size(); ++pivot)
+                    {
+                        std::vector<std::vector<uint8_t>> dependent_values;
+                        dependent_values.reserve(row_values.size() - 1);
+                        for (size_t other = 0; other < row_values.size(); ++other)
+                        {
+                            if (other != pivot)
+                            {
+                                dependent_values.push_back(row_values[other]);
+                            }
+                        }
+
+                        const std::vector<uint8_t> dependent_key =
+                            encodeCompositeStatisticValue(dependent_values);
+                        forward_dependencies[pivot][row_values[pivot]][dependent_key] += 1;
+                        reverse_dependencies[pivot][dependent_key][row_values[pivot]] += 1;
+                    }
                 }
 
                 if (composite_values.size() < 8)
                 {
-                    continue;
+                    return;
                 }
 
                 MultivariateStatistics stats;
                 stats.table_id = table_id;
-                stats.column_ids = {
-                    columns[first_idx].column_id, columns[second_idx].column_id};
-                stats.column_names = {
-                    columns[first_idx].column_name, columns[second_idx].column_name};
+                for (size_t subset_index : subset)
+                {
+                    stats.column_ids.push_back(columns[subset_index].column_id);
+                    stats.column_names.push_back(columns[subset_index].column_name);
+                }
                 stats.sample_size = static_cast<uint64_t>(composite_values.size());
                 stats.last_analyzed_time = analyzed_time;
                 stats.ndistinct.column_ids = stats.column_ids;
@@ -4758,37 +4963,62 @@ namespace scratchbird::optimizer
                     }
                 }
 
-                FunctionalDependencyStatistics first_to_second;
-                first_to_second.determinant_column_ids = {stats.column_ids[0]};
-                first_to_second.dependent_column_ids = {stats.column_ids[1]};
-                first_to_second.determinant_column_names = {stats.column_names[0]};
-                first_to_second.dependent_column_names = {stats.column_names[1]};
-                first_to_second.strength =
-                    dependency_strength(forward_dependencies, stats.sample_size);
-                first_to_second.sample_size = stats.sample_size;
-                first_to_second.last_analyzed_time = analyzed_time;
-                stats.dependencies.push_back(std::move(first_to_second));
+                for (size_t pivot = 0; pivot < subset.size(); ++pivot)
+                {
+                    FunctionalDependencyStatistics single_to_rest;
+                    single_to_rest.determinant_column_ids = {stats.column_ids[pivot]};
+                    single_to_rest.determinant_column_names = {stats.column_names[pivot]};
+                    single_to_rest.strength =
+                        dependency_strength(forward_dependencies[pivot], stats.sample_size);
+                    single_to_rest.sample_size = stats.sample_size;
+                    single_to_rest.last_analyzed_time = analyzed_time;
 
-                FunctionalDependencyStatistics second_to_first;
-                second_to_first.determinant_column_ids = {stats.column_ids[1]};
-                second_to_first.dependent_column_ids = {stats.column_ids[0]};
-                second_to_first.determinant_column_names = {stats.column_names[1]};
-                second_to_first.dependent_column_names = {stats.column_names[0]};
-                second_to_first.strength =
-                    dependency_strength(reverse_dependencies, stats.sample_size);
-                second_to_first.sample_size = stats.sample_size;
-                second_to_first.last_analyzed_time = analyzed_time;
-                stats.dependencies.push_back(std::move(second_to_first));
+                    FunctionalDependencyStatistics rest_to_single;
+                    rest_to_single.dependent_column_ids = {stats.column_ids[pivot]};
+                    rest_to_single.dependent_column_names = {stats.column_names[pivot]};
+                    rest_to_single.strength =
+                        dependency_strength(reverse_dependencies[pivot], stats.sample_size);
+                    rest_to_single.sample_size = stats.sample_size;
+                    rest_to_single.last_analyzed_time = analyzed_time;
+
+                    for (size_t other = 0; other < subset.size(); ++other)
+                    {
+                        if (other == pivot)
+                        {
+                            continue;
+                        }
+                        single_to_rest.dependent_column_ids.push_back(stats.column_ids[other]);
+                        single_to_rest.dependent_column_names.push_back(stats.column_names[other]);
+                        rest_to_single.determinant_column_ids.push_back(stats.column_ids[other]);
+                        rest_to_single.determinant_column_names.push_back(
+                            stats.column_names[other]);
+                    }
+
+                    if (subset.size() == 2 && pivot > 0)
+                    {
+                        continue;
+                    }
+
+                    stats.dependencies.push_back(std::move(single_to_rest));
+                    stats.dependencies.push_back(std::move(rest_to_single));
+                }
 
                 {
                     std::lock_guard<std::mutex> lock(cache_mutex_);
-                    const auto correlation_it = correlation_stats_cache_.find(
-                        getCorrelationCacheKey(table_id,
-                                               stats.column_ids[0],
-                                               stats.column_ids[1]));
-                    if (correlation_it != correlation_stats_cache_.end())
+                    for (size_t left = 0; left < stats.column_ids.size(); ++left)
                     {
-                        stats.pairwise_correlations.push_back(correlation_it->second);
+                        for (size_t right = left + 1; right < stats.column_ids.size(); ++right)
+                        {
+                            const auto correlation_it = correlation_stats_cache_.find(
+                                getCorrelationCacheKey(table_id,
+                                                       stats.column_ids[left],
+                                                       stats.column_ids[right]));
+                            if (correlation_it != correlation_stats_cache_.end())
+                            {
+                                stats.pairwise_correlations.push_back(
+                                    correlation_it->second);
+                            }
+                        }
                     }
                 }
 
@@ -4801,10 +5031,41 @@ namespace scratchbird::optimizer
                 Status persist_status = storeMultivariateStatistics(stats, ctx);
                 if (persist_status != Status::OK)
                 {
+                    std::string descriptor;
+                    for (size_t index = 0; index < stats.column_names.size(); ++index)
+                    {
+                        if (index != 0)
+                        {
+                            descriptor += "/";
+                        }
+                        descriptor += stats.column_names[index];
+                    }
                     DEBUG_LOG_DB("Failed to persist multivariate statistics for " +
-                                 stats.column_names[0] + "/" + stats.column_names[1]);
+                                 descriptor);
                 }
-            }
+            };
+
+        const auto enumerate_subsets =
+            [&](const auto &self, size_t start, size_t target_size) -> void {
+                if (subset_indices.size() == target_size)
+                {
+                    persist_subset(subset_indices);
+                    return;
+                }
+
+                for (size_t index = start; index < columns.size(); ++index)
+                {
+                    subset_indices.push_back(index);
+                    self(self, index + 1, target_size);
+                    subset_indices.pop_back();
+                }
+            };
+
+        for (size_t subset_size = 2;
+             subset_size <= std::min<size_t>(3, columns.size());
+             ++subset_size)
+        {
+            enumerate_subsets(enumerate_subsets, 0, subset_size);
         }
     }
 

@@ -677,7 +677,7 @@ namespace scratchbird::optimizer
 
             return makeResult(PlannerAccessFamily::VECTOR_FLAT_SCAN,
                               AccessPathExactnessClass::EXACT_ROW,
-                              AccessPathVisibilityEnforcement::POST_FILTER,
+                              AccessPathVisibilityEnforcement::HYBRID,
                               false,
                               false,
                               false,
@@ -699,7 +699,7 @@ namespace scratchbird::optimizer
                 return makeResult(
                     PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN,
                     AccessPathExactnessClass::EXACT_ROW,
-                    AccessPathVisibilityEnforcement::POST_FILTER,
+                    AccessPathVisibilityEnforcement::HYBRID,
                     false,
                     false,
                     false,
@@ -743,7 +743,7 @@ namespace scratchbird::optimizer
                 return makeResult(
                     PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN,
                     AccessPathExactnessClass::EXACT_ROW,
-                    AccessPathVisibilityEnforcement::POST_FILTER,
+                    AccessPathVisibilityEnforcement::HYBRID,
                     false,
                     false,
                     false,
