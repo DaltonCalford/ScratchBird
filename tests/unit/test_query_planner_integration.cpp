@@ -774,7 +774,7 @@ TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
          true,
          PlannerAccessFamily::ANN_HYBRID_FALLBACK_SCAN,
          ExactnessClass::EXACT_ROW,
-         VisibilityEnforcement::POST_FILTER,
+         VisibilityEnforcement::HYBRID,
          QueryabilityState::QUERYABLE},
         {IndexType::VECTOR_FLAT,
          PredicateMatchShape::NONE,
@@ -793,7 +793,7 @@ TEST(IndexFamilyLoweringTest, BroaderFamilyMatrixPublishesTypedMetadata)
          false,
          PlannerAccessFamily::VECTOR_FLAT_SCAN,
          ExactnessClass::EXACT_ROW,
-         VisibilityEnforcement::POST_FILTER,
+         VisibilityEnforcement::HYBRID,
          QueryabilityState::QUERYABLE},
     };
 

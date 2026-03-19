@@ -331,37 +331,48 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             auto btree = BTree::open(&db, index_uuid, root_gpid, &ctx);
             if (!btree)
             {
-                std::cout << "FAILED (BTree::open after corruption): " << ctx.message << std::endl;
-                FAIL(); return;
-            }
-
-            // Try to search for a key that forces rightmost traversal
-            std::vector<uint8_t> search_key(8, 0xFF);
-
-            std::vector<TID> results;
-            Status search_status = btree->search(search_key, 1, &results, &ctx);
-
-            // Should get PAGE_CORRUPT error
-            if (search_status == Status::PAGE_CORRUPT)
-            {
-                // Check error message mentions rightmost child
-                std::string error_msg(ctx.message);
+                const std::string error_msg(ctx.message);
                 if (error_msg.find("rightmost") != std::string::npos ||
                     error_msg.find("missing") != std::string::npos)
                 {
-                    std::cout << "PASSED (correctly detected corruption)" << std::endl;
+                    std::cout << "PASSED (open fail-closed detected corruption)" << std::endl;
                 }
                 else
                 {
-                    std::cout << "PASSED (detected corruption, but message unclear: "
-                              << ctx.message << ")" << std::endl;
+                    std::cout << "FAILED (BTree::open after corruption): " << ctx.message
+                              << std::endl;
+                    FAIL(); return;
                 }
             }
             else
             {
-                std::cout << "FAILED: Should have detected corruption, got status "
-                          << static_cast<int>(search_status) << std::endl;
-                FAIL(); return;
+                // Try to search for a key that forces rightmost traversal
+                std::vector<uint8_t> search_key(8, 0xFF);
+
+                std::vector<TID> results;
+                Status search_status = btree->search(search_key, 1, &results, &ctx);
+
+                // Should get PAGE_CORRUPT error
+                if (search_status == Status::PAGE_CORRUPT)
+                {
+                    std::string error_msg(ctx.message);
+                    if (error_msg.find("rightmost") != std::string::npos ||
+                        error_msg.find("missing") != std::string::npos)
+                    {
+                        std::cout << "PASSED (traversal detected corruption)" << std::endl;
+                    }
+                    else
+                    {
+                        std::cout << "PASSED (detected corruption, but message unclear: "
+                                  << ctx.message << ")" << std::endl;
+                    }
+                }
+                else
+                {
+                    std::cout << "FAILED: Should have detected corruption, got status "
+                              << static_cast<int>(search_status) << std::endl;
+                    FAIL(); return;
+                }
             }
 
             db.close();
@@ -376,8 +387,8 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
     std::cout << std::endl;
     std::cout << "Analysis summary:" << std::endl;
     std::cout << "  - Internal nodes always have valid rightmost_child after splits ✅" << std::endl;
-    std::cout << "  - Validation exists in traversal code (btree.cpp:556-576) ✅" << std::endl;
-    std::cout << "  - Corruption is detected and reported as PAGE_CORRUPT ✅" << std::endl;
+    std::cout << "  - Validation exists in open/traversal code paths ✅" << std::endl;
+    std::cout << "  - Corruption is detected and reported fail-closed ✅" << std::endl;
     std::cout << "  - Error message clearly indicates missing rightmost child pointer ✅" << std::endl;
     std::cout << "  - Code at btree.cpp:1083, 1087, 1378 properly sets rightmost_child ✅" << std::endl;
     std::cout << "  - No infinite loop possible - error is returned immediately ✅" << std::endl;
